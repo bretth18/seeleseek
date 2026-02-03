@@ -1,0 +1,310 @@
+import Foundation
+
+struct MessageParser {
+    // MARK: - Frame Parsing
+
+    struct ParsedFrame {
+        let code: UInt32
+        let payload: Data
+    }
+
+    static func parseFrame(from data: Data) -> (frame: ParsedFrame, consumed: Int)? {
+        guard data.count >= 8 else { return nil }
+
+        guard let length = data.readUInt32(at: 0) else { return nil }
+        let totalLength = 4 + Int(length)
+
+        guard data.count >= totalLength else { return nil }
+        guard let code = data.readUInt32(at: 4) else { return nil }
+
+        let payload = data.subdata(in: 8..<totalLength)
+        return (ParsedFrame(code: code, payload: payload), totalLength)
+    }
+
+    // MARK: - Server Message Parsing
+
+    static func parseLoginResponse(_ payload: Data) -> LoginResult? {
+        var offset = 0
+
+        guard let success = payload.readBool(at: offset) else { return nil }
+        offset += 1
+
+        if success {
+            guard let (greeting, greetingLen) = payload.readString(at: offset) else { return nil }
+            offset += greetingLen
+
+            guard let ip = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+
+            let ipString = "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
+
+            var hashString: String?
+            if let (hash, _) = payload.readString(at: offset) {
+                hashString = hash
+            }
+
+            return .success(greeting: greeting, ip: ipString, hash: hashString)
+        } else {
+            guard let (reason, _) = payload.readString(at: offset) else {
+                return .failure(reason: "Unknown error")
+            }
+            return .failure(reason: reason)
+        }
+    }
+
+    struct RoomListEntry {
+        let name: String
+        let userCount: UInt32
+    }
+
+    static func parseRoomList(_ payload: Data) -> [RoomListEntry]? {
+        var offset = 0
+        var rooms: [RoomListEntry] = []
+
+        guard let roomCount = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        var roomNames: [String] = []
+        for _ in 0..<roomCount {
+            guard let (name, len) = payload.readString(at: offset) else { return nil }
+            offset += len
+            roomNames.append(name)
+        }
+
+        guard let userCountsCount = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        for i in 0..<Int(min(roomCount, userCountsCount)) {
+            guard let userCount = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+            rooms.append(RoomListEntry(name: roomNames[i], userCount: userCount))
+        }
+
+        return rooms
+    }
+
+    struct PeerInfo {
+        let username: String
+        let ip: String
+        let port: UInt32
+        let token: UInt32
+        let privileged: Bool
+    }
+
+    static func parseConnectToPeer(_ payload: Data) -> PeerInfo? {
+        var offset = 0
+
+        guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
+        offset += usernameLen
+
+        guard let (_, typeLen) = payload.readString(at: offset) else { return nil }
+        offset += typeLen
+
+        guard let ip = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let port = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let token = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        let privileged = payload.readBool(at: offset) ?? false
+
+        let ipString = "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
+
+        return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
+    }
+
+    struct UserStatusInfo {
+        let username: String
+        let status: UserStatus
+        let privileged: Bool
+    }
+
+    static func parseGetUserStatus(_ payload: Data) -> UserStatusInfo? {
+        var offset = 0
+
+        guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
+        offset += usernameLen
+
+        guard let statusRaw = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        let privileged = payload.readBool(at: offset) ?? false
+
+        let status = UserStatus(rawValue: statusRaw) ?? .offline
+
+        return UserStatusInfo(username: username, status: status, privileged: privileged)
+    }
+
+    struct PrivateMessageInfo {
+        let id: UInt32
+        let timestamp: UInt32
+        let username: String
+        let message: String
+        let isAdmin: Bool
+    }
+
+    static func parsePrivateMessage(_ payload: Data) -> PrivateMessageInfo? {
+        var offset = 0
+
+        guard let id = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let timestamp = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
+        offset += usernameLen
+
+        guard let (message, messageLen) = payload.readString(at: offset) else { return nil }
+        offset += messageLen
+
+        let isAdmin = payload.readBool(at: offset) ?? false
+
+        return PrivateMessageInfo(id: id, timestamp: timestamp, username: username, message: message, isAdmin: isAdmin)
+    }
+
+    struct ChatRoomMessageInfo {
+        let roomName: String
+        let username: String
+        let message: String
+    }
+
+    static func parseSayInChatRoom(_ payload: Data) -> ChatRoomMessageInfo? {
+        var offset = 0
+
+        guard let (roomName, roomLen) = payload.readString(at: offset) else { return nil }
+        offset += roomLen
+
+        guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
+        offset += usernameLen
+
+        guard let (message, _) = payload.readString(at: offset) else { return nil }
+
+        return ChatRoomMessageInfo(roomName: roomName, username: username, message: message)
+    }
+
+    // MARK: - Peer Message Parsing
+
+    struct SearchResultFile {
+        let filename: String
+        let size: UInt64
+        let `extension`: String
+        let attributes: [FileAttribute]
+    }
+
+    struct FileAttribute {
+        let type: UInt32
+        let value: UInt32
+
+        var description: String {
+            switch type {
+            case 0: "Bitrate: \(value) kbps"
+            case 1: "Duration: \(value) seconds"
+            case 2: "VBR: \(value == 1 ? "Yes" : "No")"
+            case 4: "Sample Rate: \(value) Hz"
+            case 5: "Bit Depth: \(value) bits"
+            default: "Unknown(\(type)): \(value)"
+            }
+        }
+    }
+
+    struct SearchReplyInfo {
+        let username: String
+        let token: UInt32
+        let files: [SearchResultFile]
+        let freeSlots: Bool
+        let uploadSpeed: UInt32
+        let queueLength: UInt32
+    }
+
+    static func parseSearchReply(_ payload: Data) -> SearchReplyInfo? {
+        var offset = 0
+
+        guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
+        offset += usernameLen
+
+        guard let token = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let fileCount = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        var files: [SearchResultFile] = []
+        for _ in 0..<fileCount {
+            guard payload.readUInt8(at: offset) != nil else { return nil }
+            offset += 1
+
+            guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
+            offset += filenameLen
+
+            guard let size = payload.readUInt64(at: offset) else { return nil }
+            offset += 8
+
+            guard let (ext, extLen) = payload.readString(at: offset) else { return nil }
+            offset += extLen
+
+            guard let attrCount = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+
+            var attributes: [FileAttribute] = []
+            for _ in 0..<attrCount {
+                guard let attrType = payload.readUInt32(at: offset) else { return nil }
+                offset += 4
+                guard let attrValue = payload.readUInt32(at: offset) else { return nil }
+                offset += 4
+                attributes.append(FileAttribute(type: attrType, value: attrValue))
+            }
+
+            files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes))
+        }
+
+        let freeSlots = payload.readBool(at: offset) ?? true
+        offset += 1
+
+        let uploadSpeed = payload.readUInt32(at: offset) ?? 0
+        offset += 4
+
+        let queueLength = payload.readUInt32(at: offset) ?? 0
+
+        return SearchReplyInfo(
+            username: username,
+            token: token,
+            files: files,
+            freeSlots: freeSlots,
+            uploadSpeed: uploadSpeed,
+            queueLength: queueLength
+        )
+    }
+
+    struct TransferRequestInfo {
+        let direction: FileTransferDirection
+        let token: UInt32
+        let filename: String
+        let fileSize: UInt64?
+    }
+
+    static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
+        var offset = 0
+
+        guard let directionRaw = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let direction = FileTransferDirection(rawValue: UInt8(directionRaw)) else { return nil }
+
+        guard let token = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
+        offset += filenameLen
+
+        var fileSize: UInt64?
+        if direction == .upload {
+            fileSize = payload.readUInt64(at: offset)
+        }
+
+        return TransferRequestInfo(direction: direction, token: token, filename: filename, fileSize: fileSize)
+    }
+}

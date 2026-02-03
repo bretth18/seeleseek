@@ -1,0 +1,200 @@
+import SwiftUI
+
+struct LoginView: View {
+    @Environment(\.appState) private var appState
+
+    var body: some View {
+        @Bindable var connectionState = appState.connection
+
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: SeeleSpacing.xxl) {
+                // Logo / Title
+                VStack(spacing: SeeleSpacing.md) {
+                    Image(systemName: "waveform.circle.fill")
+                        .font(.system(size: 64, weight: .light))
+                        .foregroundStyle(SeeleColors.accent)
+
+                    Text("SeeleSeek")
+                        .font(SeeleTypography.largeTitle)
+                        .foregroundStyle(SeeleColors.textPrimary)
+
+                    Text("SoulSeek Client for macOS")
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+
+                // Login Form
+                VStack(spacing: SeeleSpacing.lg) {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        Text("Username")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+
+                        TextField("", text: $connectionState.loginUsername)
+                            .textFieldStyle(SeeleTextFieldStyle())
+                            .textContentType(.username)
+                            #if os(iOS)
+                            .autocapitalization(.none)
+                            #endif
+                            .autocorrectionDisabled()
+                    }
+
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        Text("Password")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+
+                        SecureField("", text: $connectionState.loginPassword)
+                            .textFieldStyle(SeeleTextFieldStyle())
+                            .textContentType(.password)
+                    }
+
+                    Toggle("Remember me", isOn: $connectionState.rememberCredentials)
+                        .toggleStyle(SeeleToggleStyle())
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+
+                    if let error = appState.connection.errorMessage {
+                        HStack(spacing: SeeleSpacing.sm) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                            Text(error)
+                        }
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.error)
+                        .padding(SeeleSpacing.md)
+                        .frame(maxWidth: .infinity)
+                        .background(SeeleColors.error.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                    }
+
+                    PrimaryButton(
+                        "Connect",
+                        icon: "network",
+                        isLoading: appState.connection.connectionStatus == .connecting
+                    ) {
+                        Task {
+                            await connect()
+                        }
+                    }
+                    .disabled(!appState.connection.isLoginValid)
+                }
+                .frame(maxWidth: 320)
+            }
+            .padding(SeeleSpacing.xxl)
+            .cardStyle()
+
+            Spacer()
+
+            // Footer
+            VStack(spacing: SeeleSpacing.xs) {
+                Text("Connecting to server.slsknet.org:2242")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
+            .padding(.bottom, SeeleSpacing.xl)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SeeleColors.background)
+        .onAppear {
+            loadSavedCredentials()
+        }
+    }
+
+    private func connect() async {
+        appState.connection.setConnecting()
+
+        do {
+            let result = try await appState.networkClient.connect(
+                username: appState.connection.loginUsername,
+                password: appState.connection.loginPassword
+            )
+
+            switch result {
+            case .success(let greeting, let ip, _):
+                if appState.connection.rememberCredentials {
+                    CredentialStorage.save(
+                        username: appState.connection.loginUsername,
+                        password: appState.connection.loginPassword
+                    )
+                }
+                appState.connection.setConnected(
+                    username: appState.connection.loginUsername,
+                    ip: ip,
+                    greeting: greeting
+                )
+
+            case .failure(let reason):
+                appState.connection.setError(reason)
+            }
+        } catch {
+            appState.connection.setError(error.localizedDescription)
+        }
+    }
+
+    private func loadSavedCredentials() {
+        if let credentials = CredentialStorage.load() {
+            appState.connection.loginUsername = credentials.username
+            appState.connection.loginPassword = credentials.password
+        }
+    }
+}
+
+// MARK: - Custom TextField Style
+
+struct SeeleTextFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<_Label>) -> some View {
+        configuration
+            .padding(SeeleSpacing.md)
+            .background(SeeleColors.surfaceSecondary)
+            .foregroundStyle(SeeleColors.textPrimary)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                    .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
+            )
+    }
+}
+
+// MARK: - Custom Toggle Style
+
+struct SeeleToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack {
+            configuration.label
+
+            Spacer()
+
+            RoundedRectangle(cornerRadius: 12)
+                .fill(configuration.isOn ? SeeleColors.accent : SeeleColors.surfaceSecondary)
+                .frame(width: 44, height: 24)
+                .overlay(
+                    Circle()
+                        .fill(Color.white)
+                        .padding(2)
+                        .offset(x: configuration.isOn ? 10 : -10)
+                )
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        configuration.isOn.toggle()
+                    }
+                }
+        }
+    }
+}
+
+#Preview("Login - Empty") {
+    LoginView()
+        .environment(\.appState, AppState())
+}
+
+#Preview("Login - With Error") {
+    let state = AppState()
+    state.connection.loginUsername = "testuser"
+    state.connection.loginPassword = "wrongpassword"
+    state.connection.setError("Invalid username or password")
+
+    return LoginView()
+        .environment(\.appState, state)
+}
