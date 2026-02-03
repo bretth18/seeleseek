@@ -12,12 +12,17 @@ struct MessageParser {
         guard data.count >= 8 else { return nil }
 
         guard let length = data.readUInt32(at: 0) else { return nil }
+
+        // Sanity check - messages shouldn't be excessively large
+        guard length <= 100_000_000 else { return nil }
+
         let totalLength = 4 + Int(length)
 
         guard data.count >= totalLength else { return nil }
         guard let code = data.readUInt32(at: 4) else { return nil }
 
-        let payload = data.subdata(in: 8..<totalLength)
+        // Use safe subdata extraction
+        guard let payload = data.safeSubdata(in: 8..<totalLength) else { return nil }
         return (ParsedFrame(code: code, payload: payload), totalLength)
     }
 

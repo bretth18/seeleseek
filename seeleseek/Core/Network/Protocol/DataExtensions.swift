@@ -3,28 +3,31 @@ import Foundation
 // MARK: - Data Reading Extensions (Little-Endian)
 extension Data {
     func readUInt8(at offset: Int) -> UInt8? {
-        guard offset < count else { return nil }
-        return self[offset]
+        guard offset >= 0, offset < count else { return nil }
+        return self[self.startIndex.advanced(by: offset)]
     }
 
     func readUInt16(at offset: Int) -> UInt16? {
-        guard offset + 2 <= count else { return nil }
-        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+        guard offset >= 0, offset + 2 <= count else { return nil }
+        let start = self.startIndex.advanced(by: offset)
+        return UInt16(self[start]) | (UInt16(self[start.advanced(by: 1)]) << 8)
     }
 
     func readUInt32(at offset: Int) -> UInt32? {
-        guard offset + 4 <= count else { return nil }
-        return UInt32(self[offset]) |
-               (UInt32(self[offset + 1]) << 8) |
-               (UInt32(self[offset + 2]) << 16) |
-               (UInt32(self[offset + 3]) << 24)
+        guard offset >= 0, offset + 4 <= count else { return nil }
+        let start = self.startIndex.advanced(by: offset)
+        return UInt32(self[start]) |
+               (UInt32(self[start.advanced(by: 1)]) << 8) |
+               (UInt32(self[start.advanced(by: 2)]) << 16) |
+               (UInt32(self[start.advanced(by: 3)]) << 24)
     }
 
     func readUInt64(at offset: Int) -> UInt64? {
-        guard offset + 8 <= count else { return nil }
+        guard offset >= 0, offset + 8 <= count else { return nil }
+        let start = self.startIndex.advanced(by: offset)
         var value: UInt64 = 0
         for i in 0..<8 {
-            value |= UInt64(self[offset + i]) << (i * 8)
+            value |= UInt64(self[start.advanced(by: i)]) << (i * 8)
         }
         return value
     }
@@ -36,13 +39,24 @@ extension Data {
 
     func readString(at offset: Int) -> (string: String, bytesConsumed: Int)? {
         guard let length = readUInt32(at: offset) else { return nil }
+
+        // Sanity check - strings shouldn't be excessively long
+        guard length <= 10_000_000 else { return nil }
+
         let stringStart = offset + 4
         let stringEnd = stringStart + Int(length)
         guard stringEnd <= count else { return nil }
 
-        let stringData = self[stringStart..<stringEnd]
+        let startIndex = self.startIndex.advanced(by: stringStart)
+        let endIndex = self.startIndex.advanced(by: stringEnd)
+        let stringData = self[startIndex..<endIndex]
+
         guard let string = String(data: stringData, encoding: .utf8) else {
-            return nil
+            // Try Latin-1 as fallback
+            guard let fallbackString = String(data: stringData, encoding: .isoLatin1) else {
+                return nil
+            }
+            return (fallbackString, 4 + Int(length))
         }
         return (string, 4 + Int(length))
     }
@@ -50,6 +64,23 @@ extension Data {
     func readBool(at offset: Int) -> Bool? {
         guard let byte = readUInt8(at: offset) else { return nil }
         return byte != 0
+    }
+
+    /// Alias for readUInt8
+    func readByte(at offset: Int) -> UInt8? {
+        readUInt8(at: offset)
+    }
+
+    // Safe subdata extraction
+    func safeSubdata(in range: Range<Int>) -> Data? {
+        guard range.lowerBound >= 0,
+              range.upperBound <= count,
+              range.lowerBound <= range.upperBound else {
+            return nil
+        }
+        let start = self.startIndex.advanced(by: range.lowerBound)
+        let end = self.startIndex.advanced(by: range.upperBound)
+        return self[start..<end]
     }
 }
 

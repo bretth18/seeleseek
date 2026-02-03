@@ -42,6 +42,9 @@ actor ServerConnection {
     private var messageHandler: ((UInt32, Data) async -> Void)?
     private var stateHandler: ((State) -> Void)?
 
+    // Async stream for messages
+    private var messageContinuation: AsyncStream<Data>.Continuation?
+
     private let logger = Logger(subsystem: "com.seeleseek", category: "ServerConnection")
 
     // MARK: - Configuration
@@ -54,6 +57,28 @@ actor ServerConnection {
     init(host: String = defaultHost, port: UInt16 = defaultPort) {
         self.host = host
         self.port = port
+    }
+
+    // MARK: - Async Message Stream
+
+    /// Async stream of complete message frames from the server
+    nonisolated var messages: AsyncStream<Data> {
+        AsyncStream { continuation in
+            Task {
+                await self.setMessageContinuation(continuation)
+            }
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.clearContinuation() }
+            }
+        }
+    }
+
+    private func setMessageContinuation(_ continuation: AsyncStream<Data>.Continuation) {
+        messageContinuation = continuation
+    }
+
+    private func clearContinuation() {
+        messageContinuation = nil
     }
 
     // MARK: - Public Interface
@@ -239,6 +264,17 @@ actor ServerConnection {
         // Process complete messages
         while let (frame, consumed) = MessageParser.parseFrame(from: receiveBuffer) {
             receiveBuffer.removeFirst(consumed)
+
+            // Build complete message with length prefix and code
+            var completeMessage = Data()
+            completeMessage.appendUInt32(UInt32(frame.payload.count + 4))
+            completeMessage.appendUInt32(frame.code)
+            completeMessage.append(frame.payload)
+
+            // Yield to async stream
+            messageContinuation?.yield(completeMessage)
+
+            // Also call legacy handler if set
             await messageHandler?(frame.code, frame.payload)
         }
     }

@@ -62,21 +62,21 @@ struct MainView: View {
         } else {
             switch appState.sidebarSelection {
             case .search:
-                PlaceholderView(title: "Search", icon: "magnifyingglass")
+                SearchView()
             case .transfers:
-                PlaceholderView(title: "Transfers", icon: "arrow.down.arrow.up")
+                TransfersView()
             case .chat:
-                PlaceholderView(title: "Chat", icon: "bubble.left.and.bubble.right")
+                ChatView()
             case .browse:
-                PlaceholderView(title: "Browse", icon: "folder")
+                BrowseView()
             case .user(let name):
-                PlaceholderView(title: "User: \(name)", icon: "person")
+                BrowseView()
             case .room(let name):
-                PlaceholderView(title: "Room: \(name)", icon: "person.3")
+                ChatView()
             case .settings:
-                PlaceholderView(title: "Settings", icon: "gear")
+                SettingsView()
             case nil:
-                PlaceholderView(title: "Select an item", icon: "sidebar.left")
+                SearchView()
             }
         }
     }

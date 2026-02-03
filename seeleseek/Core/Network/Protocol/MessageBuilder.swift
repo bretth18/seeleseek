@@ -214,6 +214,58 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
+    // MARK: - NetworkClient Convenience Methods
+
+    static func login(username: String, password: String, version: UInt32, hash: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.login.rawValue)
+        payload.appendString(username)
+        payload.appendString(password)
+        payload.appendUInt32(version)
+        payload.appendString(hash)
+        payload.appendUInt32(1) // minor version
+        return wrapMessage(payload)
+    }
+
+    static func fileSearch(token: UInt32, query: String) -> Data {
+        fileSearchMessage(token: token, query: query)
+    }
+
+    static func roomList() -> Data {
+        getRoomListMessage()
+    }
+
+    static func joinRoom(_ name: String) -> Data {
+        joinRoomMessage(roomName: name)
+    }
+
+    static func leaveRoom(_ name: String) -> Data {
+        leaveRoomMessage(roomName: name)
+    }
+
+    static func sayInRoom(room: String, message: String) -> Data {
+        sayInChatRoomMessage(roomName: room, message: message)
+    }
+
+    static func privateMessage(username: String, message: String) -> Data {
+        privateMessageMessage(username: username, message: message)
+    }
+
+    static func getUserAddress(_ username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.getPeerAddress.rawValue)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
+    static func setStatus(_ status: UserStatus) -> Data {
+        setOnlineStatusMessage(status: status)
+    }
+
+    static func sharedFoldersFiles(folders: UInt32, files: UInt32) -> Data {
+        sharedFoldersFilesMessage(folders: folders, files: files)
+    }
+
     // MARK: - Utilities
 
     private static func wrapMessage(_ payload: Data) -> Data {

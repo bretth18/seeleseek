@@ -105,14 +105,10 @@ struct LoginView: View {
     private func connect() async {
         appState.connection.setConnecting()
 
-        do {
-            let result = try await appState.networkClient.connect(
-                username: appState.connection.loginUsername,
-                password: appState.connection.loginPassword
-            )
-
-            switch result {
-            case .success(let greeting, let ip, _):
+        // Set up callbacks
+        appState.networkClient.onConnectionStatusChanged = { status in
+            switch status {
+            case .connected:
                 if appState.connection.rememberCredentials {
                     CredentialStorage.save(
                         username: appState.connection.loginUsername,
@@ -121,15 +117,27 @@ struct LoginView: View {
                 }
                 appState.connection.setConnected(
                     username: appState.connection.loginUsername,
-                    ip: ip,
-                    greeting: greeting
+                    ip: "",
+                    greeting: nil
                 )
-
-            case .failure(let reason):
-                appState.connection.setError(reason)
+            case .disconnected:
+                appState.connection.setDisconnected()
+            case .connecting:
+                appState.connection.setConnecting()
+            case .error:
+                appState.connection.setError(appState.networkClient.connectionError ?? "Unknown error")
             }
-        } catch {
-            appState.connection.setError(error.localizedDescription)
+        }
+
+        await appState.networkClient.connect(
+            server: ServerConnection.defaultHost,
+            port: ServerConnection.defaultPort,
+            username: appState.connection.loginUsername,
+            password: appState.connection.loginPassword
+        )
+
+        if let error = appState.networkClient.connectionError {
+            appState.connection.setError(error)
         }
     }
 
