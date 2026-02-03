@@ -1,8 +1,10 @@
 import Foundation
+import os
 
 /// Handles incoming server messages and dispatches to appropriate callbacks
 @MainActor
 final class ServerMessageHandler {
+    private let logger = Logger(subsystem: "com.seeleseek", category: "ServerMessageHandler")
     private weak var client: NetworkClient?
 
     init(client: NetworkClient) {
@@ -10,12 +12,23 @@ final class ServerMessageHandler {
     }
 
     func handle(_ data: Data) async {
-        guard data.count >= 8 else { return }
+        guard data.count >= 8 else {
+            logger.warning("Received message too short: \(data.count) bytes")
+            return
+        }
 
         // Parse message length and code
         guard let messageLength = data.readUInt32(at: 0),
-              let codeValue = data.readUInt32(at: 4),
-              let code = ServerMessageCode(rawValue: codeValue) else {
+              let codeValue = data.readUInt32(at: 4) else {
+            logger.warning("Failed to parse message header")
+            return
+        }
+
+        let code = ServerMessageCode(rawValue: codeValue)
+        logger.info("Received message: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
+
+        guard let code = code else {
+            logger.warning("Unknown message code: \(codeValue)")
             return
         }
 
@@ -56,29 +69,38 @@ final class ServerMessageHandler {
         var offset = 0
 
         // Success byte
-        guard let success = data.readByte(at: offset) else { return }
+        guard let success = data.readByte(at: offset) else {
+            logger.error("Failed to read login success byte")
+            return
+        }
         offset += 1
+
+        logger.info("Login response: success=\(success)")
 
         if success == 1 {
             // Login successful
             // Read greeting message
-            if let (greeting, newOffset) = data.readString(at: offset) {
+            var greeting = ""
+            if let (greetingStr, newOffset) = data.readString(at: offset) {
                 offset = newOffset
-                print("Login successful: \(greeting)")
+                greeting = greetingStr
+                logger.info("Login greeting: \(greeting)")
             }
 
             // Read IP address
             if let ip = data.readUInt32(at: offset) {
                 offset += 4
-                print("Server reports IP: \(ipString(from: ip))")
+                logger.info("Server reports IP: \(self.ipString(from: ip))")
             }
 
-            client?.setLoggedIn(true, message: nil)
+            client?.setLoggedIn(true, message: greeting)
         } else {
             // Login failed - read reason
             if let (reason, _) = data.readString(at: offset) {
+                logger.error("Login failed: \(reason)")
                 client?.setLoggedIn(false, message: reason)
             } else {
+                logger.error("Login failed: Unknown error")
                 client?.setLoggedIn(false, message: "Unknown error")
             }
         }

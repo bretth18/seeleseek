@@ -133,11 +133,15 @@ actor ServerConnection {
             throw ConnectionError.notConnected
         }
 
+        logger.debug("Sending \(data.count) bytes")
+
         return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: data, completion: .contentProcessed { error in
+            connection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
+                    self?.logger.error("Send failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
+                    self?.logger.debug("Send completed")
                     continuation.resume()
                 }
             })
@@ -260,10 +264,13 @@ actor ServerConnection {
 
     private func handleReceivedData(_ data: Data) async {
         receiveBuffer.append(data)
+        logger.debug("Received \(data.count) bytes, buffer now \(self.receiveBuffer.count) bytes")
 
         // Process complete messages
         while let (frame, consumed) = MessageParser.parseFrame(from: receiveBuffer) {
             receiveBuffer.removeFirst(consumed)
+
+            logger.info("Parsed message: code=\(frame.code) payload=\(frame.payload.count) bytes")
 
             // Build complete message with length prefix and code
             var completeMessage = Data()

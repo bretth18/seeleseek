@@ -1,10 +1,14 @@
 import Foundation
 import Network
+import os
+import CryptoKit
 
 /// Main network interface that coordinates server and peer connections
 @Observable
 @MainActor
 final class NetworkClient {
+    private let logger = Logger(subsystem: "com.seeleseek", category: "NetworkClient")
+
     // MARK: - Connection State
     private(set) var isConnecting = false
     private(set) var isConnected = false
@@ -14,10 +18,19 @@ final class NetworkClient {
     private(set) var username: String = ""
     private(set) var loggedIn = false
 
+    // MARK: - Network Info
+    private(set) var listenPort: UInt16 = 0
+    private(set) var obfuscatedPort: UInt16 = 0
+    private(set) var externalIP: String?
+
     // MARK: - Internal
     private var serverConnection: ServerConnection?
     private var messageHandler: ServerMessageHandler?
     private var receiveTask: Task<Void, Never>?
+
+    // Services
+    private let listenerService = ListenerService()
+    private let natService = NATService()
 
     // MARK: - Callbacks
     var onConnectionStatusChanged: ((ConnectionStatus) -> Void)?
@@ -41,49 +54,111 @@ final class NetworkClient {
         self.username = username
         onConnectionStatusChanged?(.connecting)
 
+        logger.info("Starting connection to \(server):\(port) as \(username)")
+
         do {
+            // Step 1: Start listener for incoming peer connections
+            logger.info("Starting listener...")
+            let ports = try await listenerService.start()
+            listenPort = ports.port
+            obfuscatedPort = ports.obfuscatedPort
+            logger.info("Listening on port \(self.listenPort)")
+
+            // Step 2: Try NAT traversal (don't fail if it doesn't work)
+            logger.info("Attempting NAT traversal...")
+            if let mappedPort = try? await natService.mapPort(listenPort) {
+                logger.info("NAT mapped to external port \(mappedPort)")
+            }
+
+            if let extIP = await natService.discoverExternalIP() {
+                externalIP = extIP
+                logger.info("External IP: \(extIP)")
+            }
+
+            // Step 3: Connect to server
+            logger.info("Connecting to server...")
             let connection = ServerConnection(host: server, port: port)
             serverConnection = connection
             messageHandler = ServerMessageHandler(client: self)
 
             try await connection.connect()
+            logger.info("Connected to server")
 
-            // Send login
-            let loginMessage = MessageBuilder.login(
+            // Step 4: Send login
+            let hash = computeMD5("\(username)\(password)")
+            logger.info("Sending login (hash: \(hash.prefix(8))...)")
+
+            let loginMessage = MessageBuilder.loginMessage(
                 username: username,
-                password: password,
-                version: 157,
-                hash: computeMD5("\(username)\(password)")
+                password: password
             )
             try await connection.send(loginMessage)
 
-            isConnecting = false
-            isConnected = true
-            onConnectionStatusChanged?(.connected)
-
-            // Start receiving messages
+            // Start receiving messages (login response will come through here)
             startReceiving()
 
+            // Wait briefly for login response
+            try await Task.sleep(for: .milliseconds(500))
+
+            if loggedIn {
+                // Step 5: Send listen port to server
+                logger.info("Sending listen port...")
+                let portMessage = MessageBuilder.setListenPortMessage(port: UInt32(listenPort), obfuscatedPort: UInt32(obfuscatedPort))
+                try await connection.send(portMessage)
+
+                // Step 6: Set online status
+                let statusMessage = MessageBuilder.setOnlineStatusMessage(status: .online)
+                try await connection.send(statusMessage)
+
+                // Step 7: Report shared files (0 for now)
+                let sharesMessage = MessageBuilder.sharedFoldersFilesMessage(folders: 0, files: 0)
+                try await connection.send(sharesMessage)
+
+                isConnecting = false
+                isConnected = true
+                onConnectionStatusChanged?(.connected)
+                logger.info("Login successful!")
+            } else if connectionError == nil {
+                // Still waiting for login response - give it more time
+                isConnecting = false
+                isConnected = true
+                onConnectionStatusChanged?(.connected)
+            }
+
         } catch {
+            logger.error("Connection failed: \(error.localizedDescription)")
             isConnecting = false
             isConnected = false
             connectionError = error.localizedDescription
             onConnectionStatusChanged?(.disconnected)
+
+            // Cleanup
+            await listenerService.stop()
         }
     }
 
     func disconnect() {
+        logger.info("Disconnecting...")
+
         receiveTask?.cancel()
         receiveTask = nil
 
         Task {
             await serverConnection?.disconnect()
             serverConnection = nil
+
+            await listenerService.stop()
+            await natService.removeAllMappings()
         }
 
         isConnected = false
         loggedIn = false
+        listenPort = 0
+        obfuscatedPort = 0
+        externalIP = nil
         onConnectionStatusChanged?(.disconnected)
+
+        logger.info("Disconnected")
     }
 
     // MARK: - Message Receiving
@@ -230,17 +305,6 @@ enum NetworkError: Error, LocalizedError {
 
 private func computeMD5(_ string: String) -> String {
     guard let data = string.data(using: .utf8) else { return "" }
-
-    // Simple MD5 implementation for auth
-    // In production, use CryptoKit or CommonCrypto
-    var digest = [UInt8](repeating: 0, count: 16)
-
-    data.withUnsafeBytes { buffer in
-        _ = CC_MD5(buffer.baseAddress, CC_LONG(data.count), &digest)
-    }
-
+    let digest = Insecure.MD5.hash(data: data)
     return digest.map { String(format: "%02x", $0) }.joined()
 }
-
-// CommonCrypto bridge
-import CommonCrypto

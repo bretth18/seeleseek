@@ -1,0 +1,585 @@
+import Foundation
+import Network
+import os
+
+/// Handles NAT traversal using UPnP and NAT-PMP
+actor NATService {
+    private let logger = Logger(subsystem: "com.seeleseek", category: "NATService")
+
+    private var mappedPorts: [(internal: UInt16, external: UInt16, protocol: String)] = []
+    private var externalIP: String?
+    private var gatewayIP: String?
+
+    // MARK: - Public Interface
+
+    var externalAddress: String? { externalIP }
+
+    /// Attempts to map a port using UPnP or NAT-PMP
+    func mapPort(_ internalPort: UInt16, externalPort: UInt16? = nil, protocol proto: String = "TCP") async throws -> UInt16 {
+        let targetExternal = externalPort ?? internalPort
+
+        // Try UPnP first
+        if let mapped = try? await mapPortUPnP(internalPort, externalPort: targetExternal, protocol: proto) {
+            mappedPorts.append((internalPort, mapped, proto))
+            logger.info("UPnP mapped port \(internalPort) -> \(mapped)")
+            return mapped
+        }
+
+        // Fall back to NAT-PMP
+        if let mapped = try? await mapPortNATPMP(internalPort, externalPort: targetExternal, protocol: proto) {
+            mappedPorts.append((internalPort, mapped, proto))
+            logger.info("NAT-PMP mapped port \(internalPort) -> \(mapped)")
+            return mapped
+        }
+
+        // If both fail, assume we're not behind NAT or port is already open
+        logger.warning("NAT mapping failed for port \(internalPort), assuming direct connection")
+        return internalPort
+    }
+
+    /// Removes all port mappings
+    func removeAllMappings() async {
+        for mapping in mappedPorts {
+            try? await removePortMapping(mapping.external, protocol: mapping.protocol)
+        }
+        mappedPorts.removeAll()
+    }
+
+    /// Discovers external IP address
+    func discoverExternalIP() async -> String? {
+        // Try UPnP first
+        if let ip = try? await getExternalIPUPnP() {
+            externalIP = ip
+            return ip
+        }
+
+        // Try STUN
+        if let ip = try? await getExternalIPSTUN() {
+            externalIP = ip
+            return ip
+        }
+
+        // Fall back to web service
+        if let ip = try? await getExternalIPWebService() {
+            externalIP = ip
+            return ip
+        }
+
+        return nil
+    }
+
+    // MARK: - UPnP Implementation
+
+    private func mapPortUPnP(_ internalPort: UInt16, externalPort: UInt16, protocol proto: String) async throws -> UInt16 {
+        // Discover UPnP gateway
+        guard let gateway = try? await discoverUPnPGateway() else {
+            throw NATError.noGatewayFound
+        }
+
+        gatewayIP = gateway.ip
+
+        // Get local IP
+        guard let localIP = getLocalIPAddress() else {
+            throw NATError.noLocalIP
+        }
+
+        // Send AddPortMapping request
+        let soapAction = "AddPortMapping"
+        let soapBody = """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+            <s:Body>
+                <u:AddPortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+                    <NewRemoteHost></NewRemoteHost>
+                    <NewExternalPort>\(externalPort)</NewExternalPort>
+                    <NewProtocol>\(proto)</NewProtocol>
+                    <NewInternalPort>\(internalPort)</NewInternalPort>
+                    <NewInternalClient>\(localIP)</NewInternalClient>
+                    <NewEnabled>1</NewEnabled>
+                    <NewPortMappingDescription>SeeleSeek</NewPortMappingDescription>
+                    <NewLeaseDuration>0</NewLeaseDuration>
+                </u:AddPortMapping>
+            </s:Body>
+        </s:Envelope>
+        """
+
+        let success = try await sendUPnPRequest(to: gateway.controlURL, action: soapAction, body: soapBody)
+
+        if success {
+            return externalPort
+        }
+
+        throw NATError.mappingFailed
+    }
+
+    private func getExternalIPUPnP() async throws -> String {
+        guard let gateway = try? await discoverUPnPGateway() else {
+            throw NATError.noGatewayFound
+        }
+
+        let soapAction = "GetExternalIPAddress"
+        let soapBody = """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+            <s:Body>
+                <u:GetExternalIPAddress xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+                </u:GetExternalIPAddress>
+            </s:Body>
+        </s:Envelope>
+        """
+
+        guard let response = try? await sendUPnPRequestWithResponse(to: gateway.controlURL, action: soapAction, body: soapBody),
+              let ip = parseExternalIP(from: response) else {
+            throw NATError.ipDiscoveryFailed
+        }
+
+        return ip
+    }
+
+    private func removePortMapping(_ externalPort: UInt16, protocol proto: String) async throws {
+        guard let gateway = try? await discoverUPnPGateway() else { return }
+
+        let soapAction = "DeletePortMapping"
+        let soapBody = """
+        <?xml version="1.0"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+            <s:Body>
+                <u:DeletePortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+                    <NewRemoteHost></NewRemoteHost>
+                    <NewExternalPort>\(externalPort)</NewExternalPort>
+                    <NewProtocol>\(proto)</NewProtocol>
+                </u:DeletePortMapping>
+            </s:Body>
+        </s:Envelope>
+        """
+
+        _ = try? await sendUPnPRequest(to: gateway.controlURL, action: soapAction, body: soapBody)
+    }
+
+    private struct UPnPGateway {
+        let ip: String
+        let controlURL: String
+    }
+
+    private func discoverUPnPGateway() async throws -> UPnPGateway {
+        // SSDP M-SEARCH for UPnP IGD
+        let ssdpRequest = """
+        M-SEARCH * HTTP/1.1\r
+        HOST: 239.255.255.250:1900\r
+        MAN: "ssdp:discover"\r
+        MX: 3\r
+        ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
+        \r
+
+        """
+
+        // Create UDP socket for multicast
+        let params = NWParameters.udp
+        let endpoint = NWEndpoint.hostPort(host: "239.255.255.250", port: 1900)
+        let connection = NWConnection(to: endpoint, using: params)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var didComplete = false
+
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: ssdpRequest.data(using: .utf8), completion: .contentProcessed { _ in })
+
+                    // Receive response
+                    connection.receiveMessage { data, _, _, error in
+                        guard !didComplete else { return }
+
+                        if let data = data,
+                           let response = String(data: data, encoding: .utf8),
+                           let location = self.parseLocationHeader(from: response) {
+
+                            Task {
+                                if let gateway = try? await self.fetchGatewayInfo(from: location) {
+                                    didComplete = true
+                                    continuation.resume(returning: gateway)
+                                }
+                            }
+                        }
+                    }
+
+                case .failed(let error):
+                    if !didComplete {
+                        didComplete = true
+                        continuation.resume(throwing: error)
+                    }
+
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: .global())
+
+            // Timeout after 5 seconds
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                if !didComplete {
+                    didComplete = true
+                    connection.cancel()
+                    continuation.resume(throwing: NATError.discoveryTimeout)
+                }
+            }
+        }
+    }
+
+    private func parseLocationHeader(from response: String) -> String? {
+        let lines = response.components(separatedBy: "\r\n")
+        for line in lines {
+            if line.lowercased().hasPrefix("location:") {
+                return line.dropFirst(9).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
+    }
+
+    private func fetchGatewayInfo(from location: String) async throws -> UPnPGateway {
+        guard let url = URL(string: location) else {
+            throw NATError.invalidGatewayURL
+        }
+
+        let (data, _) = try await URLSession.shared.data(from: url)
+        guard let xml = String(data: data, encoding: .utf8) else {
+            throw NATError.invalidGatewayResponse
+        }
+
+        // Parse control URL from device description
+        // This is simplified - real implementation would use XML parser
+        if let controlURL = parseControlURL(from: xml, baseURL: location) {
+            return UPnPGateway(ip: url.host ?? "", controlURL: controlURL)
+        }
+
+        throw NATError.noControlURL
+    }
+
+    private func parseControlURL(from xml: String, baseURL: String) -> String? {
+        // Look for WANIPConnection service
+        if let range = xml.range(of: "<controlURL>"),
+           let endRange = xml.range(of: "</controlURL>", range: range.upperBound..<xml.endIndex) {
+            let urlPath = String(xml[range.upperBound..<endRange.lowerBound])
+
+            // Make absolute URL
+            if urlPath.hasPrefix("http") {
+                return urlPath
+            } else if let base = URL(string: baseURL) {
+                return "\(base.scheme ?? "http")://\(base.host ?? "")\(urlPath)"
+            }
+        }
+        return nil
+    }
+
+    private func sendUPnPRequest(to controlURL: String, action: String, body: String) async throws -> Bool {
+        guard let url = URL(string: controlURL) else {
+            throw NATError.invalidGatewayURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("text/xml; charset=\"utf-8\"", forHTTPHeaderField: "Content-Type")
+        request.setValue("\"urn:schemas-upnp-org:service:WANIPConnection:1#\(action)\"", forHTTPHeaderField: "SOAPAction")
+        request.httpBody = body.data(using: .utf8)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        if let httpResponse = response as? HTTPURLResponse {
+            return httpResponse.statusCode == 200
+        }
+        return false
+    }
+
+    private func sendUPnPRequestWithResponse(to controlURL: String, action: String, body: String) async throws -> String {
+        guard let url = URL(string: controlURL) else {
+            throw NATError.invalidGatewayURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("text/xml; charset=\"utf-8\"", forHTTPHeaderField: "Content-Type")
+        request.setValue("\"urn:schemas-upnp-org:service:WANIPConnection:1#\(action)\"", forHTTPHeaderField: "SOAPAction")
+        request.httpBody = body.data(using: .utf8)
+
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        guard let response = String(data: data, encoding: .utf8) else {
+            throw NATError.invalidGatewayResponse
+        }
+
+        return response
+    }
+
+    private func parseExternalIP(from response: String) -> String? {
+        if let range = response.range(of: "<NewExternalIPAddress>"),
+           let endRange = response.range(of: "</NewExternalIPAddress>", range: range.upperBound..<response.endIndex) {
+            return String(response[range.upperBound..<endRange.lowerBound])
+        }
+        return nil
+    }
+
+    // MARK: - NAT-PMP Implementation
+
+    private func mapPortNATPMP(_ internalPort: UInt16, externalPort: UInt16, protocol proto: String) async throws -> UInt16 {
+        guard let gatewayIP = getDefaultGateway() else {
+            throw NATError.noGatewayFound
+        }
+
+        // NAT-PMP uses UDP port 5351
+        let params = NWParameters.udp
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(gatewayIP), port: 5351)
+        let connection = NWConnection(to: endpoint, using: params)
+
+        // Build NAT-PMP request
+        var request = Data()
+        request.append(0) // Version
+        request.append(proto == "TCP" ? 2 : 1) // Opcode: 1=UDP, 2=TCP
+        request.append(contentsOf: [0, 0]) // Reserved
+        request.appendUInt16(internalPort)
+        request.appendUInt16(externalPort)
+        request.appendUInt32(7200) // Lifetime in seconds
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var didComplete = false
+
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: request, completion: .contentProcessed { _ in })
+
+                    connection.receiveMessage { data, _, _, error in
+                        guard !didComplete, let data = data, data.count >= 16 else { return }
+
+                        // Parse response
+                        let resultCode = data.readUInt16(at: 2) ?? 0xFFFF
+                        let mappedPort = data.readUInt16(at: 10) ?? 0
+
+                        didComplete = true
+                        connection.cancel()
+
+                        if resultCode == 0 && mappedPort > 0 {
+                            continuation.resume(returning: mappedPort)
+                        } else {
+                            continuation.resume(throwing: NATError.mappingFailed)
+                        }
+                    }
+
+                case .failed(let error):
+                    if !didComplete {
+                        didComplete = true
+                        continuation.resume(throwing: error)
+                    }
+
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: .global())
+
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if !didComplete {
+                    didComplete = true
+                    connection.cancel()
+                    continuation.resume(throwing: NATError.discoveryTimeout)
+                }
+            }
+        }
+    }
+
+    // MARK: - STUN Implementation
+
+    private func getExternalIPSTUN() async throws -> String {
+        // Use Google's STUN server
+        let params = NWParameters.udp
+        let endpoint = NWEndpoint.hostPort(host: "stun.l.google.com", port: 19302)
+        let connection = NWConnection(to: endpoint, using: params)
+
+        // STUN Binding Request
+        var request = Data()
+        request.appendUInt16(0x0001) // Binding Request
+        request.appendUInt16(0x0000) // Message Length
+        request.appendUInt32(0x2112A442) // Magic Cookie
+        // Transaction ID (12 bytes)
+        for _ in 0..<3 {
+            request.appendUInt32(UInt32.random(in: 0...UInt32.max))
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var didComplete = false
+
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    connection.send(content: request, completion: .contentProcessed { _ in })
+
+                    connection.receiveMessage { data, _, _, error in
+                        guard !didComplete, let data = data else { return }
+
+                        // Parse STUN response for XOR-MAPPED-ADDRESS
+                        if let ip = self.parseSTUNResponse(data) {
+                            didComplete = true
+                            connection.cancel()
+                            continuation.resume(returning: ip)
+                        }
+                    }
+
+                case .failed(let error):
+                    if !didComplete {
+                        didComplete = true
+                        continuation.resume(throwing: error)
+                    }
+
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: .global())
+
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                if !didComplete {
+                    didComplete = true
+                    connection.cancel()
+                    continuation.resume(throwing: NATError.discoveryTimeout)
+                }
+            }
+        }
+    }
+
+    private func parseSTUNResponse(_ data: Data) -> String? {
+        guard data.count >= 20 else { return nil }
+
+        // Skip header (20 bytes)
+        var offset = 20
+
+        while offset + 4 <= data.count {
+            guard let attrType = data.readUInt16(at: offset),
+                  let attrLength = data.readUInt16(at: offset + 2) else {
+                break
+            }
+
+            // XOR-MAPPED-ADDRESS = 0x0020
+            if attrType == 0x0020 && attrLength >= 8 {
+                let family = data.readByte(at: offset + 5)
+                if family == 0x01 { // IPv4
+                    // XOR with magic cookie
+                    guard let xorPort = data.readUInt16(at: offset + 6),
+                          let xorIP = data.readUInt32(at: offset + 8) else {
+                        break
+                    }
+
+                    let ip = xorIP ^ 0x2112A442
+                    let b1 = (ip >> 24) & 0xFF
+                    let b2 = (ip >> 16) & 0xFF
+                    let b3 = (ip >> 8) & 0xFF
+                    let b4 = ip & 0xFF
+
+                    return "\(b1).\(b2).\(b3).\(b4)"
+                }
+            }
+
+            offset += 4 + Int(attrLength)
+            // Pad to 4-byte boundary
+            if attrLength % 4 != 0 {
+                offset += 4 - Int(attrLength % 4)
+            }
+        }
+
+        return nil
+    }
+
+    // MARK: - Web Service Fallback
+
+    private func getExternalIPWebService() async throws -> String {
+        let urls = [
+            "https://api.ipify.org",
+            "https://ifconfig.me/ip",
+            "https://icanhazip.com"
+        ]
+
+        for urlString in urls {
+            guard let url = URL(string: urlString) else { continue }
+
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let ip = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    return ip
+                }
+            } catch {
+                continue
+            }
+        }
+
+        throw NATError.ipDiscoveryFailed
+    }
+
+    // MARK: - Utility
+
+    private func getLocalIPAddress() -> String? {
+        var address: String?
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+
+        if getifaddrs(&ifaddr) == 0 {
+            var ptr = ifaddr
+            while ptr != nil {
+                defer { ptr = ptr?.pointee.ifa_next }
+
+                guard let interface = ptr?.pointee else { continue }
+                let addrFamily = interface.ifa_addr.pointee.sa_family
+
+                if addrFamily == UInt8(AF_INET) {
+                    let name = String(cString: interface.ifa_name)
+                    if name == "en0" || name == "en1" {
+                        var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                        getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                                   &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
+                        address = String(cString: hostname)
+                    }
+                }
+            }
+            freeifaddrs(ifaddr)
+        }
+
+        return address
+    }
+
+    private func getDefaultGateway() -> String? {
+        // On macOS, read from system configuration
+        // This is a simplified version - real implementation would use SystemConfiguration framework
+        return nil
+    }
+}
+
+// MARK: - Errors
+
+enum NATError: Error, LocalizedError {
+    case noGatewayFound
+    case noLocalIP
+    case mappingFailed
+    case discoveryTimeout
+    case invalidGatewayURL
+    case invalidGatewayResponse
+    case noControlURL
+    case ipDiscoveryFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .noGatewayFound: return "No UPnP gateway found"
+        case .noLocalIP: return "Could not determine local IP address"
+        case .mappingFailed: return "Port mapping failed"
+        case .discoveryTimeout: return "Gateway discovery timed out"
+        case .invalidGatewayURL: return "Invalid gateway URL"
+        case .invalidGatewayResponse: return "Invalid gateway response"
+        case .noControlURL: return "No control URL found"
+        case .ipDiscoveryFailed: return "Could not discover external IP"
+        }
+    }
+}
+
+// Required for getifaddrs
+import Darwin

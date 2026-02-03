@@ -12,6 +12,7 @@ struct SettingsView: View {
         case metadata = "Metadata"
         case chat = "Chat"
         case privacy = "Privacy"
+        case diagnostics = "Diagnostics"
 
         var icon: String {
             switch self {
@@ -21,6 +22,7 @@ struct SettingsView: View {
             case .metadata: "music.note"
             case .chat: "bubble.left"
             case .privacy: "lock.shield"
+            case .diagnostics: "ant"
             }
         }
     }
@@ -53,6 +55,8 @@ struct SettingsView: View {
                         ChatSettingsSection(settings: settingsState)
                     case .privacy:
                         PrivacySettingsSection(settings: settingsState)
+                    case .diagnostics:
+                        DiagnosticsSection()
                     }
                 }
                 .padding(SeeleSpacing.xl)
@@ -259,6 +263,215 @@ struct PrivacySettingsSection: View {
         }
     }
 }
+
+struct DiagnosticsSection: View {
+    @Environment(\.appState) private var appState
+    @State private var testResult: String = ""
+    @State private var isTesting: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+            settingsHeader("Diagnostics")
+
+            settingsGroup("Connection Status") {
+                HStack {
+                    Text("Server Connected")
+                    Spacer()
+                    Text(appState.networkClient.isConnected ? "Yes" : "No")
+                        .foregroundStyle(appState.networkClient.isConnected ? SeeleColors.success : SeeleColors.error)
+                }
+
+                HStack {
+                    Text("Logged In")
+                    Spacer()
+                    Text(appState.networkClient.loggedIn ? "Yes" : "No")
+                        .foregroundStyle(appState.networkClient.loggedIn ? SeeleColors.success : SeeleColors.error)
+                }
+
+                HStack {
+                    Text("Username")
+                    Spacer()
+                    Text(appState.networkClient.username.isEmpty ? "-" : appState.networkClient.username)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+
+                if let error = appState.networkClient.connectionError {
+                    HStack {
+                        Text("Last Error")
+                        Spacer()
+                        Text(error)
+                            .foregroundStyle(SeeleColors.error)
+                            .lineLimit(2)
+                    }
+                }
+            }
+
+            settingsGroup("Network Info") {
+                HStack {
+                    Text("Listen Port")
+                    Spacer()
+                    Text(appState.networkClient.listenPort > 0 ? "\(appState.networkClient.listenPort)" : "-")
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+
+                HStack {
+                    Text("Obfuscated Port")
+                    Spacer()
+                    Text(appState.networkClient.obfuscatedPort > 0 ? "\(appState.networkClient.obfuscatedPort)" : "-")
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+
+                HStack {
+                    Text("External IP")
+                    Spacer()
+                    Text(appState.networkClient.externalIP ?? "Unknown")
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+            }
+
+            settingsGroup("Connection Test") {
+                if isTesting {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Testing...")
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
+                } else {
+                    Button("Test Server Connection") {
+                        testConnection()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SeeleColors.accent)
+                }
+
+                if !testResult.isEmpty {
+                    Text(testResult)
+                        .font(SeeleTypography.mono)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .lineLimit(nil)
+                }
+            }
+        }
+    }
+
+    private func testConnection() {
+        isTesting = true
+        testResult = ""
+
+        Task {
+            var results: [String] = []
+
+            // Test DNS resolution
+            results.append("Testing DNS resolution...")
+            let host = ServerConnection.defaultHost
+            let port = ServerConnection.defaultPort
+
+            do {
+                let addresses = try await resolveDNS(host: host)
+                results.append("✓ DNS resolved to: \(addresses.joined(separator: ", "))")
+            } catch {
+                results.append("✗ DNS resolution failed: \(error.localizedDescription)")
+            }
+
+            // Test TCP connection
+            results.append("\nTesting TCP connection to \(host):\(port)...")
+            do {
+                try await testTCPConnection(host: host, port: port)
+                results.append("✓ TCP connection successful")
+            } catch {
+                results.append("✗ TCP connection failed: \(error.localizedDescription)")
+            }
+
+            await MainActor.run {
+                testResult = results.joined(separator: "\n")
+                isTesting = false
+            }
+        }
+    }
+
+    private func resolveDNS(host: String) async throws -> [String] {
+        return try await withCheckedThrowingContinuation { continuation in
+            var hints = addrinfo()
+            hints.ai_family = AF_UNSPEC
+            hints.ai_socktype = SOCK_STREAM
+
+            var result: UnsafeMutablePointer<addrinfo>?
+
+            let status = getaddrinfo(host, nil, &hints, &result)
+            if status != 0 {
+                continuation.resume(throwing: NSError(domain: "DNS", code: Int(status)))
+                return
+            }
+
+            var addresses: [String] = []
+            var ptr = result
+            while ptr != nil {
+                if let addr = ptr?.pointee.ai_addr {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    getnameinfo(addr, socklen_t(ptr!.pointee.ai_addrlen),
+                               &hostname, socklen_t(hostname.count),
+                               nil, 0, NI_NUMERICHOST)
+                    addresses.append(String(cString: hostname))
+                }
+                ptr = ptr?.pointee.ai_next
+            }
+            freeaddrinfo(result)
+
+            continuation.resume(returning: Array(Set(addresses)))
+        }
+    }
+
+    private func testTCPConnection(host: String, port: UInt16) async throws {
+        let endpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: port)!
+        )
+
+        let connection = NWConnection(to: endpoint, using: .tcp)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            var didComplete = false
+
+            connection.stateUpdateHandler = { state in
+                guard !didComplete else { return }
+
+                switch state {
+                case .ready:
+                    didComplete = true
+                    connection.cancel()
+                    continuation.resume()
+
+                case .failed(let error):
+                    didComplete = true
+                    continuation.resume(throwing: error)
+
+                case .cancelled:
+                    if !didComplete {
+                        didComplete = true
+                        continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection cancelled"]))
+                    }
+
+                default:
+                    break
+                }
+            }
+
+            connection.start(queue: .global())
+
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                if !didComplete {
+                    didComplete = true
+                    connection.cancel()
+                    continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection timed out"]))
+                }
+            }
+        }
+    }
+}
+
+import Network
 
 // MARK: - Settings Components
 
