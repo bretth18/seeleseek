@@ -249,10 +249,47 @@ struct BrowseView: View {
                 .padding(.vertical, SeeleSpacing.sm)
                 .background(SeeleColors.surface.opacity(0.3))
 
+                // Folder path breadcrumb (when viewing subfolder)
+                if let folderPath = browseState.currentFolderPath {
+                    HStack(spacing: SeeleSpacing.xs) {
+                        // Go to root button
+                        Button {
+                            browseState.navigateToRoot()
+                        } label: {
+                            Image(systemName: "house.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(SeeleColors.accent)
+                        }
+                        .buttonStyle(.plain)
+
+                        // Go up button
+                        Button {
+                            browseState.navigateUp()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 12))
+                                .foregroundStyle(SeeleColors.accent)
+                        }
+                        .buttonStyle(.plain)
+
+                        // Path display
+                        Text(folderPath.replacingOccurrences(of: "\\", with: " / "))
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.xs)
+                    .background(SeeleColors.surfaceSecondary)
+                }
+
                 // File tree
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(shares.folders) { folder in
+                        ForEach(browseState.displayedFolders) { folder in
                             FileTreeRow(
                                 file: folder,
                                 depth: 0,

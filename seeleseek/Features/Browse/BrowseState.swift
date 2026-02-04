@@ -33,6 +33,70 @@ final class BrowseState {
     /// Target path to auto-expand after browse loads (e.g., "@@music\\Artist\\Album")
     private var targetPath: String?
 
+    /// Current folder path being viewed (nil = show all shares from root)
+    /// When set, only shows contents of this specific folder
+    var currentFolderPath: String?
+
+    /// The folders to display (filtered by currentFolderPath if set)
+    var displayedFolders: [SharedFile] {
+        guard let browse = currentBrowse else { return [] }
+
+        // If no folder filter, show all root folders
+        guard let folderPath = currentFolderPath else {
+            return browse.folders
+        }
+
+        // Find the target folder and return its contents
+        return findFolder(at: folderPath, in: browse.folders)?.children ?? []
+    }
+
+    /// Find a folder by its path in the tree
+    private func findFolder(at path: String, in folders: [SharedFile]) -> SharedFile? {
+        let pathComponents = path.split(separator: "\\").map(String.init)
+        guard !pathComponents.isEmpty else { return nil }
+
+        var currentFiles = folders
+
+        for (index, component) in pathComponents.enumerated() {
+            guard let match = currentFiles.first(where: {
+                $0.displayName.lowercased() == component.lowercased() ||
+                $0.filename.split(separator: "\\").last?.lowercased() == component.lowercased()
+            }) else {
+                return nil
+            }
+
+            if index == pathComponents.count - 1 {
+                // Found the target folder
+                return match.isDirectory ? match : nil
+            }
+
+            // Move to children
+            guard let children = match.children else { return nil }
+            currentFiles = children
+        }
+
+        return nil
+    }
+
+    /// Navigate up one folder level (or to root if at top level)
+    func navigateUp() {
+        guard let path = currentFolderPath else { return }
+
+        let components = path.split(separator: "\\")
+        if components.count <= 1 {
+            // Already at top level, go to root
+            currentFolderPath = nil
+        } else {
+            // Go up one level
+            currentFolderPath = components.dropLast().joined(separator: "\\")
+        }
+    }
+
+    /// Navigate to root (show all shares)
+    func navigateToRoot() {
+        currentFolderPath = nil
+    }
+
     // MARK: - History
     var browseHistory: [String] = []
 
@@ -157,6 +221,18 @@ final class BrowseState {
         currentUser = trimmedUsername
         self.targetPath = targetPath
 
+        // Extract folder path from target (remove filename if present)
+        if let targetPath = targetPath {
+            let components = targetPath.split(separator: "\\")
+            if components.count > 1 {
+                // Set folder path (excluding the filename)
+                currentFolderPath = components.dropLast().joined(separator: "\\")
+                print("📂 BrowseState: Set currentFolderPath to: \(currentFolderPath ?? "nil")")
+            }
+        } else {
+            currentFolderPath = nil
+        }
+
         // Check if we already have a tab for this user
         if let existingIndex = browses.firstIndex(where: { $0.username.lowercased() == trimmedUsername.lowercased() }) {
             // Switch to existing tab
@@ -167,8 +243,20 @@ final class BrowseState {
                 browses[existingIndex] = UserShares(username: trimmedUsername)
                 startBrowseRequest(for: trimmedUsername, at: existingIndex)
             } else if targetPath != nil {
-                // Already loaded, just expand to target path
-                expandToTargetPath(in: browses[existingIndex].folders)
+                // Check if data needs tree rebuild (flat data has no directories)
+                let folders = browses[existingIndex].folders
+                let hasTreeStructure = folders.contains { $0.isDirectory }
+
+                if !hasTreeStructure && !folders.isEmpty {
+                    // Rebuild tree from flat data
+                    print("📂 BrowseState: Rebuilding tree for existing tab (had flat data)")
+                    let treeFiles = SharedFile.buildTree(from: folders)
+                    browses[existingIndex].folders = treeFiles
+                    expandToTargetPath(in: treeFiles)
+                } else {
+                    // Already has tree structure, just expand
+                    expandToTargetPath(in: folders)
+                }
             }
             return
         }
@@ -319,6 +407,7 @@ final class BrowseState {
         // Reset UI state when switching tabs
         expandedFolders = []
         selectedFile = nil
+        currentFolderPath = nil  // Show root when switching tabs
     }
 
     /// Retry a failed browse
@@ -381,6 +470,7 @@ final class BrowseState {
         expandedFolders = []
         selectedFile = nil
         targetPath = nil
+        currentFolderPath = nil
     }
 
     // MARK: - Auto-Expand to Path
@@ -391,16 +481,26 @@ final class BrowseState {
         guard let targetPath = targetPath else { return }
 
         print("📂 BrowseState: Expanding to target path: \(targetPath)")
+        print("📂 BrowseState: Root folders count: \(folders.count)")
+        if folders.count <= 10 {
+            print("📂 BrowseState: Root folder names: \(folders.map { $0.displayName })")
+        } else {
+            print("📂 BrowseState: First 5 root folders: \(folders.prefix(5).map { $0.displayName })")
+        }
 
         // Parse the target path into components (e.g., "@@music\\Artist\\Album\\song.mp3")
         let pathComponents = targetPath.split(separator: "\\").map(String.init)
         guard !pathComponents.isEmpty else { return }
+
+        print("📂 BrowseState: Path components: \(pathComponents)")
 
         // Find and expand folders along the path
         var currentFiles = folders
         var expandedCount = 0
 
         for (index, component) in pathComponents.enumerated() {
+            print("📂 BrowseState: Looking for '\(component)' in \(currentFiles.count) items (isDirectory counts: \(currentFiles.filter { $0.isDirectory }.count))")
+
             // Find matching folder/file at this level
             if let match = currentFiles.first(where: { $0.displayName.lowercased() == component.lowercased() }) {
                 if match.isDirectory {
@@ -443,6 +543,7 @@ final class BrowseState {
                     }
                 } else {
                     print("📂 BrowseState: Could not find '\(component)' in current level")
+                    print("📂 BrowseState: Available names at this level: \(currentFiles.prefix(10).map { $0.displayName })")
                     break
                 }
             }
