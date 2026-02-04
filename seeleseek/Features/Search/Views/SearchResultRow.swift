@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SearchResultRow: View {
+    @Environment(\.appState) private var appState
     let result: SearchResult
     @State private var isHovered = false
 
@@ -136,8 +137,8 @@ struct SearchResultRow: View {
     }
 
     private func downloadFile() {
-        // TODO: Implement download
         print("Download: \(result.filename) from \(result.username)")
+        appState.downloadManager.queueDownload(from: result)
     }
 }
 

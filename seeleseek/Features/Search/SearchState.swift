@@ -5,11 +5,28 @@ import SwiftUI
 final class SearchState {
     // MARK: - Search Input
     var searchQuery: String = ""
-    var isSearching: Bool = false
 
-    // MARK: - Results
-    var currentSearch: SearchQuery?
-    var searchHistory: [SearchQuery] = []
+    // MARK: - Tabbed Searches
+    /// All active search tabs - results stream in over time
+    var searches: [SearchQuery] = []
+
+    /// Currently selected search tab index
+    var selectedSearchIndex: Int = 0
+
+    /// The currently selected search (convenience accessor)
+    var currentSearch: SearchQuery? {
+        get {
+            guard selectedSearchIndex >= 0, selectedSearchIndex < searches.count else { return nil }
+            return searches[selectedSearchIndex]
+        }
+        set {
+            guard selectedSearchIndex >= 0, selectedSearchIndex < searches.count, let newValue else { return }
+            searches[selectedSearchIndex] = newValue
+        }
+    }
+
+    /// Map of token -> search index for routing incoming results
+    private var tokenToSearchIndex: [UInt32: Int] = [:]
 
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
@@ -21,19 +38,19 @@ final class SearchState {
     func setupCallbacks(client: NetworkClient) {
         self.networkClient = client
 
-        client.onSearchResults = { [weak self] results in
-            // Note: In SoulSeek, search results come from peers, not the server
-            // This callback would be triggered when peer connections deliver results
-            print("SearchState: Received \(results.count) results from NetworkClient")
-            self?.addResults(results)
+        print("🔧 SearchState: Setting up callbacks with NetworkClient...")
 
-            // Record results count in activity tracker
-            if let query = self?.currentSearch?.query {
-                SearchState.activityTracker.recordSearchResults(query: query, count: results.count)
+        client.onSearchResults = { [weak self] token, results in
+            print("🔔 SearchState: Received \(results.count) results for token \(token)")
+            if let self = self {
+                self.addResults(results, forToken: token)
+                print("✅ SearchState: Results added to search")
+            } else {
+                print("⚠️ SearchState: self is nil in callback!")
             }
         }
 
-        print("SearchState: Callbacks configured with NetworkClient")
+        print("✅ SearchState: Callbacks configured with NetworkClient")
     }
 
     // MARK: - Filters
@@ -97,45 +114,72 @@ final class SearchState {
     }
 
     var canSearch: Bool {
-        !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty && !isSearching
+        !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    var isSearching: Bool {
+        currentSearch?.isSearching ?? false
     }
 
     // MARK: - Actions
+
+    /// Start a new search - creates a new tab
     func startSearch(token: UInt32) {
         let query = SearchQuery(query: searchQuery, token: token)
-        currentSearch = query
-        isSearching = true
+
+        // Add new search tab
+        searches.append(query)
+        let newIndex = searches.count - 1
+        tokenToSearchIndex[token] = newIndex
+        selectedSearchIndex = newIndex
 
         // Record in activity tracker
         SearchState.activityTracker.recordOutgoingSearch(query: searchQuery)
 
         // Log to activity feed
         ActivityLog.shared.logSearchStarted(query: searchQuery)
+
+        print("SearchState: Started search '\(searchQuery)' with token \(token), tab \(newIndex)")
     }
 
-    func addResult(_ result: SearchResult) {
-        currentSearch?.results.append(result)
+    /// Add results to a specific search by token
+    func addResults(_ results: [SearchResult], forToken token: UInt32) {
+        guard let index = tokenToSearchIndex[token], index < searches.count else {
+            print("SearchState: No search found for token \(token)")
+            return
+        }
+
+        searches[index].results.append(contentsOf: results)
+        print("SearchState: Added \(results.count) results to '\(searches[index].query)' (total: \(searches[index].results.count))")
+
+        // Record results count in activity tracker
+        SearchState.activityTracker.recordSearchResults(query: searches[index].query, count: results.count)
     }
 
-    func addResults(_ results: [SearchResult]) {
-        currentSearch?.results.append(contentsOf: results)
-    }
+    /// Close a search tab
+    func closeSearch(at index: Int) {
+        guard index >= 0, index < searches.count else { return }
 
-    func finishSearch() {
-        isSearching = false
-        currentSearch?.isSearching = false
+        let search = searches[index]
+        tokenToSearchIndex.removeValue(forKey: search.token)
+        searches.remove(at: index)
 
-        if let search = currentSearch, !search.results.isEmpty {
-            // Add to history, keeping last 10 searches
-            searchHistory.insert(search, at: 0)
-            if searchHistory.count > 10 {
-                searchHistory.removeLast()
-            }
+        // Update token mappings for remaining searches
+        tokenToSearchIndex.removeAll()
+        for (i, s) in searches.enumerated() {
+            tokenToSearchIndex[s.token] = i
+        }
+
+        // Adjust selected index
+        if selectedSearchIndex >= searches.count {
+            selectedSearchIndex = max(0, searches.count - 1)
         }
     }
 
-    func clearResults() {
-        currentSearch = nil
+    /// Select a search tab
+    func selectSearch(at index: Int) {
+        guard index >= 0, index < searches.count else { return }
+        selectedSearchIndex = index
     }
 
     func clearFilters() {
@@ -145,11 +189,5 @@ final class SearchState {
         filterExtensions = []
         filterFreeSlotOnly = false
         sortOrder = .relevance
-    }
-
-    func selectHistorySearch(_ search: SearchQuery) {
-        currentSearch = search
-        searchQuery = search.query
-        isSearching = false
     }
 }

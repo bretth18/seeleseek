@@ -2,8 +2,9 @@ import SwiftUI
 
 struct TransfersView: View {
     @Environment(\.appState) private var appState
-    @State private var transferState = TransferState()
     @State private var selectedTab: TransferTab = .downloads
+
+    private var transferState: TransferState { appState.transferState }
 
     enum TransferTab: String, CaseIterable {
         case downloads = "Downloads"

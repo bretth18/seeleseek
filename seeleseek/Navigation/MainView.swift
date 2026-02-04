@@ -12,6 +12,20 @@ struct MainView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        #if DEBUG
+        .onAppear {
+            // Cmd+Shift+T to run protocol test
+            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers == "t" {
+                    Task {
+                        await ProtocolTest.runLocalServerTest()
+                    }
+                    return nil
+                }
+                return event
+            }
+        }
+        #endif
     }
 
     #if os(macOS)

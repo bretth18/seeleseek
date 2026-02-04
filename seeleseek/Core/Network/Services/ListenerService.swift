@@ -76,14 +76,28 @@ actor ListenerService {
     // MARK: - Private Methods
 
     private func startListener(on port: UInt16) async throws {
+        // Force IPv4 only (like Nicotine+) - many routers only forward IPv4
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
+
+        // Require IPv4 by setting protocol options
+        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true  // Disable Nagle's algorithm for lower latency
+        }
+
+        // Explicitly bind to IPv4 any address
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw ListenerError.bindFailed("Invalid port \(port)")
+        }
+
+        // Force IPv4 binding
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
             host: .ipv4(.any),
-            port: NWEndpoint.Port(rawValue: port)!
+            port: nwPort
         )
 
         let newListener = try NWListener(using: parameters)
+        print("🔊 Created IPv4 listener for port \(port)")
 
         // Use nonisolated(unsafe) for the flag since NWListener callbacks are on a different queue
         nonisolated(unsafe) var hasResumed = false
@@ -122,12 +136,18 @@ actor ListenerService {
 
     private func startObfuscatedListener(on port: UInt16) async throws {
         // Obfuscated connections use a slightly different protocol
-        // For now, we'll handle them similarly
+        // Force IPv4 only (like Nicotine+)
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
+
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw ListenerError.bindFailed("Invalid obfuscated port \(port)")
+        }
+
+        // Force IPv4 binding
         parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
             host: .ipv4(.any),
-            port: NWEndpoint.Port(rawValue: port)!
+            port: nwPort
         )
 
         let obfuscatedListener = try NWListener(using: parameters)

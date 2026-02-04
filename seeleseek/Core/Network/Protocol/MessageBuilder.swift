@@ -1,10 +1,12 @@
 import Foundation
 import CryptoKit
 
-struct MessageBuilder {
+/// Message builder for SoulSeek protocol messages.
+/// All methods are nonisolated to allow use from any actor context.
+enum MessageBuilder {
     // MARK: - Server Messages
 
-    static func loginMessage(username: String, password: String) -> Data {
+    nonisolated static func loginMessage(username: String, password: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.login.rawValue)
         payload.appendString(username)
@@ -25,7 +27,7 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
+    nonisolated static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.setListenPort.rawValue)
         payload.appendUInt32(port)
@@ -33,14 +35,14 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func setOnlineStatusMessage(status: UserStatus) -> Data {
+    nonisolated static func setOnlineStatusMessage(status: UserStatus) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.setOnlineStatus.rawValue)
         payload.appendUInt32(status.rawValue)
         return wrapMessage(payload)
     }
 
-    static func sharedFoldersFilesMessage(folders: UInt32, files: UInt32) -> Data {
+    nonisolated static func sharedFoldersFilesMessage(folders: UInt32, files: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.sharedFoldersFiles.rawValue)
         payload.appendUInt32(folders)
@@ -48,13 +50,13 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func pingMessage() -> Data {
+    nonisolated static func pingMessage() -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.ping.rawValue)
         return wrapMessage(payload)
     }
 
-    static func fileSearchMessage(token: UInt32, query: String) -> Data {
+    nonisolated static func fileSearchMessage(token: UInt32, query: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.fileSearch.rawValue)
         payload.appendUInt32(token)
@@ -62,21 +64,21 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func joinRoomMessage(roomName: String) -> Data {
+    nonisolated static func joinRoomMessage(roomName: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.joinRoom.rawValue)
         payload.appendString(roomName)
         return wrapMessage(payload)
     }
 
-    static func leaveRoomMessage(roomName: String) -> Data {
+    nonisolated static func leaveRoomMessage(roomName: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.leaveRoom.rawValue)
         payload.appendString(roomName)
         return wrapMessage(payload)
     }
 
-    static func sayInChatRoomMessage(roomName: String, message: String) -> Data {
+    nonisolated static func sayInChatRoomMessage(roomName: String, message: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.sayInChatRoom.rawValue)
         payload.appendString(roomName)
@@ -84,7 +86,7 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func privateMessageMessage(username: String, message: String) -> Data {
+    nonisolated static func privateMessageMessage(username: String, message: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.privateMessages.rawValue)
         payload.appendString(username)
@@ -92,35 +94,35 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func acknowledgePrivateMessageMessage(messageId: UInt32) -> Data {
+    nonisolated static func acknowledgePrivateMessageMessage(messageId: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.acknowledgePrivateMessage.rawValue)
         payload.appendUInt32(messageId)
         return wrapMessage(payload)
     }
 
-    static func watchUserMessage(username: String) -> Data {
+    nonisolated static func watchUserMessage(username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.watchUser.rawValue)
         payload.appendString(username)
         return wrapMessage(payload)
     }
 
-    static func unwatchUserMessage(username: String) -> Data {
+    nonisolated static func unwatchUserMessage(username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.unwatchUser.rawValue)
         payload.appendString(username)
         return wrapMessage(payload)
     }
 
-    static func getUserStatusMessage(username: String) -> Data {
+    nonisolated static func getUserStatusMessage(username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.getUserStatus.rawValue)
         payload.appendString(username)
         return wrapMessage(payload)
     }
 
-    static func connectToPeerMessage(token: UInt32, username: String, connectionType: String) -> Data {
+    nonisolated static func connectToPeerMessage(token: UInt32, username: String, connectionType: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.connectToPeer.rawValue)
         payload.appendUInt32(token)
@@ -129,7 +131,7 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func getRoomListMessage() -> Data {
+    nonisolated static func getRoomListMessage() -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.roomList.rawValue)
         return wrapMessage(payload)
@@ -137,7 +139,7 @@ struct MessageBuilder {
 
     // MARK: - Peer Messages
 
-    static func peerInitMessage(username: String, connectionType: String, token: UInt32) -> Data {
+    nonisolated static func peerInitMessage(username: String, connectionType: String, token: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt8(PeerMessageCode.peerInit.rawValue)
         payload.appendString(username)
@@ -146,26 +148,26 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func pierceFirewallMessage(token: UInt32) -> Data {
+    nonisolated static func pierceFirewallMessage(token: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt8(PeerMessageCode.pierceFirewall.rawValue)
         payload.appendUInt32(token)
         return wrapMessage(payload)
     }
 
-    static func sharesRequestMessage() -> Data {
+    nonisolated static func sharesRequestMessage() -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.sharesRequest.rawValue))
         return wrapMessage(payload)
     }
 
-    static func userInfoRequestMessage() -> Data {
+    nonisolated static func userInfoRequestMessage() -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.userInfoRequest.rawValue))
         return wrapMessage(payload)
     }
 
-    static func searchReplyMessage(
+    nonisolated static func searchReplyMessage(
         username: String,
         token: UInt32,
         results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]
@@ -195,14 +197,14 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func queueDownloadMessage(filename: String) -> Data {
+    nonisolated static func queueDownloadMessage(filename: String) -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.queueDownload.rawValue))
         payload.appendString(filename)
         return wrapMessage(payload)
     }
 
-    static func transferRequestMessage(direction: FileTransferDirection, token: UInt32, filename: String, fileSize: UInt64? = nil) -> Data {
+    nonisolated static func transferRequestMessage(direction: FileTransferDirection, token: UInt32, filename: String, fileSize: UInt64? = nil) -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.transferRequest.rawValue))
         payload.appendUInt32(UInt32(direction.rawValue))
@@ -216,7 +218,7 @@ struct MessageBuilder {
 
     // MARK: - NetworkClient Convenience Methods
 
-    static func login(username: String, password: String, version: UInt32, hash: String) -> Data {
+    nonisolated static func login(username: String, password: String, version: UInt32, hash: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.login.rawValue)
         payload.appendString(username)
@@ -227,46 +229,46 @@ struct MessageBuilder {
         return wrapMessage(payload)
     }
 
-    static func fileSearch(token: UInt32, query: String) -> Data {
+    nonisolated static func fileSearch(token: UInt32, query: String) -> Data {
         fileSearchMessage(token: token, query: query)
     }
 
-    static func roomList() -> Data {
+    nonisolated static func roomList() -> Data {
         getRoomListMessage()
     }
 
-    static func joinRoom(_ name: String) -> Data {
+    nonisolated static func joinRoom(_ name: String) -> Data {
         joinRoomMessage(roomName: name)
     }
 
-    static func leaveRoom(_ name: String) -> Data {
+    nonisolated static func leaveRoom(_ name: String) -> Data {
         leaveRoomMessage(roomName: name)
     }
 
-    static func sayInRoom(room: String, message: String) -> Data {
+    nonisolated static func sayInRoom(room: String, message: String) -> Data {
         sayInChatRoomMessage(roomName: room, message: message)
     }
 
-    static func privateMessage(username: String, message: String) -> Data {
+    nonisolated static func privateMessage(username: String, message: String) -> Data {
         privateMessageMessage(username: username, message: message)
     }
 
-    static func getUserAddress(_ username: String) -> Data {
+    nonisolated static func getUserAddress(_ username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.getPeerAddress.rawValue)
         payload.appendString(username)
         return wrapMessage(payload)
     }
 
-    static func setStatus(_ status: UserStatus) -> Data {
+    nonisolated static func setStatus(_ status: UserStatus) -> Data {
         setOnlineStatusMessage(status: status)
     }
 
-    static func sharedFoldersFiles(folders: UInt32, files: UInt32) -> Data {
+    nonisolated static func sharedFoldersFiles(folders: UInt32, files: UInt32) -> Data {
         sharedFoldersFilesMessage(folders: folders, files: files)
     }
 
-    static func cantConnectToPeer(token: UInt32, username: String) -> Data {
+    nonisolated static func cantConnectToPeer(token: UInt32, username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.cantConnectToPeer.rawValue)
         payload.appendUInt32(token)
@@ -277,7 +279,7 @@ struct MessageBuilder {
     // MARK: - Distributed Network Messages
 
     /// Tell server we have no distributed parent and need one
-    static func haveNoParent(_ haveNoParent: Bool) -> Data {
+    nonisolated static func haveNoParent(_ haveNoParent: Bool) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.haveNoParent.rawValue)
         payload.appendBool(haveNoParent)
@@ -285,7 +287,7 @@ struct MessageBuilder {
     }
 
     /// Tell server whether we accept child connections
-    static func acceptChildren(_ accept: Bool) -> Data {
+    nonisolated static func acceptChildren(_ accept: Bool) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.acceptChildren.rawValue)
         payload.appendBool(accept)
@@ -293,7 +295,7 @@ struct MessageBuilder {
     }
 
     /// Tell server our branch level in the distributed network
-    static func branchLevel(_ level: UInt32) -> Data {
+    nonisolated static func branchLevel(_ level: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.branchLevel.rawValue)
         payload.appendUInt32(level)
@@ -301,7 +303,7 @@ struct MessageBuilder {
     }
 
     /// Tell server our branch root username
-    static func branchRoot(_ username: String) -> Data {
+    nonisolated static func branchRoot(_ username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.branchRoot.rawValue)
         payload.appendString(username)
@@ -309,7 +311,7 @@ struct MessageBuilder {
     }
 
     /// Tell server our child depth
-    static func childDepth(_ depth: UInt32) -> Data {
+    nonisolated static func childDepth(_ depth: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.childDepth.rawValue)
         payload.appendUInt32(depth)
@@ -318,7 +320,7 @@ struct MessageBuilder {
 
     // MARK: - Utilities
 
-    private static func wrapMessage(_ payload: Data) -> Data {
+    nonisolated private static func wrapMessage(_ payload: Data) -> Data {
         var message = Data()
         message.appendUInt32(UInt32(payload.count))
         message.append(payload)

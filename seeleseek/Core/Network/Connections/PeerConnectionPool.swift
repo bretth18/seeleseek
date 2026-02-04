@@ -37,7 +37,7 @@ final class PeerConnectionPool {
 
     // MARK: - Callbacks
 
-    var onSearchResults: (([SearchResult]) -> Void)?
+    var onSearchResults: ((UInt32, [SearchResult]) -> Void)?  // (token, results)
     var onSharesReceived: ((String, [SharedFile]) -> Void)?
     var onTransferRequest: ((TransferRequest) -> Void)?
 
@@ -169,11 +169,11 @@ final class PeerConnectionPool {
             }
 
             // IMPORTANT: Set up search reply callback so we receive search results
-            await connection.setOnSearchReply { [weak self] results in
+            await connection.setOnSearchReply { [weak self] token, results in
                 await MainActor.run {
-                    print("🔴 SEARCH RESULTS: \(results.count) from incoming connection")
+                    print("🔴 SEARCH RESULTS: \(results.count) from incoming connection (token=\(token))")
                     self?.logger.info("Received \(results.count) search results from incoming connection")
-                    self?.onSearchResults?(results)
+                    self?.onSearchResults?(token, results)
                 }
             }
 
@@ -342,10 +342,18 @@ final class PeerConnectionPool {
     // MARK: - Callbacks Setup
 
     private func setupCallbacks(for connection: PeerConnection, username: String) async {
-        await connection.setOnSearchReply { [weak self] results in
+        print("🔧 Setting up callbacks for connection to \(username)")
+
+        await connection.setOnSearchReply { [weak self] token, results in
+            print("🔔 PeerConnectionPool: Received search reply callback for \(username) - \(results.count) results, token=\(token)")
             await MainActor.run {
-                print("🔴 SEARCH RESULTS: \(results.count) from outgoing connection to \(username)")
-                self?.onSearchResults?(results)
+                print("🔴 SEARCH RESULTS: \(results.count) from \(username) (token=\(token))")
+                if self?.onSearchResults != nil {
+                    print("🔔 PeerConnectionPool: Forwarding to NetworkClient callback...")
+                    self?.onSearchResults?(token, results)
+                } else {
+                    print("⚠️ PeerConnectionPool: onSearchResults callback is nil!")
+                }
             }
         }
 
@@ -377,6 +385,8 @@ final class PeerConnectionPool {
                 }
             }
         }
+
+        print("🔧 Callbacks set up for \(username)")
     }
 
     // MARK: - Analytics

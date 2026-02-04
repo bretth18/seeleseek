@@ -9,7 +9,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     let isDirectory: Bool
     var children: [SharedFile]?
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         filename: String,
         size: UInt64 = 0,

@@ -133,7 +133,8 @@ struct LoginView: View {
             server: ServerConnection.defaultHost,
             port: ServerConnection.defaultPort,
             username: appState.connection.loginUsername,
-            password: appState.connection.loginPassword
+            password: appState.connection.loginPassword,
+            preferredListenPort: UInt16(appState.settings.listenPort)
         )
 
         if let error = appState.networkClient.connectionError {

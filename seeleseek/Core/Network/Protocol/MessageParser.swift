@@ -1,14 +1,16 @@
 import Foundation
 
-struct MessageParser {
+/// Parser for SoulSeek protocol messages.
+/// All types are Sendable to allow use across actor boundaries.
+enum MessageParser {
     // MARK: - Frame Parsing
 
-    struct ParsedFrame {
+    struct ParsedFrame: Sendable {
         let code: UInt32
         let payload: Data
     }
 
-    static func parseFrame(from data: Data) -> (frame: ParsedFrame, consumed: Int)? {
+    nonisolated static func parseFrame(from data: Data) -> (frame: ParsedFrame, consumed: Int)? {
         guard data.count >= 8 else { return nil }
 
         guard let length = data.readUInt32(at: 0) else { return nil }
@@ -28,7 +30,7 @@ struct MessageParser {
 
     // MARK: - Server Message Parsing
 
-    static func parseLoginResponse(_ payload: Data) -> LoginResult? {
+    nonisolated static func parseLoginResponse(_ payload: Data) -> LoginResult? {
         var offset = 0
 
         guard let success = payload.readBool(at: offset) else { return nil }
@@ -57,12 +59,12 @@ struct MessageParser {
         }
     }
 
-    struct RoomListEntry {
+    struct RoomListEntry: Sendable {
         let name: String
         let userCount: UInt32
     }
 
-    static func parseRoomList(_ payload: Data) -> [RoomListEntry]? {
+    nonisolated static func parseRoomList(_ payload: Data) -> [RoomListEntry]? {
         var offset = 0
         var rooms: [RoomListEntry] = []
 
@@ -88,7 +90,7 @@ struct MessageParser {
         return rooms
     }
 
-    struct PeerInfo {
+    struct PeerInfo: Sendable {
         let username: String
         let ip: String
         let port: UInt32
@@ -96,7 +98,7 @@ struct MessageParser {
         let privileged: Bool
     }
 
-    static func parseConnectToPeer(_ payload: Data) -> PeerInfo? {
+    nonisolated static func parseConnectToPeer(_ payload: Data) -> PeerInfo? {
         var offset = 0
 
         guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
@@ -121,13 +123,13 @@ struct MessageParser {
         return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
     }
 
-    struct UserStatusInfo {
+    struct UserStatusInfo: Sendable {
         let username: String
         let status: UserStatus
         let privileged: Bool
     }
 
-    static func parseGetUserStatus(_ payload: Data) -> UserStatusInfo? {
+    nonisolated static func parseGetUserStatus(_ payload: Data) -> UserStatusInfo? {
         var offset = 0
 
         guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
@@ -143,7 +145,7 @@ struct MessageParser {
         return UserStatusInfo(username: username, status: status, privileged: privileged)
     }
 
-    struct PrivateMessageInfo {
+    struct PrivateMessageInfo: Sendable {
         let id: UInt32
         let timestamp: UInt32
         let username: String
@@ -151,7 +153,7 @@ struct MessageParser {
         let isAdmin: Bool
     }
 
-    static func parsePrivateMessage(_ payload: Data) -> PrivateMessageInfo? {
+    nonisolated static func parsePrivateMessage(_ payload: Data) -> PrivateMessageInfo? {
         var offset = 0
 
         guard let id = payload.readUInt32(at: offset) else { return nil }
@@ -171,13 +173,13 @@ struct MessageParser {
         return PrivateMessageInfo(id: id, timestamp: timestamp, username: username, message: message, isAdmin: isAdmin)
     }
 
-    struct ChatRoomMessageInfo {
+    struct ChatRoomMessageInfo: Sendable {
         let roomName: String
         let username: String
         let message: String
     }
 
-    static func parseSayInChatRoom(_ payload: Data) -> ChatRoomMessageInfo? {
+    nonisolated static func parseSayInChatRoom(_ payload: Data) -> ChatRoomMessageInfo? {
         var offset = 0
 
         guard let (roomName, roomLen) = payload.readString(at: offset) else { return nil }
@@ -193,14 +195,14 @@ struct MessageParser {
 
     // MARK: - Peer Message Parsing
 
-    struct SearchResultFile {
+    struct SearchResultFile: Sendable {
         let filename: String
         let size: UInt64
         let `extension`: String
         let attributes: [FileAttribute]
     }
 
-    struct FileAttribute {
+    struct FileAttribute: Sendable {
         let type: UInt32
         let value: UInt32
 
@@ -216,7 +218,7 @@ struct MessageParser {
         }
     }
 
-    struct SearchReplyInfo {
+    struct SearchReplyInfo: Sendable {
         let username: String
         let token: UInt32
         let files: [SearchResultFile]
@@ -225,7 +227,7 @@ struct MessageParser {
         let queueLength: UInt32
     }
 
-    static func parseSearchReply(_ payload: Data) -> SearchReplyInfo? {
+    nonisolated static func parseSearchReply(_ payload: Data) -> SearchReplyInfo? {
         var offset = 0
 
         guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
@@ -284,14 +286,14 @@ struct MessageParser {
         )
     }
 
-    struct TransferRequestInfo {
+    struct TransferRequestInfo: Sendable {
         let direction: FileTransferDirection
         let token: UInt32
         let filename: String
         let fileSize: UInt64?
     }
 
-    static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
+    nonisolated static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
         var offset = 0
 
         guard let directionRaw = payload.readUInt32(at: offset) else { return nil }

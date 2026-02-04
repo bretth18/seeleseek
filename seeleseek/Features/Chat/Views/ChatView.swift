@@ -2,8 +2,11 @@ import SwiftUI
 
 struct ChatView: View {
     @Environment(\.appState) private var appState
-    @State private var chatState = ChatState()
     @State private var showRoomList = false
+
+    private var chatState: ChatState {
+        appState.chatState
+    }
 
     var body: some View {
         HSplitView {
@@ -13,9 +16,6 @@ struct ChatView: View {
             chatContent
         }
         .background(SeeleColors.background)
-        .onAppear {
-            chatState.setupCallbacks(client: appState.networkClient)
-        }
     }
 
     private var chatSidebar: some View {

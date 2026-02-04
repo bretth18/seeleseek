@@ -6,18 +6,34 @@ final class AppState {
     // MARK: - Feature States
     var connection = ConnectionState()
     var searchState = SearchState()
+    var chatState = ChatState()
+    var settings = SettingsState()
+    var transferState = TransferState()
 
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
     var sidebarSelection: SidebarItem? = .search
 
-    // MARK: - Network Client
-    let networkClient = NetworkClient()
+    // MARK: - Network Client (lazy to avoid creation in previews/default env)
+    private var _networkClient: NetworkClient?
+    var networkClient: NetworkClient {
+        if _networkClient == nil {
+            _networkClient = NetworkClient()
+            // Set up callbacks when client is first accessed
+            searchState.setupCallbacks(client: _networkClient!)
+            chatState.setupCallbacks(client: _networkClient!)
+            downloadManager.configure(networkClient: _networkClient!, transferState: transferState)
+        }
+        return _networkClient!
+    }
+
+    // MARK: - Download Manager
+    let downloadManager = DownloadManager()
 
     // MARK: - Initialization
     init() {
-        // Set up search callbacks immediately so they're always connected
-        searchState.setupCallbacks(client: networkClient)
+        // Load persisted settings
+        settings.load()
     }
 }
 

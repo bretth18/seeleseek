@@ -61,8 +61,9 @@ actor PeerConnection {
     private var _onStateChanged: ((State) async -> Void)?
     private var _onMessage: ((UInt32, Data) async -> Void)?
     private var _onSharesReceived: (([SharedFile]) async -> Void)?
-    private var _onSearchReply: (([SearchResult]) async -> Void)?
+    private var _onSearchReply: ((UInt32, [SearchResult]) async -> Void)?  // (token, results)
     private var _onTransferRequest: ((TransferRequest) async -> Void)?
+    private var _onUsernameDiscovered: ((String, UInt32) async -> Void)?  // (username, token)
 
     // Callback setters for external access
     func setOnStateChanged(_ handler: @escaping (State) async -> Void) {
@@ -77,12 +78,21 @@ actor PeerConnection {
         _onSharesReceived = handler
     }
 
-    func setOnSearchReply(_ handler: @escaping ([SearchResult]) async -> Void) {
+    func setOnSearchReply(_ handler: @escaping (UInt32, [SearchResult]) async -> Void) {
         _onSearchReply = handler
     }
 
     func setOnTransferRequest(_ handler: @escaping (TransferRequest) async -> Void) {
         _onTransferRequest = handler
+    }
+
+    func setOnUsernameDiscovered(_ handler: @escaping (String, UInt32) async -> Void) {
+        _onUsernameDiscovered = handler
+    }
+
+    /// Get the discovered peer username (from PeerInit message)
+    func getPeerUsername() -> String {
+        return peerUsername
     }
 
     // Statistics
@@ -196,7 +206,12 @@ actor PeerConnection {
 
     func sendPierceFirewall() async throws {
         let message = MessageBuilder.pierceFirewallMessage(token: token)
+        print("📤 Sending PierceFirewall to \(peerInfo.username) with token \(token) (\(message.count) bytes)")
+        print("📤 PierceFirewall data: \(message.map { String(format: "%02x", $0) }.joined(separator: " "))")
         try await send(message)
+        // Mark handshake as complete from our side - peer will send peer messages (not init messages) now
+        handshakeComplete = true
+        print("📤 PierceFirewall sent successfully to \(peerInfo.username), handshake complete")
     }
 
     // MARK: - Peer Messages
@@ -241,6 +256,7 @@ actor PeerConnection {
 
     func send(_ data: Data) async throws {
         guard let connection else {
+            print("❌ [\(peerInfo.username)] send() - no connection!")
             throw PeerError.notConnected
         }
         // Allow sending in connected or handshaking state
@@ -248,14 +264,19 @@ actor PeerConnection {
         case .connected, .handshaking:
             break
         default:
+            print("❌ [\(peerInfo.username)] send() - wrong state: \(state)")
             throw PeerError.notConnected
         }
+
+        print("📤 [\(peerInfo.username)] Sending \(data.count) bytes: \(data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " "))")
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
+                    print("❌ [\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
+                    print("✅ [\(self?.peerInfo.username ?? "??")] send succeeded")
                     Task {
                         await self?.recordSent(data.count)
                     }
@@ -295,14 +316,16 @@ actor PeerConnection {
             logger.info("Connected to peer \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             connectedAt = Date()
             updateState(.connected)
+            // Start receiving BEFORE resuming continuation to ensure we're ready for data
+            startReceiving()
             if !connectContinuationResumed {
                 connectContinuationResumed = true
                 continuation?.resume()
             }
-            startReceiving()
 
         case .failed(let error):
-            print("🔴 PEER CONNECTION FAILED: \(self.peerInfo.username) - \(error.localizedDescription)")
+            print("🔴 PEER CONNECTION FAILED: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
+            print("🔴 Error details: \(error)")
             logger.error("Peer connection failed: \(error.localizedDescription)")
             updateState(.failed(error))
             // Cancel the connection to free resources
@@ -314,7 +337,8 @@ actor PeerConnection {
             }
 
         case .waiting(let error):
-            print("🟡 PEER CONNECTION WAITING: \(self.peerInfo.username) - \(error.localizedDescription)")
+            print("🟡 PEER CONNECTION WAITING: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
+            print("🟡 Waiting error: \(error)")
             // Check if this is a definitive failure (not just a transient condition)
             // POSIX errors: 12 (ENOMEM), 51 (ENETUNREACH), 57 (ENOTCONN), 60 (ETIMEDOUT), 61 (ECONNREFUSED), 65 (EHOSTUNREACH)
             if case .posix(let posixError) = error {
@@ -334,7 +358,7 @@ actor PeerConnection {
             }
 
         case .preparing:
-            print("🔵 PEER CONNECTION PREPARING: \(self.peerInfo.username)")
+            print("🔵 PEER CONNECTION PREPARING: \(self.peerInfo.username) -> \(self.peerInfo.ip):\(self.peerInfo.port)")
 
         case .cancelled:
             print("⚪ PEER CONNECTION CANCELLED: \(self.peerInfo.username)")
@@ -350,20 +374,37 @@ actor PeerConnection {
     }
 
     private func startReceiving() {
-        guard let connection else { return }
+        guard let connection else {
+            print("📡 [\(peerInfo.username)] startReceiving called but no connection!")
+            return
+        }
+
+        print("📡 [\(peerInfo.username)] Starting receive loop...")
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
+            guard let self else {
+                print("📡 startReceiving callback but self is nil!")
+                return
+            }
 
             Task {
+                if let error {
+                    print("📡 [\(await self.peerInfo.username)] Receive error: \(error.localizedDescription)")
+                }
+
                 if let data {
                     await self.handleReceivedData(data)
+                } else {
+                    print("📡 [\(await self.peerInfo.username)] No data received")
                 }
 
                 if isComplete {
+                    print("📡 [\(await self.peerInfo.username)] Connection complete, disconnecting")
                     await self.disconnect()
                 } else if error == nil {
                     await self.startReceiving()
+                } else {
+                    print("📡 [\(await self.peerInfo.username)] Not continuing receive due to error")
                 }
             }
         }
@@ -378,24 +419,34 @@ actor PeerConnection {
         bytesReceived += UInt64(data.count)
         lastActivityAt = Date()
 
-        print("📥 PeerConnection received \(data.count) bytes, buffer now \(receiveBuffer.count) bytes")
+        let preview = data.prefix(40).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("📥 [\(peerInfo.username)] Received \(data.count) bytes, buffer=\(receiveBuffer.count) bytes")
+        print("📥 [\(peerInfo.username)] Data preview: \(preview)")
 
         // Parse messages - init messages use 1-byte codes, peer messages use 4-byte codes
         while receiveBuffer.count >= 5 {
-            guard let length = receiveBuffer.readUInt32(at: 0) else { break }
+            guard let length = receiveBuffer.readUInt32(at: 0) else {
+                print("📥 [\(peerInfo.username)] Failed to read message length")
+                break
+            }
 
             let totalLength = 4 + Int(length)
             guard receiveBuffer.count >= totalLength else {
-                print("📥 Waiting for more data: have \(receiveBuffer.count), need \(totalLength)")
+                print("📥 [\(peerInfo.username)] Waiting for more data: have \(receiveBuffer.count), need \(totalLength)")
                 break
             }
 
             // Check if this is an init message (1-byte code) or peer message (4-byte code)
-            guard let firstByte = receiveBuffer.readByte(at: 4) else { break }
+            guard let firstByte = receiveBuffer.readByte(at: 4) else {
+                print("📥 [\(peerInfo.username)] Failed to read first byte")
+                break
+            }
+
+            print("📥 [\(peerInfo.username)] Message: length=\(length), firstByte=\(firstByte), handshakeComplete=\(handshakeComplete)")
 
             if !handshakeComplete && (firstByte == 0 || firstByte == 1) {
                 // Init message with 1-byte code
-                print("📥 Init message: code=\(firstByte) length=\(length)")
+                print("📥 [\(peerInfo.username)] Init message: code=\(firstByte) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 5..<totalLength) ?? Data()
                 receiveBuffer.removeFirst(totalLength)
                 messagesReceived += 1
@@ -403,9 +454,15 @@ actor PeerConnection {
                 await handleInitMessage(code: firstByte, payload: payload)
             } else {
                 // Peer message with 4-byte code
-                guard receiveBuffer.count >= 8 else { break }
-                guard let code = receiveBuffer.readUInt32(at: 4) else { break }
-                print("📥 Peer message: code=\(code) length=\(length)")
+                guard receiveBuffer.count >= 8 else {
+                    print("📥 [\(peerInfo.username)] Buffer too small for peer message header")
+                    break
+                }
+                guard let code = receiveBuffer.readUInt32(at: 4) else {
+                    print("📥 [\(peerInfo.username)] Failed to read message code")
+                    break
+                }
+                print("📥 [\(peerInfo.username)] Peer message: code=\(code) (\(PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown")) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 8..<totalLength) ?? Data()
 
                 receiveBuffer.removeFirst(totalLength)
@@ -435,13 +492,18 @@ actor PeerConnection {
                 offset += usernameLen
                 peerUsername = username
 
+                var peerToken: UInt32 = 0
                 if let (connType, typeLen) = payload.readString(at: offset) {
                     offset += typeLen
 
                     if let token = payload.readUInt32(at: offset) {
+                        peerToken = token
                         logger.info("PeerInit from \(username) type=\(connType) token=\(token)")
                     }
                 }
+
+                // Notify the pool of the discovered username
+                await _onUsernameDiscovered?(username, peerToken)
             }
             handshakeComplete = true
 
@@ -552,18 +614,31 @@ actor PeerConnection {
     }
 
     private func handleSearchReply(_ data: Data) async {
+        print("🔍 [\(peerInfo.username)] handleSearchReply called with \(data.count) bytes")
         logger.info("handleSearchReply called with \(data.count) bytes")
 
         // Search replies may be zlib compressed - try decompression first
         var parseData = data
+        var wasCompressed = false
         if data.count > 4 {
-            if let decompressed = try? decompressZlib(data) {
+            do {
+                let decompressed = try decompressZlib(data)
+                print("🔍 [\(peerInfo.username)] Decompressed from \(data.count) to \(decompressed.count) bytes")
                 logger.info("Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
                 parseData = decompressed
+                wasCompressed = true
+            } catch {
+                print("🔍 [\(peerInfo.username)] Not compressed or decompression failed: \(error)")
+                // Not compressed or decompression failed - try parsing raw data
             }
         }
 
+        let dataPreview = parseData.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("🔍 [\(peerInfo.username)] Parsing data (compressed=\(wasCompressed)): \(dataPreview)")
+
         guard let parsed = MessageParser.parseSearchReply(parseData) else {
+            print("❌ [\(peerInfo.username)] Failed to parse search reply!")
+            print("❌ [\(peerInfo.username)] Data starts with: \(parseData.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " "))")
             logger.error("Failed to parse search reply, data starts with: \(parseData.prefix(20).map { String(format: "%02x", $0) }.joined())")
             return
         }
@@ -582,12 +657,16 @@ actor PeerConnection {
         }
 
         let username = parsed.username.isEmpty ? peerUsername : parsed.username
-        logger.info("Parsed \(results.count) search results from \(username)")
+        print("✅ [\(peerInfo.username)] Parsed \(results.count) search results from \(username) for token \(parsed.token)")
+        logger.info("Parsed \(results.count) search results from \(username) for token \(parsed.token)")
 
         if _onSearchReply != nil {
-            await _onSearchReply?(results)
-            logger.info("Search results callback invoked")
+            print("🔔 [\(peerInfo.username)] Invoking search reply callback for token \(parsed.token)...")
+            await _onSearchReply?(parsed.token, results)
+            print("✅ [\(peerInfo.username)] Callback invoked successfully")
+            logger.info("Search results callback invoked for token \(parsed.token)")
         } else {
+            print("⚠️ [\(peerInfo.username)] No search reply callback set!")
             logger.warning("No search reply callback set!")
         }
     }
@@ -683,14 +762,53 @@ actor PeerConnection {
     // MARK: - Zlib Decompression
 
     private func decompressZlib(_ data: Data) throws -> Data {
-        // Use Compression framework
+        // SoulSeek uses standard zlib format (RFC 1950):
+        // - 2-byte header
+        // - DEFLATE compressed data
+        // - 4-byte Adler-32 checksum
+        //
+        // Apple's COMPRESSION_ZLIB expects raw DEFLATE (RFC 1951) without header/footer.
+        // We need to strip the 2-byte header and 4-byte footer.
+
+        guard data.count > 6 else {
+            print("🗜️ Decompression: data too short (\(data.count) bytes)")
+            throw PeerError.decompressionFailed
+        }
+
+        // Verify zlib header (first byte should have compression method 8 = deflate)
+        let cmf = data[data.startIndex]
+        let flg = data[data.startIndex + 1]
+        let compressionMethod = cmf & 0x0F
+        print("🗜️ Decompression: CMF=0x\(String(format: "%02x", cmf)) FLG=0x\(String(format: "%02x", flg)) method=\(compressionMethod)")
+
+        guard compressionMethod == 8 else {
+            print("🗜️ Not zlib format (method != 8), trying raw deflate")
+            // Not zlib format, try raw deflate
+            return try decompressRawDeflate(data)
+        }
+
+        // Strip zlib header (2 bytes) and Adler-32 checksum (4 bytes)
+        let deflateData = data.dropFirst(2).dropLast(4)
+        print("🗜️ Stripped zlib header/footer: \(data.count) -> \(deflateData.count) bytes")
+
+        let result = try decompressRawDeflate(Data(deflateData))
+        print("🗜️ Decompressed: \(deflateData.count) -> \(result.count) bytes")
+
+        // Log first few bytes of decompressed data
+        let preview = result.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("🗜️ Decompressed preview: \(preview)")
+
+        return result
+    }
+
+    private func decompressRawDeflate(_ data: Data) throws -> Data {
         let decompressed = try data.withUnsafeBytes { sourceBuffer -> Data in
             let sourceSize = data.count
-            let destinationSize = sourceSize * 10 // Estimate
-
+            // Start with a reasonable estimate, expand if needed
+            var destinationSize = max(sourceSize * 20, 65536)
             var destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
 
-            let decodedSize = compression_decode_buffer(
+            var decodedSize = compression_decode_buffer(
                 &destinationBuffer,
                 destinationSize,
                 sourceBuffer.bindMemory(to: UInt8.self).baseAddress!,
@@ -698,6 +816,20 @@ actor PeerConnection {
                 nil,
                 COMPRESSION_ZLIB
             )
+
+            // If output buffer was too small, try with larger buffer
+            if decodedSize == 0 || decodedSize == destinationSize {
+                destinationSize = sourceSize * 100
+                destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
+                decodedSize = compression_decode_buffer(
+                    &destinationBuffer,
+                    destinationSize,
+                    sourceBuffer.bindMemory(to: UInt8.self).baseAddress!,
+                    sourceSize,
+                    nil,
+                    COMPRESSION_ZLIB
+                )
+            }
 
             guard decodedSize > 0 else {
                 throw PeerError.decompressionFailed

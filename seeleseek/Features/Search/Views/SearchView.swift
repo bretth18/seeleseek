@@ -12,6 +12,12 @@ struct SearchView: View {
         @Bindable var state = appState
         VStack(spacing: 0) {
             searchBar(binding: $state.searchState.searchQuery)
+
+            // Search tabs
+            if !searchState.searches.isEmpty {
+                searchTabs
+            }
+
             Divider().background(SeeleColors.surfaceSecondary)
             resultsArea
         }
@@ -64,12 +70,68 @@ struct SearchView: View {
         .background(SeeleColors.surface.opacity(0.5))
     }
 
+    private var searchTabs: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: SeeleSpacing.xs) {
+                ForEach(Array(searchState.searches.enumerated()), id: \.element.id) { index, search in
+                    searchTab(search: search, index: index)
+                }
+            }
+            .padding(.horizontal, SeeleSpacing.lg)
+            .padding(.vertical, SeeleSpacing.sm)
+        }
+        .background(SeeleColors.surface.opacity(0.3))
+    }
+
+    private func searchTab(search: SearchQuery, index: Int) -> some View {
+        let isSelected = index == searchState.selectedSearchIndex
+
+        return HStack(spacing: SeeleSpacing.xs) {
+            // Activity indicator if still searching
+            if search.isSearching {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 12, height: 12)
+            }
+
+            Text(search.query)
+                .font(SeeleTypography.caption)
+                .lineLimit(1)
+
+            Text("(\(search.results.count))")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+
+            // Close button
+            Button {
+                searchState.closeSearch(at: index)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, SeeleSpacing.md)
+        .padding(.vertical, SeeleSpacing.xs)
+        .background(isSelected ? SeeleColors.accent.opacity(0.2) : SeeleColors.surface)
+        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+        .overlay(
+            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2)
+                .stroke(isSelected ? SeeleColors.accent : Color.clear, lineWidth: 1)
+        )
+        .onTapGesture {
+            searchState.selectSearch(at: index)
+        }
+    }
+
     @ViewBuilder
     private var resultsArea: some View {
-        if searchState.isSearching {
-            searchingView
-        } else if let search = searchState.currentSearch {
-            if search.results.isEmpty {
+        if let search = searchState.currentSearch {
+            if search.results.isEmpty && search.isSearching {
+                searchingView
+            } else if search.results.isEmpty {
                 noResultsView
             } else {
                 resultsListView
@@ -90,11 +152,9 @@ struct SearchView: View {
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
-            if let search = searchState.currentSearch {
-                Text("\(search.results.count) results from \(search.uniqueUsers) users")
-                    .font(SeeleTypography.subheadline)
-                    .foregroundStyle(SeeleColors.textSecondary)
-            }
+            Text("Results will appear as peers respond")
+                .font(SeeleTypography.subheadline)
+                .foregroundStyle(SeeleColors.textSecondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -129,35 +189,6 @@ struct SearchView: View {
             Text("Enter an artist, album, or song name above")
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textTertiary)
-
-            if !searchState.searchHistory.isEmpty {
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    Text("Recent Searches")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                        .padding(.top, SeeleSpacing.lg)
-
-                    ForEach(searchState.searchHistory.prefix(5)) { search in
-                        Button {
-                            searchState.selectHistorySearch(search)
-                        } label: {
-                            HStack {
-                                Image(systemName: "clock")
-                                    .foregroundStyle(SeeleColors.textTertiary)
-                                Text(search.query)
-                                    .foregroundStyle(SeeleColors.textSecondary)
-                                Spacer()
-                                Text("\(search.resultCount) results")
-                                    .font(SeeleTypography.caption)
-                                    .foregroundStyle(SeeleColors.textTertiary)
-                            }
-                            .padding(.vertical, SeeleSpacing.xs)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, SeeleSpacing.xxl)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -167,14 +198,25 @@ struct SearchView: View {
             // Results header
             HStack {
                 if let search = searchState.currentSearch {
-                    Text("\(searchState.filteredResults.count) results")
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(SeeleColors.textSecondary)
+                    HStack(spacing: SeeleSpacing.sm) {
+                        Text("\(searchState.filteredResults.count) results")
+                            .font(SeeleTypography.subheadline)
+                            .foregroundStyle(SeeleColors.textSecondary)
 
-                    if searchState.filteredResults.count != search.results.count {
-                        Text("(\(search.results.count) total)")
+                        if searchState.filteredResults.count != search.results.count {
+                            Text("(\(search.results.count) total)")
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                        }
+
+                        Text("from \(search.uniqueUsers) users")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
+
+                        if search.isSearching {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        }
                     }
                 }
 
@@ -228,14 +270,10 @@ struct SearchView: View {
         Task {
             do {
                 try await appState.networkClient.search(query: searchState.searchQuery, token: token)
-
-                // Results trickle in from peers over time
-                // Wait for a reasonable period, then mark as complete
-                // But keep results visible and updateable
-                try await Task.sleep(for: .seconds(30))
-                searchState.finishSearch()
+                // Results stream in from peers - no "finish" needed
+                // The search tab stays open until user closes it
             } catch {
-                searchState.finishSearch()
+                print("Search error: \(error)")
             }
         }
     }

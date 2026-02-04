@@ -41,20 +41,24 @@ final class NetworkClient {
     // MARK: - Initialization
 
     init() {
+        print("🚀 NetworkClient initializing...")
         // Wire up peer connection pool callbacks to network client
-        peerConnectionPool.onSearchResults = { [weak self] results in
-            print("NetworkClient: Received \(results.count) search results from PeerConnectionPool")
+        peerConnectionPool.onSearchResults = { [weak self] token, results in
+            print("🔔 NetworkClient: Received \(results.count) results for token \(token)")
             if self?.onSearchResults != nil {
-                self?.onSearchResults?(results)
+                print("🔔 NetworkClient: Forwarding to SearchState callback...")
+                self?.onSearchResults?(token, results)
+                print("✅ NetworkClient: Callback completed")
             } else {
-                print("NetworkClient: WARNING - onSearchResults callback is nil!")
+                print("⚠️ NetworkClient: WARNING - onSearchResults callback is nil!")
             }
         }
+        print("🚀 NetworkClient initialized, callbacks wired")
     }
 
     // MARK: - Callbacks
     var onConnectionStatusChanged: ((ConnectionStatus) -> Void)?
-    var onSearchResults: (([SearchResult]) -> Void)?
+    var onSearchResults: ((UInt32, [SearchResult]) -> Void)?  // (token, results)
     var onRoomList: (([ChatRoom]) -> Void)?
     var onRoomMessage: ((String, ChatMessage) -> Void)?
     var onPrivateMessage: ((String, ChatMessage) -> Void)?
@@ -66,7 +70,7 @@ final class NetworkClient {
 
     // MARK: - Connection
 
-    func connect(server: String, port: UInt16, username: String, password: String) async {
+    func connect(server: String, port: UInt16, username: String, password: String, preferredListenPort: UInt16? = nil) async {
         guard !isConnecting && !isConnected else { return }
 
         isConnecting = true
@@ -87,30 +91,14 @@ final class NetworkClient {
 
             // Step 2: Start listener for incoming peer connections
             logger.info("Starting listener...")
-            print("🔵 Starting listener service...")
-            let ports = try await listenerService.start()
+            print("🔵 Starting listener service (preferred port: \(preferredListenPort?.description ?? "auto"))...")
+            let ports = try await listenerService.start(preferredPort: preferredListenPort)
             listenPort = ports.port
             obfuscatedPort = ports.obfuscatedPort
             logger.info("Listening on port \(self.listenPort)")
             print("🟢 LISTENING on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 
-            // Step 2: Try NAT traversal (don't fail if it doesn't work)
-            print("🔧 Attempting NAT traversal...")
-            if let mappedPort = try? await natService.mapPort(listenPort) {
-                print("🔧 NAT mapped to external port \(mappedPort)")
-            } else {
-                print("🔧 NAT mapping failed or unavailable")
-            }
-
-            print("🔧 Discovering external IP...")
-            if let extIP = await natService.discoverExternalIP() {
-                externalIP = extIP
-                print("🔧 External IP: \(extIP)")
-            } else {
-                print("🔧 Could not discover external IP")
-            }
-
-            // Step 3: Connect to server
+            // Step 3: Connect to server FIRST (NAT runs in background)
             print("🔌 Connecting to server...")
             let connection = ServerConnection(host: server, port: port)
             serverConnection = connection
@@ -182,6 +170,11 @@ final class NetworkClient {
                 isConnected = true
                 onConnectionStatusChanged?(.connected)
                 logger.info("Login successful!")
+
+                // Run NAT mapping in background (don't block connection)
+                Task {
+                    await self.setupNATInBackground()
+                }
             } else if connectionError == nil {
                 // Still waiting for login response - give it more time
                 isConnecting = false
@@ -223,6 +216,40 @@ final class NetworkClient {
         onConnectionStatusChanged?(.disconnected)
 
         logger.info("Disconnected")
+    }
+
+    // MARK: - NAT Setup (Background)
+
+    private func setupNATInBackground() async {
+        print("🔧 NAT: Starting background port mapping...")
+
+        // Try to map the listen port
+        do {
+            let mappedPort = try await natService.mapPort(listenPort)
+            print("✅ NAT: Mapped port \(listenPort) -> \(mappedPort)")
+        } catch {
+            print("⚠️ NAT: Port mapping failed (will rely on server-mediated connections)")
+        }
+
+        // Try to map obfuscated port
+        if obfuscatedPort > 0 {
+            do {
+                let mappedObfuscated = try await natService.mapPort(obfuscatedPort)
+                print("✅ NAT: Mapped obfuscated port \(obfuscatedPort) -> \(mappedObfuscated)")
+            } catch {
+                // Silent failure for obfuscated port
+            }
+        }
+
+        // Discover external IP
+        if let extIP = await natService.discoverExternalIP() {
+            await MainActor.run {
+                self.externalIP = extIP
+            }
+            print("✅ NAT: External IP: \(extIP)")
+        }
+
+        print("🔧 NAT: Background setup complete")
     }
 
     // MARK: - Message Receiving

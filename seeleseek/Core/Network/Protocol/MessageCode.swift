@@ -71,7 +71,7 @@ enum ServerMessageCode: UInt32 {
 
     case resetDistributed = 130
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .login: "Login"
         case .setListenPort: "SetListenPort"
@@ -130,7 +130,7 @@ enum PeerMessageCode: UInt8 {
     case placeInQueueRequest = 51
     case placeInQueueReply = 52
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .pierceFirewall: "PierceFirewall"
         case .peerInit: "PeerInit"
@@ -161,7 +161,7 @@ enum DistributedMessageCode: UInt8 {
     case branchLevel = 4
     case branchRoot = 5
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .ping: "DistributedPing"
         case .searchRequest: "DistributedSearch"
@@ -172,18 +172,18 @@ enum DistributedMessageCode: UInt8 {
 }
 
 // MARK: - File Transfer Codes
-enum FileTransferDirection: UInt8 {
+enum FileTransferDirection: UInt8, Sendable {
     case download = 0
     case upload = 1
 }
 
 // MARK: - User Status
-enum UserStatus: UInt32 {
+enum UserStatus: UInt32, Sendable {
     case offline = 0
     case away = 1
     case online = 2
 
-    var description: String {
+    nonisolated var description: String {
         switch self {
         case .offline: "Offline"
         case .away: "Away"
@@ -193,7 +193,7 @@ enum UserStatus: UInt32 {
 }
 
 // MARK: - Login Response
-enum LoginResult {
+enum LoginResult: Sendable {
     case success(greeting: String, ip: String, hash: String?)
     case failure(reason: String)
 }

@@ -96,16 +96,19 @@ final class ServerMessageHandler {
             // Login successful
             // Read greeting message
             var greeting = ""
-            if let (greetingStr, newOffset) = data.readString(at: offset) {
-                offset = newOffset
+            if let (greetingStr, bytesConsumed) = data.readString(at: offset) {
+                offset += bytesConsumed
                 greeting = greetingStr
                 logger.info("Login greeting: \(greeting)")
             }
 
-            // Read IP address
+            // Read IP address - this is critical for debugging
             if let ip = data.readUInt32(at: offset) {
                 offset += 4
-                logger.info("Server reports IP: \(self.ipString(from: ip))")
+                let ipStr = self.ipString(from: ip)
+                print("📍 SERVER REPORTS OUR IP: \(ipStr)")
+                print("📍 Peers will connect to: \(ipStr):\(client?.listenPort ?? 0)")
+                logger.info("Server reports IP: \(ipStr)")
             }
 
             client?.setLoggedIn(true, message: greeting)
@@ -132,9 +135,9 @@ final class ServerMessageHandler {
         // Room names
         var roomNames: [String] = []
         for _ in 0..<roomCount {
-            guard let (name, newOffset) = data.readString(at: offset) else { break }
+            guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
             roomNames.append(name)
-            offset = newOffset
+            offset += bytesConsumed
         }
 
         // User counts
@@ -163,8 +166,8 @@ final class ServerMessageHandler {
         var offset = 0
 
         // Room name
-        guard let (roomName, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (roomName, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         // Number of users
         guard let userCount = data.readUInt32(at: offset) else { return }
@@ -173,9 +176,9 @@ final class ServerMessageHandler {
         // User names
         var users: [String] = []
         for _ in 0..<userCount {
-            guard let (username, newOffset) = data.readString(at: offset) else { break }
+            guard let (username, userBytesConsumed) = data.readString(at: offset) else { break }
             users.append(username)
-            offset = newOffset
+            offset += userBytesConsumed
         }
 
         client?.onRoomJoined?(roomName, users)
@@ -189,11 +192,11 @@ final class ServerMessageHandler {
     private func handleSayInRoom(_ data: Data) {
         var offset = 0
 
-        guard let (roomName, newOffset1) = data.readString(at: offset) else { return }
-        offset = newOffset1
+        guard let (roomName, roomBytes) = data.readString(at: offset) else { return }
+        offset += roomBytes
 
-        guard let (username, newOffset2) = data.readString(at: offset) else { return }
-        offset = newOffset2
+        guard let (username, userBytes) = data.readString(at: offset) else { return }
+        offset += userBytes
 
         guard let (message, _) = data.readString(at: offset) else { return }
 
@@ -209,8 +212,8 @@ final class ServerMessageHandler {
     private func handleUserJoinedRoom(_ data: Data) {
         var offset = 0
 
-        guard let (roomName, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (roomName, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
@@ -220,8 +223,8 @@ final class ServerMessageHandler {
     private func handleUserLeftRoom(_ data: Data) {
         var offset = 0
 
-        guard let (roomName, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (roomName, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
@@ -239,8 +242,8 @@ final class ServerMessageHandler {
         guard let timestamp = data.readUInt32(at: offset) else { return }
         offset += 4
 
-        guard let (username, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         guard let (message, _) = data.readString(at: offset) else { return }
 
@@ -269,8 +272,8 @@ final class ServerMessageHandler {
     private func handleGetUserAddress(_ data: Data) {
         var offset = 0
 
-        guard let (username, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         guard let ip = data.readUInt32(at: offset) else { return }
         offset += 4
@@ -284,8 +287,8 @@ final class ServerMessageHandler {
     private func handleGetUserStatus(_ data: Data) {
         var offset = 0
 
-        guard let (username, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
+        offset += bytesConsumed
 
         guard let status = data.readUInt32(at: offset) else { return }
 
@@ -293,61 +296,90 @@ final class ServerMessageHandler {
         print("User \(username) status: \(status)")
     }
 
-    // Track pending connections to avoid duplicates and limit concurrency
+    // Track pending connections to avoid duplicates
     private var pendingConnections: Set<String> = []
-    private var activeConnectionCount = 0
-    private let maxConcurrentConnections = 5
+    private var connectToPeerCount = 0
+    private var hasWarnedAboutListener = false
 
     private func handleConnectToPeer(_ data: Data) {
         var offset = 0
 
-        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        guard let (username, usernameLen) = data.readString(at: offset) else {
+            print("❌ ConnectToPeer: Failed to read username")
+            return
+        }
         offset += usernameLen
 
-        guard let (connectionType, typeLen) = data.readString(at: offset) else { return }
+        guard let (connectionType, typeLen) = data.readString(at: offset) else {
+            print("❌ ConnectToPeer: Failed to read connection type")
+            return
+        }
         offset += typeLen
 
-        guard let ip = data.readUInt32(at: offset) else { return }
+        guard let ip = data.readUInt32(at: offset) else {
+            print("❌ ConnectToPeer: Failed to read IP")
+            return
+        }
         offset += 4
 
-        guard let port = data.readUInt32(at: offset) else { return }
+        guard let port = data.readUInt32(at: offset) else {
+            print("❌ ConnectToPeer: Failed to read port")
+            return
+        }
         offset += 4
 
-        guard let token = data.readUInt32(at: offset) else { return }
+        guard let token = data.readUInt32(at: offset) else {
+            print("❌ ConnectToPeer: Failed to read token")
+            return
+        }
 
+        connectToPeerCount += 1
         let ipAddress = ipString(from: ip)
+
+        // Log every ConnectToPeer for diagnostics
+        if connectToPeerCount <= 10 || connectToPeerCount % 100 == 0 {
+            print("📞 ConnectToPeer #\(connectToPeerCount): \(username) type=\(connectionType) ip=\(ipAddress) port=\(port) token=\(token)")
+        }
+
+        // If we're getting tons of ConnectToPeer, our listener isn't reachable
+        if connectToPeerCount == 100 && !hasWarnedAboutListener {
+            hasWarnedAboutListener = true
+            print("⚠️ WARNING: Received 100+ ConnectToPeer requests - your listen port may not be reachable!")
+            print("⚠️ Check NAT/firewall settings. Search results primarily come via incoming connections.")
+        }
+
+        // Skip invalid addresses (peer behind NAT without reachable port)
+        if port == 0 || ipAddress == "0.0.0.0" {
+            print("⏭️ Skipping \(username) - no reachable address (\(ipAddress):\(port))")
+            return
+        }
+
+        // Limit total attempts - ConnectToPeer is a fallback, not primary mechanism
+        // Most results should come via incoming connections to our listener
+        if pendingConnections.count >= 50 {
+            return // Silently drop - we have enough pending
+        }
+
         let connectionKey = "\(username)-\(token)"
-
-        // Skip if we're already trying to connect to this peer
         if pendingConnections.contains(connectionKey) {
-            print("⏭️ Skipping duplicate ConnectToPeer for \(username)")
             return
         }
 
-        // Limit concurrent connections to avoid resource exhaustion
-        if activeConnectionCount >= maxConcurrentConnections {
-            print("⏸️ Too many concurrent connections, skipping \(username)")
-            return
-        }
-
-        logger.info("ConnectToPeer: \(username) (\(connectionType)) at \(ipAddress):\(port) token=\(token)")
         pendingConnections.insert(connectionKey)
-        activeConnectionCount += 1
 
-        // Initiate peer connection for search results, transfers, etc.
+        // Fire off connection in parallel - don't wait
         Task {
-            defer {
-                pendingConnections.remove(connectionKey)
-                activeConnectionCount -= 1
-            }
+            defer { pendingConnections.remove(connectionKey) }
 
             do {
-                guard let pool = client?.peerConnectionPool else { return }
+                guard let pool = client?.peerConnectionPool else {
+                    print("❌ ConnectToPeer: No connection pool available")
+                    return
+                }
 
-                print("🔵 Connecting to peer \(username) at \(ipAddress):\(port) [\(activeConnectionCount)/\(maxConcurrentConnections)]")
+                print("🔄 Connecting to \(username) at \(ipAddress):\(port) token=\(token)...")
 
-                // Try direct connection with a shorter timeout
-                let connection = try await withTimeout(seconds: 5) {
+                let connection = try await withTimeout(seconds: 10) {
                     try await pool.connect(
                         to: username,
                         ip: ipAddress,
@@ -356,18 +388,12 @@ final class ServerMessageHandler {
                     )
                 }
 
-                // Send PierceFirewall to complete handshake
-                print("🔵 Sending PierceFirewall to \(username) with token \(token)")
+                print("✅ Connected to \(username), sending PierceFirewall...")
                 try await connection.sendPierceFirewall()
-
-                logger.info("Connected to peer \(username) for \(connectionType), handshake sent")
-                print("🟢 Connected to peer \(username) for \(connectionType)")
+                print("🟢 Connected to \(username) for \(connectionType) - waiting for SearchReply")
 
             } catch {
-                logger.error("Failed to connect to peer \(username): \(error.localizedDescription)")
-                print("🔴 Failed to connect to peer \(username): \(error)")
-
-                // Tell server we couldn't connect - it may try indirect connection
+                print("❌ Failed to connect to \(username): \(error.localizedDescription)")
                 await client?.sendCantConnectToPeer(token: token, username: username)
             }
         }

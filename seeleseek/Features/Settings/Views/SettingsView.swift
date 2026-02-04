@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.appState) private var appState
-    @State private var settingsState = SettingsState()
     @State private var selectedTab: SettingsTab = .general
 
     enum SettingsTab: String, CaseIterable {
@@ -44,17 +43,17 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
                     switch selectedTab {
                     case .general:
-                        GeneralSettingsSection(settings: settingsState)
+                        GeneralSettingsSection(settings: appState.settings)
                     case .network:
-                        NetworkSettingsSection(settings: settingsState)
+                        NetworkSettingsSection(settings: appState.settings)
                     case .shares:
-                        SharesSettingsSection(settings: settingsState)
+                        SharesSettingsSection(settings: appState.settings)
                     case .metadata:
-                        MetadataSettingsSection(settings: settingsState)
+                        MetadataSettingsSection(settings: appState.settings)
                     case .chat:
-                        ChatSettingsSection(settings: settingsState)
+                        ChatSettingsSection(settings: appState.settings)
                     case .privacy:
-                        PrivacySettingsSection(settings: settingsState)
+                        PrivacySettingsSection(settings: appState.settings)
                     case .diagnostics:
                         DiagnosticsSection()
                     }

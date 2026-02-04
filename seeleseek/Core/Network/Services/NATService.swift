@@ -18,23 +18,34 @@ actor NATService {
     func mapPort(_ internalPort: UInt16, externalPort: UInt16? = nil, protocol proto: String = "TCP") async throws -> UInt16 {
         let targetExternal = externalPort ?? internalPort
 
+        print("🔧 NAT: Attempting to map port \(internalPort) -> \(targetExternal) (\(proto))")
+
         // Try UPnP first
-        if let mapped = try? await mapPortUPnP(internalPort, externalPort: targetExternal, protocol: proto) {
+        do {
+            let mapped = try await mapPortUPnP(internalPort, externalPort: targetExternal, protocol: proto)
             mappedPorts.append((internalPort, mapped, proto))
+            print("✅ NAT: UPnP mapped port \(internalPort) -> \(mapped)")
             logger.info("UPnP mapped port \(internalPort) -> \(mapped)")
             return mapped
+        } catch {
+            print("⚠️ NAT: UPnP failed: \(error)")
         }
 
         // Fall back to NAT-PMP
-        if let mapped = try? await mapPortNATPMP(internalPort, externalPort: targetExternal, protocol: proto) {
+        do {
+            let mapped = try await mapPortNATPMP(internalPort, externalPort: targetExternal, protocol: proto)
             mappedPorts.append((internalPort, mapped, proto))
+            print("✅ NAT: NAT-PMP mapped port \(internalPort) -> \(mapped)")
             logger.info("NAT-PMP mapped port \(internalPort) -> \(mapped)")
             return mapped
+        } catch {
+            print("⚠️ NAT: NAT-PMP failed: \(error)")
         }
 
         // If both fail, assume we're not behind NAT or port is already open
+        print("❌ NAT: All mapping methods failed for port \(internalPort)")
         logger.warning("NAT mapping failed for port \(internalPort), assuming direct connection")
-        return internalPort
+        throw NATError.mappingFailed
     }
 
     /// Removes all port mappings
@@ -71,17 +82,20 @@ actor NATService {
     // MARK: - UPnP Implementation
 
     private func mapPortUPnP(_ internalPort: UInt16, externalPort: UInt16, protocol proto: String) async throws -> UInt16 {
-        // Discover UPnP gateway
-        guard let gateway = try? await discoverUPnPGateway() else {
-            throw NATError.noGatewayFound
-        }
+        print("🔧 NAT: mapPortUPnP starting...")
 
+        // Discover UPnP gateway
+        let gateway = try await discoverUPnPGateway()
         gatewayIP = gateway.ip
 
         // Get local IP
         guard let localIP = getLocalIPAddress() else {
+            print("❌ NAT: Could not determine local IP address")
             throw NATError.noLocalIP
         }
+
+        print("🔧 NAT: Local IP: \(localIP), Gateway: \(gateway.ip)")
+        print("🔧 NAT: Sending AddPortMapping request to \(gateway.controlURL)")
 
         // Send AddPortMapping request
         let soapAction = "AddPortMapping"
@@ -106,9 +120,11 @@ actor NATService {
         let success = try await sendUPnPRequest(to: gateway.controlURL, action: soapAction, body: soapBody)
 
         if success {
+            print("✅ NAT: AddPortMapping succeeded for port \(externalPort)")
             return externalPort
         }
 
+        print("❌ NAT: AddPortMapping failed")
         throw NATError.mappingFailed
     }
 
@@ -162,46 +178,89 @@ actor NATService {
     }
 
     private func discoverUPnPGateway() async throws -> UPnPGateway {
-        // SSDP M-SEARCH for UPnP IGD
-        let ssdpRequest = """
-        M-SEARCH * HTTP/1.1\r
-        HOST: 239.255.255.250:1900\r
-        MAN: "ssdp:discover"\r
-        MX: 3\r
-        ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
-        \r
+        print("🔧 NAT: Discovering UPnP gateway via SSDP...")
 
-        """
+        // Try multiple service types - different routers use different ones
+        let serviceTypes = [
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
+            "urn:schemas-upnp-org:service:WANIPConnection:1",
+            "urn:schemas-upnp-org:service:WANPPPConnection:1",
+            "upnp:rootdevice"
+        ]
 
-        // Create UDP socket for multicast
+        for serviceType in serviceTypes {
+            print("🔧 NAT: Trying service type: \(serviceType)")
+            if let gateway = try? await discoverGatewayWithServiceType(serviceType) {
+                return gateway
+            }
+        }
+
+        throw NATError.noGatewayFound
+    }
+
+    private func discoverGatewayWithServiceType(_ serviceType: String) async throws -> UPnPGateway {
+        // SSDP M-SEARCH request - must use proper CRLF line endings
+        let ssdpRequest = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: \(serviceType)\r\n\r\n"
+
+        // Create UDP connection group for multicast - allows receiving from any source
         let params = NWParameters.udp
+        params.allowLocalEndpointReuse = true
+
+        // Create a UDP connection to send the multicast request
         let endpoint = NWEndpoint.hostPort(host: "239.255.255.250", port: 1900)
         let connection = NWConnection(to: endpoint, using: params)
 
         return try await withCheckedThrowingContinuation { continuation in
             var didComplete = false
 
-            connection.stateUpdateHandler = { state in
+            connection.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    connection.send(content: ssdpRequest.data(using: .utf8), completion: .contentProcessed { _ in })
+                    // Send the M-SEARCH request
+                    connection.send(content: ssdpRequest.data(using: .utf8), completion: .contentProcessed { error in
+                        if let error = error {
+                            print("🔧 NAT: SSDP send error: \(error)")
+                        }
+                    })
 
-                    // Receive response
-                    connection.receiveMessage { data, _, _, error in
-                        guard !didComplete else { return }
+                    // Receive response - NWConnection CAN receive unicast replies to multicast requests
+                    func receiveNext() {
+                        connection.receiveMessage { data, context, _, error in
+                            guard !didComplete else { return }
 
-                        if let data = data,
-                           let response = String(data: data, encoding: .utf8),
-                           let location = self.parseLocationHeader(from: response) {
+                            if let data = data, let response = String(data: data, encoding: .utf8) {
+                                print("🔧 NAT: SSDP response (\(data.count) bytes)")
 
-                            Task {
-                                if let gateway = try? await self.fetchGatewayInfo(from: location) {
-                                    didComplete = true
-                                    continuation.resume(returning: gateway)
+                                if let location = self?.parseLocationHeader(from: response) {
+                                    print("🔧 NAT: Gateway at: \(location)")
+
+                                    Task {
+                                        do {
+                                            let gateway = try await self?.fetchGatewayInfo(from: location)
+                                            if let gateway = gateway {
+                                                didComplete = true
+                                                connection.cancel()
+                                                continuation.resume(returning: gateway)
+                                            }
+                                        } catch {
+                                            // Try next response
+                                            receiveNext()
+                                        }
+                                    }
+                                } else {
+                                    // No location header, try next response
+                                    receiveNext()
                                 }
+                            } else if error != nil {
+                                // Error receiving, but don't fail yet - wait for timeout
+                            } else {
+                                // No data, try next
+                                receiveNext()
                             }
                         }
                     }
+                    receiveNext()
 
                 case .failed(let error):
                     if !didComplete {
@@ -216,9 +275,9 @@ actor NATService {
 
             connection.start(queue: .global())
 
-            // Timeout after 5 seconds
+            // Timeout after 1.5 seconds
             Task {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: .milliseconds(1500))
                 if !didComplete {
                     didComplete = true
                     connection.cancel()
@@ -284,12 +343,23 @@ actor NATService {
         request.setValue("\"urn:schemas-upnp-org:service:WANIPConnection:1#\(action)\"", forHTTPHeaderField: "SOAPAction")
         request.httpBody = body.data(using: .utf8)
 
-        let (_, response) = try await URLSession.shared.data(for: request)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
 
-        if let httpResponse = response as? HTTPURLResponse {
-            return httpResponse.statusCode == 200
+            if let httpResponse = response as? HTTPURLResponse {
+                print("🔧 NAT: UPnP \(action) response: HTTP \(httpResponse.statusCode)")
+                if httpResponse.statusCode != 200 {
+                    if let responseBody = String(data: data, encoding: .utf8) {
+                        print("🔧 NAT: Error response: \(responseBody.prefix(500))")
+                    }
+                }
+                return httpResponse.statusCode == 200
+            }
+            return false
+        } catch {
+            print("🔧 NAT: UPnP request error: \(error)")
+            throw error
         }
-        return false
     }
 
     private func sendUPnPRequestWithResponse(to controlURL: String, action: String, body: String) async throws -> String {
@@ -380,7 +450,7 @@ actor NATService {
             connection.start(queue: .global())
 
             Task {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(1))
                 if !didComplete {
                     didComplete = true
                     connection.cancel()
@@ -441,7 +511,7 @@ actor NATService {
             connection.start(queue: .global())
 
             Task {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(1))
                 if !didComplete {
                     didComplete = true
                     connection.cancel()

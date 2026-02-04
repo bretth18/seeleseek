@@ -3,6 +3,14 @@ import SwiftUI
 @Observable
 @MainActor
 final class SettingsState {
+    // MARK: - Keys
+    private let listenPortKey = "settings.listenPort"
+    private let enableUPnPKey = "settings.enableUPnP"
+    private let maxDownloadSlotsKey = "settings.maxDownloadSlots"
+    private let maxUploadSlotsKey = "settings.maxUploadSlots"
+    private let uploadSpeedLimitKey = "settings.uploadSpeedLimit"
+    private let downloadSpeedLimitKey = "settings.downloadSpeedLimit"
+
     // MARK: - General Settings
     var downloadLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
     var incompleteLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("Incomplete")
@@ -10,12 +18,27 @@ final class SettingsState {
     var showInMenuBar: Bool = true
 
     // MARK: - Network Settings
-    var listenPort: Int = 2234
-    var enableUPnP: Bool = true
-    var maxDownloadSlots: Int = 5
-    var maxUploadSlots: Int = 5
-    var uploadSpeedLimit: Int = 0 // 0 = unlimited
-    var downloadSpeedLimit: Int = 0
+    var listenPort: Int = 2234 {
+        didSet {
+            print("🔧 Settings: listenPort changed from \(oldValue) to \(listenPort)")
+            save()
+        }
+    }
+    var enableUPnP: Bool = true {
+        didSet { save() }
+    }
+    var maxDownloadSlots: Int = 5 {
+        didSet { save() }
+    }
+    var maxUploadSlots: Int = 5 {
+        didSet { save() }
+    }
+    var uploadSpeedLimit: Int = 0 {
+        didSet { save() }
+    }
+    var downloadSpeedLimit: Int = 0 {
+        didSet { save() }
+    }
 
     // MARK: - Shares Settings
     var sharedFolders: [URL] = []
@@ -72,15 +95,43 @@ final class SettingsState {
         notificationSound = true
         showOnlineStatus = true
         allowBrowsing = true
+        save()
     }
 
     // MARK: - Persistence
     func save() {
-        // In real app, save to UserDefaults or a settings file
+        UserDefaults.standard.set(listenPort, forKey: listenPortKey)
+        UserDefaults.standard.set(enableUPnP, forKey: enableUPnPKey)
+        UserDefaults.standard.set(maxDownloadSlots, forKey: maxDownloadSlotsKey)
+        UserDefaults.standard.set(maxUploadSlots, forKey: maxUploadSlotsKey)
+        UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
+        UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
     }
 
     func load() {
-        // In real app, load from UserDefaults or a settings file
+        print("🔧 Settings: Loading from UserDefaults...")
+        if UserDefaults.standard.object(forKey: listenPortKey) != nil {
+            let savedPort = UserDefaults.standard.integer(forKey: listenPortKey)
+            print("🔧 Settings: Found saved listenPort: \(savedPort)")
+            listenPort = savedPort
+        } else {
+            print("🔧 Settings: No saved listenPort, using default: \(listenPort)")
+        }
+        if UserDefaults.standard.object(forKey: enableUPnPKey) != nil {
+            enableUPnP = UserDefaults.standard.bool(forKey: enableUPnPKey)
+        }
+        if UserDefaults.standard.object(forKey: maxDownloadSlotsKey) != nil {
+            maxDownloadSlots = UserDefaults.standard.integer(forKey: maxDownloadSlotsKey)
+        }
+        if UserDefaults.standard.object(forKey: maxUploadSlotsKey) != nil {
+            maxUploadSlots = UserDefaults.standard.integer(forKey: maxUploadSlotsKey)
+        }
+        if UserDefaults.standard.object(forKey: uploadSpeedLimitKey) != nil {
+            uploadSpeedLimit = UserDefaults.standard.integer(forKey: uploadSpeedLimitKey)
+        }
+        if UserDefaults.standard.object(forKey: downloadSpeedLimitKey) != nil {
+            downloadSpeedLimit = UserDefaults.standard.integer(forKey: downloadSpeedLimitKey)
+        }
     }
 }
 

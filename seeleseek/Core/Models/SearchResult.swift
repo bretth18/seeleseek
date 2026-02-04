@@ -12,7 +12,7 @@ struct SearchResult: Identifiable, Hashable, Sendable {
     let uploadSpeed: UInt32
     let queueLength: UInt32
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         username: String,
         filename: String,
@@ -103,7 +103,7 @@ struct SearchQuery: Identifiable, Hashable, Sendable {
     var results: [SearchResult]
     var isSearching: Bool
 
-    init(query: String, token: UInt32) {
+    nonisolated init(query: String, token: UInt32) {
         self.id = UUID()
         self.query = query
         self.token = token
