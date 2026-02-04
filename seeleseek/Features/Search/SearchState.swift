@@ -60,6 +60,7 @@ final class SearchState {
     var filterExtensions: Set<String> = []
     var filterFreeSlotOnly: Bool = false
     var sortOrder: SortOrder = .relevance
+    var resultGrouping: ResultGrouping = .flat
 
     enum SortOrder: String, CaseIterable {
         case relevance = "Relevance"
@@ -67,6 +68,13 @@ final class SearchState {
         case size = "Size"
         case speed = "Speed"
         case queue = "Queue"
+    }
+
+    enum ResultGrouping: String, CaseIterable {
+        case flat = "Flat"
+        case byUser = "By User"
+        case byFolder = "By Folder"
+        case byAlbum = "By Album"
     }
 
     // MARK: - Computed Properties
@@ -115,6 +123,57 @@ final class SearchState {
 
     var canSearch: Bool {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Results grouped according to the current grouping mode
+    var groupedResults: [String: [SearchResult]] {
+        let results = filteredResults
+
+        switch resultGrouping {
+        case .flat:
+            return ["All Results": results]
+
+        case .byUser:
+            return Dictionary(grouping: results) { $0.username }
+
+        case .byFolder:
+            return Dictionary(grouping: results) { $0.folderPath.isEmpty ? "Root" : $0.folderPath }
+
+        case .byAlbum:
+            // Try to detect album from path structure (e.g., "Artist/Album/track.mp3")
+            return Dictionary(grouping: results) { result in
+                let components = result.folderPath.components(separatedBy: "\\")
+                if components.count >= 2 {
+                    // Return last two path components as "Artist - Album"
+                    let album = components.suffix(2).joined(separator: " - ")
+                    return album.isEmpty ? "Unknown Album" : album
+                } else if !result.folderPath.isEmpty {
+                    return result.folderPath
+                } else {
+                    return "Unknown Album"
+                }
+            }
+        }
+    }
+
+    /// Sorted group keys for display
+    var sortedGroupKeys: [String] {
+        switch resultGrouping {
+        case .flat:
+            return ["All Results"]
+        case .byUser:
+            // Sort by number of results (most first), then alphabetically
+            return groupedResults.keys.sorted { key1, key2 in
+                let count1 = groupedResults[key1]?.count ?? 0
+                let count2 = groupedResults[key2]?.count ?? 0
+                if count1 != count2 {
+                    return count1 > count2
+                }
+                return key1.localizedCaseInsensitiveCompare(key2) == .orderedAscending
+            }
+        case .byFolder, .byAlbum:
+            return groupedResults.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }
     }
 
     var isSearching: Bool {
@@ -189,5 +248,6 @@ final class SearchState {
         filterExtensions = []
         filterFreeSlotOnly = false
         sortOrder = .relevance
+        resultGrouping = .flat
     }
 }

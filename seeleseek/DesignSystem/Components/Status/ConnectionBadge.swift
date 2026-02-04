@@ -63,7 +63,7 @@ struct ConnectionBadge: View {
         if status == .connecting {
             ProgressView()
                 .progressViewStyle(.circular)
-                .scaleEffect(0.6)
+                .scaleEffect(0.4)
                 .tint(status.color)
                 .frame(width: 12, height: 12)
         } else {

@@ -2,24 +2,45 @@ import SwiftUI
 
 struct BrowseView: View {
     @Environment(\.appState) private var appState
-    @State private var browseState = BrowseState()
+
+    private var browseState: BrowseState {
+        appState.browseState
+    }
 
     var body: some View {
+        @Bindable var browseBinding = appState.browseState
+
         VStack(spacing: 0) {
-            browseBar
+            browseBarView(currentUserBinding: $browseBinding.currentUser)
             Divider().background(SeeleColors.surfaceSecondary)
             contentArea
         }
         .background(SeeleColors.background)
+        .task(id: browseState.userShares?.id) {
+            // When userShares changes (set by browseUser from search), check if we need to fetch
+            guard let shares = browseState.userShares,
+                  shares.isLoading,
+                  shares.folders.isEmpty,
+                  shares.error == nil else { return }
+
+            // Fetch the actual shares
+            let username = browseState.currentUser
+            do {
+                let files = try await appState.networkClient.browseUser(username)
+                browseState.setShares(files)
+            } catch {
+                browseState.setError("Failed to browse \(username): \(error.localizedDescription)")
+            }
+        }
     }
 
-    private var browseBar: some View {
+    private func browseBarView(currentUserBinding: Binding<String>) -> some View {
         HStack(spacing: SeeleSpacing.md) {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: "person")
                     .foregroundStyle(SeeleColors.textTertiary)
 
-                TextField("Enter username to browse...", text: $browseState.currentUser)
+                TextField("Enter username to browse...", text: currentUserBinding)
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -255,7 +276,7 @@ struct BrowseView: View {
 struct FileTreeRow: View {
     let file: SharedFile
     let depth: Int
-    @Bindable var browseState: BrowseState
+    var browseState: BrowseState
     @State private var isHovered = false
 
     private var isExpanded: Bool {

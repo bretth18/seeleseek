@@ -25,8 +25,11 @@ enum ServerMessageCode: UInt32 {
     case sendConnectToken = 33
     case sendUploadSpeed = 34
     case sharedFoldersFiles = 35
-    case cantConnectToPeer = 36
+    case getUserStats = 36
     case getMoreParents = 41
+    case addThingILike = 51
+    case removeThingILike = 52
+    case recommendations = 54
     case userInterests = 57
     case roomList = 64
     case exactFileSearch = 65
@@ -51,7 +54,9 @@ enum ServerMessageCode: UInt32 {
 
     case wishlistSearch = 103
     case wishlistInterval = 104
-    case globalRecommendations = 110
+    case similarUsers = 110
+    case itemRecommendations = 111
+    case itemSimilarUsers = 112
     case roomTickerState = 113
     case roomTickerAdd = 114
     case roomTickerRemove = 115
@@ -70,6 +75,22 @@ enum ServerMessageCode: UInt32 {
     case acceptChildren = 100  // Tell server if we accept child nodes
 
     case resetDistributed = 130
+
+    // Private rooms
+    case privateRoomMembers = 133
+    case privateRoomAddMember = 134
+    case privateRoomRemoveMember = 135
+    case privateRoomCancelMembership = 136
+    case privateRoomCancelOwnership = 137
+    case privateRoomAddOperator = 143
+    case privateRoomRemoveOperator = 144
+    case privateRoomOperatorGranted = 145
+    case privateRoomOperatorRevoked = 146
+    case privateRoomOperators = 148
+
+    // Special codes (1000+)
+    case cantConnectToPeer = 1001
+    case cantCreateRoom = 1003
 
     nonisolated var description: String {
         switch self {
@@ -93,7 +114,9 @@ enum ServerMessageCode: UInt32 {
         case .sendConnectToken: "SendConnectToken"
         case .sendUploadSpeed: "SendUploadSpeed"
         case .sharedFoldersFiles: "SharedFoldersFiles"
+        case .getUserStats: "GetUserStats"
         case .cantConnectToPeer: "CantConnectToPeer"
+        case .cantCreateRoom: "CantCreateRoom"
         case .haveNoParent: "HaveNoParent"
         case .possibleParents: "PossibleParents"
         case .embeddedMessage: "EmbeddedMessage"
@@ -124,11 +147,11 @@ enum PeerMessageCode: UInt8 {
     case transferRequest = 40
     case transferReply = 41
     case uploadPlacehold = 42
-    case queueDownload = 43
+    case queueDownload = 43        // QueueUpload in protocol docs
+    case placeInQueueReply = 44    // PlaceInQueueResponse in protocol docs
     case uploadFailed = 46
-    case queueFailed = 50
+    case uploadDenied = 50
     case placeInQueueRequest = 51
-    case placeInQueueReply = 52
 
     nonisolated var description: String {
         switch self {
@@ -145,11 +168,11 @@ enum PeerMessageCode: UInt8 {
         case .transferRequest: "TransferRequest"
         case .transferReply: "TransferReply"
         case .uploadPlacehold: "UploadPlacehold"
-        case .queueDownload: "QueueDownload"
+        case .queueDownload: "QueueUpload"
+        case .placeInQueueReply: "PlaceInQueueResponse"
         case .uploadFailed: "UploadFailed"
-        case .queueFailed: "QueueFailed"
+        case .uploadDenied: "UploadDenied"
         case .placeInQueueRequest: "PlaceInQueueRequest"
-        case .placeInQueueReply: "PlaceInQueueReply"
         }
     }
 }

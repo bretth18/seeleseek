@@ -42,6 +42,11 @@ struct Sidebar: View {
 
     private var connectionHeader: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+            
+            Text("seeleseek")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+            
             HStack {
                 ConnectionBadge(status: appState.connection.connectionStatus)
                 Spacer()

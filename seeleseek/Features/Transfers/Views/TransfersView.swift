@@ -220,15 +220,20 @@ struct TransferRow: View {
                         Text(transfer.formattedSpeed)
                             .font(SeeleTypography.monoSmall)
                             .foregroundStyle(SeeleColors.accent)
-                    } else if let queuePosition = transfer.queuePosition {
-                        Text("Queue: \(queuePosition)")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.warning)
                     } else if let error = transfer.error {
                         Text(error)
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.error)
                             .lineLimit(1)
+                    } else if let queuePosition = transfer.queuePosition {
+                        Text("Queue: \(queuePosition)")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.warning)
+                    } else if transfer.status != .completed {
+                        // Show status text for non-completed, non-error states
+                        Text(transfer.status.displayText)
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(transfer.statusColor)
                     }
                 }
             }

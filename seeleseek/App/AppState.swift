@@ -9,6 +9,9 @@ final class AppState {
     var chatState = ChatState()
     var settings = SettingsState()
     var transferState = TransferState()
+    var statisticsState = StatisticsState()
+    var browseState = BrowseState()
+    var metadataState = MetadataState()
 
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
@@ -22,13 +25,17 @@ final class AppState {
             // Set up callbacks when client is first accessed
             searchState.setupCallbacks(client: _networkClient!)
             chatState.setupCallbacks(client: _networkClient!)
-            downloadManager.configure(networkClient: _networkClient!, transferState: transferState)
+            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState)
+            uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
         }
         return _networkClient!
     }
 
     // MARK: - Download Manager
     let downloadManager = DownloadManager()
+
+    // MARK: - Upload Manager
+    let uploadManager = UploadManager()
 
     // MARK: - Initialization
     init() {
@@ -111,7 +118,7 @@ enum SidebarItem: Hashable, Identifiable {
     var icon: String {
         switch self {
         case .search: "magnifyingglass"
-        case .transfers: "arrow.down.arrow.up"
+        case .transfers: "arrow.up.arrow.down"
         case .chat: "bubble.left.and.bubble.right"
         case .browse: "folder"
         case .user: "person"

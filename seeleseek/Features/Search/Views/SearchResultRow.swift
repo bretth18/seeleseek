@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
@@ -18,9 +21,17 @@ struct SearchResultRow: View {
                     .lineLimit(1)
 
                 HStack(spacing: SeeleSpacing.md) {
-                    Label(result.username, systemImage: "person")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textSecondary)
+                    HStack(spacing: SeeleSpacing.xxs) {
+                        // Country flag (if available)
+                        if let flag = countryFlag, !flag.isEmpty {
+                            Text(flag)
+                                .font(.system(size: 12))
+                        }
+
+                        Label(result.username, systemImage: "person")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
 
                     if !result.folderPath.isEmpty {
                         Text(result.folderPath)
@@ -61,6 +72,17 @@ struct SearchResultRow: View {
                 }
             }
 
+            // Browse user button
+            Button {
+                browseUser()
+            } label: {
+                Image(systemName: "folder")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isHovered ? SeeleColors.textSecondary : SeeleColors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Browse \(result.username)'s files")
+
             // Download button
             Button {
                 downloadFile()
@@ -70,6 +92,7 @@ struct SearchResultRow: View {
                     .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
             }
             .buttonStyle(.plain)
+            .help("Download file")
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)
@@ -77,6 +100,41 @@ struct SearchResultRow: View {
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
+            }
+        }
+        .contextMenu {
+            Button {
+                downloadFile()
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+
+            Divider()
+
+            Button {
+                browseUser()
+            } label: {
+                Label("Browse \(result.username)", systemImage: "folder")
+            }
+
+            Button {
+                browseFolder()
+            } label: {
+                Label("Browse folder", systemImage: "folder.badge.questionmark")
+            }
+
+            Divider()
+
+            Button {
+                copyFilename()
+            } label: {
+                Label("Copy filename", systemImage: "doc.on.doc")
+            }
+
+            Button {
+                copyPath()
+            } label: {
+                Label("Copy full path", systemImage: "link")
             }
         }
     }
@@ -126,6 +184,10 @@ struct SearchResultRow: View {
         }
     }
 
+    private var countryFlag: String? {
+        appState.networkClient.userInfoCache.flag(for: result.username)
+    }
+
     private func metadataBadge(_ text: String, color: Color) -> some View {
         Text(text)
             .font(SeeleTypography.monoSmall)
@@ -139,6 +201,33 @@ struct SearchResultRow: View {
     private func downloadFile() {
         print("Download: \(result.filename) from \(result.username)")
         appState.downloadManager.queueDownload(from: result)
+    }
+
+    private func browseUser() {
+        print("Browse user: \(result.username)")
+        appState.browseState.browseUser(result.username)
+        appState.sidebarSelection = .browse
+    }
+
+    private func browseFolder() {
+        print("Browse folder: \(result.folderPath) from \(result.username)")
+        appState.browseState.browseUser(result.username)
+        // TODO: Filter to specific folder path after browse loads
+        appState.sidebarSelection = .browse
+    }
+
+    private func copyFilename() {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(result.displayFilename, forType: .string)
+        #endif
+    }
+
+    private func copyPath() {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(result.filename, forType: .string)
+        #endif
     }
 }
 

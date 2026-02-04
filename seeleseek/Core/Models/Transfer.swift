@@ -42,6 +42,18 @@ struct Transfer: Identifiable, Hashable, Sendable {
         var color: SeeleColors.Type {
             SeeleColors.self
         }
+
+        var displayText: String {
+            switch self {
+            case .queued: "Queued"
+            case .connecting: "Connecting to peer..."
+            case .transferring: "Transferring"
+            case .completed: "Completed"
+            case .failed: "Failed"
+            case .cancelled: "Cancelled"
+            case .waiting: "Waiting in remote queue"
+            }
+        }
     }
 
     init(

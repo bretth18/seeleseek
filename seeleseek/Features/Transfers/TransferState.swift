@@ -37,6 +37,14 @@ final class TransferState {
     }
 
     // MARK: - Actions
+
+    func getTransfer(id: UUID) -> Transfer? {
+        if let transfer = downloads.first(where: { $0.id == id }) {
+            return transfer
+        }
+        return uploads.first(where: { $0.id == id })
+    }
+
     func addDownload(_ transfer: Transfer) {
         downloads.insert(transfer, at: 0)
     }

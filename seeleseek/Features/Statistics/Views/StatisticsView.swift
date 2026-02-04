@@ -3,8 +3,11 @@ import Charts
 
 struct StatisticsView: View {
     @Environment(\.appState) private var appState
-    @State private var statsState = StatisticsState()
     @State private var selectedTimeRange: TimeRange = .minute
+
+    private var statsState: StatisticsState {
+        appState.statisticsState
+    }
 
     private var peerPool: PeerConnectionPool {
         appState.networkClient.peerConnectionPool

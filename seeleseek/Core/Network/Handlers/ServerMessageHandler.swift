@@ -72,6 +72,44 @@ final class ServerMessageHandler {
             handleParentMinSpeed(payload)
         case .parentSpeedRatio:
             handleParentSpeedRatio(payload)
+        case .recommendations:
+            handleRecommendations(payload)
+        case .userInterests:
+            handleUserInterests(payload)
+        case .similarUsers:
+            handleSimilarUsers(payload)
+        case .itemRecommendations:
+            handleItemRecommendations(payload)
+        case .itemSimilarUsers:
+            handleItemSimilarUsers(payload)
+        case .getUserStats:
+            handleGetUserStats(payload)
+        case .checkPrivileges:
+            handleCheckPrivileges(payload)
+        case .userPrivileges:
+            handleUserPrivileges(payload)
+        case .privilegedUsers:
+            handlePrivilegedUsers(payload)
+        case .roomTickerState:
+            handleRoomTickerState(payload)
+        case .roomTickerAdd:
+            handleRoomTickerAdd(payload)
+        case .roomTickerRemove:
+            handleRoomTickerRemove(payload)
+        case .wishlistInterval:
+            handleWishlistInterval(payload)
+        case .privateRoomMembers:
+            handlePrivateRoomMembers(payload)
+        case .privateRoomAddMember:
+            handlePrivateRoomAddMember(payload)
+        case .privateRoomRemoveMember:
+            handlePrivateRoomRemoveMember(payload)
+        case .privateRoomOperatorGranted:
+            handlePrivateRoomOperatorGranted(payload)
+        case .privateRoomOperatorRevoked:
+            handlePrivateRoomOperatorRevoked(payload)
+        case .privateRoomOperators:
+            handlePrivateRoomOperators(payload)
         default:
             // Log unhandled message with more detail
             print("📨 Unhandled server message: \(code) (code=\(codeValue)) payload=\(payload.count) bytes")
@@ -281,7 +319,12 @@ final class ServerMessageHandler {
         guard let port = data.readUInt32(at: offset) else { return }
 
         let ipAddress = ipString(from: ip)
-        client?.onPeerAddress?(username, ipAddress, Int(port))
+
+        // Cache IP for country lookup
+        client?.userInfoCache.registerIP(ipAddress, for: username)
+
+        // Use internal handler that dispatches to both pending requests AND external callback
+        client?.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port))
     }
 
     private func handleGetUserStatus(_ data: Data) {
@@ -379,16 +422,19 @@ final class ServerMessageHandler {
 
                 print("🔄 Connecting to \(username) at \(ipAddress):\(port) token=\(token)...")
 
+                // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
+                // We'll send PierceFirewall instead (correct protocol for indirect connections)
                 let connection = try await withTimeout(seconds: 10) {
                     try await pool.connect(
                         to: username,
                         ip: ipAddress,
                         port: Int(port),
-                        token: token
+                        token: token,
+                        isIndirect: true
                     )
                 }
 
-                print("✅ Connected to \(username), sending PierceFirewall...")
+                print("✅ Connected to \(username), sending PierceFirewall (token=\(token))...")
                 try await connection.sendPierceFirewall()
                 print("🟢 Connected to \(username) for \(connectionType) - waiting for SearchReply")
 
@@ -549,7 +595,7 @@ final class ServerMessageHandler {
         var offset = 0
 
         // uint32 unknown
-        guard data.readUInt32(at: offset) != nil else { return }
+        guard let unknown = data.readUInt32(at: offset) else { return }
         offset += 4
 
         // string username (who is searching)
@@ -565,8 +611,92 @@ final class ServerMessageHandler {
 
         print("🔍 Distributed search from \(username): '\(query)' token=\(token)")
 
-        // TODO: Search our shared files and send results back via P connection
-        // For now, just log it
+        // Forward to children
+        Task {
+            await client?.forwardDistributedSearch(unknown: unknown, username: username, token: token, query: query)
+        }
+
+        // Don't respond to our own searches
+        guard username != client?.username else { return }
+
+        // Search our shared files
+        guard let shareManager = client?.shareManager else {
+            logger.debug("No share manager available for distributed search")
+            return
+        }
+
+        let matchingFiles = shareManager.search(query: query)
+        guard !matchingFiles.isEmpty else {
+            print("🔍 No matches for distributed search: '\(query)'")
+            return
+        }
+
+        print("🔍 Found \(matchingFiles.count) matches for distributed search: '\(query)'")
+        logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
+
+        // Send search results back to the searching user
+        Task {
+            await sendDistributedSearchResponse(
+                to: username,
+                token: token,
+                files: matchingFiles
+            )
+        }
+    }
+
+    private func sendDistributedSearchResponse(
+        to username: String,
+        token: UInt32,
+        files: [ShareManager.IndexedFile]
+    ) async {
+        guard let client else { return }
+
+        do {
+            // Get peer address using concurrent-safe method
+            print("📤 Getting address for \(username) to send search results...")
+            let address = try await client.getPeerAddress(for: username)
+
+            print("📤 Connecting to \(username) at \(address.ip):\(address.port) to send search results...")
+
+            // Connect to peer
+            let connectionToken = UInt32.random(in: 0...UInt32.max)
+            let connection = try await client.peerConnectionPool.connect(
+                to: username,
+                ip: address.ip,
+                port: address.port,
+                token: connectionToken
+            )
+
+            // Build and send search reply
+            let results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = files.map { file in
+                var attributes: [(UInt32, UInt32)] = []
+                if let bitrate = file.bitrate {
+                    attributes.append((0, bitrate))  // 0 = bitrate
+                }
+                if let duration = file.duration {
+                    attributes.append((1, duration))  // 1 = duration
+                }
+                return (
+                    filename: file.sharedPath,
+                    size: file.size,
+                    extension_: file.fileExtension,
+                    attributes: attributes
+                )
+            }
+
+            try await connection.sendSearchReply(
+                username: client.username,
+                token: token,
+                results: results
+            )
+
+            print("✅ Sent \(files.count) search results to \(username) for token \(token)")
+            logger.info("Sent \(files.count) search results to \(username)")
+
+        } catch {
+            print("❌ Failed to send search results to \(username): \(error)")
+            logger.error("Failed to send search results to \(username): \(error.localizedDescription)")
+        }
     }
 
     private func handleResetDistributed() {
@@ -582,6 +712,329 @@ final class ServerMessageHandler {
     private func handleParentSpeedRatio(_ data: Data) {
         guard let ratio = data.readUInt32(at: 0) else { return }
         print("🌐 Parent speed ratio: \(ratio)")
+    }
+
+    // MARK: - User Interests & Recommendations
+
+    private func handleRecommendations(_ data: Data) {
+        var offset = 0
+
+        // Recommendations
+        guard let recCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var recommendations: [(item: String, score: Int32)] = []
+        for _ in 0..<recCount {
+            guard let (item, itemLen) = data.readString(at: offset) else { break }
+            offset += itemLen
+            guard let score = data.readInt32(at: offset) else { break }
+            offset += 4
+            recommendations.append((item, score))
+        }
+
+        // Unrecommendations
+        guard let unrecCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var unrecommendations: [(item: String, score: Int32)] = []
+        for _ in 0..<unrecCount {
+            guard let (item, itemLen) = data.readString(at: offset) else { break }
+            offset += itemLen
+            guard let score = data.readInt32(at: offset) else { break }
+            offset += 4
+            unrecommendations.append((item, score))
+        }
+
+        print("📚 Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
+        client?.onRecommendations?(recommendations, unrecommendations)
+    }
+
+    private func handleUserInterests(_ data: Data) {
+        var offset = 0
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        // Liked interests
+        guard let likedCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var likes: [String] = []
+        for _ in 0..<likedCount {
+            guard let (interest, interestLen) = data.readString(at: offset) else { break }
+            likes.append(interest)
+            offset += interestLen
+        }
+
+        // Hated interests
+        guard let hatedCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var hates: [String] = []
+        for _ in 0..<hatedCount {
+            guard let (interest, interestLen) = data.readString(at: offset) else { break }
+            hates.append(interest)
+            offset += interestLen
+        }
+
+        print("📚 User \(username) interests - likes: \(likes.count), hates: \(hates.count)")
+        client?.onUserInterests?(username, likes, hates)
+    }
+
+    private func handleSimilarUsers(_ data: Data) {
+        var offset = 0
+
+        guard let userCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var users: [(username: String, rating: UInt32)] = []
+        for _ in 0..<userCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            offset += usernameLen
+            guard let rating = data.readUInt32(at: offset) else { break }
+            offset += 4
+            users.append((username, rating))
+        }
+
+        print("📚 Similar users: \(users.count)")
+        client?.onSimilarUsers?(users)
+    }
+
+    private func handleItemRecommendations(_ data: Data) {
+        var offset = 0
+
+        guard let (item, itemLen) = data.readString(at: offset) else { return }
+        offset += itemLen
+
+        guard let recCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var recommendations: [(item: String, score: Int32)] = []
+        for _ in 0..<recCount {
+            guard let (recItem, recLen) = data.readString(at: offset) else { break }
+            offset += recLen
+            guard let score = data.readInt32(at: offset) else { break }
+            offset += 4
+            recommendations.append((recItem, score))
+        }
+
+        print("📚 Item recommendations for '\(item)': \(recommendations.count)")
+        client?.onItemRecommendations?(item, recommendations)
+    }
+
+    private func handleItemSimilarUsers(_ data: Data) {
+        var offset = 0
+
+        guard let (item, itemLen) = data.readString(at: offset) else { return }
+        offset += itemLen
+
+        guard let userCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var users: [String] = []
+        for _ in 0..<userCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            users.append(username)
+            offset += usernameLen
+        }
+
+        print("📚 Similar users for '\(item)': \(users.count)")
+        client?.onItemSimilarUsers?(item, users)
+    }
+
+    // MARK: - User Stats & Privileges
+
+    private func handleGetUserStats(_ data: Data) {
+        var offset = 0
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        guard let avgSpeed = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        guard let uploadNum = data.readUInt64(at: offset) else { return }
+        offset += 8
+
+        guard let files = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        guard let dirs = data.readUInt32(at: offset) else { return }
+
+        print("📊 User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
+        client?.onUserStats?(username, avgSpeed, uploadNum, files, dirs)
+    }
+
+    private func handleCheckPrivileges(_ data: Data) {
+        guard let timeLeft = data.readUInt32(at: 0) else { return }
+        print("⭐ Privileges time remaining: \(timeLeft) seconds")
+        client?.onPrivilegesChecked?(timeLeft)
+    }
+
+    private func handleUserPrivileges(_ data: Data) {
+        var offset = 0
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        guard let privileged = data.readBool(at: offset) else { return }
+
+        print("⭐ User \(username) privileged: \(privileged)")
+        client?.onUserPrivileges?(username, privileged)
+    }
+
+    private func handlePrivilegedUsers(_ data: Data) {
+        var offset = 0
+
+        guard let userCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var users: [String] = []
+        for _ in 0..<userCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            users.append(username)
+            offset += usernameLen
+        }
+
+        print("⭐ Privileged users: \(users.count)")
+        client?.onPrivilegedUsers?(users)
+    }
+
+    // MARK: - Room Tickers
+
+    private func handleRoomTickerState(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let tickerCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var tickers: [(username: String, ticker: String)] = []
+        for _ in 0..<tickerCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            offset += usernameLen
+            guard let (ticker, tickerLen) = data.readString(at: offset) else { break }
+            offset += tickerLen
+            tickers.append((username, ticker))
+        }
+
+        print("🎫 Room ticker state for \(room): \(tickers.count) tickers")
+        client?.onRoomTickerState?(room, tickers)
+    }
+
+    private func handleRoomTickerAdd(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        guard let (ticker, _) = data.readString(at: offset) else { return }
+
+        print("🎫 Room ticker added in \(room): \(username) = '\(ticker)'")
+        client?.onRoomTickerAdd?(room, username, ticker)
+    }
+
+    private func handleRoomTickerRemove(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let (username, _) = data.readString(at: offset) else { return }
+
+        print("🎫 Room ticker removed in \(room): \(username)")
+        client?.onRoomTickerRemove?(room, username)
+    }
+
+    // MARK: - Wishlist
+
+    private func handleWishlistInterval(_ data: Data) {
+        guard let interval = data.readUInt32(at: 0) else { return }
+        print("🌟 Wishlist interval: \(interval) seconds")
+        client?.onWishlistInterval?(interval)
+    }
+
+    // MARK: - Private Rooms
+
+    private func handlePrivateRoomMembers(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let memberCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var members: [String] = []
+        for _ in 0..<memberCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            members.append(username)
+            offset += usernameLen
+        }
+
+        print("🔒 Private room \(room) members: \(members.count)")
+        client?.onPrivateRoomMembers?(room, members)
+    }
+
+    private func handlePrivateRoomAddMember(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let (username, _) = data.readString(at: offset) else { return }
+
+        print("🔒 Private room \(room) member added: \(username)")
+        client?.onPrivateRoomMemberAdded?(room, username)
+    }
+
+    private func handlePrivateRoomRemoveMember(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let (username, _) = data.readString(at: offset) else { return }
+
+        print("🔒 Private room \(room) member removed: \(username)")
+        client?.onPrivateRoomMemberRemoved?(room, username)
+    }
+
+    private func handlePrivateRoomOperatorGranted(_ data: Data) {
+        guard let (room, _) = data.readString(at: 0) else { return }
+        print("🔒 Granted operator in room: \(room)")
+        client?.onPrivateRoomOperatorGranted?(room)
+    }
+
+    private func handlePrivateRoomOperatorRevoked(_ data: Data) {
+        guard let (room, _) = data.readString(at: 0) else { return }
+        print("🔒 Revoked operator in room: \(room)")
+        client?.onPrivateRoomOperatorRevoked?(room)
+    }
+
+    private func handlePrivateRoomOperators(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let operatorCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var operators: [String] = []
+        for _ in 0..<operatorCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            operators.append(username)
+            offset += usernameLen
+        }
+
+        print("🔒 Private room \(room) operators: \(operators.count)")
+        client?.onPrivateRoomOperators?(room, operators)
     }
 
     // MARK: - Helpers
