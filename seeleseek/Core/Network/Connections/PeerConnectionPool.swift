@@ -23,6 +23,8 @@ final class PeerConnectionPool {
     private(set) var totalBytesSent: UInt64 = 0
     private(set) var totalConnections: UInt32 = 0
     private(set) var activeConnections: Int = 0
+    private(set) var connectToPeerCount: Int = 0  // How many ConnectToPeer messages we've received
+    private(set) var pierceFirewallCount: Int = 0  // How many PierceFirewall messages we've received
 
     // Speed tracking
     private(set) var currentDownloadSpeed: Double = 0
@@ -99,6 +101,17 @@ final class PeerConnectionPool {
     init() {
         // Start speed tracking timer
         startSpeedTracking()
+        // Start periodic cleanup of stale connections
+        startCleanupTimer()
+    }
+
+    private func startCleanupTimer() {
+        Task {
+            while true {
+                try? await Task.sleep(for: .seconds(30))
+                cleanupStaleConnections()
+            }
+        }
     }
 
     // MARK: - Configuration
@@ -188,6 +201,14 @@ final class PeerConnectionPool {
 
     /// Handle an incoming connection from the listener service
     func handleIncomingConnection(_ nwConnection: NWConnection) async {
+        // Enforce connection limit to prevent resource exhaustion
+        if activeConnections >= maxConnections {
+            logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
+            print("⚠️ Connection limit reached, rejecting: \(nwConnection.endpoint)")
+            nwConnection.cancel()
+            return
+        }
+
         do {
             let connection = try await acceptIncoming(nwConnection, obfuscated: false)
 
@@ -209,25 +230,19 @@ final class PeerConnectionPool {
             }
 
             // Set up ALL callbacks for the incoming connection - this is critical for receiving search results!
-            await connection.setOnStateChanged { [weak self] state in
+            // Capture connectionId to properly clean up THIS specific connection
+            await connection.setOnStateChanged { [weak self, connectionId] state in
                 guard let self else { return }
                 await MainActor.run {
-                    self.logger.info("Incoming connection state changed: \(String(describing: state))")
-                    print("🔄 Connection state: \(state)")
+                    self.logger.info("Incoming connection \(connectionId) state changed: \(String(describing: state))")
+                    print("🔄 Connection \(connectionId) state: \(state)")
 
-                    // Clean up disconnected connections - find by the connection object
+                    // Clean up disconnected connections using the captured connectionId
                     if case .disconnected = state {
-                        // Find and remove this connection from our tracking
-                        for (key, _) in self.activeConnections_ {
-                            // We'll clean it up if it's this connection
-                            if key.hasPrefix("incoming-") {
-                                self.connections.removeValue(forKey: key)
-                                self.activeConnections_.removeValue(forKey: key)
-                                self.activeConnections = self.connections.count
-                                print("🔴 Connection \(key) removed (disconnected)")
-                                break
-                            }
-                        }
+                        self.connections.removeValue(forKey: connectionId)
+                        self.activeConnections_.removeValue(forKey: connectionId)
+                        self.activeConnections = self.connections.count
+                        print("🔴 Connection \(connectionId) removed (disconnected)")
                     }
                 }
             }
@@ -290,6 +305,7 @@ final class PeerConnectionPool {
                             await self.onIncomingConnectionMatched?(username, token, connection)
                         }
                     }
+                    // Note: Indirect browse connections are now handled via PierceFirewall callback
                 }
             }
 
@@ -315,6 +331,7 @@ final class PeerConnectionPool {
                 guard let self else { return }
                 print("🔓 PierceFirewall from incoming connection, token=\(token)")
                 self.logger.info("PierceFirewall received: token=\(token)")
+                await MainActor.run { self.incrementPierceFirewallCount() }
                 await self.onPierceFirewall?(token, connection)
             }
 
@@ -457,6 +474,16 @@ final class PeerConnectionPool {
 
     func resolvePendingConnection(token: UInt32) -> PendingConnection? {
         return pendingConnections.removeValue(forKey: token)
+    }
+
+    // MARK: - Diagnostic Counters
+
+    func incrementConnectToPeerCount() {
+        connectToPeerCount += 1
+    }
+
+    func incrementPierceFirewallCount() {
+        pierceFirewallCount += 1
     }
 
     func cleanupStaleConnections() {

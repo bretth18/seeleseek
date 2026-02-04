@@ -85,8 +85,15 @@ final class NetworkClient {
         }
 
         // Wire up PierceFirewall for indirect connections
+        // First check if it matches a pending browse request, then delegate to DownloadManager
         peerConnectionPool.onPierceFirewall = { [weak self] token, connection in
             print("🔓 NetworkClient: PierceFirewall token=\(token)")
+            // Check if this is for a pending browse request
+            if self?.handlePierceFirewallForBrowse(token: token, connection: connection) == true {
+                print("🔓 NetworkClient: PierceFirewall handled as browse request")
+                return
+            }
+            // Otherwise, delegate to DownloadManager
             await self?.onPierceFirewall?(token, connection)
         }
 
@@ -517,7 +524,7 @@ final class NetworkClient {
         try await connection.send(message)
     }
 
-    /// Tell server we couldn't connect to a peer - triggers indirect connection attempt
+    /// Tell server we couldn't connect to a peer (used by peer responding to us)
     func sendCantConnectToPeer(token: UInt32, username: String) async {
         guard isConnected, let connection = serverConnection else { return }
 
@@ -527,6 +534,21 @@ final class NetworkClient {
             logger.info("Sent CantConnectToPeer for \(username) token=\(token)")
         } catch {
             logger.error("Failed to send CantConnectToPeer: \(error.localizedDescription)")
+        }
+    }
+
+    /// Request server to tell peer to connect to us (indirect connection request)
+    /// Server will forward this to the peer, who will then send PierceFirewall to us
+    func sendConnectToPeer(token: UInt32, username: String, connectionType: String = "P") async {
+        guard isConnected, let connection = serverConnection else { return }
+
+        let message = MessageBuilder.connectToPeer(token: token, username: username, connectionType: connectionType)
+        do {
+            try await connection.send(message)
+            logger.info("Sent ConnectToPeer for \(username) token=\(token) type=\(connectionType)")
+            print("📤 Sent ConnectToPeer: token=\(token) username=\(username) type=\(connectionType)")
+        } catch {
+            logger.error("Failed to send ConnectToPeer: \(error.localizedDescription)")
         }
     }
 
@@ -603,6 +625,10 @@ final class NetworkClient {
 
     // MARK: - Peer Connections
 
+    // Pending browse requests waiting for indirect connections (keyed by TOKEN)
+    // When peer connects via PierceFirewall, they send the same token we used in ConnectToPeer
+    private var pendingBrowseConnections: [UInt32: (username: String, continuation: CheckedContinuation<PeerConnection, Error>)] = [:]
+
     /// Browse a user's shared files
     func browseUser(_ username: String) async throws -> [SharedFile] {
         print("📂 Browse: START browseUser(\(username))")
@@ -611,23 +637,53 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let token = UInt32.random(in: 0...UInt32.max)
+        var connection: PeerConnection
 
-        print("📂 Browse: Getting peer address for \(username)...")
+        // Step 0: Check if we already have an active connection to this user
+        // This is common - the peer may have connected to us for search results
+        if let existingConnection = peerConnectionPool.getConnectionForUser(username) {
+            print("📂 Browse: Found existing connection to \(username), reusing it!")
+            connection = existingConnection
+        } else {
+            // No existing connection - need to establish one
+            let token = UInt32.random(in: 0...UInt32.max)
+            print("📂 Browse: No existing connection, using token \(token) for \(username)")
 
-        // Get peer address using concurrent-safe method
-        let (ip, port) = try await getPeerAddress(for: username)
+            // Step 1: Send ConnectToPeer to server FIRST
+            // This tells the server to forward a connection request to the peer
+            // The peer will then try to connect to us with PierceFirewall
+            await sendConnectToPeer(token: token, username: username, connectionType: "P")
+            print("📂 Browse: Sent ConnectToPeer to server")
 
-        logger.info("Got peer address for \(username): \(ip):\(port)")
-        print("📂 Browse: Got address \(ip):\(port), connecting...")
+            // Step 2: Get peer address
+            print("📂 Browse: Getting peer address for \(username)...")
+            let (ip, port) = try await getPeerAddress(for: username)
 
-        // Connect to the peer
-        let connection = try await peerConnectionPool.connect(
-            to: username,
-            ip: ip,
-            port: port,
-            token: token
-        )
+            logger.info("Got peer address for \(username): \(ip):\(port)")
+            print("📂 Browse: Got address \(ip):\(port), attempting direct connection...")
+
+            // Step 3: Try direct connection first
+            do {
+                connection = try await peerConnectionPool.connect(
+                    to: username,
+                    ip: ip,
+                    port: port,
+                    token: token
+                )
+                print("📂 Browse: Direct connection to \(username) successful!")
+            } catch {
+                // Direct connection failed - wait for indirect connection
+                // The server already told the peer to connect to us (step 1)
+                // The peer will send PierceFirewall with the same token
+                print("📂 Browse: Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
+                logger.info("Direct connection to \(username) failed, waiting for PierceFirewall")
+                print("📂 Browse: Waiting for PierceFirewall with token=\(token)...")
+
+                // Wait for the peer to connect to us via PierceFirewall with matching token
+                connection = try await waitForIndirectBrowseConnection(token: token, username: username, timeout: 15)
+                print("📂 Browse: Indirect connection from \(username) received via PierceFirewall!")
+            }
+        }
 
         print("📂 Browse: Connected to \(username), waiting for peer handshake...")
 
@@ -668,6 +724,36 @@ final class NetworkClient {
 
         print("📂 Browse: Got \(receivedFiles.count) files from \(username)")
         return receivedFiles
+    }
+
+    /// Wait for an indirect connection via PierceFirewall with matching token
+    private func waitForIndirectBrowseConnection(token: UInt32, username: String, timeout: TimeInterval) async throws -> PeerConnection {
+        return try await withCheckedThrowingContinuation { continuation in
+            // Register that we're waiting for this token
+            pendingBrowseConnections[token] = (username: username, continuation: continuation)
+            print("📂 Browse: Registered pending browse for token=\(token) username=\(username)")
+
+            // Set up timeout
+            Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                // If still pending, resume with timeout error
+                if let pending = pendingBrowseConnections.removeValue(forKey: token) {
+                    print("📂 Browse: Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
+                    pending.continuation.resume(throwing: NetworkError.timeout)
+                }
+            }
+        }
+    }
+
+    /// Called when PierceFirewall is received - check if it matches a pending browse request
+    /// Returns true if it was handled as a browse request
+    func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) -> Bool {
+        if let pending = pendingBrowseConnections.removeValue(forKey: token) {
+            print("📂 Browse: PierceFirewall token=\(token) matched pending browse for \(pending.username)")
+            pending.continuation.resume(returning: connection)
+            return true
+        }
+        return false
     }
 
     // MARK: - User Interests & Recommendations

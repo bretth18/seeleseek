@@ -1,0 +1,11 @@
+build
+.DS_Store
+notes
+node_modules
+package-lock.json
+CMakePresets.json
+.build
+.claude
+
+
+*.log

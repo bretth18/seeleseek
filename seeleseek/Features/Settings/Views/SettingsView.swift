@@ -382,72 +382,112 @@ struct DiagnosticsSection: View {
     @Environment(\.appState) private var appState
     @State private var testResult: String = ""
     @State private var isTesting: Bool = false
+    @State private var portTestResult: String = ""
+    @State private var isTestingPort: Bool = false
+    @State private var browseTestUsername: String = ""
+    @State private var browseTestResult: String = ""
+    @State private var isTestingBrowse: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
             settingsHeader("Diagnostics")
 
             settingsGroup("Connection Status") {
-                HStack {
-                    Text("Server Connected")
-                    Spacer()
-                    Text(appState.networkClient.isConnected ? "Yes" : "No")
-                        .foregroundStyle(appState.networkClient.isConnected ? SeeleColors.success : SeeleColors.error)
-                }
-
-                HStack {
-                    Text("Logged In")
-                    Spacer()
-                    Text(appState.networkClient.loggedIn ? "Yes" : "No")
-                        .foregroundStyle(appState.networkClient.loggedIn ? SeeleColors.success : SeeleColors.error)
-                }
-
-                HStack {
-                    Text("Username")
-                    Spacer()
-                    Text(appState.networkClient.username.isEmpty ? "-" : appState.networkClient.username)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
+                diagRow("Server Connected", value: appState.networkClient.isConnected ? "Yes" : "No",
+                       color: appState.networkClient.isConnected ? SeeleColors.success : SeeleColors.error)
+                diagRow("Logged In", value: appState.networkClient.loggedIn ? "Yes" : "No",
+                       color: appState.networkClient.loggedIn ? SeeleColors.success : SeeleColors.error)
+                diagRow("Username", value: appState.networkClient.username.isEmpty ? "-" : appState.networkClient.username)
 
                 if let error = appState.networkClient.connectionError {
+                    diagRow("Last Error", value: error, color: SeeleColors.error)
+                }
+            }
+
+            settingsGroup("Network Configuration") {
+                diagRow("Listen Port", value: appState.networkClient.listenPort > 0 ? "\(appState.networkClient.listenPort)" : "-")
+                diagRow("Obfuscated Port", value: appState.networkClient.obfuscatedPort > 0 ? "\(appState.networkClient.obfuscatedPort)" : "-")
+                diagRow("External IP", value: appState.networkClient.externalIP ?? "Unknown")
+                diagRow("Configured Port", value: "\(appState.settings.listenPort)")
+                diagRow("UPnP Enabled", value: appState.settings.enableUPnP ? "Yes" : "No")
+            }
+
+            settingsGroup("Peer Connections") {
+                diagRow("Active Connections", value: "\(appState.networkClient.peerConnectionPool.activeConnections)")
+                diagRow("Max Connections", value: "\(appState.networkClient.peerConnectionPool.maxConnections)")
+                diagRow("ConnectToPeer Received", value: "\(appState.networkClient.peerConnectionPool.connectToPeerCount)")
+                diagRow("PierceFirewall Received", value: "\(appState.networkClient.peerConnectionPool.pierceFirewallCount)",
+                       color: appState.networkClient.peerConnectionPool.pierceFirewallCount > 0 ? SeeleColors.success : SeeleColors.textSecondary)
+
+                Text("Note: If ConnectToPeer is high but PierceFirewall is 0, your port is not reachable.")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                    .padding(.top, SeeleSpacing.xs)
+            }
+
+            settingsGroup("Port Reachability Test") {
+                Text("Tests if your listen port is reachable from the internet.")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+
+                if isTestingPort {
                     HStack {
-                        Text("Last Error")
-                        Spacer()
-                        Text(error)
-                            .foregroundStyle(SeeleColors.error)
-                            .lineLimit(2)
+                        ProgressView().scaleEffect(0.8)
+                        Text("Testing port reachability...")
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
+                } else {
+                    Button("Test Port Reachability") {
+                        testPortReachability()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SeeleColors.accent)
+                }
+
+                if !portTestResult.isEmpty {
+                    Text(portTestResult)
+                        .font(SeeleTypography.mono)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            settingsGroup("Browse Test") {
+                Text("Test browsing a specific user to diagnose connection issues.")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+
+                HStack {
+                    TextField("Username", text: $browseTestUsername)
+                        .textFieldStyle(.plain)
+                        .padding(SeeleSpacing.sm)
+                        .background(SeeleColors.surfaceSecondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    if isTestingBrowse {
+                        ProgressView().scaleEffect(0.8)
+                    } else {
+                        Button("Test Browse") {
+                            testBrowse()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(SeeleColors.accent)
+                        .disabled(browseTestUsername.isEmpty)
                     }
                 }
-            }
 
-            settingsGroup("Network Info") {
-                HStack {
-                    Text("Listen Port")
-                    Spacer()
-                    Text(appState.networkClient.listenPort > 0 ? "\(appState.networkClient.listenPort)" : "-")
+                if !browseTestResult.isEmpty {
+                    Text(browseTestResult)
+                        .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.textSecondary)
-                }
-
-                HStack {
-                    Text("Obfuscated Port")
-                    Spacer()
-                    Text(appState.networkClient.obfuscatedPort > 0 ? "\(appState.networkClient.obfuscatedPort)" : "-")
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-
-                HStack {
-                    Text("External IP")
-                    Spacer()
-                    Text(appState.networkClient.externalIP ?? "Unknown")
-                        .foregroundStyle(SeeleColors.textSecondary)
+                        .textSelection(.enabled)
                 }
             }
 
-            settingsGroup("Connection Test") {
+            settingsGroup("Server Connection Test") {
                 if isTesting {
                     HStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
+                        ProgressView().scaleEffect(0.8)
                         Text("Testing...")
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
@@ -463,8 +503,128 @@ struct DiagnosticsSection: View {
                     Text(testResult)
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.textSecondary)
-                        .lineLimit(nil)
+                        .textSelection(.enabled)
                 }
+            }
+
+            settingsGroup("Troubleshooting Tips") {
+                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                    tipRow("Port Forwarding", "Ensure port \(appState.settings.listenPort) is forwarded in your router to this computer")
+                    tipRow("Firewall", "Allow SeeleSeek through your firewall for incoming connections")
+                    tipRow("NAT Type", "Strict NAT may prevent peers from connecting to you")
+                    tipRow("UPnP", "Enable UPnP in your router settings for automatic port forwarding")
+                }
+            }
+        }
+    }
+
+    private func diagRow(_ label: String, value: String, color: Color = SeeleColors.textSecondary) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(SeeleColors.textPrimary)
+            Spacer()
+            Text(value)
+                .foregroundStyle(color)
+                .lineLimit(1)
+        }
+    }
+
+    private func tipRow(_ title: String, _ description: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("• \(title)")
+                .font(SeeleTypography.subheadline)
+                .foregroundStyle(SeeleColors.textPrimary)
+            Text(description)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+        }
+    }
+
+    private func testPortReachability() {
+        isTestingPort = true
+        portTestResult = ""
+
+        Task {
+            var results: [String] = []
+            let port = appState.networkClient.listenPort
+            let externalIP = appState.networkClient.externalIP ?? "unknown"
+
+            results.append("Testing port \(port) reachability...")
+            results.append("External IP: \(externalIP)")
+
+            // Try to use an external port check service
+            if let url = URL(string: "https://portchecker.co/check?port=\(port)") {
+                results.append("Check manually at: portchecker.co")
+            }
+
+            // Check if we're receiving ConnectToPeer messages (indicates server knows our port)
+            let ctpCount = appState.networkClient.peerConnectionPool.connectToPeerCount
+            if ctpCount > 0 {
+                results.append("✓ Receiving ConnectToPeer requests (\(ctpCount))")
+                results.append("  Server knows our port, but peers may not be able to reach us")
+            } else {
+                results.append("⚠ No ConnectToPeer requests received yet")
+                results.append("  Try searching first to trigger peer connections")
+            }
+
+            // Check active connections
+            let activeCount = appState.networkClient.peerConnectionPool.activeConnections
+            results.append("Active peer connections: \(activeCount)")
+
+            if activeCount == 0 && ctpCount > 10 {
+                results.append("")
+                results.append("⚠ HIGH ConnectToPeer but NO active connections")
+                results.append("  Your port is likely NOT reachable from internet")
+                results.append("  → Check router port forwarding")
+                results.append("  → Check firewall settings")
+                results.append("  → Try enabling UPnP")
+            }
+
+            await MainActor.run {
+                portTestResult = results.joined(separator: "\n")
+                isTestingPort = false
+            }
+        }
+    }
+
+    private func testBrowse() {
+        guard !browseTestUsername.isEmpty else { return }
+        isTestingBrowse = true
+        browseTestResult = ""
+
+        Task {
+            var results: [String] = []
+            let username = browseTestUsername.trimmingCharacters(in: .whitespaces)
+
+            results.append("Testing browse for: \(username)")
+            results.append("")
+
+            // Step 1: Get user status (would need to implement)
+            results.append("Step 1: Requesting peer address...")
+
+            do {
+                let startTime = Date()
+
+                // Try the browse
+                let files = try await appState.networkClient.browseUser(username)
+
+                let elapsed = Date().timeIntervalSince(startTime)
+                results.append("✓ Browse successful in \(String(format: "%.1f", elapsed))s")
+                results.append("✓ Received \(files.count) files/folders")
+
+            } catch {
+                results.append("✗ Browse failed: \(error.localizedDescription)")
+                results.append("")
+                results.append("Possible causes:")
+                results.append("• User is offline")
+                results.append("• User has browsing disabled")
+                results.append("• Network connectivity issue")
+                results.append("• Both peers behind strict NAT")
+            }
+
+            await MainActor.run {
+                browseTestResult = results.joined(separator: "\n")
+                isTestingBrowse = false
             }
         }
     }

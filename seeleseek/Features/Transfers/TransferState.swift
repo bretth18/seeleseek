@@ -2,6 +2,49 @@ import SwiftUI
 import Combine
 import os
 
+/// Represents a completed transfer in history
+struct TransferHistoryItem: Identifiable, Sendable {
+    let id: String
+    let timestamp: Date
+    let filename: String
+    let username: String
+    let size: Int64
+    let duration: TimeInterval
+    let averageSpeed: Double
+    let isDownload: Bool
+
+    var displayFilename: String {
+        if let lastComponent = filename.split(separator: "\\").last {
+            return String(lastComponent)
+        }
+        return filename
+    }
+
+    var formattedSize: String {
+        ByteFormatter.format(size)
+    }
+
+    var formattedSpeed: String {
+        ByteFormatter.formatSpeed(Int64(averageSpeed))
+    }
+
+    var formattedDuration: String {
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        }
+        return "\(seconds)s"
+    }
+
+    var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: timestamp)
+    }
+}
+
 @Observable
 @MainActor
 final class TransferState {
@@ -9,9 +52,14 @@ final class TransferState {
     var downloads: [Transfer] = []
     var uploads: [Transfer] = []
 
+    // MARK: - History
+    var history: [TransferHistoryItem] = []
+
     // MARK: - Stats
     var totalDownloadSpeed: Int64 = 0
     var totalUploadSpeed: Int64 = 0
+    var totalDownloaded: Int64 = 0
+    var totalUploaded: Int64 = 0
 
     // Speed update timer
     private var speedUpdateTimer: Timer?
@@ -64,8 +112,49 @@ final class TransferState {
             downloads = resumable.filter { $0.direction == .download }
             uploads = resumable.filter { $0.direction == .upload }
             logger.info("Loaded \(self.downloads.count) downloads and \(self.uploads.count) uploads from database")
+
+            // Also load history
+            await loadHistory()
         } catch {
             logger.error("Failed to load persisted transfers: \(error.localizedDescription)")
+        }
+    }
+
+    /// Load transfer history from database
+    func loadHistory() async {
+        do {
+            let records = try await TransferHistoryRepository.fetchRecent(limit: 200)
+            history = records.map { record in
+                TransferHistoryItem(
+                    id: record.id,
+                    timestamp: Date(timeIntervalSince1970: record.timestamp),
+                    filename: record.filename,
+                    username: record.username,
+                    size: record.size,
+                    duration: record.duration,
+                    averageSpeed: record.averageSpeed,
+                    isDownload: record.isDownload
+                )
+            }
+            logger.info("Loaded \(self.history.count) history entries from database")
+
+            // Update totals
+            let stats = try await TransferHistoryRepository.getStats()
+            totalDownloaded = stats.totalDownloadedBytes
+            totalUploaded = stats.totalUploadedBytes
+        } catch {
+            logger.error("Failed to load transfer history: \(error.localizedDescription)")
+        }
+    }
+
+    /// Clear all history
+    func clearHistory() {
+        history.removeAll()
+        totalDownloaded = 0
+        totalUploaded = 0
+
+        Task {
+            try? await TransferHistoryRepository.deleteOlderThan(Date.distantFuture)
         }
     }
 
@@ -85,6 +174,8 @@ final class TransferState {
         Task {
             do {
                 try await TransferRepository.recordCompletion(transfer)
+                // Reload history to include the new entry
+                await loadHistory()
             } catch {
                 logger.error("Failed to record transfer completion: \(error.localizedDescription)")
             }

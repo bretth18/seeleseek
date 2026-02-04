@@ -410,6 +410,25 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// ConnectToPeer (code 18) - Request server to tell peer to connect to us
+    /// This is sent BEFORE or alongside GetPeerAddress to initiate indirect connection
+    nonisolated static func connectToPeer(token: UInt32, username: String, connectionType: String = "P") -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.connectToPeer.rawValue)
+        payload.appendUInt32(token)
+        payload.appendString(username)
+        payload.appendString(connectionType)
+        return wrapMessage(payload)
+    }
+
+    /// GetUserStatus (code 7) - Check if a user is online
+    nonisolated static func getUserStatus(username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.getUserStatus.rawValue)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
     // MARK: - User Interests & Recommendations
 
     /// Add something I like (code 51)

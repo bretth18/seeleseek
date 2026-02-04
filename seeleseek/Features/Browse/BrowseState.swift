@@ -177,17 +177,21 @@ final class BrowseState {
         selectedFile = nil
 
         logger.info("Created new tab for \(trimmedUsername) at index \(newIndex)")
+        print("📂 BrowseState: Created new tab for \(trimmedUsername) at index \(newIndex)")
 
         // Check cache first, then fetch if not cached
         Task {
+            print("📂 BrowseState: Checking cache for \(trimmedUsername)...")
             if let cached = await checkCache(for: trimmedUsername) {
                 // Use cached data
+                print("📂 BrowseState: Found cache for \(trimmedUsername) with \(cached.folders.count) folders")
                 if newIndex < browses.count && browses[newIndex].username.lowercased() == trimmedUsername.lowercased() {
                     browses[newIndex] = cached
                     logger.info("Using cached browse for \(trimmedUsername)")
                 }
             } else {
                 // Fetch fresh data
+                print("📂 BrowseState: No cache for \(trimmedUsername), starting network request...")
                 startBrowseRequest(for: trimmedUsername, at: newIndex)
             }
         }

@@ -10,6 +10,7 @@ struct TransfersView: View {
     enum TransferTab: String, CaseIterable {
         case downloads = "Downloads"
         case uploads = "Uploads"
+        case history = "History"
     }
 
     var body: some View {
@@ -20,10 +21,13 @@ struct TransfersView: View {
             Divider().background(SeeleColors.surfaceSecondary)
 
             // Tab content
-            if selectedTab == .downloads {
+            switch selectedTab {
+            case .downloads:
                 downloadsView
-            } else {
+            case .uploads:
                 uploadsView
+            case .history:
+                historyView
             }
         }
         .background(SeeleColors.background)
@@ -99,7 +103,12 @@ struct TransfersView: View {
 
     private func tabButton(_ tab: TransferTab) -> some View {
         let isSelected = selectedTab == tab
-        let count = tab == .downloads ? transferState.downloads.count : transferState.uploads.count
+        let count: Int
+        switch tab {
+        case .downloads: count = transferState.downloads.count
+        case .uploads: count = transferState.uploads.count
+        case .history: count = transferState.history.count
+        }
 
         return Button {
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -156,6 +165,73 @@ struct TransfersView: View {
             )
         } else {
             transferList(transfers: transferState.uploads)
+        }
+    }
+
+    @ViewBuilder
+    private var historyView: some View {
+        if transferState.history.isEmpty {
+            emptyState(
+                icon: "clock.arrow.circlepath",
+                title: "No History",
+                subtitle: "Completed transfers will appear here"
+            )
+        } else {
+            VStack(spacing: 0) {
+                // Stats bar
+                HStack(spacing: SeeleSpacing.xl) {
+                    statItem(
+                        icon: "arrow.down",
+                        label: "Downloaded",
+                        value: ByteFormatter.format(transferState.totalDownloaded),
+                        color: SeeleColors.info
+                    )
+                    statItem(
+                        icon: "arrow.up",
+                        label: "Uploaded",
+                        value: ByteFormatter.format(transferState.totalUploaded),
+                        color: SeeleColors.success
+                    )
+                    Spacer()
+                    Button {
+                        transferState.clearHistory()
+                    } label: {
+                        Label("Clear History", systemImage: "trash")
+                            .font(SeeleTypography.subheadline)
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, SeeleSpacing.lg)
+                .padding(.vertical, SeeleSpacing.sm)
+                .background(SeeleColors.surface.opacity(0.5))
+
+                Divider().background(SeeleColors.surfaceSecondary)
+
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(transferState.history) { item in
+                            HistoryRow(item: item)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func statItem(icon: String, label: String, value: String, color: Color) -> some View {
+        HStack(spacing: SeeleSpacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(label)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                Text(value)
+                    .font(SeeleTypography.mono)
+                    .foregroundStyle(SeeleColors.textPrimary)
+            }
         }
     }
 
@@ -361,6 +437,71 @@ struct TransferRow: View {
                 }
             } catch {
                 print("Failed to play audio: \(error)")
+            }
+        }
+    }
+}
+
+struct HistoryRow: View {
+    let item: TransferHistoryItem
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: SeeleSpacing.md) {
+            // Direction icon
+            ZStack {
+                Circle()
+                    .fill((item.isDownload ? SeeleColors.info : SeeleColors.success).opacity(0.15))
+                    .frame(width: 32, height: 32)
+
+                Image(systemName: item.isDownload ? "arrow.down" : "arrow.up")
+                    .font(.system(size: 14))
+                    .foregroundStyle(item.isDownload ? SeeleColors.info : SeeleColors.success)
+            }
+
+            // File info
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                Text(item.displayFilename)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textPrimary)
+                    .lineLimit(1)
+
+                HStack(spacing: SeeleSpacing.md) {
+                    Label(item.username, systemImage: "person")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+
+                    Text(item.formattedDate)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+            }
+
+            Spacer()
+
+            // Stats
+            VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
+                Text(item.formattedSize)
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.textSecondary)
+
+                HStack(spacing: SeeleSpacing.sm) {
+                    Text(item.formattedSpeed)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+
+                    Text(item.formattedDuration)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+            }
+        }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.md)
+        .background(isHovered ? SeeleColors.surfaceSecondary : SeeleColors.surface)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
             }
         }
     }

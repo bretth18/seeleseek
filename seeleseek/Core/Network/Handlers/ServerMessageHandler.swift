@@ -380,6 +380,9 @@ final class ServerMessageHandler {
         connectToPeerCount += 1
         let ipAddress = ipString(from: ip)
 
+        // Update the pool's counter for diagnostics UI
+        client?.peerConnectionPool.incrementConnectToPeerCount()
+
         // Log sparingly to reduce noise
         if connectToPeerCount <= 5 || connectToPeerCount % 100 == 0 {
             print("📞 ConnectToPeer #\(connectToPeerCount): \(username) type=\(connectionType)")

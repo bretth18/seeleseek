@@ -29,6 +29,12 @@ actor DatabaseManager {
 
     /// Initialize the database and run migrations
     func initialize() async throws {
+        // Guard against multiple initializations
+        guard dbPool == nil else {
+            logger.debug("Database already initialized, skipping")
+            return
+        }
+
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dbDir = appSupport.appendingPathComponent("SeeleSeek")
         try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
