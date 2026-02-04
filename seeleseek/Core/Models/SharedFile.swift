@@ -91,6 +91,104 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
         return losslessExtensions.contains(fileExtension)
     }
+
+    // MARK: - Tree Building
+
+    /// Build a hierarchical tree from flat file paths
+    /// Input: Flat array of files with paths like "@@share\Folder\Subfolder\file.mp3"
+    /// Output: Tree structure with directories containing children
+    static func buildTree(from flatFiles: [SharedFile]) -> [SharedFile] {
+        // Use a dictionary to track folders by their full path
+        var folderMap: [String: (id: UUID, children: [SharedFile])] = [:]
+        var rootFolders: [String] = []
+
+        for file in flatFiles {
+            let pathComponents = file.filename.split(separator: "\\").map(String.init)
+            guard !pathComponents.isEmpty else { continue }
+
+            // Build folder hierarchy
+            var currentPath = ""
+            for (index, component) in pathComponents.dropLast().enumerated() {
+                let parentPath = currentPath
+                currentPath = currentPath.isEmpty ? component : "\(currentPath)\\\(component)"
+
+                if folderMap[currentPath] == nil {
+                    folderMap[currentPath] = (id: UUID(), children: [])
+
+                    // Track root folders
+                    if index == 0 && !rootFolders.contains(currentPath) {
+                        rootFolders.append(currentPath)
+                    }
+                }
+            }
+
+            // Add file to its parent folder
+            if pathComponents.count > 1 {
+                let parentPath = pathComponents.dropLast().joined(separator: "\\")
+                folderMap[parentPath]?.children.append(file)
+            } else {
+                // File at root level (unusual but handle it)
+                if !rootFolders.contains(file.filename) {
+                    rootFolders.append(file.filename)
+                    folderMap[file.filename] = (id: UUID(), children: [])
+                }
+            }
+        }
+
+        // Build the tree recursively
+        func buildFolder(path: String, name: String) -> SharedFile {
+            guard let folderData = folderMap[path] else {
+                return SharedFile(filename: path, isDirectory: true)
+            }
+
+            // Find child folders
+            var children: [SharedFile] = []
+
+            // Add subfolders
+            for (childPath, _) in folderMap {
+                // Check if childPath is a direct child of path
+                if childPath.hasPrefix(path + "\\") {
+                    let remaining = String(childPath.dropFirst(path.count + 1))
+                    if !remaining.contains("\\") {
+                        // Direct child folder
+                        let childName = remaining
+                        children.append(buildFolder(path: childPath, name: childName))
+                    }
+                }
+            }
+
+            // Add files (already in folderData.children)
+            children.append(contentsOf: folderData.children)
+
+            // Sort: folders first, then files, alphabetically
+            children.sort { a, b in
+                if a.isDirectory != b.isDirectory {
+                    return a.isDirectory
+                }
+                return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+            }
+
+            // Calculate total size of folder
+            let totalSize = children.reduce(0) { $0 + $1.size }
+
+            return SharedFile(
+                id: folderData.id,
+                filename: path,
+                size: totalSize,
+                isDirectory: true,
+                children: children
+            )
+        }
+
+        // Build root folders
+        var result: [SharedFile] = []
+        for rootPath in rootFolders.sorted() {
+            let name = rootPath.split(separator: "\\").last.map(String.init) ?? rootPath
+            result.append(buildFolder(path: rootPath, name: name))
+        }
+
+        return result
+    }
 }
 
 struct UserShares: Identifiable, Sendable {

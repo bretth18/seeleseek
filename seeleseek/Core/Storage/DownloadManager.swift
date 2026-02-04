@@ -170,6 +170,14 @@ final class DownloadManager {
 
     /// Queue a file for download
     func queueDownload(from result: SearchResult) {
+        // Skip macOS resource fork files (._xxx in __MACOSX folders)
+        // These are metadata files that usually don't exist as real files
+        if isMacOSResourceFork(result.filename) {
+            print("⚠️ Skipping macOS resource fork file: \(result.filename)")
+            logger.info("Skipping macOS resource fork file: \(result.filename)")
+            return
+        }
+
         print("")
         print("╔════════════════════════════════════════════════════════════╗")
         print("║  DOWNLOAD STARTED                                          ║")
@@ -1066,6 +1074,30 @@ final class DownloadManager {
             sanitized = "_" + sanitized.dropFirst()
         }
         return sanitized.isEmpty ? "unnamed" : sanitized
+    }
+
+    /// Check if a filename is a macOS resource fork file (._xxx in __MACOSX folders)
+    /// These are metadata files from zip extraction that usually don't exist as real files
+    private func isMacOSResourceFork(_ filename: String) -> Bool {
+        let lowercased = filename.lowercased()
+
+        // Check for __MACOSX folder in path
+        if lowercased.contains("__macosx") {
+            return true
+        }
+
+        // Check for ._ prefix on filename (resource fork)
+        let components = filename.split(separator: "\\")
+        if let lastComponent = components.last, lastComponent.hasPrefix("._") {
+            return true
+        }
+
+        // Check for .DS_Store
+        if lowercased.hasSuffix(".ds_store") || lowercased.hasSuffix("\\.ds_store") {
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Incoming Connection Handling

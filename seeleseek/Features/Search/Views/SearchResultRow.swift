@@ -211,8 +211,8 @@ struct SearchResultRow: View {
 
     private func browseFolder() {
         print("Browse folder: \(result.folderPath) from \(result.username)")
-        appState.browseState.browseUser(result.username)
-        // TODO: Filter to specific folder path after browse loads
+        // Pass the full filename path so we can expand to the file's location
+        appState.browseState.browseUser(result.username, targetPath: result.filename)
         appState.sidebarSelection = .browse
     }
 

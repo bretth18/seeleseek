@@ -30,6 +30,9 @@ final class BrowseState {
     var expandedFolders: Set<UUID> = []
     var selectedFile: SharedFile?
 
+    /// Target path to auto-expand after browse loads (e.g., "@@music\\Artist\\Album")
+    private var targetPath: String?
+
     // MARK: - History
     var browseHistory: [String] = []
 
@@ -140,10 +143,19 @@ final class BrowseState {
 
     /// Start browsing a user - creates a new tab and initiates the request
     func browseUser(_ username: String) {
+        browseUser(username, targetPath: nil)
+    }
+
+    /// Browse a user and auto-expand to a specific folder path
+    /// - Parameters:
+    ///   - username: The user to browse
+    ///   - targetPath: Optional path to auto-expand to (e.g., "@@music\\Artist\\Album\\song.mp3")
+    func browseUser(_ username: String, targetPath: String?) {
         let trimmedUsername = username.trimmingCharacters(in: .whitespaces)
         guard !trimmedUsername.isEmpty else { return }
 
         currentUser = trimmedUsername
+        self.targetPath = targetPath
 
         // Check if we already have a tab for this user
         if let existingIndex = browses.firstIndex(where: { $0.username.lowercased() == trimmedUsername.lowercased() }) {
@@ -154,6 +166,9 @@ final class BrowseState {
             if browses[existingIndex].error != nil {
                 browses[existingIndex] = UserShares(username: trimmedUsername)
                 startBrowseRequest(for: trimmedUsername, at: existingIndex)
+            } else if targetPath != nil {
+                // Already loaded, just expand to target path
+                expandToTargetPath(in: browses[existingIndex].folders)
             }
             return
         }
@@ -188,6 +203,11 @@ final class BrowseState {
                 if newIndex < browses.count && browses[newIndex].username.lowercased() == trimmedUsername.lowercased() {
                     browses[newIndex] = cached
                     logger.info("Using cached browse for \(trimmedUsername)")
+
+                    // Auto-expand to target path if set
+                    if targetPath != nil {
+                        expandToTargetPath(in: cached.folders)
+                    }
                 }
             } else {
                 // Fetch fresh data
@@ -221,21 +241,30 @@ final class BrowseState {
             self?.logger.info("Starting browse request for \(username)")
 
             do {
-                // This is the actual network call
-                let files = try await networkClient.browseUser(username)
+                // This is the actual network call - returns flat files
+                let flatFiles = try await networkClient.browseUser(username)
+
+                // Build hierarchical tree structure (do this off main thread for large file lists)
+                let treeFiles = SharedFile.buildTree(from: flatFiles)
 
                 // Update on main actor
                 await MainActor.run {
                     guard let self else { return }
                     // Find the browse by ID (index may have changed)
                     if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
-                        self.browses[idx].folders = files
+                        self.browses[idx].folders = treeFiles
                         self.browses[idx].isLoading = false
                         self.browses[idx].error = nil
-                        self.logger.info("Got \(files.count) files for \(username)")
+                        self.logger.info("Got \(flatFiles.count) files -> \(treeFiles.count) root folders for \(username)")
+                        print("📂 BrowseState: Built tree with \(treeFiles.count) root folders from \(flatFiles.count) flat files")
 
                         // Cache the results
                         self.cacheUserShares(self.browses[idx])
+
+                        // Auto-expand to target path if set
+                        if self.targetPath != nil {
+                            self.expandToTargetPath(in: treeFiles)
+                        }
                     }
                     self.activeBrowseTasks.removeValue(forKey: browseId)
                 }
@@ -351,5 +380,75 @@ final class BrowseState {
         currentUser = ""
         expandedFolders = []
         selectedFile = nil
+        targetPath = nil
+    }
+
+    // MARK: - Auto-Expand to Path
+
+    /// Expand all folders in the path to reveal a target file/folder
+    /// - Parameter folders: The root folders to search in
+    private func expandToTargetPath(in folders: [SharedFile]) {
+        guard let targetPath = targetPath else { return }
+
+        print("📂 BrowseState: Expanding to target path: \(targetPath)")
+
+        // Parse the target path into components (e.g., "@@music\\Artist\\Album\\song.mp3")
+        let pathComponents = targetPath.split(separator: "\\").map(String.init)
+        guard !pathComponents.isEmpty else { return }
+
+        // Find and expand folders along the path
+        var currentFiles = folders
+        var expandedCount = 0
+
+        for (index, component) in pathComponents.enumerated() {
+            // Find matching folder/file at this level
+            if let match = currentFiles.first(where: { $0.displayName.lowercased() == component.lowercased() }) {
+                if match.isDirectory {
+                    // Expand this folder
+                    expandedFolders.insert(match.id)
+                    expandedCount += 1
+                    print("📂 BrowseState: Expanded folder: \(match.displayName)")
+
+                    // Move to children for next iteration
+                    if let children = match.children {
+                        currentFiles = children
+                    } else {
+                        break
+                    }
+                } else {
+                    // Found the target file - select it
+                    selectedFile = match
+                    print("📂 BrowseState: Selected file: \(match.displayName)")
+                    break
+                }
+            } else {
+                // Try matching by full path component (for root shares like "@@music")
+                if let match = currentFiles.first(where: { file in
+                    let fileComponents = file.filename.split(separator: "\\").map(String.init)
+                    return fileComponents.last?.lowercased() == component.lowercased()
+                }) {
+                    if match.isDirectory {
+                        expandedFolders.insert(match.id)
+                        expandedCount += 1
+                        print("📂 BrowseState: Expanded folder (by filename): \(match.displayName)")
+
+                        if let children = match.children {
+                            currentFiles = children
+                        } else {
+                            break
+                        }
+                    } else if index == pathComponents.count - 1 {
+                        selectedFile = match
+                        print("📂 BrowseState: Selected file (by filename): \(match.displayName)")
+                    }
+                } else {
+                    print("📂 BrowseState: Could not find '\(component)' in current level")
+                    break
+                }
+            }
+        }
+
+        print("📂 BrowseState: Auto-expanded \(expandedCount) folders")
+        self.targetPath = nil // Clear after processing
     }
 }

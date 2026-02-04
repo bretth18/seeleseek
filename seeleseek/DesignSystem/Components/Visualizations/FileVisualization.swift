@@ -37,17 +37,24 @@ struct FileTreemap: View {
     }
 
     private func calculateTreemap(files: [SharedFile], in rect: CGRect) -> [CGRect] {
-        guard !files.isEmpty else { return [] }
+        guard !files.isEmpty, rect.width > 0, rect.height > 0 else { return [] }
 
         let sortedFiles = files.sorted { $0.size > $1.size }
-        let totalSize = sortedFiles.reduce(0) { $0 + $1.size }
+        let totalSize = max(sortedFiles.reduce(0) { $0 + $1.size }, 1)
 
         var rects: [CGRect] = []
         var remainingRect = rect
 
         for file in sortedFiles {
-            let ratio = CGFloat(file.size) / CGFloat(max(totalSize, 1))
-            let area = remainingRect.width * remainingRect.height * ratio
+            // Skip if remaining area is too small
+            guard remainingRect.width > 1, remainingRect.height > 1 else {
+                // Assign minimal rect for remaining files
+                rects.append(CGRect(x: remainingRect.minX, y: remainingRect.minY, width: 1, height: 1))
+                continue
+            }
+
+            let ratio = CGFloat(file.size) / CGFloat(totalSize)
+            let area = max(remainingRect.width * remainingRect.height * ratio, 1)
 
             // Decide split direction based on aspect ratio
             let isHorizontalSplit = remainingRect.width > remainingRect.height
@@ -55,7 +62,8 @@ struct FileTreemap: View {
             var fileRect: CGRect
 
             if isHorizontalSplit {
-                let width = min(area / remainingRect.height, remainingRect.width)
+                let divisor = max(remainingRect.height, 1)
+                let width = max(min(area / divisor, remainingRect.width), 1)
                 fileRect = CGRect(
                     x: remainingRect.minX,
                     y: remainingRect.minY,
@@ -65,11 +73,12 @@ struct FileTreemap: View {
                 remainingRect = CGRect(
                     x: remainingRect.minX + width,
                     y: remainingRect.minY,
-                    width: remainingRect.width - width,
+                    width: max(remainingRect.width - width, 0),
                     height: remainingRect.height
                 )
             } else {
-                let height = min(area / remainingRect.width, remainingRect.height)
+                let divisor = max(remainingRect.width, 1)
+                let height = max(min(area / divisor, remainingRect.height), 1)
                 fileRect = CGRect(
                     x: remainingRect.minX,
                     y: remainingRect.minY,
@@ -80,7 +89,7 @@ struct FileTreemap: View {
                     x: remainingRect.minX,
                     y: remainingRect.minY + height,
                     width: remainingRect.width,
-                    height: remainingRect.height - height
+                    height: max(remainingRect.height - height, 0)
                 )
             }
 
@@ -113,13 +122,24 @@ struct TreemapCell: View {
 
     @State private var isHovered = false
 
+    // Ensure valid dimensions (minimum 1, handle NaN/infinity)
+    private var safeWidth: CGFloat {
+        let w = rect.width
+        return w.isFinite && w > 0 ? max(w, 1) : 1
+    }
+
+    private var safeHeight: CGFloat {
+        let h = rect.height
+        return h.isFinite && h > 0 ? max(h, 1) : 1
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4)
                 .fill(color.opacity(isHovered ? 0.9 : 0.7))
-                .frame(width: rect.width - 2, height: rect.height - 2)
+                .frame(width: max(safeWidth - 2, 1), height: max(safeHeight - 2, 1))
 
-            if rect.width > 60 && rect.height > 40 {
+            if safeWidth > 60 && safeHeight > 40 {
                 VStack(spacing: 2) {
                     Text(file.displayFilename)
                         .font(SeeleTypography.caption2)
@@ -134,8 +154,8 @@ struct TreemapCell: View {
                 .padding(4)
             }
         }
-        .frame(width: rect.width, height: rect.height)
-        .offset(x: rect.minX, y: rect.minY)
+        .frame(width: safeWidth, height: safeHeight)
+        .offset(x: rect.minX.isFinite ? rect.minX : 0, y: rect.minY.isFinite ? rect.minY : 0)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
@@ -165,7 +185,7 @@ struct FileTypeDistribution: View {
     }
 
     private var totalSize: UInt64 {
-        files.reduce(0) { $0 + $1.size }
+        max(files.reduce(0) { $0 + $1.size }, 1)
     }
 
     var body: some View {
@@ -174,11 +194,12 @@ struct FileTypeDistribution: View {
             GeometryReader { geometry in
                 HStack(spacing: 1) {
                     ForEach(distribution, id: \.type) { item in
-                        let ratio = CGFloat(item.size) / CGFloat(max(totalSize, 1))
+                        let ratio = CGFloat(item.size) / CGFloat(totalSize)
+                        let width = geometry.size.width * ratio
 
                         Rectangle()
                             .fill(item.color)
-                            .frame(width: max(geometry.size.width * ratio - 1, 2))
+                            .frame(width: max(width.isFinite ? width - 1 : 2, 2))
                     }
                 }
             }
@@ -251,7 +272,7 @@ struct BitrateDistribution: View {
     }
 
     private var maxCount: Int {
-        buckets.map(\.count).max() ?? 1
+        max(buckets.map(\.count).max() ?? 1, 1)
     }
 
     var body: some View {
@@ -269,7 +290,7 @@ struct BitrateDistribution: View {
 
                         RoundedRectangle(cornerRadius: 3)
                             .fill(bucket.range == "320" ? SeeleColors.success : SeeleColors.accent.opacity(0.7))
-                            .frame(height: CGFloat(bucket.count) / CGFloat(maxCount) * 60)
+                            .frame(height: max(CGFloat(bucket.count) / CGFloat(maxCount) * 60, 2))
 
                         Text(bucket.range)
                             .font(SeeleTypography.caption2)
@@ -376,7 +397,7 @@ struct SizeComparisonBars: View {
     let items: [(label: String, size: UInt64)]
 
     private var maxSize: UInt64 {
-        items.map(\.size).max() ?? 1
+        max(items.map(\.size).max() ?? 1, 1)
     }
 
     var body: some View {

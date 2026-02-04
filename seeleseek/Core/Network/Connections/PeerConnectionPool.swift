@@ -2,6 +2,24 @@ import Foundation
 import Network
 import os
 
+/// Errors that can occur during peer connection
+enum PeerConnectionError: Error, LocalizedError {
+    case invalidAddress
+    case timeout
+    case connectionFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidAddress:
+            return "Invalid peer IP address (multicast or reserved)"
+        case .timeout:
+            return "Connection timed out"
+        case .connectionFailed(let reason):
+            return "Connection failed: \(reason)"
+        }
+    }
+}
+
 /// Manages multiple peer connections with statistics tracking
 @Observable
 @MainActor
@@ -116,6 +134,45 @@ final class PeerConnectionPool {
 
     // MARK: - Configuration
 
+    // MARK: - IP Validation
+
+    /// Check if an IP address is valid for peer connections
+    /// Rejects multicast, broadcast, loopback, and other reserved addresses
+    private func isValidPeerIP(_ ip: String) -> Bool {
+        // Parse IP address into octets
+        let octets = ip.split(separator: ".").compactMap { UInt8($0) }
+        guard octets.count == 4 else { return false }
+
+        let first = octets[0]
+
+        // Reject multicast (224.0.0.0 - 239.255.255.255)
+        if first >= 224 && first <= 239 {
+            return false
+        }
+
+        // Reject broadcast (255.255.255.255)
+        if octets.allSatisfy({ $0 == 255 }) {
+            return false
+        }
+
+        // Reject loopback (127.x.x.x)
+        if first == 127 {
+            return false
+        }
+
+        // Reject 0.0.0.0
+        if octets.allSatisfy({ $0 == 0 }) {
+            return false
+        }
+
+        // Reject reserved (240.0.0.0 - 255.255.255.254)
+        if first >= 240 {
+            return false
+        }
+
+        return true
+    }
+
     // MARK: - Connection Management
 
     /// Our username for PeerInit messages
@@ -132,6 +189,13 @@ final class PeerConnectionPool {
     ///   - token: Connection token
     ///   - isIndirect: If true, this is an indirect connection (responding to ConnectToPeer) - don't send PeerInit
     func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false) async throws -> PeerConnection {
+        // Validate IP address before attempting connection
+        guard isValidPeerIP(ip) else {
+            logger.error("Invalid peer IP address: \(ip) for \(username)")
+            print("❌ Invalid peer IP address: \(ip) (multicast/reserved) for \(username)")
+            throw PeerConnectionError.invalidAddress
+        }
+
         let peerInfo = PeerConnection.PeerInfo(username: username, ip: ip, port: port)
         // Pass listen port for NAT traversal - binding outgoing connections to our listen port
         // can help with NAT hole punching

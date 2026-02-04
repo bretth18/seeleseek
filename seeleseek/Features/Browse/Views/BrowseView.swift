@@ -256,7 +256,8 @@ struct BrowseView: View {
                             FileTreeRow(
                                 file: folder,
                                 depth: 0,
-                                browseState: browseState
+                                browseState: browseState,
+                                username: shares.username
                             )
                         }
                     }
@@ -349,9 +350,11 @@ struct BrowseTabButton: View {
 }
 
 struct FileTreeRow: View {
+    @Environment(\.appState) private var appState
     let file: SharedFile
     let depth: Int
     var browseState: BrowseState
+    let username: String
     @State private var isHovered = false
 
     private var isExpanded: Bool {
@@ -398,7 +401,7 @@ struct FileTreeRow: View {
 
                     // Download button
                     Button {
-                        // Download file
+                        downloadFile()
                     } label: {
                         Image(systemName: "arrow.down.circle")
                             .font(.system(size: 16))
@@ -406,6 +409,7 @@ struct FileTreeRow: View {
                     }
                     .buttonStyle(.plain)
                     .opacity(isHovered ? 1 : 0)
+                    .help("Download file")
                 }
             }
             .padding(.horizontal, SeeleSpacing.lg)
@@ -427,11 +431,31 @@ struct FileTreeRow: View {
                     FileTreeRow(
                         file: child,
                         depth: depth + 1,
-                        browseState: browseState
+                        browseState: browseState,
+                        username: username
                     )
                 }
             }
         }
+    }
+
+    private func downloadFile() {
+        print("📥 Browse download: \(file.filename) from \(username)")
+
+        // Create a SearchResult from the SharedFile to use with DownloadManager
+        let result = SearchResult(
+            username: username,
+            filename: file.filename,
+            size: file.size,
+            bitrate: file.bitrate,
+            duration: file.duration,
+            isVBR: false,
+            freeSlots: true,
+            uploadSpeed: 0,
+            queueLength: 0
+        )
+
+        appState.downloadManager.queueDownload(from: result)
     }
 }
 
