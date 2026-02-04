@@ -25,6 +25,7 @@ final class AppState {
             // Set up callbacks when client is first accessed
             searchState.setupCallbacks(client: _networkClient!)
             chatState.setupCallbacks(client: _networkClient!)
+            browseState.configure(networkClient: _networkClient!)
             downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
         }

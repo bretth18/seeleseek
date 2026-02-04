@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A6120FB12F33E8AC00995D21 /* GRDB */; };
 		A6TESTS012F32CDA700995D21 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A6TESTS002F32CDA700995D21 /* XCTest.framework */; };
 /* End PBXBuildFile section */
 
@@ -57,6 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +120,7 @@
 			);
 			name = seeleseek;
 			packageProductDependencies = (
+				A6120FB12F33E8AC00995D21 /* GRDB */,
 			);
 			productName = seeleseek;
 			productReference = A61208182F32A89C00995D21 /* seeleseek.app */;
@@ -172,6 +175,9 @@
 			);
 			mainGroup = A612080F2F32A89C00995D21;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A61208192F32A89C00995D21 /* Products */;
 			projectDirPath = "";
@@ -507,6 +513,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A6120FB12F33E8AC00995D21 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A61208102F32A89C00995D21 /* Project object */;
 }

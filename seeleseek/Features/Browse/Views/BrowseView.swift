@@ -11,27 +11,40 @@ struct BrowseView: View {
         @Bindable var browseBinding = appState.browseState
 
         VStack(spacing: 0) {
+            // Tab bar (if there are tabs)
+            if !browseState.browses.isEmpty {
+                browseTabBar
+            }
+
             browseBarView(currentUserBinding: $browseBinding.currentUser)
             Divider().background(SeeleColors.surfaceSecondary)
             contentArea
         }
         .background(SeeleColors.background)
-        .task(id: browseState.userShares?.id) {
-            // When userShares changes (set by browseUser from search), check if we need to fetch
-            guard let shares = browseState.userShares,
-                  shares.isLoading,
-                  shares.folders.isEmpty,
-                  shares.error == nil else { return }
+    }
 
-            // Fetch the actual shares
-            let username = browseState.currentUser
-            do {
-                let files = try await appState.networkClient.browseUser(username)
-                browseState.setShares(files)
-            } catch {
-                browseState.setError("Failed to browse \(username): \(error.localizedDescription)")
+    // MARK: - Tab Bar
+
+    private var browseTabBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(Array(browseState.browses.enumerated()), id: \.element.id) { index, browse in
+                    BrowseTabButton(
+                        browse: browse,
+                        isSelected: index == browseState.selectedBrowseIndex,
+                        onSelect: {
+                            browseState.selectBrowse(at: index)
+                        },
+                        onClose: {
+                            browseState.closeBrowse(at: index)
+                        }
+                    )
+                }
             }
+            .padding(.horizontal, SeeleSpacing.md)
+            .padding(.vertical, SeeleSpacing.sm)
         }
+        .background(SeeleColors.surface.opacity(0.3))
     }
 
     private func browseBarView(currentUserBinding: Binding<String>) -> some View {
@@ -88,7 +101,7 @@ struct BrowseView: View {
             loadingView
         } else if browseState.hasError {
             errorView
-        } else if let shares = browseState.userShares {
+        } else if let shares = browseState.currentBrowse {
             if shares.folders.isEmpty {
                 emptySharesView
             } else {
@@ -110,7 +123,7 @@ struct BrowseView: View {
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
-            Text("Connecting to \(browseState.currentUser)")
+            Text("Connecting to \(browseState.currentBrowse?.username ?? browseState.currentUser)")
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textSecondary)
         }
@@ -127,14 +140,16 @@ struct BrowseView: View {
                 .font(SeeleTypography.title2)
                 .foregroundStyle(SeeleColors.textPrimary)
 
-            if let error = browseState.userShares?.error {
+            if let error = browseState.currentBrowse?.error {
                 Text(error)
                     .font(SeeleTypography.subheadline)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
             }
 
             SecondaryButton("Try Again", icon: "arrow.clockwise") {
-                browseUser()
+                browseState.retryCurrentBrowse()
             }
             .frame(width: 150)
         }
@@ -151,7 +166,7 @@ struct BrowseView: View {
                 .font(SeeleTypography.title2)
                 .foregroundStyle(SeeleColors.textSecondary)
 
-            Text("\(browseState.currentUser) has no files shared")
+            Text("\(browseState.currentBrowse?.username ?? "User") has no files shared")
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textTertiary)
         }
@@ -260,19 +275,75 @@ struct BrowseView: View {
         guard browseState.canBrowse else { return }
         let username = browseState.currentUser
         print("📂 BrowseView: Starting browse for \(username)")
-        browseState.browseUser(username)
 
-        // Request shares from the peer via network client
-        Task {
-            do {
-                print("📂 BrowseView: Calling networkClient.browseUser(\(username))")
-                let files = try await appState.networkClient.browseUser(username)
-                print("📂 BrowseView: Got \(files.count) files, setting shares")
-                browseState.setShares(files)
-            } catch {
-                print("📂 BrowseView: ERROR - \(error)")
-                browseState.setError("Failed to browse \(username): \(error.localizedDescription)")
+        // Delegate to BrowseState - it manages the task lifecycle
+        browseState.browseUser(username)
+    }
+}
+
+// MARK: - Browse Tab Button
+
+struct BrowseTabButton: View {
+    let browse: UserShares
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onClose: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: SeeleSpacing.sm) {
+            // Status indicator
+            if browse.isLoading {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 12, height: 12)
+            } else if browse.error != nil {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(SeeleColors.error)
+            } else {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(SeeleColors.warning)
             }
+
+            Text(browse.username)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
+                .lineLimit(1)
+
+            // File count badge
+            if !browse.isLoading && browse.error == nil && !browse.folders.isEmpty {
+                Text("\(browse.totalFiles)")
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
+
+            // Close button
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovered ? 1 : 0.5)
+        }
+        .padding(.horizontal, SeeleSpacing.md)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(isSelected ? SeeleColors.surface : SeeleColors.surface.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                .stroke(isSelected ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
+        .onTapGesture {
+            onSelect()
+        }
+        .onHover { hovering in
+            isHovered = hovering
         }
     }
 }
