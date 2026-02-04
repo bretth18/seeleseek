@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct TransfersView: View {
     @Environment(\.appState) private var appState
@@ -198,6 +199,8 @@ struct TransferRow: View {
     let onRemove: () -> Void
 
     @State private var isHovered = false
+    @State private var isPlaying = false
+    @State private var audioPlayer: AVAudioPlayer?
 
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
@@ -212,6 +215,17 @@ struct TransferRow: View {
                     .lineLimit(1)
 
                 HStack(spacing: SeeleSpacing.md) {
+                    // Show folder path if available
+                    if let folderPath = transfer.folderPath {
+                        Text(folderPath)
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                            .lineLimit(1)
+
+                        Text("•")
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+
                     Label(transfer.username, systemImage: "person")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -230,7 +244,6 @@ struct TransferRow: View {
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.warning)
                     } else if transfer.status != .completed {
-                        // Show status text for non-completed, non-error states
                         Text(transfer.status.displayText)
                             .font(SeeleTypography.caption)
                             .foregroundStyle(transfer.statusColor)
@@ -260,6 +273,20 @@ struct TransferRow: View {
 
             // Action buttons
             HStack(spacing: SeeleSpacing.sm) {
+                // Audio preview for completed audio files
+                if transfer.status == .completed && transfer.isAudioFile && transfer.localPath != nil {
+                    IconButton(icon: isPlaying ? "pause.fill" : "play.fill") {
+                        toggleAudioPreview()
+                    }
+                }
+
+                // Reveal in Finder for completed downloads
+                if transfer.status == .completed && transfer.localPath != nil {
+                    IconButton(icon: "folder") {
+                        revealInFinder()
+                    }
+                }
+
                 if transfer.canCancel {
                     IconButton(icon: "xmark") {
                         onCancel()
@@ -286,6 +313,9 @@ struct TransferRow: View {
                 isHovered = hovering
             }
         }
+        .onDisappear {
+            audioPlayer?.stop()
+        }
     }
 
     private var statusIcon: some View {
@@ -303,6 +333,34 @@ struct TransferRow: View {
                 Image(systemName: transfer.status.icon)
                     .font(.system(size: 14))
                     .foregroundStyle(transfer.statusColor)
+            }
+        }
+    }
+
+    private func revealInFinder() {
+        guard let path = transfer.localPath else { return }
+        NSWorkspace.shared.selectFile(path.path, inFileViewerRootedAtPath: path.deletingLastPathComponent().path)
+    }
+
+    private func toggleAudioPreview() {
+        if isPlaying {
+            audioPlayer?.stop()
+            isPlaying = false
+        } else {
+            guard let path = transfer.localPath else { return }
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: path)
+                audioPlayer?.prepareToPlay()
+                audioPlayer?.play()
+                isPlaying = true
+
+                // Stop after 30 seconds preview
+                DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak audioPlayer] in
+                    audioPlayer?.stop()
+                    isPlaying = false
+                }
+            } catch {
+                print("Failed to play audio: \(error)")
             }
         }
     }

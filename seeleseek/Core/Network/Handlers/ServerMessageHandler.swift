@@ -344,63 +344,61 @@ final class ServerMessageHandler {
     private var connectToPeerCount = 0
     private var hasWarnedAboutListener = false
 
+    // Rate limiting for outbound connections to avoid triggering IDS/IPS
+    private var lastConnectionAttempt = Date.distantPast
+    private let connectionRateLimit: TimeInterval = 0.25  // Max 4 connections per second
+    private var connectionQueue: [(username: String, type: String, ip: String, port: UInt32, token: UInt32)] = []
+    private var isProcessingQueue = false
+
     private func handleConnectToPeer(_ data: Data) {
         var offset = 0
 
         guard let (username, usernameLen) = data.readString(at: offset) else {
-            print("❌ ConnectToPeer: Failed to read username")
             return
         }
         offset += usernameLen
 
         guard let (connectionType, typeLen) = data.readString(at: offset) else {
-            print("❌ ConnectToPeer: Failed to read connection type")
             return
         }
         offset += typeLen
 
         guard let ip = data.readUInt32(at: offset) else {
-            print("❌ ConnectToPeer: Failed to read IP")
             return
         }
         offset += 4
 
         guard let port = data.readUInt32(at: offset) else {
-            print("❌ ConnectToPeer: Failed to read port")
             return
         }
         offset += 4
 
         guard let token = data.readUInt32(at: offset) else {
-            print("❌ ConnectToPeer: Failed to read token")
             return
         }
 
         connectToPeerCount += 1
         let ipAddress = ipString(from: ip)
 
-        // Log every ConnectToPeer for diagnostics
-        if connectToPeerCount <= 10 || connectToPeerCount % 100 == 0 {
-            print("📞 ConnectToPeer #\(connectToPeerCount): \(username) type=\(connectionType) ip=\(ipAddress) port=\(port) token=\(token)")
+        // Log sparingly to reduce noise
+        if connectToPeerCount <= 5 || connectToPeerCount % 100 == 0 {
+            print("📞 ConnectToPeer #\(connectToPeerCount): \(username) type=\(connectionType)")
         }
 
         // If we're getting tons of ConnectToPeer, our listener isn't reachable
         if connectToPeerCount == 100 && !hasWarnedAboutListener {
             hasWarnedAboutListener = true
             print("⚠️ WARNING: Received 100+ ConnectToPeer requests - your listen port may not be reachable!")
-            print("⚠️ Check NAT/firewall settings. Search results primarily come via incoming connections.")
         }
 
         // Skip invalid addresses (peer behind NAT without reachable port)
         if port == 0 || ipAddress == "0.0.0.0" {
-            print("⏭️ Skipping \(username) - no reachable address (\(ipAddress):\(port))")
             return
         }
 
-        // Limit total attempts - ConnectToPeer is a fallback, not primary mechanism
-        // Most results should come via incoming connections to our listener
-        if pendingConnections.count >= 50 {
-            return // Silently drop - we have enough pending
+        // Limit queue size to reduce IDS triggers and memory usage
+        if connectionQueue.count >= 15 {
+            return // Silently drop - queue is full
         }
 
         let connectionKey = "\(username)-\(token)"
@@ -408,40 +406,71 @@ final class ServerMessageHandler {
             return
         }
 
-        pendingConnections.insert(connectionKey)
+        // Queue the connection with rate limiting instead of firing immediately
+        connectionQueue.append((username, connectionType, ipAddress, port, token))
+        processConnectionQueue()
+    }
 
-        // Fire off connection in parallel - don't wait
+    private func processConnectionQueue() {
+        guard !isProcessingQueue else { return }
+        isProcessingQueue = true
+
         Task {
-            defer { pendingConnections.remove(connectionKey) }
-
-            do {
-                guard let pool = client?.peerConnectionPool else {
-                    print("❌ ConnectToPeer: No connection pool available")
-                    return
+            while !connectionQueue.isEmpty {
+                // Rate limit: wait if we connected too recently
+                let timeSinceLastConnection = Date().timeIntervalSince(lastConnectionAttempt)
+                if timeSinceLastConnection < connectionRateLimit {
+                    let waitTime = connectionRateLimit - timeSinceLastConnection
+                    try? await Task.sleep(for: .milliseconds(Int(waitTime * 1000)))
                 }
 
-                print("🔄 Connecting to \(username) at \(ipAddress):\(port) token=\(token)...")
+                guard !connectionQueue.isEmpty else { break }
 
-                // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
-                // We'll send PierceFirewall instead (correct protocol for indirect connections)
-                let connection = try await withTimeout(seconds: 10) {
-                    try await pool.connect(
-                        to: username,
-                        ip: ipAddress,
-                        port: Int(port),
-                        token: token,
-                        isIndirect: true
-                    )
+                let next = connectionQueue.removeFirst()
+                lastConnectionAttempt = Date()
+
+                let connectionKey = "\(next.username)-\(next.token)"
+                if pendingConnections.contains(connectionKey) {
+                    continue
                 }
+                pendingConnections.insert(connectionKey)
 
-                print("✅ Connected to \(username), sending PierceFirewall (token=\(token))...")
-                try await connection.sendPierceFirewall()
-                print("🟢 Connected to \(username) for \(connectionType) - waiting for SearchReply")
+                await connectToPeerThrottled(
+                    username: next.username,
+                    connectionType: next.type,
+                    ip: next.ip,
+                    port: next.port,
+                    token: next.token
+                )
 
-            } catch {
-                print("❌ Failed to connect to \(username): \(error.localizedDescription)")
-                await client?.sendCantConnectToPeer(token: token, username: username)
+                pendingConnections.remove(connectionKey)
             }
+            isProcessingQueue = false
+        }
+    }
+
+    private func connectToPeerThrottled(username: String, connectionType: String, ip: String, port: UInt32, token: UInt32) async {
+        do {
+            guard let pool = client?.peerConnectionPool else {
+                return
+            }
+
+            // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
+            // We'll send PierceFirewall instead (correct protocol for indirect connections)
+            let connection = try await withTimeout(seconds: 10) {
+                try await pool.connect(
+                    to: username,
+                    ip: ip,
+                    port: Int(port),
+                    token: token,
+                    isIndirect: true
+                )
+            }
+
+            try await connection.sendPierceFirewall()
+
+        } catch {
+            await client?.sendCantConnectToPeer(token: token, username: username)
         }
     }
 

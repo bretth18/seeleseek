@@ -966,13 +966,25 @@ actor PeerConnection {
     }
 
     private func handleTransferRequest(_ data: Data) async {
-        guard let parsed = MessageParser.parseTransferRequest(data) else { return }
+        guard let parsed = MessageParser.parseTransferRequest(data) else {
+            logger.error("Failed to parse TransferRequest")
+            print("❌ Failed to parse TransferRequest, data: \(data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " "))")
+            return
+        }
+
+        let fileSize = parsed.fileSize ?? 0
+        if fileSize == 0 && parsed.direction == .upload {
+            logger.warning("TransferRequest has zero file size - this may cause issues")
+            print("⚠️ TransferRequest: direction=\(parsed.direction) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize) (WARNING: zero size!)")
+        } else {
+            print("📨 TransferRequest: direction=\(parsed.direction) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize)")
+        }
 
         let request = TransferRequest(
             direction: parsed.direction,
             token: parsed.token,
             filename: parsed.filename,
-            size: parsed.fileSize ?? 0,
+            size: fileSize,
             username: peerInfo.username
         )
 

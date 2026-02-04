@@ -345,7 +345,27 @@ final class NetworkClient {
     // MARK: - NAT Setup (Background)
 
     private func setupNATInBackground() async {
+        // Check if UPnP/NAT-PMP is enabled in settings
+        let enableNAT = UserDefaults.standard.object(forKey: "settings.enableUPnP") == nil
+            ? true  // Default to enabled
+            : UserDefaults.standard.bool(forKey: "settings.enableUPnP")
+
+        if !enableNAT {
+            print("🔧 NAT: Port mapping disabled in settings")
+            // Still try to discover external IP via STUN/web service (non-invasive)
+            if let extIP = await natService.discoverExternalIP() {
+                await MainActor.run {
+                    self.externalIP = extIP
+                }
+                print("✅ NAT: External IP: \(extIP)")
+            }
+            return
+        }
+
         print("🔧 NAT: Starting background port mapping...")
+
+        // Add delay to avoid triggering IDS with rapid network activity at startup
+        try? await Task.sleep(for: .seconds(2))
 
         // Try to map the listen port
         do {
@@ -354,6 +374,9 @@ final class NetworkClient {
         } catch {
             print("⚠️ NAT: Port mapping failed (will rely on server-mediated connections)")
         }
+
+        // Small delay between mapping attempts to avoid IDS triggers
+        try? await Task.sleep(for: .milliseconds(500))
 
         // Try to map obfuscated port
         if obfuscatedPort > 0 {
@@ -566,10 +589,13 @@ final class NetworkClient {
 
         let token = UInt32.random(in: 0...UInt32.max)
 
+        print("🔍 Browse: Getting peer address for \(username)...")
+
         // Get peer address using concurrent-safe method
         let (ip, port) = try await getPeerAddress(for: username)
 
         logger.info("Got peer address for \(username): \(ip):\(port)")
+        print("🔍 Browse: Got address \(ip):\(port), connecting...")
 
         // Connect to the peer
         let connection = try await peerConnectionPool.connect(
@@ -579,6 +605,8 @@ final class NetworkClient {
             token: token
         )
 
+        print("🔍 Browse: Connected to \(username), setting up callback...")
+
         // Wait for shares response - set up callback BEFORE requesting shares
         nonisolated(unsafe) var sharesResumed = false
 
@@ -586,15 +614,19 @@ final class NetworkClient {
             Task {
                 // Set up callback FIRST
                 await connection.setOnSharesReceived { files in
+                    print("🔍 Browse: Received \(files.count) files from \(username)")
                     guard !sharesResumed else { return }
                     sharesResumed = true
                     continuation.resume(returning: files)
                 }
 
                 // THEN request shares
+                print("🔍 Browse: Requesting shares from \(username)...")
                 do {
                     try await connection.requestShares()
+                    print("🔍 Browse: Shares request sent, waiting for response...")
                 } catch {
+                    print("🔍 Browse: Failed to request shares: \(error)")
                     guard !sharesResumed else { return }
                     sharesResumed = true
                     continuation.resume(throwing: error)
@@ -604,11 +636,13 @@ final class NetworkClient {
                 // Timeout after 30 seconds
                 try? await Task.sleep(for: .seconds(30))
                 guard !sharesResumed else { return }
+                print("🔍 Browse: Timeout waiting for shares from \(username)")
                 sharesResumed = true
                 continuation.resume(throwing: NetworkError.timeout)
             }
         }
 
+        print("🔍 Browse: Got \(files.count) files from \(username)")
         return files
     }
 

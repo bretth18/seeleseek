@@ -22,6 +22,7 @@ final class UploadManager {
 
     // Configuration
     var maxConcurrentUploads = 3
+    var maxQueuedPerUser = 50  // Max files queued per user (nicotine+ default)
     var uploadSpeedLimit: Int64? = nil  // bytes per second, nil = unlimited
 
     // MARK: - Types
@@ -235,6 +236,30 @@ final class UploadManager {
                 try await connection.sendUploadDenied(filename: filename, reason: "File not available")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        // Check per-user queue limit (like nicotine+)
+        let userQueueCount = uploadQueue.filter { $0.username == username }.count
+        if userQueueCount >= maxQueuedPerUser {
+            logger.warning("User \(username) has too many queued uploads (\(userQueueCount))")
+            do {
+                try await connection.sendUploadDenied(filename: filename, reason: "Too many files queued")
+            } catch {
+                logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        // Check for duplicate (same user + same file)
+        if uploadQueue.contains(where: { $0.username == username && $0.filename == filename }) {
+            logger.debug("File already queued for user: \(filename)")
+            let position = getQueuePosition(for: filename, username: username)
+            do {
+                try await connection.sendPlaceInQueue(filename: filename, place: position)
+            } catch {
+                logger.error("Failed to send PlaceInQueue: \(error.localizedDescription)")
             }
             return
         }
@@ -488,10 +513,35 @@ final class UploadManager {
         }
 
         guard connected else {
-            logger.error("Failed to connect to peer for file transfer")
+            logger.error("Failed direct F connection to peer \(pending.username)")
+            print("❌ Direct F connection failed, requesting indirect connection via server")
+
+            // Try indirect connection - send CantConnectToPeer to server
+            // The server will tell the peer to connect to us instead
+            do {
+                try await networkClient.sendCantConnectToPeer(token: token, username: pending.username)
+                logger.info("Sent CantConnectToPeer for \(pending.username), waiting for indirect connection")
+                print("📤 Sent CantConnectToPeer for \(pending.username)")
+
+                // The peer should now connect to us with PierceFirewall
+                // We need to register this pending upload for when they connect
+                // For now, just wait with a longer timeout
+                transferState?.updateTransfer(id: pending.transferId) { t in
+                    t.status = .connecting
+                    t.error = "Waiting for peer to connect (firewall)"
+                }
+
+                // The indirect connection will be handled by the existing
+                // PierceFirewall handler in NetworkClient/PeerConnectionPool
+                // We just need to make sure our pending transfer is tracked
+                return
+            } catch {
+                logger.error("Failed to send CantConnectToPeer: \(error.localizedDescription)")
+            }
+
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
-                t.error = "Failed to connect for file transfer"
+                t.error = "Cannot connect to peer (both firewalled)"
             }
             activeUploads.removeValue(forKey: pending.transferId)
             return

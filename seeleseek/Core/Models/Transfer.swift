@@ -3,7 +3,7 @@ import Foundation
 struct Transfer: Identifiable, Hashable, Sendable {
     let id: UUID
     let username: String
-    let filename: String
+    let filename: String  // Original path from peer (e.g., "@@music\Artist\Album\01 Song.mp3")
     let size: UInt64
     let direction: TransferDirection
     var status: TransferStatus
@@ -12,6 +12,7 @@ struct Transfer: Identifiable, Hashable, Sendable {
     var speed: Int64
     var queuePosition: Int?
     var error: String?
+    var localPath: URL?  // Local file path after download completes
 
     enum TransferDirection: String, Sendable {
         case download
@@ -67,7 +68,8 @@ struct Transfer: Identifiable, Hashable, Sendable {
         startTime: Date? = nil,
         speed: Int64 = 0,
         queuePosition: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        localPath: URL? = nil
     ) {
         self.id = id
         self.username = username
@@ -80,6 +82,7 @@ struct Transfer: Identifiable, Hashable, Sendable {
         self.speed = speed
         self.queuePosition = queuePosition
         self.error = error
+        self.localPath = localPath
     }
 
     var displayFilename: String {
@@ -87,6 +90,24 @@ struct Transfer: Identifiable, Hashable, Sendable {
             return String(lastComponent)
         }
         return filename
+    }
+
+    /// Extract artist/album path from filename (e.g., "Artist/Album" from "@@music\Artist\Album\Song.mp3")
+    var folderPath: String? {
+        let parts = filename.split(separator: "\\").map(String.init)
+        guard parts.count >= 2 else { return nil }
+        // Skip root share (@@music) and filename, return middle parts
+        let startIndex = parts[0].hasPrefix("@@") ? 1 : 0
+        let endIndex = parts.count - 1
+        guard startIndex < endIndex else { return nil }
+        return parts[startIndex..<endIndex].joined(separator: " / ")
+    }
+
+    /// Check if this is an audio file
+    var isAudioFile: Bool {
+        let audioExtensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg", "wma", "aiff", "alac"]
+        let ext = (displayFilename as NSString).pathExtension.lowercased()
+        return audioExtensions.contains(ext)
     }
 
     var progress: Double {

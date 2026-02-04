@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 @Observable
 @MainActor
@@ -10,6 +11,21 @@ final class TransferState {
     // MARK: - Stats
     var totalDownloadSpeed: Int64 = 0
     var totalUploadSpeed: Int64 = 0
+
+    // Speed update timer
+    private var speedUpdateTimer: Timer?
+
+    init() {
+        startSpeedUpdates()
+    }
+
+    private func startSpeedUpdates() {
+        speedUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateSpeeds()
+            }
+        }
+    }
 
     // MARK: - Computed Properties
     var activeDownloads: [Transfer] {

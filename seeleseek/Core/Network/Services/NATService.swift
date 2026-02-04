@@ -180,16 +180,19 @@ actor NATService {
     private func discoverUPnPGateway() async throws -> UPnPGateway {
         print("🔧 NAT: Discovering UPnP gateway via SSDP...")
 
-        // Try multiple service types - different routers use different ones
+        // Try the most common service types first - avoid rapid-fire probing that triggers IDS
+        // Most routers respond to InternetGatewayDevice:1
         let serviceTypes = [
             "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
-            "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
-            "urn:schemas-upnp-org:service:WANIPConnection:1",
-            "urn:schemas-upnp-org:service:WANPPPConnection:1",
-            "upnp:rootdevice"
+            "urn:schemas-upnp-org:service:WANIPConnection:1"
         ]
 
-        for serviceType in serviceTypes {
+        for (index, serviceType) in serviceTypes.enumerated() {
+            // Add delay between probes to avoid triggering IDS (except for first one)
+            if index > 0 {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+
             print("🔧 NAT: Trying service type: \(serviceType)")
             if let gateway = try? await discoverGatewayWithServiceType(serviceType) {
                 return gateway
@@ -619,8 +622,18 @@ actor NATService {
     }
 
     private func getDefaultGateway() -> String? {
-        // On macOS, read from system configuration
-        // This is a simplified version - real implementation would use SystemConfiguration framework
+        // Infer gateway from local IP address - most home routers use .1 on the subnet
+        // This avoids spawning processes which can trigger security software
+        if let localIP = getLocalIPAddress() {
+            let parts = localIP.split(separator: ".")
+            if parts.count == 4 {
+                let gateway = "\(parts[0]).\(parts[1]).\(parts[2]).1"
+                print("🔧 NAT: Inferred gateway from local IP: \(gateway)")
+                return gateway
+            }
+        }
+
+        print("🔧 NAT: Could not determine default gateway")
         return nil
     }
 }

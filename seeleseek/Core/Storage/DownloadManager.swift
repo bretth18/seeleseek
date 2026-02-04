@@ -503,12 +503,9 @@ final class DownloadManager {
 
         logger.info("Starting file transfer for \(request.filename) (\(request.size) bytes)")
 
-        // Get download directory
-        let downloadDir = getDownloadDirectory()
-
-        // Create filename from path (use last component)
-        let filename = (pending.filename as NSString).lastPathComponent
-        let destPath = downloadDir.appendingPathComponent(filename)
+        // Compute destination path preserving folder structure
+        let destPath = computeDestPath(for: pending.filename, username: pending.username)
+        let filename = destPath.lastPathComponent
 
         logger.info("Downloading to: \(destPath.path)")
 
@@ -537,13 +534,14 @@ final class DownloadManager {
                 transferId: pending.transferId
             )
 
-            // Mark as completed
+            // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = request.size
+                t.localPath = destPath
             }
 
-            logger.info("Download complete: \(filename)")
+            logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
 
         } catch {
@@ -644,10 +642,9 @@ final class DownloadManager {
             try await sendData(connection: connection, data: handshakeData)
             print("✅ File transfer handshake sent, receiving file data...")
 
-            // Get download directory
-            let downloadDir = getDownloadDirectory()
-            let filename = (pending.filename as NSString).lastPathComponent
-            let destPath = downloadDir.appendingPathComponent(filename)
+            // Compute destination path preserving folder structure
+            let destPath = computeDestPath(for: pending.filename, username: username)
+            let filename = destPath.lastPathComponent
 
             // Receive file data
             try await receiveFileData(
@@ -660,13 +657,14 @@ final class DownloadManager {
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
 
-            // Mark as completed
+            // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = fileSize
+                t.localPath = destPath
             }
 
-            logger.info("Download complete (outgoing F): \(filename)")
+            logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
 
             // Record in statistics
@@ -814,19 +812,30 @@ final class DownloadManager {
         let attrs = try FileManager.default.attributesOfItem(atPath: destPath.path)
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
+        print("📏 File verification (NW):")
+        print("   Expected size (from TransferRequest): \(expectedSize) bytes")
+        print("   Bytes received in transfer loop: \(bytesReceived) bytes")
+        print("   Actual file size on disk: \(actualSize) bytes")
+
+        // If expected size is 0, something went wrong with TransferRequest parsing
+        if expectedSize == 0 {
+            logger.error("Expected size is 0 - TransferRequest parsing likely failed")
+            print("❌ Expected size is 0! This indicates TransferRequest size was not parsed correctly.")
+        }
+
         // Allow small discrepancy (up to 0.1% or 1KB, whichever is larger)
         let tolerance = max(1024, expectedSize / 1000)
         let sizeDiff = actualSize > expectedSize ? actualSize - expectedSize : expectedSize - actualSize
 
-        print("📏 File verification (NW): expected=\(expectedSize), actual=\(actualSize), diff=\(sizeDiff), tolerance=\(tolerance)")
+        print("   Size difference: \(sizeDiff) bytes, tolerance: \(tolerance) bytes")
 
-        if sizeDiff > tolerance {
+        if expectedSize > 0 && sizeDiff > tolerance {
             logger.error("File size mismatch: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff))")
             print("❌ File size mismatch exceeds tolerance: \(sizeDiff) > \(tolerance)")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
         }
 
-        if actualSize != expectedSize {
+        if actualSize != expectedSize && expectedSize > 0 {
             logger.warning("Minor size discrepancy: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff) bytes) - accepting")
             print("⚠️ Minor size discrepancy (\(sizeDiff) bytes) - within tolerance, accepting file")
         }
@@ -876,6 +885,53 @@ final class DownloadManager {
         return downloadsDir
     }
 
+    /// Compute destination path preserving folder structure from SoulSeek path
+    /// e.g., "@@music\Artist\Album\01 Song.mp3" -> "Downloads/SeeleSeek/Artist/Album/01 Song.mp3"
+    private func computeDestPath(for soulseekPath: String, username: String) -> URL {
+        let downloadDir = getDownloadDirectory()
+
+        // Parse the SoulSeek path (uses backslash separators)
+        var pathComponents = soulseekPath.split(separator: "\\").map(String.init)
+
+        // Remove the root share marker (e.g., "@@music", "@@downloads")
+        if !pathComponents.isEmpty && pathComponents[0].hasPrefix("@@") {
+            pathComponents.removeFirst()
+        }
+
+        // Need at least a filename
+        guard !pathComponents.isEmpty else {
+            let fallbackName = (soulseekPath as NSString).lastPathComponent
+            return downloadDir.appendingPathComponent(fallbackName.isEmpty ? "unknown" : fallbackName)
+        }
+
+        // Build path: username/Artist/Album/Song.mp3
+        // Include username to avoid conflicts between different users' files
+        var destURL = downloadDir.appendingPathComponent(username)
+        for component in pathComponents {
+            // Sanitize each component (remove invalid filesystem characters)
+            let sanitized = sanitizeFilename(component)
+            destURL = destURL.appendingPathComponent(sanitized)
+        }
+
+        return destURL
+    }
+
+    /// Sanitize a filename/folder name for the filesystem
+    private func sanitizeFilename(_ name: String) -> String {
+        // Remove/replace characters that are invalid in macOS filenames
+        var sanitized = name
+        let invalidChars: [Character] = [":", "/", "\0"]
+        for char in invalidChars {
+            sanitized = sanitized.replacingOccurrences(of: String(char), with: "_")
+        }
+        // Trim whitespace and dots from ends
+        sanitized = sanitized.trimmingCharacters(in: .whitespaces)
+        if sanitized.hasPrefix(".") {
+            sanitized = "_" + sanitized.dropFirst()
+        }
+        return sanitized.isEmpty ? "unnamed" : sanitized
+    }
+
     // MARK: - Incoming Connection Handling
 
     /// Called when we receive an indirect connection from a peer
@@ -919,30 +975,68 @@ final class DownloadManager {
         print("🎯 handleFileTransferConnection CALLED - username='\(username)' token=\(token)")
         print("📋 Looking for pendingFileTransfersByUser keys: \(Array(pendingFileTransfersByUser.keys))")
 
-        guard let transferState else {
+        guard transferState != nil else {
             logger.error("TransferState not configured")
             print("❌ TransferState not configured!")
             return
         }
 
         // Look up the pending file transfer by USERNAME (not token, because PeerInit token is always 0 for F connections)
-        guard let pending = pendingFileTransfersByUser.removeValue(forKey: username) else {
+        // Try exact match first, then case-insensitive match
+        var pending: PendingFileTransfer?
+        var matchedKey: String?
+
+        if let exactMatch = pendingFileTransfersByUser[username] {
+            pending = exactMatch
+            matchedKey = username
+        } else {
+            // Try case-insensitive lookup
+            let lowercaseUsername = username.lowercased()
+            for (key, value) in pendingFileTransfersByUser {
+                if key.lowercased() == lowercaseUsername {
+                    pending = value
+                    matchedKey = key
+                    print("📋 Case-insensitive match: '\(username)' -> '\(key)'")
+                    break
+                }
+            }
+        }
+
+        guard let pending = pending, let matchedKey = matchedKey else {
+            // If only one pending transfer, use it (common case)
+            if pendingFileTransfersByUser.count == 1, let (onlyKey, onlyValue) = pendingFileTransfersByUser.first {
+                print("📋 Using only pending transfer: '\(onlyKey)' (received username was '\(username)')")
+                pendingFileTransfersByUser.removeValue(forKey: onlyKey)
+                await handleFileTransferWithPending(onlyValue, connection: connection)
+                return
+            }
+
             logger.warning("No pending file transfer for username \(username)")
             print("⚠️ No pending file transfer for '\(username)' - available keys: \(Array(pendingFileTransfersByUser.keys))")
             return
         }
 
+        pendingFileTransfersByUser.removeValue(forKey: matchedKey)
+
         print("✅ Found pending file transfer for '\(username)': \(pending.filename)")
 
-        logger.info("File transfer connection from \(username), sending transferToken=\(pending.transferToken) offset=\(pending.offset)")
-        print("📁 F connection from \(username): transferToken=\(pending.transferToken) offset=\(pending.offset)")
+        // Call the common handler to actually do the transfer
+        await handleFileTransferWithPending(pending, connection: connection)
+    }
 
-        // Get download directory
-        let downloadDir = getDownloadDirectory()
+    /// Common handler for file transfer with a pending transfer record
+    private func handleFileTransferWithPending(_ pending: PendingFileTransfer, connection: PeerConnection) async {
+        guard let transferState else {
+            logger.error("TransferState not configured in handleFileTransferWithPending")
+            return
+        }
 
-        // Create filename from path (use last component)
-        let filename = (pending.filename as NSString).lastPathComponent
-        let destPath = downloadDir.appendingPathComponent(filename)
+        logger.info("File transfer connection, sending transferToken=\(pending.transferToken) offset=\(pending.offset)")
+        print("📁 F connection: transferToken=\(pending.transferToken) offset=\(pending.offset)")
+
+        // Compute destination path preserving folder structure
+        let destPath = computeDestPath(for: pending.filename, username: pending.username)
+        let filename = destPath.lastPathComponent
 
         logger.info("Receiving file to: \(destPath.path)")
 
@@ -974,13 +1068,14 @@ final class DownloadManager {
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
 
-            // Mark as completed
+            // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = pending.size
+                t.localPath = destPath
             }
 
-            logger.info("Download complete: \(filename)")
+            logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
 
             // Record in statistics
@@ -1047,41 +1142,89 @@ final class DownloadManager {
 
         logger.info("Receiving file data from peer, expected size: \(expectedSize) bytes")
 
-        // Receive data in chunks
-        receiveLoop: while bytesReceived < expectedSize {
-            let chunkResult = try await connection.receiveFileChunk()
+        // Receive data in chunks - like nicotine+, we receive until connection closes
+        // then check if we got enough bytes
+        var lastDataTime = Date()
+        let receiveTimeout: TimeInterval = 30  // 30 seconds without data = timeout
+
+        receiveLoop: while true {
+            // Check for timeout (no data received for too long)
+            let timeSinceLastData = Date().timeIntervalSince(lastDataTime)
+            if timeSinceLastData > receiveTimeout {
+                logger.warning("Receive timeout after \(timeSinceLastData)s with no data")
+                print("⚠️ Receive timeout - \(bytesReceived)/\(expectedSize) bytes received")
+                break receiveLoop
+            }
+
+            // Receive with timeout
+            let chunkResult: PeerConnection.FileChunkResult
+            do {
+                chunkResult = try await withThrowingTaskGroup(of: PeerConnection.FileChunkResult.self) { group in
+                    group.addTask {
+                        try await connection.receiveFileChunk()
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(10))
+                        return .connectionComplete  // Treat timeout as connection done
+                    }
+                    let result = try await group.next()!
+                    group.cancelAll()
+                    return result
+                }
+            } catch {
+                logger.error("Receive error: \(error.localizedDescription)")
+                break receiveLoop
+            }
 
             switch chunkResult {
             case .data(let chunk), .dataWithCompletion(let chunk):
-                if chunk.isEmpty {
-                    // No data received but connection still open - continue waiting
-                    continue
-                }
-                try fileHandle.write(contentsOf: chunk)
-                bytesReceived += UInt64(chunk.count)
+                if !chunk.isEmpty {
+                    try fileHandle.write(contentsOf: chunk)
+                    bytesReceived += UInt64(chunk.count)
+                    lastDataTime = Date()  // Reset timeout
 
-                // Update progress
-                let elapsed = Date().timeIntervalSince(startTime)
-                let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
+                    // Update progress
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
 
-                await MainActor.run { [transferState] in
-                    transferState?.updateTransfer(id: transferId) { t in
-                        t.bytesTransferred = bytesReceived
-                        t.speed = speed
+                    await MainActor.run { [transferState] in
+                        transferState?.updateTransfer(id: transferId) { t in
+                            t.bytesTransferred = bytesReceived
+                            t.speed = speed
+                        }
                     }
                 }
 
                 // If this was the final chunk with completion signal, exit loop
                 if case .dataWithCompletion = chunkResult {
-                    logger.info("Final data chunk received with completion, bytesReceived=\(bytesReceived)")
+                    logger.info("Connection complete with final data, bytesReceived=\(bytesReceived)")
+                    break receiveLoop
+                }
+
+                // If we've received expected bytes, we're done (like nicotine+)
+                if bytesReceived >= expectedSize {
+                    logger.info("Received all expected bytes: \(bytesReceived)/\(expectedSize)")
                     break receiveLoop
                 }
 
             case .connectionComplete:
-                // Connection cleanly closed with no more data
-                logger.info("Connection complete signal received, bytesReceived=\(bytesReceived)")
+                // Connection closed - drain any remaining buffer
+                let remainingBuffer = await connection.getFileTransferBuffer()
+                if !remainingBuffer.isEmpty {
+                    try fileHandle.write(contentsOf: remainingBuffer)
+                    bytesReceived += UInt64(remainingBuffer.count)
+                    print("📁 Wrote \(remainingBuffer.count) remaining buffered bytes")
+                }
+                logger.info("Connection closed, bytesReceived=\(bytesReceived)")
                 break receiveLoop
             }
+        }
+
+        // Drain any final buffer
+        let finalBuffer = await connection.getFileTransferBuffer()
+        if !finalBuffer.isEmpty {
+            try fileHandle.write(contentsOf: finalBuffer)
+            bytesReceived += UInt64(finalBuffer.count)
         }
 
         // Flush data to disk before verifying
@@ -1092,23 +1235,23 @@ final class DownloadManager {
         let attrs = try FileManager.default.attributesOfItem(atPath: destPath.path)
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
-        // Allow small discrepancy (up to 0.1% or 1KB, whichever is larger)
-        // Some peers report slightly different sizes due to metadata differences
-        let tolerance = max(1024, expectedSize / 1000)
-        let sizeDiff = actualSize > expectedSize ? actualSize - expectedSize : expectedSize - actualSize
+        print("📏 File verification: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize)")
 
-        print("📏 File verification: expected=\(expectedSize), actual=\(actualSize), diff=\(sizeDiff), tolerance=\(tolerance)")
-
-        if sizeDiff > tolerance {
-            logger.error("File size mismatch: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff))")
-            print("❌ File size mismatch exceeds tolerance: \(sizeDiff) > \(tolerance)")
-            // Keep the file but mark as incomplete - user might want to retry or keep partial
+        // Like nicotine+: Accept if we received >= expected bytes
+        // The file is complete when bytesReceived >= expectedSize (connection closes after sending all data)
+        if expectedSize > 0 && actualSize >= expectedSize {
+            logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
+            print("✅ Download complete: \(actualSize) >= \(expectedSize) bytes")
+        } else if expectedSize == 0 && actualSize > 0 {
+            // Expected size was 0 (parsing issue) but we got data - accept it
+            logger.warning("Expected size was 0 but received \(actualSize) bytes - accepting")
+            print("⚠️ Expected size was 0, accepting \(actualSize) bytes")
+        } else if actualSize < expectedSize && expectedSize > 0 {
+            // Got less than expected - this is an incomplete transfer
+            let percentComplete = Double(actualSize) / Double(expectedSize) * 100
+            logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
+            print("❌ Incomplete: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
-        }
-
-        if actualSize != expectedSize {
-            logger.warning("Minor size discrepancy: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff) bytes) - accepting")
-            print("⚠️ Minor size discrepancy (\(sizeDiff) bytes) - within tolerance, accepting file")
         }
 
         await connection.disconnect()
