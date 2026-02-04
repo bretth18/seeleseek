@@ -81,6 +81,7 @@ actor PeerConnection {
     private var _onFolderContentsRequest: ((UInt32, String) async -> Void)?  // (token, folder)
     private var _onFolderContentsResponse: ((UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
     private var _onPlaceInQueueRequest: ((String, String) async -> Void)?  // (username, filename) - peer asks for queue position
+    private var _onSharesRequest: ((PeerConnection) async -> Void)?  // Peer wants to browse our shares
 
     // Callback setters for external access
     func setOnStateChanged(_ handler: @escaping (State) async -> Void) {
@@ -154,6 +155,10 @@ actor PeerConnection {
 
     func setOnPlaceInQueueRequest(_ handler: @escaping (String, String) async -> Void) {
         _onPlaceInQueueRequest = handler
+    }
+
+    func setOnSharesRequest(_ handler: @escaping (PeerConnection) async -> Void) {
+        _onSharesRequest = handler
     }
 
     /// Get the discovered peer username (from PeerInit message)
@@ -390,6 +395,14 @@ actor PeerConnection {
         try await send(message)
         print("📂 [\(peerInfo.username)] GetShareFileList sent successfully")
         logger.info("Requested shares from \(self.peerInfo.username)")
+    }
+
+    /// Send our shared files to a peer (response to SharesRequest)
+    func sendShares(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) async throws {
+        let message = MessageBuilder.sharesReplyMessage(files: files)
+        print("📂 [\(peerInfo.username)] Sending SharesReply with \(files.count) directories")
+        try await send(message)
+        logger.info("Sent shares to \(self.peerInfo.username): \(files.count) directories")
     }
 
     func requestUserInfo() async throws {
@@ -1009,6 +1022,10 @@ actor PeerConnection {
 
         // Handle based on message code
         switch code {
+        case UInt32(PeerMessageCode.sharesRequest.rawValue):
+            print("📂 [\(peerInfo.username)] Received SharesRequest - peer wants to browse us")
+            await handleSharesRequest()
+
         case UInt32(PeerMessageCode.sharesReply.rawValue):
             print("📂 [\(peerInfo.username)] Routing to handleSharesReply...")
             await handleSharesReply(payload)
@@ -1049,6 +1066,19 @@ actor PeerConnection {
         default:
             logger.debug("Unhandled peer message code: \(code)")
             await _onMessage?(code, payload)
+        }
+    }
+
+    /// Handle SharesRequest (code 4) - peer wants to browse our shared files
+    private func handleSharesRequest() async {
+        logger.info("Peer \(self.peerUsername) requested our shares")
+        print("📂 [\(self.peerUsername)] Peer wants to browse our shares, invoking callback...")
+
+        // Delegate to callback which will send the shares
+        if let callback = _onSharesRequest {
+            await callback(self)
+        } else {
+            print("⚠️ [\(self.peerUsername)] No onSharesRequest callback set!")
         }
     }
 

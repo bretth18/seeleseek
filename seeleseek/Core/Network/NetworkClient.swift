@@ -138,6 +138,12 @@ final class NetworkClient {
             await self?.onPlaceInQueueRequest?(username, filename, connection)
         }
 
+        // Wire up SharesRequest for when peers want to browse our shared files
+        peerConnectionPool.onSharesRequest = { [weak self] username, connection in
+            print("📂 NetworkClient: SharesRequest from \(username) - sending our shares")
+            await self?.handleSharesRequest(username: username, connection: connection)
+        }
+
         // Wire up user IP discovery for country flags
         peerConnectionPool.onUserIPDiscovered = { [weak self] username, ip in
             self?.userInfoCache.registerIP(ip, for: username)
@@ -1053,6 +1059,48 @@ final class NetworkClient {
             logger.info("Sent folder contents: \(folder) (\(files.count) files)")
         } catch {
             logger.error("Failed to send folder contents: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Shares Request Handling
+
+    /// Handle incoming shares request - respond with our shared file list
+    private func handleSharesRequest(username: String, connection: PeerConnection) async {
+        logger.info("Shares request from \(username)")
+        print("📂 Handling SharesRequest from \(username)")
+
+        // Group files by directory
+        var directoriesMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
+
+        for file in shareManager.fileIndex {
+            // Get the directory path
+            let components = file.sharedPath.split(separator: "\\")
+            guard components.count > 1 else { continue }
+
+            let directory = components.dropLast().joined(separator: "\\")
+            let filename = String(components.last!)
+
+            directoriesMap[directory, default: []].append((
+                filename: filename,
+                size: file.size,
+                bitrate: file.bitrate,
+                duration: file.duration
+            ))
+        }
+
+        // Convert to array format
+        let directories: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] =
+            directoriesMap.map { (directory: $0.key, files: $0.value) }
+                .sorted { $0.directory < $1.directory }
+
+        print("📂 Sending \(directories.count) directories with \(shareManager.totalFiles) total files to \(username)")
+
+        do {
+            try await connection.sendShares(files: directories)
+            logger.info("Sent shares to \(username): \(directories.count) directories")
+        } catch {
+            logger.error("Failed to send shares to \(username): \(error.localizedDescription)")
+            print("❌ Failed to send shares: \(error)")
         }
     }
 

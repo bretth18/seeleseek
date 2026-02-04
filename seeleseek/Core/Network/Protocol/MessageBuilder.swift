@@ -162,6 +162,64 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// Build shares reply message (code 5) - zlib compressed
+    /// Format: directory count, then for each directory: name, file count, files
+    nonisolated static func sharesReplyMessage(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) -> Data {
+        var uncompressedPayload = Data()
+
+        // Directory count
+        uncompressedPayload.appendUInt32(UInt32(files.count))
+
+        for dir in files {
+            // Directory name
+            uncompressedPayload.appendString(dir.directory)
+            // File count
+            uncompressedPayload.appendUInt32(UInt32(dir.files.count))
+
+            for file in dir.files {
+                // Code byte
+                uncompressedPayload.appendUInt8(1)
+                // Filename (just the name, not full path)
+                uncompressedPayload.appendString(file.filename)
+                // Size
+                uncompressedPayload.appendUInt64(file.size)
+                // Extension
+                let ext = URL(fileURLWithPath: file.filename).pathExtension
+                uncompressedPayload.appendString(ext)
+
+                // Attributes
+                var attrs: [(UInt32, UInt32)] = []
+                if let bitrate = file.bitrate {
+                    attrs.append((0, bitrate))
+                }
+                if let duration = file.duration {
+                    attrs.append((1, duration))
+                }
+                uncompressedPayload.appendUInt32(UInt32(attrs.count))
+                for attr in attrs {
+                    uncompressedPayload.appendUInt32(attr.0)
+                    uncompressedPayload.appendUInt32(attr.1)
+                }
+            }
+        }
+
+        // Compress with zlib
+        guard let compressed = compressZlib(uncompressedPayload) else {
+            // Fallback: send uncompressed (not ideal but better than nothing)
+            var payload = Data()
+            payload.appendUInt32(UInt32(PeerMessageCode.sharesReply.rawValue))
+            payload.append(uncompressedPayload)
+            return wrapMessage(payload)
+        }
+
+        // Build final message
+        var payload = Data()
+        payload.appendUInt32(UInt32(PeerMessageCode.sharesReply.rawValue))
+        payload.append(compressed)
+
+        return wrapMessage(payload)
+    }
+
     nonisolated static func userInfoRequestMessage() -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.userInfoRequest.rawValue))
