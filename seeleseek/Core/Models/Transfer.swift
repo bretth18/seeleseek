@@ -13,6 +13,7 @@ struct Transfer: Identifiable, Hashable, Sendable {
     var queuePosition: Int?
     var error: String?
     var localPath: URL?  // Local file path after download completes
+    var retryCount: Int  // Number of retry attempts (nicotine+ style)
 
     enum TransferDirection: String, Sendable {
         case download
@@ -69,7 +70,8 @@ struct Transfer: Identifiable, Hashable, Sendable {
         speed: Int64 = 0,
         queuePosition: Int? = nil,
         error: String? = nil,
-        localPath: URL? = nil
+        localPath: URL? = nil,
+        retryCount: Int = 0
     ) {
         self.id = id
         self.username = username
@@ -83,6 +85,7 @@ struct Transfer: Identifiable, Hashable, Sendable {
         self.queuePosition = queuePosition
         self.error = error
         self.localPath = localPath
+        self.retryCount = retryCount
     }
 
     var displayFilename: String {

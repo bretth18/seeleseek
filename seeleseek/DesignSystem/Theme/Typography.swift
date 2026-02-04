@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SeeleTypography {
     // MARK: - Headings
+    static let logo = Font.system(size: 36, weight: .black, design: .default)
     static let largeTitle = Font.system(size: 34, weight: .bold, design: .default)
     static let title = Font.system(size: 28, weight: .bold, design: .default)
     static let title2 = Font.system(size: 22, weight: .semibold, design: .default)
@@ -24,6 +25,10 @@ enum SeeleTypography {
 }
 
 extension View {
+    func seeleLogo() -> some View {
+        font(SeeleTypography.logo)
+            .foregroundStyle(SeeleColors.textPrimary)
+    }
     func seeleTitle() -> some View {
         font(SeeleTypography.title)
             .foregroundStyle(SeeleColors.textPrimary)

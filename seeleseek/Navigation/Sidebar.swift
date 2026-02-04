@@ -44,7 +44,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
             
             Text("seeleseek")
-                .font(SeeleTypography.headline)
+                .font(SeeleTypography.logo)
                 .foregroundStyle(SeeleColors.textPrimary)
             
             HStack {

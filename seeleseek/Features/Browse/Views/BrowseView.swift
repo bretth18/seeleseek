@@ -259,14 +259,18 @@ struct BrowseView: View {
     private func browseUser() {
         guard browseState.canBrowse else { return }
         let username = browseState.currentUser
+        print("📂 BrowseView: Starting browse for \(username)")
         browseState.browseUser(username)
 
         // Request shares from the peer via network client
         Task {
             do {
+                print("📂 BrowseView: Calling networkClient.browseUser(\(username))")
                 let files = try await appState.networkClient.browseUser(username)
+                print("📂 BrowseView: Got \(files.count) files, setting shares")
                 browseState.setShares(files)
             } catch {
+                print("📂 BrowseView: ERROR - \(error)")
                 browseState.setError("Failed to browse \(username): \(error.localizedDescription)")
             }
         }

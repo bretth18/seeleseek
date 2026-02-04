@@ -585,17 +585,21 @@ final class NetworkClient {
 
     /// Browse a user's shared files
     func browseUser(_ username: String) async throws -> [SharedFile] {
-        guard isConnected else { throw NetworkError.notConnected }
+        print("📂 Browse: START browseUser(\(username))")
+        guard isConnected else {
+            print("📂 Browse: ERROR - not connected")
+            throw NetworkError.notConnected
+        }
 
         let token = UInt32.random(in: 0...UInt32.max)
 
-        print("🔍 Browse: Getting peer address for \(username)...")
+        print("📂 Browse: Getting peer address for \(username)...")
 
         // Get peer address using concurrent-safe method
         let (ip, port) = try await getPeerAddress(for: username)
 
         logger.info("Got peer address for \(username): \(ip):\(port)")
-        print("🔍 Browse: Got address \(ip):\(port), connecting...")
+        print("📂 Browse: Got address \(ip):\(port), connecting...")
 
         // Connect to the peer
         let connection = try await peerConnectionPool.connect(
@@ -605,45 +609,42 @@ final class NetworkClient {
             token: token
         )
 
-        print("🔍 Browse: Connected to \(username), setting up callback...")
+        print("📂 Browse: Connected to \(username), setting up callback...")
 
-        // Wait for shares response - set up callback BEFORE requesting shares
+        // Small delay to ensure connection is fully ready and receive loop is running
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // Set up callback BEFORE requesting shares
         nonisolated(unsafe) var sharesResumed = false
+        nonisolated(unsafe) var receivedFiles: [SharedFile] = []
 
-        let files = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[SharedFile], Error>) in
-            Task {
-                // Set up callback FIRST
-                await connection.setOnSharesReceived { files in
-                    print("🔍 Browse: Received \(files.count) files from \(username)")
-                    guard !sharesResumed else { return }
-                    sharesResumed = true
-                    continuation.resume(returning: files)
-                }
+        // Set up the callback first (outside the continuation to avoid race)
+        await connection.setOnSharesReceived { files in
+            print("📂 Browse: Callback received \(files.count) files from \(username)")
+            receivedFiles = files
+            sharesResumed = true
+        }
 
-                // THEN request shares
-                print("🔍 Browse: Requesting shares from \(username)...")
-                do {
-                    try await connection.requestShares()
-                    print("🔍 Browse: Shares request sent, waiting for response...")
-                } catch {
-                    print("🔍 Browse: Failed to request shares: \(error)")
-                    guard !sharesResumed else { return }
-                    sharesResumed = true
-                    continuation.resume(throwing: error)
-                    return
-                }
+        // Request shares
+        print("📂 Browse: Requesting shares from \(username)...")
+        try await connection.requestShares()
+        print("📂 Browse: Shares request sent, waiting for response...")
 
-                // Timeout after 30 seconds
-                try? await Task.sleep(for: .seconds(30))
-                guard !sharesResumed else { return }
-                print("🔍 Browse: Timeout waiting for shares from \(username)")
-                sharesResumed = true
-                continuation.resume(throwing: NetworkError.timeout)
+        // Poll for response with timeout
+        let startTime = Date()
+        let timeoutSeconds: TimeInterval = 30
+
+        while !sharesResumed {
+            try await Task.sleep(for: .milliseconds(100))
+
+            if Date().timeIntervalSince(startTime) > timeoutSeconds {
+                print("📂 Browse: Timeout waiting for shares from \(username)")
+                throw NetworkError.timeout
             }
         }
 
-        print("🔍 Browse: Got \(files.count) files from \(username)")
-        return files
+        print("📂 Browse: Got \(receivedFiles.count) files from \(username)")
+        return receivedFiles
     }
 
     // MARK: - User Interests & Recommendations

@@ -273,6 +273,11 @@ actor PeerConnection {
 
         print("📤 PeerInit: username='\(username)' type='\(connectionType.rawValue)' token=\(peerInitToken)")
         try await send(message)
+
+        // Mark handshake as complete from our side after sending PeerInit
+        // We can now receive peer messages (code >= 4) without waiting for peer's response
+        handshakeComplete = true
+        print("📤 PeerInit sent, handshake marked complete")
     }
 
     func sendPierceFirewall() async throws {
@@ -768,11 +773,14 @@ actor PeerConnection {
     }
 
     private func handlePeerMessage(code: UInt32, payload: Data) async {
+        let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid"
+        print("📨 [\(peerInfo.username)] handlePeerMessage: code=\(code) (\(codeDescription)) payload=\(payload.count) bytes")
         logger.debug("Peer message: code=\(code) length=\(payload.count)")
 
         // Handle based on message code
         switch code {
         case UInt32(PeerMessageCode.sharesReply.rawValue):
+            print("📂 [\(peerInfo.username)] Routing to handleSharesReply...")
             await handleSharesReply(payload)
 
         case UInt32(PeerMessageCode.searchReply.rawValue):
@@ -815,25 +823,50 @@ actor PeerConnection {
     }
 
     private func handleSharesReply(_ data: Data) async {
+        print("📂 [\(peerInfo.username)] handleSharesReply called with \(data.count) bytes")
+        let dataPreview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("📂 [\(peerInfo.username)] Data starts with: \(dataPreview)")
+
         // Shares are zlib compressed
-        guard let decompressed = try? decompressZlib(data) else {
-            logger.error("Failed to decompress shares")
-            return
+        let decompressed: Data
+        do {
+            decompressed = try decompressZlib(data)
+            print("📂 [\(peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
+        } catch {
+            print("📂 [\(peerInfo.username)] Failed to decompress shares: \(error)")
+            logger.error("Failed to decompress shares: \(error)")
+            // Try parsing raw data as fallback
+            print("📂 [\(peerInfo.username)] Trying raw data as fallback...")
+            decompressed = data
         }
 
         var offset = 0
         var files: [SharedFile] = []
 
         // Parse directory count
-        guard let dirCount = decompressed.readUInt32(at: offset) else { return }
+        guard let dirCount = decompressed.readUInt32(at: offset) else {
+            print("📂 [\(peerInfo.username)] Failed to read directory count at offset \(offset)")
+            return
+        }
         offset += 4
+        print("📂 [\(peerInfo.username)] Directory count: \(dirCount)")
 
-        for _ in 0..<dirCount {
-            guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break }
+        for dirIndex in 0..<dirCount {
+            guard let (dirName, dirLen) = decompressed.readString(at: offset) else {
+                print("📂 [\(peerInfo.username)] Failed to read dir name at offset \(offset)")
+                break
+            }
             offset += dirLen
 
-            guard let fileCount = decompressed.readUInt32(at: offset) else { break }
+            guard let fileCount = decompressed.readUInt32(at: offset) else {
+                print("📂 [\(peerInfo.username)] Failed to read file count at offset \(offset)")
+                break
+            }
             offset += 4
+
+            if dirIndex < 3 {
+                print("📂 [\(peerInfo.username)] Dir[\(dirIndex)]: '\(dirName)' with \(fileCount) files")
+            }
 
             for _ in 0..<fileCount {
                 guard decompressed.readByte(at: offset) != nil else { break }
@@ -877,6 +910,7 @@ actor PeerConnection {
             }
         }
 
+        print("📂 [\(peerInfo.username)] Parsed \(files.count) files, callback set: \(_onSharesReceived != nil)")
         logger.info("Received \(files.count) shared files from \(self.peerInfo.username)")
         await _onSharesReceived?(files)
     }
