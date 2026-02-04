@@ -73,6 +73,10 @@ struct MainView: View {
                 BrowseView()
             case .room(let name):
                 ChatView()
+            case .statistics:
+                StatisticsView()
+            case .networkMonitor:
+                NetworkMonitorView()
             case .settings:
                 SettingsView()
             case nil:

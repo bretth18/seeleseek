@@ -2,27 +2,29 @@ import SwiftUI
 
 struct SearchView: View {
     @Environment(\.appState) private var appState
-    @State private var searchState = SearchState()
+
+    // Use shared searchState from AppState to persist callbacks
+    private var searchState: SearchState {
+        appState.searchState
+    }
 
     var body: some View {
+        @Bindable var state = appState
         VStack(spacing: 0) {
-            searchBar
+            searchBar(binding: $state.searchState.searchQuery)
             Divider().background(SeeleColors.surfaceSecondary)
             resultsArea
         }
         .background(SeeleColors.background)
-        .onAppear {
-            searchState.setupCallbacks(client: appState.networkClient)
-        }
     }
 
-    private var searchBar: some View {
+    private func searchBar(binding: Binding<String>) -> some View {
         HStack(spacing: SeeleSpacing.md) {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(SeeleColors.textTertiary)
 
-                TextField("Search for music...", text: $searchState.searchQuery)
+                TextField("Search for music...", text: binding)
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -226,9 +228,11 @@ struct SearchView: View {
         Task {
             do {
                 try await appState.networkClient.search(query: searchState.searchQuery, token: token)
-                // Results will come in via message handler
-                // For now, simulate finishing after a delay
-                try await Task.sleep(for: .seconds(5))
+
+                // Results trickle in from peers over time
+                // Wait for a reasonable period, then mark as complete
+                // But keep results visible and updateable
+                try await Task.sleep(for: .seconds(30))
                 searchState.finishSearch()
             } catch {
                 searchState.finishSearch()

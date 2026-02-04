@@ -51,21 +51,45 @@ struct SharedFile: Identifiable, Hashable, Sendable {
             return "folder.fill"
         }
 
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
-        let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
-        let videoExtensions = ["mp4", "mkv", "avi", "mov", "wmv"]
-        let archiveExtensions = ["zip", "rar", "7z", "tar", "gz"]
-
-        if audioExtensions.contains(fileExtension) {
+        if isAudioFile {
             return "music.note"
-        } else if imageExtensions.contains(fileExtension) {
+        } else if isImageFile {
             return "photo"
-        } else if videoExtensions.contains(fileExtension) {
+        } else if isVideoFile {
             return "film"
-        } else if archiveExtensions.contains(fileExtension) {
+        } else if isArchiveFile {
             return "archivebox"
         }
         return "doc"
+    }
+
+    var displayFilename: String {
+        displayName
+    }
+
+    var isAudioFile: Bool {
+        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
+        return audioExtensions.contains(fileExtension)
+    }
+
+    var isImageFile: Bool {
+        let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
+        return imageExtensions.contains(fileExtension)
+    }
+
+    var isVideoFile: Bool {
+        let videoExtensions = ["mp4", "mkv", "avi", "mov", "wmv"]
+        return videoExtensions.contains(fileExtension)
+    }
+
+    var isArchiveFile: Bool {
+        let archiveExtensions = ["zip", "rar", "7z", "tar", "gz"]
+        return archiveExtensions.contains(fileExtension)
+    }
+
+    var isLossless: Bool {
+        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
+        return losslessExtensions.contains(fileExtension)
     }
 }
 
@@ -94,6 +118,10 @@ struct UserShares: Identifiable, Sendable {
         countFiles(in: folders)
     }
 
+    var totalSize: UInt64 {
+        sumSize(in: folders)
+    }
+
     private func countFiles(in files: [SharedFile]) -> Int {
         var count = 0
         for file in files {
@@ -104,5 +132,17 @@ struct UserShares: Identifiable, Sendable {
             }
         }
         return count
+    }
+
+    private func sumSize(in files: [SharedFile]) -> UInt64 {
+        var total: UInt64 = 0
+        for file in files {
+            if file.isDirectory, let children = file.children {
+                total += sumSize(in: children)
+            } else {
+                total += file.size
+            }
+        }
+        return total
     }
 }

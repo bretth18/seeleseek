@@ -32,6 +32,26 @@ final class NetworkClient {
     private let listenerService = ListenerService()
     private let natService = NATService()
 
+    // Peer connections - public for UI access
+    let peerConnectionPool = PeerConnectionPool()
+
+    // Share manager
+    let shareManager = ShareManager()
+
+    // MARK: - Initialization
+
+    init() {
+        // Wire up peer connection pool callbacks to network client
+        peerConnectionPool.onSearchResults = { [weak self] results in
+            print("NetworkClient: Received \(results.count) search results from PeerConnectionPool")
+            if self?.onSearchResults != nil {
+                self?.onSearchResults?(results)
+            } else {
+                print("NetworkClient: WARNING - onSearchResults callback is nil!")
+            }
+        }
+    }
+
     // MARK: - Callbacks
     var onConnectionStatusChanged: ((ConnectionStatus) -> Void)?
     var onSearchResults: (([SearchResult]) -> Void)?
@@ -57,26 +77,41 @@ final class NetworkClient {
         logger.info("Starting connection to \(server):\(port) as \(username)")
 
         do {
-            // Step 1: Start listener for incoming peer connections
+            // Step 1: Set up listener callback for incoming peer connections
+            await listenerService.setOnNewConnection { [weak self] connection, isObfuscated in
+                guard let self else { return }
+                print("🟢 INCOMING PEER CONNECTION received (obfuscated: \(isObfuscated))")
+                self.logger.info("Incoming peer connection (obfuscated: \(isObfuscated))")
+                await self.peerConnectionPool.handleIncomingConnection(connection)
+            }
+
+            // Step 2: Start listener for incoming peer connections
             logger.info("Starting listener...")
+            print("🔵 Starting listener service...")
             let ports = try await listenerService.start()
             listenPort = ports.port
             obfuscatedPort = ports.obfuscatedPort
             logger.info("Listening on port \(self.listenPort)")
+            print("🟢 LISTENING on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 
             // Step 2: Try NAT traversal (don't fail if it doesn't work)
-            logger.info("Attempting NAT traversal...")
+            print("🔧 Attempting NAT traversal...")
             if let mappedPort = try? await natService.mapPort(listenPort) {
-                logger.info("NAT mapped to external port \(mappedPort)")
+                print("🔧 NAT mapped to external port \(mappedPort)")
+            } else {
+                print("🔧 NAT mapping failed or unavailable")
             }
 
+            print("🔧 Discovering external IP...")
             if let extIP = await natService.discoverExternalIP() {
                 externalIP = extIP
-                logger.info("External IP: \(extIP)")
+                print("🔧 External IP: \(extIP)")
+            } else {
+                print("🔧 Could not discover external IP")
             }
 
             // Step 3: Connect to server
-            logger.info("Connecting to server...")
+            print("🔌 Connecting to server...")
             let connection = ServerConnection(host: server, port: port)
             serverConnection = connection
             messageHandler = ServerMessageHandler(client: self)
@@ -110,9 +145,38 @@ final class NetworkClient {
                 let statusMessage = MessageBuilder.setOnlineStatusMessage(status: .online)
                 try await connection.send(statusMessage)
 
-                // Step 7: Report shared files (0 for now)
-                let sharesMessage = MessageBuilder.sharedFoldersFilesMessage(folders: 0, files: 0)
+                // Step 7: Report shared files
+                let folders = UInt32(shareManager.totalFolders)
+                let files = UInt32(shareManager.totalFiles)
+                let sharesMessage = MessageBuilder.sharedFoldersFilesMessage(folders: folders, files: files)
                 try await connection.send(sharesMessage)
+                logger.info("Reported shares: \(folders) folders, \(files) files")
+
+                // Step 8: Join distributed network for search propagation
+                // Tell server we need a distributed parent
+                let haveNoParentMessage = MessageBuilder.haveNoParent(true)
+                try await connection.send(haveNoParentMessage)
+                print("🌐 Sent HaveNoParent(true) - requesting distributed network parent")
+
+                // Tell server we accept child connections (for now, don't accept)
+                let acceptChildrenMessage = MessageBuilder.acceptChildren(false)
+                try await connection.send(acceptChildrenMessage)
+                print("🌐 Sent AcceptChildren(false)")
+
+                // Tell server our branch level (0 = not connected to distributed network yet)
+                let branchLevelMessage = MessageBuilder.branchLevel(0)
+                try await connection.send(branchLevelMessage)
+                print("🌐 Sent BranchLevel(0)")
+
+                // Print diagnostic info
+                print("📊 CONNECTION DIAGNOSTICS:")
+                print("   Listen port: \(self.listenPort)")
+                print("   Obfuscated port: \(self.obfuscatedPort)")
+                if let extIP = self.externalIP {
+                    print("   External IP: \(extIP)")
+                } else {
+                    print("   External IP: unknown (NAT mapping may have failed)")
+                }
 
                 isConnecting = false
                 isConnected = true
@@ -194,6 +258,7 @@ final class NetworkClient {
 
         let message = MessageBuilder.fileSearch(token: token, query: query)
         try await connection.send(message)
+        logger.info("Sent search request: query='\(query)' token=\(token)")
     }
 
     func getRoomList() async throws {
@@ -266,6 +331,107 @@ final class NetworkClient {
 
         let message = MessageBuilder.sharedFoldersFiles(folders: directories, files: files)
         try await connection.send(message)
+    }
+
+    /// Tell server we couldn't connect to a peer - triggers indirect connection attempt
+    func sendCantConnectToPeer(token: UInt32, username: String) async {
+        guard isConnected, let connection = serverConnection else { return }
+
+        let message = MessageBuilder.cantConnectToPeer(token: token, username: username)
+        do {
+            try await connection.send(message)
+            logger.info("Sent CantConnectToPeer for \(username) token=\(token)")
+        } catch {
+            logger.error("Failed to send CantConnectToPeer: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Peer Connections
+
+    /// Browse a user's shared files
+    func browseUser(_ username: String) async throws -> [SharedFile] {
+        guard isConnected else { throw NetworkError.notConnected }
+
+        let token = UInt32.random(in: 0...UInt32.max)
+
+        // Set up a continuation to wait for the peer address
+        let (ip, port) = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(String, Int), Error>) in
+            // Temporarily set callback to capture the response
+            let previousCallback = onPeerAddress
+            onPeerAddress = { [weak self] receivedUsername, receivedIP, receivedPort in
+                if receivedUsername == username {
+                    self?.onPeerAddress = previousCallback
+                    continuation.resume(returning: (receivedIP, receivedPort))
+                } else {
+                    previousCallback?(receivedUsername, receivedIP, receivedPort)
+                }
+            }
+
+            // Request the peer address
+            Task {
+                do {
+                    try await self.getUserAddress(username)
+                } catch {
+                    self.onPeerAddress = previousCallback
+                    continuation.resume(throwing: error)
+                }
+            }
+
+            // Timeout after 10 seconds
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                if self.onPeerAddress != nil {
+                    self.onPeerAddress = previousCallback
+                    continuation.resume(throwing: NetworkError.timeout)
+                }
+            }
+        }
+
+        logger.info("Got peer address for \(username): \(ip):\(port)")
+
+        // Connect to the peer
+        let connection = try await peerConnectionPool.connect(
+            to: username,
+            ip: ip,
+            port: port,
+            token: token
+        )
+
+        // Request shares
+        try await connection.requestShares()
+
+        // Wait for shares response
+        let files = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[SharedFile], Error>) in
+            Task {
+                await connection.setOnSharesReceived { files in
+                    continuation.resume(returning: files)
+                }
+
+                // Timeout after 30 seconds
+                try? await Task.sleep(for: .seconds(30))
+                continuation.resume(throwing: NetworkError.timeout)
+            }
+        }
+
+        return files
+    }
+
+    // MARK: - Share Updates
+
+    /// Update the server with current share counts (call after scanning)
+    func updateShareCounts() async {
+        guard isConnected, let connection = serverConnection else { return }
+
+        let folders = UInt32(shareManager.totalFolders)
+        let files = UInt32(shareManager.totalFiles)
+
+        do {
+            let message = MessageBuilder.sharedFoldersFilesMessage(folders: folders, files: files)
+            try await connection.send(message)
+            logger.info("Updated share counts: \(folders) folders, \(files) files")
+        } catch {
+            logger.error("Failed to update share counts: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Internal State Updates

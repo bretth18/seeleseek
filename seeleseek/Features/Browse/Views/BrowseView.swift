@@ -181,49 +181,73 @@ struct BrowseView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    @State private var showVisualizations = true
+
     private func fileTreeView(shares: UserShares) -> some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("\(shares.username)'s files")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
-
-                Text("(\(shares.totalFiles) files)")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-
-                Spacer()
-            }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(SeeleColors.surface.opacity(0.3))
-
+        HSplitView {
             // File tree
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(shares.folders) { folder in
-                        FileTreeRow(
-                            file: folder,
-                            depth: 0,
-                            browseState: browseState
-                        )
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Text("\(shares.username)'s files")
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
+
+                    Text("(\(shares.totalFiles) files, \(ByteFormatter.format(Int64(shares.totalSize))))")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+
+                    Spacer()
+
+                    Button {
+                        withAnimation {
+                            showVisualizations.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showVisualizations ? "chart.bar.fill" : "chart.bar")
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, SeeleSpacing.lg)
+                .padding(.vertical, SeeleSpacing.sm)
+                .background(SeeleColors.surface.opacity(0.3))
+
+                // File tree
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(shares.folders) { folder in
+                            FileTreeRow(
+                                file: folder,
+                                depth: 0,
+                                browseState: browseState
+                            )
+                        }
                     }
                 }
+            }
+
+            // Visualizations panel
+            if showVisualizations {
+                SharesVisualizationPanel(shares: shares)
+                    .frame(minWidth: 300, maxWidth: 400)
             }
         }
     }
 
     private func browseUser() {
         guard browseState.canBrowse else { return }
-        browseState.browseUser(browseState.currentUser)
+        let username = browseState.currentUser
+        browseState.browseUser(username)
 
-        // Simulate loading for now - in real implementation this would
-        // request shares from the peer
+        // Request shares from the peer via network client
         Task {
-            try? await Task.sleep(for: .seconds(2))
-            // For demo, show empty or mock data
-            browseState.setShares([])
+            do {
+                let files = try await appState.networkClient.browseUser(username)
+                browseState.setShares(files)
+            } catch {
+                browseState.setError("Failed to browse \(username): \(error.localizedDescription)")
+            }
         }
     }
 }
@@ -315,8 +339,202 @@ struct FileTreeRow: View {
     }
 }
 
+// MARK: - Shares Visualization Panel
+
+struct SharesVisualizationPanel: View {
+    let shares: UserShares
+
+    private var allFiles: [SharedFile] {
+        shares.folders.flatMap { collectFiles(from: $0) }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+                // Quick stats
+                quickStatsSection
+
+                Divider().background(SeeleColors.surfaceSecondary)
+
+                // File type distribution
+                fileTypeSection
+
+                Divider().background(SeeleColors.surfaceSecondary)
+
+                // Bitrate distribution (for audio)
+                if hasAudioFiles {
+                    bitrateSection
+                    Divider().background(SeeleColors.surfaceSecondary)
+                }
+
+                // Largest files
+                largestFilesSection
+
+                // Treemap visualization
+                if !allFiles.isEmpty {
+                    treemapSection
+                }
+            }
+            .padding(SeeleSpacing.lg)
+        }
+        .background(SeeleColors.surface)
+    }
+
+    private var quickStatsSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            Text("Overview")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            LazyVGrid(columns: [
+                GridItem(.flexible()),
+                GridItem(.flexible())
+            ], spacing: SeeleSpacing.md) {
+                StatCard(
+                    title: "Files",
+                    value: "\(allFiles.count)",
+                    icon: "doc.fill",
+                    color: SeeleColors.accent
+                )
+
+                StatCard(
+                    title: "Folders",
+                    value: "\(shares.folders.count)",
+                    icon: "folder.fill",
+                    color: SeeleColors.warning
+                )
+
+                StatCard(
+                    title: "Total Size",
+                    value: ByteFormatter.format(Int64(shares.totalSize)),
+                    icon: "externaldrive.fill",
+                    color: SeeleColors.info
+                )
+
+                StatCard(
+                    title: "Avg Size",
+                    value: ByteFormatter.format(Int64(shares.totalSize / UInt64(max(allFiles.count, 1)))),
+                    icon: "chart.bar.fill",
+                    color: SeeleColors.success
+                )
+            }
+        }
+    }
+
+    private var fileTypeSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            Text("File Types")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            FileTypeDistribution(files: allFiles)
+        }
+    }
+
+    private var bitrateSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            Text("Audio Quality")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            BitrateDistribution(files: audioFiles)
+        }
+    }
+
+    private var largestFilesSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            Text("Largest Files")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            let topFiles = allFiles
+                .filter { !$0.isDirectory }
+                .sorted { $0.size > $1.size }
+                .prefix(5)
+
+            SizeComparisonBars(
+                items: topFiles.map { ($0.displayFilename, $0.size) }
+            )
+        }
+    }
+
+    private var treemapSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            Text("Size Distribution")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            FileTreemap(
+                files: Array(allFiles.filter { !$0.isDirectory }.prefix(50))
+            )
+            .frame(height: 200)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        }
+    }
+
+    private var hasAudioFiles: Bool {
+        !audioFiles.isEmpty
+    }
+
+    private var audioFiles: [SharedFile] {
+        allFiles.filter { $0.isAudioFile }
+    }
+
+    private func collectFiles(from folder: SharedFile) -> [SharedFile] {
+        var files: [SharedFile] = []
+
+        if folder.isDirectory {
+            if let children = folder.children {
+                for child in children {
+                    files.append(contentsOf: collectFiles(from: child))
+                }
+            }
+        } else {
+            files.append(folder)
+        }
+
+        return files
+    }
+}
+
+struct StatCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: SeeleSpacing.sm) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(color)
+
+                Spacer()
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(value)
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
+
+                    Text(title)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+
+                Spacer()
+            }
+        }
+        .padding(SeeleSpacing.md)
+        .background(SeeleColors.surfaceSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+    }
+}
+
 #Preview {
     BrowseView()
         .environment(\.appState, AppState())
-        .frame(width: 800, height: 600)
+        .frame(width: 1000, height: 600)
 }

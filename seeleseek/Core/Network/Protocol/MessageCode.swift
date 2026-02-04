@@ -34,10 +34,21 @@ enum ServerMessageCode: UInt32 {
     case globalUserList = 67
     case tunneledMessage = 68
     case privilegedUsers = 69
+
+    // Distributed network - client to server
+    case haveNoParent = 71  // Tell server we need a distributed parent
+
+    case parentMinSpeed = 83
+    case parentSpeedRatio = 84
+    case minParentsInCache = 86
+
     case addToPrivileged = 91
     case checkPrivileges = 92
-    case searchRequest = 93
-    case netInfo = 102
+    case embeddedMessage = 93  // Server sends us embedded distributed message
+
+    // Distributed network - server to client
+    case possibleParents = 102  // Server sends list of potential parents
+
     case wishlistSearch = 103
     case wishlistInterval = 104
     case globalRecommendations = 110
@@ -50,13 +61,15 @@ enum ServerMessageCode: UInt32 {
     case roomSearch = 120
     case sendUploadSpeedRequest = 121
     case userPrivileges = 122
+
+    // Distributed network - branch info from client
+    case childDepth = 125  // Tell server our child depth
+    case branchLevel = 126  // Tell server our branch level
+    case branchRoot = 127  // Tell server our branch root
+
+    case acceptChildren = 100  // Tell server if we accept child nodes
+
     case resetDistributed = 130
-    case branchLevel = 140
-    case branchRoot = 141
-    case acceptChildren = 142
-    case parentMinSpeed = 83
-    case parentSpeedRatio = 84
-    case minParentsInCache = 86
 
     var description: String {
         switch self {
@@ -81,6 +94,13 @@ enum ServerMessageCode: UInt32 {
         case .sendUploadSpeed: "SendUploadSpeed"
         case .sharedFoldersFiles: "SharedFoldersFiles"
         case .cantConnectToPeer: "CantConnectToPeer"
+        case .haveNoParent: "HaveNoParent"
+        case .possibleParents: "PossibleParents"
+        case .embeddedMessage: "EmbeddedMessage"
+        case .resetDistributed: "ResetDistributed"
+        case .branchLevel: "BranchLevel"
+        case .branchRoot: "BranchRoot"
+        case .acceptChildren: "AcceptChildren"
         case .roomList: "RoomList"
         default: "Code(\(rawValue))"
         }

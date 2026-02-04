@@ -22,6 +22,11 @@ struct Sidebar: View {
                 // Dynamic rooms would go here
             }
 
+            Section("Monitor") {
+                SidebarRow(item: .statistics)
+                SidebarRow(item: .networkMonitor)
+            }
+
             Section {
                 SidebarRow(item: .settings)
             }

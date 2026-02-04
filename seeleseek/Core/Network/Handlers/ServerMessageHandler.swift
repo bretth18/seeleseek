@@ -27,6 +27,11 @@ final class ServerMessageHandler {
         let code = ServerMessageCode(rawValue: codeValue)
         logger.info("Received message: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
 
+        // Extra logging for distributed network messages
+        if codeValue == 102 || codeValue == 93 || codeValue == 83 || codeValue == 84 || codeValue == 71 {
+            print("🌐 DISTRIBUTED MSG: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
+        }
+
         guard let code = code else {
             logger.warning("Unknown message code: \(codeValue)")
             return
@@ -57,9 +62,19 @@ final class ServerMessageHandler {
             handleGetUserStatus(payload)
         case .connectToPeer:
             handleConnectToPeer(payload)
+        case .possibleParents:
+            handlePossibleParents(payload)
+        case .embeddedMessage:
+            handleEmbeddedMessage(payload)
+        case .resetDistributed:
+            handleResetDistributed()
+        case .parentMinSpeed:
+            handleParentMinSpeed(payload)
+        case .parentSpeedRatio:
+            handleParentSpeedRatio(payload)
         default:
-            // Log unhandled message
-            print("Unhandled server message: \(code) (\(codeValue))")
+            // Log unhandled message with more detail
+            print("📨 Unhandled server message: \(code) (code=\(codeValue)) payload=\(payload.count) bytes")
         }
     }
 
@@ -278,14 +293,19 @@ final class ServerMessageHandler {
         print("User \(username) status: \(status)")
     }
 
+    // Track pending connections to avoid duplicates and limit concurrency
+    private var pendingConnections: Set<String> = []
+    private var activeConnectionCount = 0
+    private let maxConcurrentConnections = 5
+
     private func handleConnectToPeer(_ data: Data) {
         var offset = 0
 
-        guard let (username, newOffset) = data.readString(at: offset) else { return }
-        offset = newOffset
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
 
-        guard let (connectionType, newOffset2) = data.readString(at: offset) else { return }
-        offset = newOffset2
+        guard let (connectionType, typeLen) = data.readString(at: offset) else { return }
+        offset += typeLen
 
         guard let ip = data.readUInt32(at: offset) else { return }
         offset += 4
@@ -296,10 +316,246 @@ final class ServerMessageHandler {
         guard let token = data.readUInt32(at: offset) else { return }
 
         let ipAddress = ipString(from: ip)
-        print("Connect to peer: \(username) (\(connectionType)) at \(ipAddress):\(port) token=\(token)")
+        let connectionKey = "\(username)-\(token)"
 
-        // Would initiate peer connection here
-        client?.onPeerAddress?(username, ipAddress, Int(port))
+        // Skip if we're already trying to connect to this peer
+        if pendingConnections.contains(connectionKey) {
+            print("⏭️ Skipping duplicate ConnectToPeer for \(username)")
+            return
+        }
+
+        // Limit concurrent connections to avoid resource exhaustion
+        if activeConnectionCount >= maxConcurrentConnections {
+            print("⏸️ Too many concurrent connections, skipping \(username)")
+            return
+        }
+
+        logger.info("ConnectToPeer: \(username) (\(connectionType)) at \(ipAddress):\(port) token=\(token)")
+        pendingConnections.insert(connectionKey)
+        activeConnectionCount += 1
+
+        // Initiate peer connection for search results, transfers, etc.
+        Task {
+            defer {
+                pendingConnections.remove(connectionKey)
+                activeConnectionCount -= 1
+            }
+
+            do {
+                guard let pool = client?.peerConnectionPool else { return }
+
+                print("🔵 Connecting to peer \(username) at \(ipAddress):\(port) [\(activeConnectionCount)/\(maxConcurrentConnections)]")
+
+                // Try direct connection with a shorter timeout
+                let connection = try await withTimeout(seconds: 5) {
+                    try await pool.connect(
+                        to: username,
+                        ip: ipAddress,
+                        port: Int(port),
+                        token: token
+                    )
+                }
+
+                // Send PierceFirewall to complete handshake
+                print("🔵 Sending PierceFirewall to \(username) with token \(token)")
+                try await connection.sendPierceFirewall()
+
+                logger.info("Connected to peer \(username) for \(connectionType), handshake sent")
+                print("🟢 Connected to peer \(username) for \(connectionType)")
+
+            } catch {
+                logger.error("Failed to connect to peer \(username): \(error.localizedDescription)")
+                print("🔴 Failed to connect to peer \(username): \(error)")
+
+                // Tell server we couldn't connect - it may try indirect connection
+                await client?.sendCantConnectToPeer(token: token, username: username)
+            }
+        }
+    }
+
+    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+
+            group.addTask {
+                try await Task.sleep(for: .seconds(seconds))
+                throw NetworkError.timeout
+            }
+
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+
+    // MARK: - Distributed Network Handlers
+
+    private func handlePossibleParents(_ data: Data) {
+        var offset = 0
+
+        guard let parentCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        print("🌐 Received \(parentCount) possible distributed parents")
+
+        var parents: [(username: String, ip: String, port: Int)] = []
+
+        for i in 0..<parentCount {
+            guard let (username, usernameLen) = data.readString(at: offset) else { break }
+            offset += usernameLen
+
+            guard let ip = data.readUInt32(at: offset) else { break }
+            offset += 4
+
+            guard let port = data.readUInt32(at: offset) else { break }
+            offset += 4
+
+            let ipStr = ipString(from: ip)
+            parents.append((username: username, ip: ipStr, port: Int(port)))
+            print("🌐   Parent \(i+1): \(username) at \(ipStr):\(port)")
+        }
+
+        // Try to connect to first few parents until one succeeds (limit to avoid resource exhaustion)
+        Task {
+            let maxAttempts = min(3, parents.count)
+            for i in 0..<maxAttempts {
+                let parent = parents[i]
+                let success = await connectToDistributedParent(
+                    username: parent.username,
+                    ip: parent.ip,
+                    port: parent.port
+                )
+                if success {
+                    print("🌐 Successfully connected to distributed parent \(parent.username)")
+                    break
+                }
+            }
+        }
+    }
+
+    private var distributedParentConnection: PeerConnection?
+
+    private func connectToDistributedParent(username: String, ip: String, port: Int) async -> Bool {
+        print("🌐 Connecting to distributed parent: \(username) at \(ip):\(port)")
+
+        let token = UInt32.random(in: 0...UInt32.max)
+
+        // Connect with "D" type for distributed network
+        let peerInfo = PeerConnection.PeerInfo(username: username, ip: ip, port: port)
+        let connection = PeerConnection(peerInfo: peerInfo, type: .distributed, token: token)
+
+        do {
+            // Use shorter timeout to free resources faster
+            try await withTimeout(seconds: 5) {
+                try await connection.connect()
+            }
+
+            // Send PeerInit with "D" type
+            if let myUsername = client?.username {
+                try await connection.sendPeerInit(username: myUsername)
+            }
+
+            print("🟢 Connected to distributed parent: \(username)")
+            logger.info("Connected to distributed parent \(username)")
+
+            // Store the connection to keep it alive
+            distributedParentConnection = connection
+
+            // Set up message handling for distributed messages
+            await connection.setOnMessage { [weak self] code, payload in
+                await self?.handleDistributedMessage(code: code, payload: payload)
+            }
+
+            return true
+        } catch {
+            print("🔴 Failed to connect to distributed parent \(username): \(error)")
+            logger.error("Failed to connect to distributed parent \(username): \(error.localizedDescription)")
+            // Explicitly disconnect to free resources
+            await connection.disconnect()
+            return false
+        }
+    }
+
+    private func handleDistributedMessage(code: UInt32, payload: Data) async {
+        print("🌐 Distributed message received: code=\(code) size=\(payload.count)")
+
+        // Distributed messages use the same codes as DistributedMessageCode
+        switch code {
+        case UInt32(DistributedMessageCode.branchLevel.rawValue):
+            // uint32 branch level
+            if let level = payload.readUInt32(at: 0) {
+                print("🌐 Branch level: \(level)")
+            }
+
+        case UInt32(DistributedMessageCode.branchRoot.rawValue):
+            // string branch root username
+            if let (rootUsername, _) = payload.readString(at: 0) {
+                print("🌐 Branch root: \(rootUsername)")
+            }
+
+        case UInt32(DistributedMessageCode.searchRequest.rawValue):
+            // This is a search request from the distributed network
+            handleDistributedSearch(payload)
+
+        default:
+            print("🌐 Unknown distributed message code: \(code)")
+        }
+    }
+
+    private func handleEmbeddedMessage(_ data: Data) {
+        // Server sends us an embedded distributed message (when we're a branch root)
+        // Format: uint8 distrib_code + message payload
+        guard let distribCode = data.readByte(at: 0) else { return }
+
+        let payload = data.safeSubdata(in: 1..<data.count) ?? Data()
+
+        print("🌐 Received embedded distributed message: code=\(distribCode) size=\(payload.count)")
+
+        if distribCode == DistributedMessageCode.searchRequest.rawValue {
+            // This is a distributed search - we should check our files and respond
+            handleDistributedSearch(payload)
+        }
+    }
+
+    private func handleDistributedSearch(_ data: Data) {
+        var offset = 0
+
+        // uint32 unknown
+        guard data.readUInt32(at: offset) != nil else { return }
+        offset += 4
+
+        // string username (who is searching)
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        // uint32 token
+        guard let token = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        // string query
+        guard let (query, _) = data.readString(at: offset) else { return }
+
+        print("🔍 Distributed search from \(username): '\(query)' token=\(token)")
+
+        // TODO: Search our shared files and send results back via P connection
+        // For now, just log it
+    }
+
+    private func handleResetDistributed() {
+        print("🌐 Server requested distributed network reset")
+        // TODO: Disconnect from parent, clear children, and request new parent
+    }
+
+    private func handleParentMinSpeed(_ data: Data) {
+        guard let speed = data.readUInt32(at: 0) else { return }
+        print("🌐 Parent minimum speed: \(speed)")
+    }
+
+    private func handleParentSpeedRatio(_ data: Data) {
+        guard let ratio = data.readUInt32(at: 0) else { return }
+        print("🌐 Parent speed ratio: \(ratio)")
     }
 
     // MARK: - Helpers

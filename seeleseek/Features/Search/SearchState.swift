@@ -14,6 +14,9 @@ final class SearchState {
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
 
+    // MARK: - Shared Activity Tracker
+    static let activityTracker = SearchActivityState()
+
     // MARK: - Setup
     func setupCallbacks(client: NetworkClient) {
         self.networkClient = client
@@ -21,8 +24,16 @@ final class SearchState {
         client.onSearchResults = { [weak self] results in
             // Note: In SoulSeek, search results come from peers, not the server
             // This callback would be triggered when peer connections deliver results
+            print("SearchState: Received \(results.count) results from NetworkClient")
             self?.addResults(results)
+
+            // Record results count in activity tracker
+            if let query = self?.currentSearch?.query {
+                SearchState.activityTracker.recordSearchResults(query: query, count: results.count)
+            }
         }
+
+        print("SearchState: Callbacks configured with NetworkClient")
     }
 
     // MARK: - Filters
@@ -94,6 +105,12 @@ final class SearchState {
         let query = SearchQuery(query: searchQuery, token: token)
         currentSearch = query
         isSearching = true
+
+        // Record in activity tracker
+        SearchState.activityTracker.recordOutgoingSearch(query: searchQuery)
+
+        // Log to activity feed
+        ActivityLog.shared.logSearchStarted(query: searchQuery)
     }
 
     func addResult(_ result: SearchResult) {

@@ -11,7 +11,11 @@ actor ListenerService {
     private var obfuscatedPort: UInt16 = 0
 
     // Callback for new connections
-    var onNewConnection: ((NWConnection, Bool) async -> Void)?
+    private var _onNewConnection: ((NWConnection, Bool) async -> Void)?
+
+    func setOnNewConnection(_ handler: @escaping (NWConnection, Bool) async -> Void) {
+        _onNewConnection = handler
+    }
 
     // MARK: - Port Configuration
 
@@ -25,6 +29,8 @@ actor ListenerService {
     var obfuscated: UInt16 { obfuscatedPort }
 
     func start(preferredPort: UInt16? = nil) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
+        print("🔊 ListenerService.start() called")
+
         // Try preferred port first, then scan for available port
         let portsToTry: [UInt16]
         if let preferred = preferredPort {
@@ -33,8 +39,11 @@ actor ListenerService {
             portsToTry = Array(Self.defaultPortRange)
         }
 
+        print("🔊 Trying ports: \(portsToTry)")
+
         for port in portsToTry {
             do {
+                print("🔊 Trying port \(port)...")
                 try await startListener(on: port)
                 listeningPort = port
                 obfuscatedPort = port + Self.obfuscatedPortOffset
@@ -43,13 +52,16 @@ actor ListenerService {
                 try? await startObfuscatedListener(on: obfuscatedPort)
 
                 logger.info("Listening on port \(port) (obfuscated: \(self.obfuscatedPort))")
+                print("🟢 LISTENER STARTED on port \(port) (obfuscated: \(self.obfuscatedPort))")
                 return (port, obfuscatedPort)
             } catch {
                 logger.debug("Port \(port) unavailable: \(error.localizedDescription)")
+                print("🟠 Port \(port) unavailable: \(error.localizedDescription)")
                 continue
             }
         }
 
+        print("🔴 LISTENER FAILED - no available port")
         throw ListenerError.noAvailablePort
     }
 
@@ -73,12 +85,20 @@ actor ListenerService {
 
         let newListener = try NWListener(using: parameters)
 
-        return try await withCheckedThrowingContinuation { continuation in
+        // Use nonisolated(unsafe) for the flag since NWListener callbacks are on a different queue
+        nonisolated(unsafe) var hasResumed = false
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             newListener.stateUpdateHandler = { [weak self] state in
+                print("🔊 Listener state on port \(port): \(state)")
+                guard !hasResumed else { return }
+
                 switch state {
                 case .ready:
+                    hasResumed = true
                     continuation.resume()
                 case .failed(let error):
+                    hasResumed = true
                     continuation.resume(throwing: error)
                 case .cancelled:
                     break
@@ -88,14 +108,16 @@ actor ListenerService {
             }
 
             newListener.newConnectionHandler = { [weak self] connection in
+                print("🔵 NEW INCOMING CONNECTION on port \(port) from \(connection.endpoint)")
                 Task {
                     await self?.handleNewConnection(connection, obfuscated: false)
                 }
             }
 
             newListener.start(queue: .global(qos: .userInitiated))
-            self.listener = newListener
         }
+
+        self.listener = newListener
     }
 
     private func startObfuscatedListener(on port: UInt16) async throws {
@@ -121,7 +143,13 @@ actor ListenerService {
 
     private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) async {
         logger.info("New \(obfuscated ? "obfuscated " : "")connection from \(String(describing: connection.endpoint))")
-        await onNewConnection?(connection, obfuscated)
+        print("🔵 INCOMING CONNECTION from \(connection.endpoint) (obfuscated: \(obfuscated))")
+
+        if _onNewConnection != nil {
+            await _onNewConnection?(connection, obfuscated)
+        } else {
+            print("⚠️ No connection handler set!")
+        }
     }
 
     // MARK: - Port Scanning

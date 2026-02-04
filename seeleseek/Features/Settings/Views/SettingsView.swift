@@ -137,49 +137,75 @@ struct NetworkSettingsSection: View {
 
 struct SharesSettingsSection: View {
     @Bindable var settings: SettingsState
+    @Environment(\.appState) private var appState
+
+    private var shareManager: ShareManager {
+        appState.networkClient.shareManager
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
             settingsHeader("Shares")
 
+            // Summary stats
+            HStack(spacing: SeeleSpacing.xl) {
+                StatBox(title: "Folders", value: "\(shareManager.totalFolders)", icon: "folder.fill", color: SeeleColors.warning)
+                StatBox(title: "Files", value: "\(shareManager.totalFiles)", icon: "doc.fill", color: SeeleColors.accent)
+                StatBox(title: "Size", value: ByteFormatter.format(Int64(shareManager.totalSize)), icon: "externaldrive.fill", color: SeeleColors.info)
+            }
+
             settingsGroup("Shared Folders") {
                 VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    ForEach(settings.sharedFolders, id: \.self) { folder in
-                        HStack {
-                            Image(systemName: "folder.fill")
-                                .foregroundStyle(SeeleColors.warning)
+                    if shareManager.sharedFolders.isEmpty {
+                        Text("No folders shared")
+                            .font(SeeleTypography.subheadline)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                            .padding(SeeleSpacing.md)
+                    }
 
-                            Text(folder.path)
-                                .font(SeeleTypography.mono)
-                                .foregroundStyle(SeeleColors.textPrimary)
-                                .lineLimit(1)
+                    ForEach(shareManager.sharedFolders) { folder in
+                        SharedFolderRow(folder: folder) {
+                            shareManager.removeFolder(folder)
+                        }
+                    }
 
-                            Spacer()
+                    HStack(spacing: SeeleSpacing.md) {
+                        Button {
+                            showFolderPicker()
+                        } label: {
+                            HStack {
+                                Image(systemName: "plus.circle")
+                                Text("Add Folder")
+                            }
+                            .font(SeeleTypography.subheadline)
+                            .foregroundStyle(SeeleColors.accent)
+                        }
+                        .buttonStyle(.plain)
 
+                        Spacer()
+
+                        if shareManager.isScanning {
+                            HStack(spacing: SeeleSpacing.sm) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Scanning... \(Int(shareManager.scanProgress * 100))%")
+                                    .font(SeeleTypography.caption)
+                                    .foregroundStyle(SeeleColors.textTertiary)
+                            }
+                        } else {
                             Button {
-                                settings.removeSharedFolder(folder)
+                                Task { await shareManager.rescanAll() }
                             } label: {
-                                Image(systemName: "minus.circle")
-                                    .foregroundStyle(SeeleColors.error)
+                                HStack {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text("Rescan")
+                                }
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textSecondary)
                             }
                             .buttonStyle(.plain)
                         }
-                        .padding(SeeleSpacing.sm)
-                        .background(SeeleColors.surfaceSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
                     }
-
-                    Button {
-                        // Show folder picker
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle")
-                            Text("Add Folder")
-                        }
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(SeeleColors.accent)
-                    }
-                    .buttonStyle(.plain)
                     .padding(.top, SeeleSpacing.sm)
                 }
             }
@@ -189,6 +215,95 @@ struct SharesSettingsSection: View {
                 settingsToggle("Share hidden files", isOn: $settings.shareHiddenFiles)
             }
         }
+    }
+
+    private func showFolderPicker() {
+        #if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.message = "Select folders to share"
+        panel.prompt = "Share"
+
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                shareManager.addFolder(url)
+            }
+        }
+        #endif
+    }
+}
+
+struct SharedFolderRow: View {
+    let folder: ShareManager.SharedFolder
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack {
+            Image(systemName: "folder.fill")
+                .foregroundStyle(SeeleColors.warning)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folder.displayName)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textPrimary)
+                    .lineLimit(1)
+
+                Text(folder.path)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(folder.fileCount) files")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+
+                Text(ByteFormatter.format(Int64(folder.totalSize)))
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
+
+            Button(action: onRemove) {
+                Image(systemName: "minus.circle")
+                    .foregroundStyle(SeeleColors.error)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(SeeleSpacing.sm)
+        .background(SeeleColors.surfaceSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+    }
+}
+
+struct StatBox: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: SeeleSpacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundStyle(color)
+
+            Text(value)
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            Text(title)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(SeeleSpacing.md)
+        .background(SeeleColors.surfaceSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
     }
 }
 

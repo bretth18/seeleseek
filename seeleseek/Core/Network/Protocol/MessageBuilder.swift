@@ -266,6 +266,56 @@ struct MessageBuilder {
         sharedFoldersFilesMessage(folders: folders, files: files)
     }
 
+    static func cantConnectToPeer(token: UInt32, username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.cantConnectToPeer.rawValue)
+        payload.appendUInt32(token)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
+    // MARK: - Distributed Network Messages
+
+    /// Tell server we have no distributed parent and need one
+    static func haveNoParent(_ haveNoParent: Bool) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.haveNoParent.rawValue)
+        payload.appendBool(haveNoParent)
+        return wrapMessage(payload)
+    }
+
+    /// Tell server whether we accept child connections
+    static func acceptChildren(_ accept: Bool) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.acceptChildren.rawValue)
+        payload.appendBool(accept)
+        return wrapMessage(payload)
+    }
+
+    /// Tell server our branch level in the distributed network
+    static func branchLevel(_ level: UInt32) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.branchLevel.rawValue)
+        payload.appendUInt32(level)
+        return wrapMessage(payload)
+    }
+
+    /// Tell server our branch root username
+    static func branchRoot(_ username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.branchRoot.rawValue)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
+    /// Tell server our child depth
+    static func childDepth(_ depth: UInt32) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.childDepth.rawValue)
+        payload.appendUInt32(depth)
+        return wrapMessage(payload)
+    }
+
     // MARK: - Utilities
 
     private static func wrapMessage(_ payload: Data) -> Data {
