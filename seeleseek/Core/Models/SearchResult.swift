@@ -103,6 +103,7 @@ struct SearchQuery: Identifiable, Hashable, Sendable {
     var results: [SearchResult]
     var isSearching: Bool
 
+    /// Convenience init for new searches
     nonisolated init(query: String, token: UInt32) {
         self.id = UUID()
         self.query = query
@@ -110,6 +111,23 @@ struct SearchQuery: Identifiable, Hashable, Sendable {
         self.timestamp = Date()
         self.results = []
         self.isSearching = true
+    }
+
+    /// Full memberwise init for database restoration
+    nonisolated init(
+        id: UUID,
+        query: String,
+        token: UInt32,
+        timestamp: Date,
+        results: [SearchResult],
+        isSearching: Bool
+    ) {
+        self.id = id
+        self.query = query
+        self.token = token
+        self.timestamp = timestamp
+        self.results = results
+        self.isSearching = isSearching
     }
 
     var resultCount: Int {

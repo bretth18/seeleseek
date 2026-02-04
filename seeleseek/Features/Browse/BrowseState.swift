@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 @Observable
 @MainActor
@@ -38,6 +39,10 @@ final class BrowseState {
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
 
+    // MARK: - Cache Settings
+    private let browseCacheTTL: TimeInterval = 86400 // 24 hours
+    private let logger = Logger(subsystem: "com.seeleseek", category: "BrowseState")
+
     // MARK: - Computed Properties
 
     /// Legacy compatibility - returns current browse
@@ -61,7 +66,74 @@ final class BrowseState {
 
     func configure(networkClient: NetworkClient) {
         self.networkClient = networkClient
-        print("🔧 BrowseState: Configured with NetworkClient")
+        logger.info("Configured with NetworkClient")
+
+        // Load cached usernames for history
+        Task {
+            await loadCachedHistory()
+        }
+    }
+
+    // MARK: - Cache Operations
+
+    /// Load browse history from cached usernames
+    private func loadCachedHistory() async {
+        do {
+            let cachedUsers = try await BrowseRepository.fetchCachedUsernames()
+            // Merge with existing history, prioritizing cached
+            for username in cachedUsers {
+                if !browseHistory.contains(where: { $0.lowercased() == username.lowercased() }) {
+                    browseHistory.append(username)
+                }
+            }
+            if browseHistory.count > 20 {
+                browseHistory = Array(browseHistory.prefix(20))
+            }
+            logger.info("Loaded \(cachedUsers.count) cached usernames for browse history")
+        } catch {
+            logger.error("Failed to load cached browse history: \(error.localizedDescription)")
+        }
+    }
+
+    /// Check for cached browse data
+    private func checkCache(for username: String) async -> UserShares? {
+        do {
+            guard try await BrowseRepository.isCacheValid(username: username, ttl: browseCacheTTL) else {
+                return nil
+            }
+
+            if let cached = try await BrowseRepository.fetch(username: username) {
+                logger.info("Found cached browse for '\(username)' with \(cached.totalFiles) files")
+                return cached
+            }
+        } catch {
+            logger.error("Failed to check browse cache: \(error.localizedDescription)")
+        }
+        return nil
+    }
+
+    /// Save browse results to cache
+    private func cacheUserShares(_ userShares: UserShares) {
+        Task {
+            do {
+                try await BrowseRepository.save(userShares)
+                logger.debug("Cached browse for '\(userShares.username)' with \(userShares.totalFiles) files")
+            } catch {
+                logger.error("Failed to cache browse: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Clean up expired browse cache
+    func cleanupExpiredCache() {
+        Task {
+            do {
+                try await BrowseRepository.deleteExpired(olderThan: browseCacheTTL)
+                logger.debug("Cleaned up expired browse cache")
+            } catch {
+                logger.error("Failed to cleanup browse cache: \(error.localizedDescription)")
+            }
+        }
     }
 
     // MARK: - Actions
@@ -86,7 +158,7 @@ final class BrowseState {
             return
         }
 
-        // Create new browse tab
+        // Create new browse tab with loading state
         let newBrowse = UserShares(username: trimmedUsername)
         browses.append(newBrowse)
         let newIndex = browses.count - 1
@@ -104,16 +176,27 @@ final class BrowseState {
         expandedFolders = []
         selectedFile = nil
 
-        print("📂 BrowseState: Created new tab for \(trimmedUsername) at index \(newIndex)")
+        logger.info("Created new tab for \(trimmedUsername) at index \(newIndex)")
 
-        // Start the browse request
-        startBrowseRequest(for: trimmedUsername, at: newIndex)
+        // Check cache first, then fetch if not cached
+        Task {
+            if let cached = await checkCache(for: trimmedUsername) {
+                // Use cached data
+                if newIndex < browses.count && browses[newIndex].username.lowercased() == trimmedUsername.lowercased() {
+                    browses[newIndex] = cached
+                    logger.info("Using cached browse for \(trimmedUsername)")
+                }
+            } else {
+                // Fetch fresh data
+                startBrowseRequest(for: trimmedUsername, at: newIndex)
+            }
+        }
     }
 
     /// Start the actual browse request in a detached task (won't be cancelled by view lifecycle)
     private func startBrowseRequest(for username: String, at index: Int) {
         guard let networkClient else {
-            print("❌ BrowseState: NetworkClient not configured")
+            logger.error("NetworkClient not configured")
             if index < browses.count {
                 browses[index].error = "Not connected"
                 browses[index].isLoading = false
@@ -131,7 +214,7 @@ final class BrowseState {
         // Start a NEW detached task that won't be cancelled by view lifecycle
         // Using Task.detached ensures the task lives independently of the calling context
         let task = Task { [weak self] in
-            print("📂 BrowseState: Starting browse request for \(username)")
+            self?.logger.info("Starting browse request for \(username)")
 
             do {
                 // This is the actual network call
@@ -145,14 +228,17 @@ final class BrowseState {
                         self.browses[idx].folders = files
                         self.browses[idx].isLoading = false
                         self.browses[idx].error = nil
-                        print("📂 BrowseState: Got \(files.count) files for \(username)")
+                        self.logger.info("Got \(files.count) files for \(username)")
+
+                        // Cache the results
+                        self.cacheUserShares(self.browses[idx])
                     }
                     self.activeBrowseTasks.removeValue(forKey: browseId)
                 }
             } catch {
                 // Check if cancelled
                 if Task.isCancelled {
-                    print("📂 BrowseState: Browse request cancelled for \(username)")
+                    self?.logger.info("Browse request cancelled for \(username)")
                     return
                 }
 
@@ -161,7 +247,7 @@ final class BrowseState {
                     if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
                         self.browses[idx].error = "Failed to browse \(username): \(error.localizedDescription)"
                         self.browses[idx].isLoading = false
-                        print("📂 BrowseState: ERROR for \(username): \(error)")
+                        self.logger.error("Browse error for \(username): \(error.localizedDescription)")
                     }
                     self.activeBrowseTasks.removeValue(forKey: browseId)
                 }
@@ -188,7 +274,7 @@ final class BrowseState {
             selectedBrowseIndex = max(0, browses.count - 1)
         }
 
-        print("📂 BrowseState: Closed tab at index \(index)")
+        logger.info("Closed tab at index \(index)")
     }
 
     /// Select a browse tab
@@ -207,6 +293,22 @@ final class BrowseState {
         guard let browse = currentBrowse, browse.error != nil else { return }
 
         // Reset state
+        if selectedBrowseIndex < browses.count {
+            browses[selectedBrowseIndex] = UserShares(username: browse.username)
+            startBrowseRequest(for: browse.username, at: selectedBrowseIndex)
+        }
+    }
+
+    /// Force refresh current browse (bypasses cache)
+    func refreshCurrentBrowse() {
+        guard let browse = currentBrowse else { return }
+
+        // Clear cache for this user
+        Task {
+            try? await BrowseRepository.delete(username: browse.username)
+        }
+
+        // Reset and refetch
         if selectedBrowseIndex < browses.count {
             browses[selectedBrowseIndex] = UserShares(username: browse.username)
             startBrowseRequest(for: browse.username, at: selectedBrowseIndex)

@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 @Observable
 @MainActor
@@ -16,6 +17,10 @@ final class AppState {
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
     var sidebarSelection: SidebarItem? = .search
+
+    // MARK: - Database State
+    var isDatabaseReady = false
+    private let logger = Logger(subsystem: "com.seeleseek", category: "AppState")
 
     // MARK: - Network Client (lazy to avoid creation in previews/default env)
     private var _networkClient: NetworkClient?
@@ -40,8 +45,85 @@ final class AppState {
 
     // MARK: - Initialization
     init() {
-        // Load persisted settings
+        // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
+
+        // Initialize database asynchronously
+        Task {
+            await initializeDatabase()
+        }
+    }
+
+    // MARK: - Database Initialization
+
+    private func initializeDatabase() async {
+        do {
+            logger.info("Initializing database...")
+            try await DatabaseManager.shared.initialize()
+
+            // Migrate from UserDefaults if needed
+            await migrateFromUserDefaults()
+
+            // Load persisted state from database
+            await loadPersistedState()
+
+            // Clean up expired cache
+            try? await DatabaseManager.shared.cleanupExpiredCache()
+
+            isDatabaseReady = true
+            logger.info("Database initialization complete")
+        } catch {
+            logger.error("Database initialization failed: \(error.localizedDescription)")
+            // App continues to work with in-memory state
+        }
+    }
+
+    private func migrateFromUserDefaults() async {
+        do {
+            guard try await !SettingsRepository.isMigrated() else {
+                logger.info("Database already migrated from UserDefaults")
+                return
+            }
+
+            logger.info("Migrating settings from UserDefaults to database...")
+
+            // Migrate network settings
+            let defaults = UserDefaults.standard
+
+            if let port = defaults.object(forKey: "settings.listenPort") as? Int {
+                try await SettingsRepository.set("listenPort", value: port)
+            }
+            if defaults.object(forKey: "settings.enableUPnP") != nil {
+                try await SettingsRepository.set("enableUPnP", value: defaults.bool(forKey: "settings.enableUPnP"))
+            }
+            if let slots = defaults.object(forKey: "settings.maxDownloadSlots") as? Int {
+                try await SettingsRepository.set("maxDownloadSlots", value: slots)
+            }
+            if let slots = defaults.object(forKey: "settings.maxUploadSlots") as? Int {
+                try await SettingsRepository.set("maxUploadSlots", value: slots)
+            }
+            if let limit = defaults.object(forKey: "settings.uploadSpeedLimit") as? Int {
+                try await SettingsRepository.set("uploadSpeedLimit", value: limit)
+            }
+            if let limit = defaults.object(forKey: "settings.downloadSpeedLimit") as? Int {
+                try await SettingsRepository.set("downloadSpeedLimit", value: limit)
+            }
+
+            try await SettingsRepository.markMigrated()
+            logger.info("UserDefaults migration complete")
+        } catch {
+            logger.error("UserDefaults migration failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadPersistedState() async {
+        // Load settings from database
+        await settings.loadFromDatabase()
+
+        // Load resumable transfers
+        await transferState.loadPersisted()
+
+        logger.info("Persisted state loaded")
     }
 }
 
