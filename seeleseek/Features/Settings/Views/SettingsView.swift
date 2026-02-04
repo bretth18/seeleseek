@@ -545,7 +545,7 @@ struct DiagnosticsSection: View {
         let connection = NWConnection(to: endpoint, using: .tcp)
 
         return try await withCheckedThrowingContinuation { continuation in
-            var didComplete = false
+            nonisolated(unsafe) var didComplete = false
 
             connection.stateUpdateHandler = { state in
                 guard !didComplete else { return }

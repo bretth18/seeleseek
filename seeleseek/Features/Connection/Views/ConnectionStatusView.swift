@@ -97,16 +97,14 @@ struct ConnectionStatusView: View {
     private var actionsCard: some View {
         VStack(spacing: SeeleSpacing.md) {
             SecondaryButton("Disconnect", icon: "xmark.circle") {
-                Task {
-                    await disconnect()
-                }
+                disconnect()
             }
         }
         .cardStyle()
     }
 
-    private func disconnect() async {
-        await appState.networkClient.disconnect()
+    private func disconnect() {
+        appState.networkClient.disconnect()
         appState.connection.setDisconnected()
     }
 }

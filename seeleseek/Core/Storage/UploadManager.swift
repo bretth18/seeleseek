@@ -91,7 +91,7 @@ final class UploadManager {
         // Set up callback for QueueUpload requests (peer wants to download from us)
         networkClient.onQueueUpload = { [weak self] username, filename, connection in
             guard let self else { return }
-            await MainActor.run {
+            _ = await MainActor.run {
                 Task {
                     await self.handleQueueUpload(username: username, filename: filename, connection: connection)
                 }
@@ -101,7 +101,7 @@ final class UploadManager {
         // Set up callback for TransferResponse (peer accepted/rejected our upload offer)
         networkClient.onTransferResponse = { [weak self] token, allowed, filesize, connection in
             guard let self else { return }
-            await MainActor.run {
+            _ = await MainActor.run {
                 Task {
                     await self.handleTransferResponse(token: token, allowed: allowed, connection: connection)
                 }
@@ -111,7 +111,7 @@ final class UploadManager {
         // Set up callback for PlaceInQueueRequest (peer wants to know their queue position)
         networkClient.onPlaceInQueueRequest = { [weak self] username, filename, connection in
             guard let self else { return }
-            await MainActor.run {
+            _ = await MainActor.run {
                 Task {
                     await self.handlePlaceInQueueRequest(username: username, filename: filename, connection: connection)
                 }
@@ -408,7 +408,7 @@ final class UploadManager {
         // Request peer address for F connection
         do {
             // Get peer info from the existing connection
-            let peerInfo = await pending.connection.peerInfo
+            let peerInfo = pending.connection.peerInfo
             let ip = peerInfo.ip
             let port = peerInfo.port
 
@@ -486,7 +486,7 @@ final class UploadManager {
 
         // Wait for connection
         let connected: Bool = await withCheckedContinuation { continuation in
-            var hasResumed = false
+            nonisolated(unsafe) var hasResumed = false
             connection.stateUpdateHandler = { state in
                 guard !hasResumed else { return }
                 switch state {
@@ -518,32 +518,20 @@ final class UploadManager {
 
             // Try indirect connection - send CantConnectToPeer to server
             // The server will tell the peer to connect to us instead
-            do {
-                try await networkClient.sendCantConnectToPeer(token: token, username: pending.username)
-                logger.info("Sent CantConnectToPeer for \(pending.username), waiting for indirect connection")
-                print("📤 Sent CantConnectToPeer for \(pending.username)")
+            await networkClient.sendCantConnectToPeer(token: token, username: pending.username)
+            logger.info("Sent CantConnectToPeer for \(pending.username), waiting for indirect connection")
+            print("📤 Sent CantConnectToPeer for \(pending.username)")
 
-                // The peer should now connect to us with PierceFirewall
-                // We need to register this pending upload for when they connect
-                // For now, just wait with a longer timeout
-                transferState?.updateTransfer(id: pending.transferId) { t in
-                    t.status = .connecting
-                    t.error = "Waiting for peer to connect (firewall)"
-                }
-
-                // The indirect connection will be handled by the existing
-                // PierceFirewall handler in NetworkClient/PeerConnectionPool
-                // We just need to make sure our pending transfer is tracked
-                return
-            } catch {
-                logger.error("Failed to send CantConnectToPeer: \(error.localizedDescription)")
-            }
-
+            // The peer should now connect to us with PierceFirewall
+            // We need to register this pending upload for when they connect
             transferState?.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = "Cannot connect to peer (both firewalled)"
+                t.status = .connecting
+                t.error = "Waiting for peer to connect (firewall)"
             }
-            activeUploads.removeValue(forKey: pending.transferId)
+
+            // The indirect connection will be handled by the existing
+            // PierceFirewall handler in NetworkClient/PeerConnectionPool
+            // We just need to make sure our pending transfer is tracked
             return
         }
 
@@ -551,8 +539,6 @@ final class UploadManager {
         print("✅ F connection established to \(ip):\(port)")
 
         // Send PeerInit with type "F" and token 0 (always 0 for F connections per protocol)
-        var peerInit = Data()
-        // Length will be added by wrapMessage, but we need to build the payload manually
         // PeerInit format: [length][code=1][username][type="F"][token=0]
         let username = networkClient.username
         var initPayload = Data()
@@ -580,26 +566,33 @@ final class UploadManager {
             return
         }
 
-        // Wait for peer to send token (4 bytes) + offset (8 bytes)
+        // Per SoulSeek/nicotine+ protocol on F connections (uploader side):
+        // 1. Uploader sends PeerInit (done above)
+        // 2. UPLOADER sends FileTransferInit (token - 4 bytes)
+        // 3. DOWNLOADER sends FileOffset (offset - 8 bytes)
+        // 4. Uploader sends raw file data
+        // See: https://nicotine-plus.org/doc/SLSKPROTOCOL.md step 8-9
+
         do {
-            let handshake = try await receiveExact(connection: connection, length: 12)
-            guard handshake.count == 12 else {
+            // Step 2: Send FileTransferInit (token - 4 bytes)
+            var tokenData = Data()
+            tokenData.appendUInt32(token)
+            print("📤 Sending FileTransferInit: token=\(token)")
+            try await sendData(connection: connection, data: tokenData)
+            logger.info("Sent FileTransferInit: token=\(token)")
+
+            // Step 3: Receive FileOffset from downloader (offset - 8 bytes)
+            print("📥 Waiting for FileOffset from downloader...")
+            let offsetData = try await receiveExact(connection: connection, length: 8)
+            guard offsetData.count == 8 else {
                 throw UploadError.connectionFailed
             }
 
-            let receivedToken = handshake.readUInt32(at: 0) ?? 0
-            let offset = handshake.readUInt64(at: 4) ?? 0
+            let offset = offsetData.readUInt64(at: 0) ?? 0
+            logger.info("Received FileOffset: offset=\(offset)")
+            print("📥 Received FileOffset: offset=\(offset)")
 
-            logger.info("Received handshake: token=\(receivedToken) offset=\(offset)")
-            print("📥 Received handshake: token=\(receivedToken) offset=\(offset)")
-
-            // Verify token matches
-            if receivedToken != token {
-                logger.warning("Token mismatch: expected \(token), got \(receivedToken)")
-                // Continue anyway - some clients may send different tokens
-            }
-
-            // Send file data starting from offset
+            // Step 4: Send file data starting from offset
             await sendFileData(
                 connection: connection,
                 filePath: pending.localPath,
@@ -609,7 +602,8 @@ final class UploadManager {
             )
 
         } catch {
-            logger.error("Failed to receive handshake: \(error.localizedDescription)")
+            logger.error("Failed during F connection handshake: \(error.localizedDescription)")
+            print("❌ F connection handshake failed: \(error)")
             connection.cancel()
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
@@ -693,6 +687,22 @@ final class UploadManager {
                 }
             }
 
+            // Signal EOF to the connection to ensure all data is flushed
+            // This sends an empty final message which triggers TCP to push remaining data
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                })
+            }
+
+            // Give TCP stack time to flush any remaining buffered data
+            // This is important because cancel() might tear down the connection before TCP sends all data
+            try? await Task.sleep(for: .milliseconds(500))
+
             // Complete
             let duration = Date().timeIntervalSince(startTime)
             logger.info("Upload complete: \(bytesSent) bytes sent in \(String(format: "%.1f", duration))s")
@@ -755,17 +765,30 @@ final class UploadManager {
         }
     }
 
-    private func receiveExact(connection: NWConnection, length: Int) async throws -> Data {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let data {
-                    continuation.resume(returning: data)
-                } else {
-                    continuation.resume(throwing: UploadError.connectionFailed)
+    private func receiveExact(connection: NWConnection, length: Int, timeout: TimeInterval = 30) async throws -> Data {
+        try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                    connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else if let data {
+                            continuation.resume(returning: data)
+                        } else {
+                            continuation.resume(throwing: UploadError.connectionFailed)
+                        }
+                    }
                 }
             }
+
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw UploadError.timeout
+            }
+
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
         }
     }
 

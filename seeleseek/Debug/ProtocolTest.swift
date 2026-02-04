@@ -95,7 +95,9 @@ class ProtocolTest {
 
         listener.newConnectionHandler = { connection in
             print("🧪 Server: Client connected!")
-            handleTestClient(connection)
+            Task { @MainActor in
+                handleTestClient(connection)
+            }
         }
 
         listener.start(queue: .global())
@@ -142,7 +144,7 @@ class ProtocolTest {
                 print("🧪 Server: Received PierceFirewall - length=\(length ?? 0), code=\(code ?? 255), token=\(token ?? 0)")
 
                 // Send SearchReply after a short delay
-                Task {
+                Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(50))
                     let reply = buildSearchReplyMessage(token: token ?? 0)
                     print("🧪 Server: Sending SearchReply (\(reply.count) bytes)")

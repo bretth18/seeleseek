@@ -450,42 +450,61 @@ final class ServerMessageHandler {
     }
 
     private func connectToPeerThrottled(username: String, connectionType: String, ip: String, port: UInt32, token: UInt32) async {
+        print("🔗 connectToPeerThrottled START: \(username) at \(ip):\(port)")
         do {
             guard let pool = client?.peerConnectionPool else {
+                print("❌ connectToPeerThrottled: pool is nil")
                 return
             }
 
             // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
             // We'll send PierceFirewall instead (correct protocol for indirect connections)
+            print("🔗 connectToPeerThrottled: calling pool.connect with 10s timeout...")
             let connection = try await withTimeout(seconds: 10) {
-                try await pool.connect(
+                print("🔗 withTimeout task: starting pool.connect...")
+                let conn = try await pool.connect(
                     to: username,
                     ip: ip,
                     port: Int(port),
                     token: token,
                     isIndirect: true
                 )
+                print("🔗 withTimeout task: pool.connect completed!")
+                return conn
             }
+            print("🔗 connectToPeerThrottled: connection established, sending PierceFirewall...")
 
             try await connection.sendPierceFirewall()
+            print("🔗 connectToPeerThrottled SUCCESS: \(username)")
 
         } catch {
+            print("❌ connectToPeerThrottled FAILED: \(username) - \(error)")
             await client?.sendCantConnectToPeer(token: token, username: username)
         }
     }
 
     private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
+        let startTime = Date()
+        return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
-                try await operation()
+                do {
+                    let result = try await operation()
+                    print("⏱️ withTimeout: operation completed after \(Date().timeIntervalSince(startTime))s")
+                    return result
+                } catch {
+                    print("⏱️ withTimeout: operation threw error after \(Date().timeIntervalSince(startTime))s: \(error)")
+                    throw error
+                }
             }
 
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
+                print("⏱️ withTimeout: TIMEOUT after \(seconds)s!")
                 throw NetworkError.timeout
             }
 
             let result = try await group.next()!
+            print("⏱️ withTimeout: got result after \(Date().timeIntervalSince(startTime))s, cancelling other task")
             group.cancelAll()
             return result
         }

@@ -178,7 +178,7 @@ final class ShareManager {
         var folderTotalSize: UInt64 = 0
         let basePath = folderURL.path
 
-        for case let fileURL as URL in enumerator {
+        while let fileURL = enumerator.nextObject() as? URL {
             do {
                 let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
 

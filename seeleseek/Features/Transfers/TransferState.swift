@@ -21,7 +21,8 @@ final class TransferState {
 
     private func startSpeedUpdates() {
         speedUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.updateSpeeds()
             }
         }

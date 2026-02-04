@@ -83,7 +83,7 @@ actor ServerConnection {
 
     // MARK: - Public Interface
 
-    func setMessageHandler(_ handler: @escaping (UInt32, Data) async -> Void) {
+    func setMessageHandler(_ handler: @escaping (UInt32, Data) async -> Void) async {
         self.messageHandler = handler
     }
 
@@ -242,7 +242,7 @@ actor ServerConnection {
         }
     }
 
-    private func startReceiving() {
+    private func startReceiving() async {
         guard let connection else { return }
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in

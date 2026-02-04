@@ -83,9 +83,9 @@ struct MainView: View {
                 ChatView()
             case .browse:
                 BrowseView()
-            case .user(let name):
+            case .user:
                 BrowseView()
-            case .room(let name):
+            case .room:
                 ChatView()
             case .statistics:
                 StatisticsView()

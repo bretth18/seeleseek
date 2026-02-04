@@ -214,7 +214,8 @@ final class ActivityLog {
         hasRecentActivity = true
         activityTimer?.invalidate()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.hasRecentActivity = false
             }
         }

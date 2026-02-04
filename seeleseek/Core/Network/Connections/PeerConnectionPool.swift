@@ -280,7 +280,7 @@ final class PeerConnectionPool {
                     }
 
                     // Check if this matches a pending connection (for downloads)
-                    if let pending = self.pendingConnections[token] {
+                    if self.pendingConnections[token] != nil {
                         print("✅ Matched incoming connection to pending download: \(username) token=\(token)")
                         self.logger.info("Matched incoming connection to pending: \(username) token=\(token)")
                         self.pendingConnections.removeValue(forKey: token)
@@ -493,8 +493,8 @@ final class PeerConnectionPool {
         totalBytesSent += sent
 
         // Update connection info
-        if let username = await connection.peerInfo.username as String?,
-           let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+        let username = connection.peerInfo.username
+        if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
             connections[key]?.bytesReceived = received
             connections[key]?.bytesSent = sent
             connections[key]?.lastActivity = await connection.lastActivityAt

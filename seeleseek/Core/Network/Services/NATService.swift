@@ -215,7 +215,7 @@ actor NATService {
         let connection = NWConnection(to: endpoint, using: params)
 
         return try await withCheckedThrowingContinuation { continuation in
-            var didComplete = false
+            nonisolated(unsafe) var didComplete = false
 
             connection.stateUpdateHandler = { [weak self] state in
                 switch state {
@@ -228,7 +228,7 @@ actor NATService {
                     })
 
                     // Receive response - NWConnection CAN receive unicast replies to multicast requests
-                    func receiveNext() {
+                    @Sendable func receiveNext() {
                         connection.receiveMessage { data, context, _, error in
                             guard !didComplete else { return }
 
@@ -238,7 +238,7 @@ actor NATService {
                                 if let location = self?.parseLocationHeader(from: response) {
                                     print("🔧 NAT: Gateway at: \(location)")
 
-                                    Task {
+                                    Task { [weak self] in
                                         do {
                                             let gateway = try await self?.fetchGatewayInfo(from: location)
                                             if let gateway = gateway {
@@ -290,7 +290,7 @@ actor NATService {
         }
     }
 
-    private func parseLocationHeader(from response: String) -> String? {
+    private nonisolated func parseLocationHeader(from response: String) -> String? {
         let lines = response.components(separatedBy: "\r\n")
         for line in lines {
             if line.lowercased().hasPrefix("location:") {
@@ -406,7 +406,7 @@ actor NATService {
         let connection = NWConnection(to: endpoint, using: params)
 
         // Build NAT-PMP request
-        var request = Data()
+        nonisolated(unsafe) var request = Data()
         request.append(0) // Version
         request.append(proto == "TCP" ? 2 : 1) // Opcode: 1=UDP, 2=TCP
         request.append(contentsOf: [0, 0]) // Reserved
@@ -415,7 +415,7 @@ actor NATService {
         request.appendUInt32(7200) // Lifetime in seconds
 
         return try await withCheckedThrowingContinuation { continuation in
-            var didComplete = false
+            nonisolated(unsafe) var didComplete = false
 
             connection.stateUpdateHandler = { state in
                 switch state {
@@ -472,7 +472,7 @@ actor NATService {
         let connection = NWConnection(to: endpoint, using: params)
 
         // STUN Binding Request
-        var request = Data()
+        nonisolated(unsafe) var request = Data()
         request.appendUInt16(0x0001) // Binding Request
         request.appendUInt16(0x0000) // Message Length
         request.appendUInt32(0x2112A442) // Magic Cookie
@@ -482,7 +482,7 @@ actor NATService {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            var didComplete = false
+            nonisolated(unsafe) var didComplete = false
 
             connection.stateUpdateHandler = { state in
                 switch state {
@@ -524,7 +524,7 @@ actor NATService {
         }
     }
 
-    private func parseSTUNResponse(_ data: Data) -> String? {
+    private nonisolated func parseSTUNResponse(_ data: Data) -> String? {
         guard data.count >= 20 else { return nil }
 
         // Skip header (20 bytes)
@@ -541,7 +541,7 @@ actor NATService {
                 let family = data.readByte(at: offset + 5)
                 if family == 0x01 { // IPv4
                     // XOR with magic cookie
-                    guard let xorPort = data.readUInt16(at: offset + 6),
+                    guard data.readUInt16(at: offset + 6) != nil,
                           let xorIP = data.readUInt32(at: offset + 8) else {
                         break
                     }

@@ -326,7 +326,8 @@ class SearchActivityState {
         isActive = true
         activityTimer?.invalidate()
         activityTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
                 self?.isActive = false
             }
         }

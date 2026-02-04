@@ -103,7 +103,7 @@ actor ListenerService {
         nonisolated(unsafe) var hasResumed = false
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            newListener.stateUpdateHandler = { [weak self] state in
+            newListener.stateUpdateHandler = { state in
                 print("🔊 Listener state on port \(port): \(state)")
                 guard !hasResumed else { return }
 

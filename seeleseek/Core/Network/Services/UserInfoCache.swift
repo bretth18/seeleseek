@@ -42,7 +42,7 @@ final class UserInfoCache {
                     self.logger.debug("Resolved country for \(username): \(countryCode)")
                 }
             } else {
-                await MainActor.run {
+                _ = await MainActor.run {
                     self.pendingLookups.remove(username)
                 }
             }

@@ -296,20 +296,45 @@ enum MessageParser {
     nonisolated static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
         var offset = 0
 
-        guard let directionRaw = payload.readUInt32(at: offset) else { return nil }
+        // Debug: show raw bytes
+        let preview = payload.prefix(min(100, payload.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
+        print("📦 TransferRequest raw (\(payload.count) bytes): \(preview)")
+
+        guard let directionRaw = payload.readUInt32(at: offset) else {
+            print("📦 Failed to read direction at offset \(offset)")
+            return nil
+        }
+        print("📦 direction raw: \(directionRaw) at offset \(offset)")
         offset += 4
 
-        guard let direction = FileTransferDirection(rawValue: UInt8(directionRaw)) else { return nil }
+        guard let direction = FileTransferDirection(rawValue: UInt8(directionRaw)) else {
+            print("📦 Invalid direction: \(directionRaw)")
+            return nil
+        }
 
-        guard let token = payload.readUInt32(at: offset) else { return nil }
+        guard let token = payload.readUInt32(at: offset) else {
+            print("📦 Failed to read token at offset \(offset)")
+            return nil
+        }
+        print("📦 token: \(token) at offset \(offset)")
         offset += 4
 
-        guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
+        guard let (filename, filenameLen) = payload.readString(at: offset) else {
+            print("📦 Failed to read filename at offset \(offset)")
+            return nil
+        }
+        print("📦 filename: '\(filename)' (len=\(filenameLen)) at offset \(offset)")
         offset += filenameLen
 
         var fileSize: UInt64?
         if direction == .upload {
+            // Debug: show the 8 bytes we're reading for file size
+            let sizeBytes = payload.dropFirst(offset).prefix(8)
+            let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("📦 fileSize bytes at offset \(offset): \(sizeBytesHex)")
+
             fileSize = payload.readUInt64(at: offset)
+            print("📦 fileSize parsed: \(fileSize ?? 0)")
         }
 
         return TransferRequestInfo(direction: direction, token: token, filename: filename, fileSize: fileSize)

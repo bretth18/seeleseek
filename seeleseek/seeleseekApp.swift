@@ -21,10 +21,8 @@ struct SeeleSeekApp: App {
                 .keyboardShortcut("k", modifiers: [.command])
 
                 Button("Disconnect") {
-                    Task {
-                        await appState.networkClient.disconnect()
-                        appState.connection.setDisconnected()
-                    }
+                    appState.networkClient.disconnect()
+                    appState.connection.setDisconnected()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(appState.connection.connectionStatus != .connected)

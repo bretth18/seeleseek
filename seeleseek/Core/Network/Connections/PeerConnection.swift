@@ -294,7 +294,9 @@ actor PeerConnection {
 
     func requestShares() async throws {
         let message = MessageBuilder.sharesRequestMessage()
+        print("📂 [\(peerInfo.username)] Sending GetShareFileList (code 4), message: \(message.map { String(format: "%02x", $0) }.joined(separator: " "))")
         try await send(message)
+        print("📂 [\(peerInfo.username)] GetShareFileList sent successfully")
         logger.info("Requested shares from \(self.peerInfo.username)")
     }
 
@@ -443,6 +445,46 @@ actor PeerConnection {
         }
     }
 
+    /// Receive exactly `count` raw bytes with optional timeout (used for file transfer handshake)
+    func receiveRawBytes(count: Int, timeout: TimeInterval = 10) async throws -> Data {
+        guard let connection else {
+            throw PeerError.notConnected
+        }
+
+        print("📥 [\(peerInfo.username)] Waiting for \(count) raw bytes (timeout: \(timeout)s)...")
+
+        return try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { continuation in
+                    connection.receive(minimumIncompleteLength: count, maximumLength: count) { [weak self] data, _, _, error in
+                        if let error {
+                            print("❌ [\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
+                            continuation.resume(throwing: error)
+                        } else if let data, data.count >= count {
+                            print("✅ [\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes")
+                            Task {
+                                await self?.recordReceived(data.count)
+                            }
+                            continuation.resume(returning: data)
+                        } else {
+                            print("❌ [\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(count)")
+                            continuation.resume(throwing: PeerError.connectionClosed)
+                        }
+                    }
+                }
+            }
+
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw PeerError.timeout
+            }
+
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+
     /// Result type for file chunk reception - distinguishes between data, completion, and errors
     enum FileChunkResult: Sendable {
         case data(Data)
@@ -451,7 +493,8 @@ actor PeerConnection {
     }
 
     /// Receive file data in chunks for file transfers
-    func receiveFileChunk(maxLength: Int = 65536) async throws -> FileChunkResult {
+    /// Uses 1MB buffer by default for better throughput
+    func receiveFileChunk(maxLength: Int = 1024 * 1024) async throws -> FileChunkResult {
         guard let connection else {
             throw PeerError.notConnected
         }
@@ -471,9 +514,17 @@ actor PeerConnection {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
+            // Use minimumIncompleteLength: 0 to return whatever is available
+            // This helps drain the buffer when connection is closing
+            connection.receive(minimumIncompleteLength: 0, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    // Real error - but still try to return any data we got
+                    if let data, !data.isEmpty {
+                        Task { await self?.recordReceived(data.count) }
+                        continuation.resume(returning: .dataWithCompletion(data))
+                    } else {
+                        continuation.resume(throwing: error)
+                    }
                 } else if let data, !data.isEmpty {
                     Task {
                         await self?.recordReceived(data.count)
@@ -488,8 +539,8 @@ actor PeerConnection {
                     // Connection cleanly closed with no more data
                     continuation.resume(returning: .connectionComplete)
                 } else {
-                    // No data but connection still open - treat as waiting
-                    // This shouldn't normally happen with minimumIncompleteLength: 1
+                    // No data and connection still open - this can happen with minimumIncompleteLength: 0
+                    // Return empty data and let caller decide whether to continue
                     continuation.resume(returning: .data(Data()))
                 }
             }
@@ -516,6 +567,53 @@ actor PeerConnection {
         let data = fileTransferBuffer
         fileTransferBuffer.removeAll()
         return data
+    }
+
+    /// Prepend data back to the file transfer buffer (for partial reads)
+    func prependToFileTransferBuffer(_ data: Data) {
+        fileTransferBuffer = data + fileTransferBuffer
+    }
+
+    /// Drain any available data from the connection without blocking
+    /// Used after connection signals complete to get remaining buffered data
+    func drainAvailableData(maxLength: Int = 65536, timeout: TimeInterval = 0.5) async -> Data {
+        guard let connection else {
+            return Data()
+        }
+
+        do {
+            return try await withThrowingTaskGroup(of: Data.self) { group in
+                group.addTask {
+                    try await withCheckedThrowingContinuation { continuation in
+                        // Use minimumIncompleteLength: 0 to return immediately with whatever is available
+                        connection.receive(minimumIncompleteLength: 0, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
+                            if let error {
+                                continuation.resume(throwing: error)
+                            } else if let data, !data.isEmpty {
+                                Task { await self?.recordReceived(data.count) }
+                                continuation.resume(returning: data)
+                            } else {
+                                // No data available
+                                continuation.resume(returning: Data())
+                            }
+                        }
+                    }
+                }
+
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeout))
+                    return Data() // Return empty on timeout
+                }
+
+                if let result = try await group.next() {
+                    group.cancelAll()
+                    return result
+                }
+                return Data()
+            }
+        } catch {
+            return Data()
+        }
     }
 
     // MARK: - Private Methods
@@ -606,8 +704,9 @@ actor PeerConnection {
             }
 
             Task {
+                let username = self.peerInfo.username
                 if let error {
-                    print("📡 [\(await self.peerInfo.username)] Receive error: \(error.localizedDescription)")
+                    print("📡 [\(username)] Receive error: \(error.localizedDescription)")
                 }
 
                 // Check if we should stop BEFORE processing data
@@ -615,7 +714,7 @@ actor PeerConnection {
                     // Store data for file transfer instead of parsing as messages
                     if let data {
                         await self.appendToFileTransferBuffer(data)
-                        print("📡 [\(await self.peerInfo.username)] Receive loop stopped, stored \(data.count) bytes for file transfer")
+                        print("📡 [\(username)] Receive loop stopped, stored \(data.count) bytes for file transfer")
                     }
                     return // Don't continue receive loop
                 }
@@ -623,16 +722,16 @@ actor PeerConnection {
                 if let data {
                     await self.handleReceivedData(data)
                 } else {
-                    print("📡 [\(await self.peerInfo.username)] No data received")
+                    print("📡 [\(username)] No data received")
                 }
 
                 if isComplete {
-                    print("📡 [\(await self.peerInfo.username)] Connection complete, disconnecting")
+                    print("📡 [\(username)] Connection complete, disconnecting")
                     await self.disconnect()
                 } else if error == nil {
                     await self.startReceiving()
                 } else {
-                    print("📡 [\(await self.peerInfo.username)] Not continuing receive due to error")
+                    print("📡 [\(username)] Not continuing receive due to error")
                 }
             }
         }
@@ -644,7 +743,28 @@ actor PeerConnection {
 
     // Track if we've completed handshake
     private var handshakeComplete = false
+    private var peerHandshakeReceived = false  // True when we receive peer's PeerInit
     private var peerUsername: String = ""
+
+    /// Wait for the peer to complete handshake (send their PeerInit)
+    /// This is needed before sending requests like GetShareFileList
+    func waitForPeerHandshake(timeout: Duration = .seconds(10)) async throws {
+        let start = Date()
+        let timeoutSeconds = TimeInterval(timeout.components.seconds)
+        while !peerHandshakeReceived {
+            try await Task.sleep(for: .milliseconds(50))
+            if Date().timeIntervalSince(start) > timeoutSeconds {
+                print("⏱️ [\(peerInfo.username)] Timeout waiting for peer handshake")
+                throw PeerError.timeout
+            }
+        }
+        print("✅ [\(peerInfo.username)] Peer handshake received")
+    }
+
+    /// Check if peer has completed handshake
+    var isPeerHandshakeComplete: Bool {
+        peerHandshakeReceived
+    }
 
     private func handleReceivedData(_ data: Data) async {
         receiveBuffer.append(data)
@@ -725,6 +845,7 @@ actor PeerConnection {
                 await _onPierceFirewall?(token)
             }
             handshakeComplete = true
+            peerHandshakeReceived = true
 
         case PeerMessageCode.peerInit.rawValue:
             // Peer init - extract username, type, token
@@ -764,6 +885,8 @@ actor PeerConnection {
                 }
             }
             handshakeComplete = true
+            peerHandshakeReceived = true
+            print("✅ [\(peerUsername)] Peer handshake complete (received PeerInit)")
 
         default:
             logger.warning("Unknown init message code: \(code)")
@@ -878,7 +1001,7 @@ actor PeerConnection {
                 guard let size = decompressed.readUInt64(at: offset) else { break }
                 offset += 8
 
-                guard let (ext, extLen) = decompressed.readString(at: offset) else { break }
+                guard let (_, extLen) = decompressed.readString(at: offset) else { break }
                 offset += extLen
 
                 guard let attrCount = decompressed.readUInt32(at: offset) else { break }
@@ -976,7 +1099,7 @@ actor PeerConnection {
     private func handleUserInfoReply(_ data: Data) async {
         var offset = 0
 
-        guard let (description, descLen) = data.readString(at: offset) else { return }
+        guard let (_, descLen) = data.readString(at: offset) else { return }
         offset += descLen
 
         // Has picture flag
@@ -1069,7 +1192,18 @@ actor PeerConnection {
     private func handleUploadFailed(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
         logger.warning("Upload failed for: \(filename)")
-        print("❌ UploadFailed: \(filename)")
+        print("❌ UploadFailed from \(peerUsername): \(filename)")
+        // Write to debug log file
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let logLine = "[\(timestamp)] ❌ UploadFailed from \(peerUsername): \(filename)\n"
+        if let logPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("seeleseek_debug.log"),
+           let data = logLine.data(using: .utf8) {
+            if let handle = try? FileHandle(forWritingTo: logPath) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+        }
         await _onUploadFailed?(filename)
     }
 

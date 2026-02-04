@@ -405,16 +405,15 @@ final class NetworkClient {
         receiveTask = Task { [weak self] in
             guard let self = self, let connection = self.serverConnection else { return }
 
-            do {
-                for try await message in connection.messages {
-                    await self.handleMessage(message)
-                }
-            } catch {
-                await MainActor.run {
-                    self.connectionError = error.localizedDescription
-                    self.isConnected = false
-                    self.onConnectionStatusChanged?(.disconnected)
-                }
+            for await message in connection.messages {
+                await self.handleMessage(message)
+            }
+
+            // Stream ended (connection closed)
+            await MainActor.run {
+                self.connectionError = "Connection closed"
+                self.isConnected = false
+                self.onConnectionStatusChanged?(.disconnected)
             }
         }
     }
@@ -610,9 +609,6 @@ final class NetworkClient {
         )
 
         print("📂 Browse: Connected to \(username), setting up callback...")
-
-        // Small delay to ensure connection is fully ready and receive loop is running
-        try? await Task.sleep(for: .milliseconds(100))
 
         // Set up callback BEFORE requesting shares
         nonisolated(unsafe) var sharesResumed = false

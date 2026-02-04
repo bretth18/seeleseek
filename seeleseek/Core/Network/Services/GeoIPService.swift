@@ -51,7 +51,7 @@ actor GeoIPService {
 
         // Ensure database is loaded
         if !isLoaded {
-            await loadDatabase()
+            loadDatabase()
         }
 
         // Binary search for the IP range

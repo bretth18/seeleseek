@@ -187,7 +187,7 @@ final class MetadataState {
     /// Parse artist and title from filename
     func parseFilename(_ filename: String) -> (artist: String, title: String) {
         // Remove extension
-        var name = (filename as NSString).deletingPathExtension
+        let name = (filename as NSString).deletingPathExtension
 
         // Common patterns:
         // "Artist - Title"
