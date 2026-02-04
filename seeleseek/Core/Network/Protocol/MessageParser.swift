@@ -300,6 +300,12 @@ enum MessageParser {
         let preview = payload.prefix(min(100, payload.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
         print("📦 TransferRequest raw (\(payload.count) bytes): \(preview)")
 
+        // Need at least 4 (direction) + 4 (token) + 4 (filename length) = 12 bytes minimum
+        guard payload.count >= 12 else {
+            print("📦 Payload too short: \(payload.count) bytes, need at least 12")
+            return nil
+        }
+
         guard let directionRaw = payload.readUInt32(at: offset) else {
             print("📦 Failed to read direction at offset \(offset)")
             return nil
@@ -323,18 +329,35 @@ enum MessageParser {
             print("📦 Failed to read filename at offset \(offset)")
             return nil
         }
-        print("📦 filename: '\(filename)' (len=\(filenameLen)) at offset \(offset)")
+        print("📦 filename: '\(filename)' (consumed=\(filenameLen) bytes) at offset \(offset)")
         offset += filenameLen
 
         var fileSize: UInt64?
         if direction == .upload {
-            // Debug: show the 8 bytes we're reading for file size
-            let sizeBytes = payload.dropFirst(offset).prefix(8)
-            let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("📦 fileSize bytes at offset \(offset): \(sizeBytesHex)")
+            // For upload direction, file size should follow the filename
+            // Check if we have enough bytes remaining (need 8 bytes for UInt64)
+            let remainingBytes = payload.count - offset
+            print("📦 Remaining bytes after filename: \(remainingBytes), need 8 for fileSize")
 
-            fileSize = payload.readUInt64(at: offset)
-            print("📦 fileSize parsed: \(fileSize ?? 0)")
+            if remainingBytes >= 8 {
+                // Debug: show the 8 bytes we're reading for file size
+                let sizeBytes = payload.dropFirst(offset).prefix(8)
+                let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
+                print("📦 fileSize bytes at offset \(offset): \(sizeBytesHex)")
+
+                fileSize = payload.readUInt64(at: offset)
+                print("📦 fileSize parsed: \(fileSize ?? 0)")
+
+                // Validate: file size of 0 for upload direction is suspicious
+                if fileSize == 0 {
+                    print("⚠️ TransferRequest: fileSize is 0 for upload direction - this may indicate parsing issue")
+                    print("⚠️ Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                }
+            } else {
+                print("⚠️ TransferRequest: Not enough bytes for fileSize! Have \(remainingBytes), need 8")
+                print("⚠️ Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                // Still return what we have - fileSize will be nil
+            }
         }
 
         return TransferRequestInfo(direction: direction, token: token, filename: filename, fileSize: fileSize)

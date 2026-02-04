@@ -48,7 +48,10 @@ actor PeerConnection {
 
     // MARK: - Properties
 
-    nonisolated let peerInfo: PeerInfo
+    // Note: peerInfo uses nonisolated(unsafe) because it may be updated after init
+    // when extracting IP/port from incoming connections. This is safe because
+    // updates only happen during connection setup, before concurrent access.
+    nonisolated(unsafe) var peerInfo: PeerInfo
     nonisolated let connectionType: ConnectionType
     nonisolated let isIncoming: Bool
     nonisolated let token: UInt32
@@ -66,6 +69,8 @@ actor PeerConnection {
     private var _onSharesReceived: (([SharedFile]) async -> Void)?
     private var _onSearchReply: ((UInt32, [SearchResult]) async -> Void)?  // (token, results)
     private var _onTransferRequest: ((TransferRequest) async -> Void)?
+    // Per-token TransferRequest handlers for handling multiple concurrent downloads on same connection
+    private var _tokenTransferRequestHandlers: [UInt32: (TransferRequest) async -> Void] = [:]
     private var _onUsernameDiscovered: ((String, UInt32) async -> Void)?  // (username, token)
     private var _onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, self)
     private var _onPierceFirewall: ((UInt32) async -> Void)?  // token from indirect connection
@@ -96,6 +101,19 @@ actor PeerConnection {
 
     func setOnTransferRequest(_ handler: @escaping (TransferRequest) async -> Void) {
         _onTransferRequest = handler
+    }
+
+    /// Register a handler for a specific token's TransferRequest
+    /// This allows multiple concurrent downloads on the same connection without callback conflicts
+    func setOnTransferRequestForToken(_ token: UInt32, handler: @escaping (TransferRequest) async -> Void) {
+        _tokenTransferRequestHandlers[token] = handler
+        print("📝 Registered TransferRequest handler for token \(token) (total handlers: \(_tokenTransferRequestHandlers.count))")
+    }
+
+    /// Remove a per-token TransferRequest handler
+    func removeTransferRequestHandlerForToken(_ token: UInt32) {
+        _tokenTransferRequestHandlers.removeValue(forKey: token)
+        print("📝 Removed TransferRequest handler for token \(token) (remaining: \(_tokenTransferRequestHandlers.count))")
     }
 
     func setOnUsernameDiscovered(_ handler: @escaping (String, UInt32) async -> Void) {
@@ -165,8 +183,37 @@ actor PeerConnection {
     }
 
     init(connection: NWConnection, isIncoming: Bool = true, autoStartReceiving: Bool = true) {
-        // For incoming connections, we don't know the peer info yet
-        self.peerInfo = PeerInfo(username: "", ip: "", port: 0)
+        // For incoming connections, extract IP/port from the connection endpoint
+        // This fixes the issue where peerInfo.ip and peerInfo.port were empty for incoming connections
+        var extractedIP = ""
+        var extractedPort = 0
+
+        if let remoteEndpoint = connection.currentPath?.remoteEndpoint {
+            switch remoteEndpoint {
+            case .hostPort(let host, let port):
+                // Extract IP string from host
+                switch host {
+                case .ipv4(let ipv4):
+                    extractedIP = "\(ipv4)"
+                case .ipv6(let ipv6):
+                    extractedIP = "\(ipv6)"
+                case .name(let hostname, _):
+                    extractedIP = hostname
+                @unknown default:
+                    extractedIP = "\(host)"
+                }
+                extractedPort = Int(port.rawValue)
+                print("📥 Incoming connection: extracted IP=\(extractedIP) port=\(extractedPort)")
+            default:
+                print("📥 Incoming connection: could not extract IP/port from endpoint: \(remoteEndpoint)")
+            }
+        } else {
+            // Path not available yet, try to extract from endpoint directly
+            // This can happen before the connection is started
+            print("📥 Incoming connection: currentPath not available, IP/port unknown until connection starts")
+        }
+
+        self.peerInfo = PeerInfo(username: "", ip: extractedIP, port: extractedPort)
         self.connectionType = .peer
         self.token = 0
         self.isIncoming = isIncoming
@@ -232,11 +279,56 @@ actor PeerConnection {
             connection.stateUpdateHandler = { [weak self] newState in
                 guard let self else { return }
                 Task {
+                    // When connection becomes ready, extract remote endpoint if not already done
+                    if case .ready = newState {
+                        await self.extractRemoteEndpointIfNeeded()
+                    }
                     await self.handleConnectionState(newState, continuation: continuation)
                 }
             }
 
             connection.start(queue: .global(qos: .userInitiated))
+        }
+    }
+
+    /// Extract remote endpoint from connection if peerInfo IP is empty
+    /// Called when connection becomes ready to ensure we have the peer's IP/port
+    private func extractRemoteEndpointIfNeeded() {
+        guard peerInfo.ip.isEmpty, let connection else { return }
+
+        if let remoteEndpoint = connection.currentPath?.remoteEndpoint {
+            switch remoteEndpoint {
+            case .hostPort(let host, let port):
+                var extractedIP = ""
+                switch host {
+                case .ipv4(let ipv4):
+                    extractedIP = "\(ipv4)"
+                case .ipv6(let ipv6):
+                    extractedIP = "\(ipv6)"
+                case .name(let hostname, _):
+                    extractedIP = hostname
+                @unknown default:
+                    extractedIP = "\(host)"
+                }
+                let extractedPort = Int(port.rawValue)
+                print("📥 Connection ready: extracted IP=\(extractedIP) port=\(extractedPort)")
+
+                // Update peerInfo with extracted IP/port
+                peerInfo = PeerInfo(
+                    username: peerInfo.username,
+                    ip: extractedIP,
+                    port: extractedPort,
+                    uploadSpeed: peerInfo.uploadSpeed,
+                    downloadSpeed: peerInfo.downloadSpeed,
+                    freeUploadSlots: peerInfo.freeUploadSlots,
+                    queueLength: peerInfo.queueLength,
+                    sharedFiles: peerInfo.sharedFiles,
+                    sharedFolders: peerInfo.sharedFolders
+                )
+                print("✅ Updated peerInfo with IP=\(extractedIP) port=\(extractedPort)")
+            default:
+                print("⚠️ Could not extract IP/port from endpoint type: \(remoteEndpoint)")
+            }
         }
     }
 
@@ -872,6 +964,21 @@ actor PeerConnection {
                     // File transfer connection - notify for file data handling
                     logger.info("File transfer connection from \(username) token=\(peerToken)")
                     print("📁 F CONNECTION DETECTED: username='\(username)' token=\(peerToken)")
+
+                    // CRITICAL: Stop receive loop IMMEDIATELY before invoking callback
+                    // This prevents race condition where receive loop consumes FileTransferInit bytes
+                    // before the callback handler can call stopReceiving()
+                    shouldStopReceiving = true
+                    print("📁 F connection: stopped receive loop preemptively")
+
+                    // Move any remaining receive buffer data to file transfer buffer
+                    // This preserves FileTransferInit bytes that may have been received
+                    if !receiveBuffer.isEmpty {
+                        fileTransferBuffer.append(receiveBuffer)
+                        print("📁 F connection: moved \(receiveBuffer.count) bytes from receive buffer to file transfer buffer")
+                        receiveBuffer.removeAll()
+                    }
+
                     if _onFileTransferConnection != nil {
                         print("📁 F connection callback IS set, invoking...")
                         await _onFileTransferConnection?(username, peerToken, self)
@@ -1145,7 +1252,19 @@ actor PeerConnection {
             username: peerInfo.username
         )
 
-        await _onTransferRequest?(request)
+        // Check for per-token handler first (for concurrent downloads on same connection)
+        if let tokenHandler = _tokenTransferRequestHandlers[parsed.token] {
+            print("📨 Dispatching TransferRequest to per-token handler for token \(parsed.token)")
+            await tokenHandler(request)
+            // Remove the handler after use (one-shot callback)
+            _tokenTransferRequestHandlers.removeValue(forKey: parsed.token)
+        } else if let globalHandler = _onTransferRequest {
+            // Fall back to global handler
+            print("📨 Dispatching TransferRequest to global handler")
+            await globalHandler(request)
+        } else {
+            print("⚠️ No handler for TransferRequest token=\(parsed.token)")
+        }
     }
 
     private func handleTransferReply(_ data: Data) async {

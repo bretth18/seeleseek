@@ -118,25 +118,18 @@ final class UploadManager {
             }
         }
 
-        // Set up callback for peer address (for uploads waiting on address resolution)
-        print("🔧 UploadManager: Setting up onPeerAddress callback chain")
-        let previousPeerAddressCallback = networkClient.onPeerAddress
-        print("  → previousPeerAddressCallback is \(previousPeerAddressCallback == nil ? "nil" : "set")")
-        networkClient.onPeerAddress = { [weak self] username, ip, port in
-            print("📞 UploadManager.onPeerAddress closure called: \(username) @ \(ip):\(port)")
-            guard let self else {
-                print("  → UploadManager self is nil, calling previous only")
-                previousPeerAddressCallback?(username, ip, port)
-                return
-            }
+        // Set up callback for peer address using multi-listener pattern
+        // This replaces the fragile callback chaining approach that could break if
+        // DownloadManager was configured after UploadManager
+        print("🔧 UploadManager: Adding peer address handler")
+        networkClient.addPeerAddressHandler { [weak self] username, ip, port in
+            print("📞 UploadManager.peerAddressHandler called: \(username) @ \(ip):\(port)")
+            guard let self else { return }
             Task { @MainActor in
                 await self.handlePeerAddressForUpload(username: username, ip: ip, port: port)
             }
-            // Also call previous callback if any
-            print("  → Calling previousPeerAddressCallback")
-            previousPeerAddressCallback?(username, ip, port)
         }
-        print("✅ UploadManager: onPeerAddress callback chain configured")
+        print("✅ UploadManager: peer address handler added")
 
         logger.info("UploadManager configured")
     }

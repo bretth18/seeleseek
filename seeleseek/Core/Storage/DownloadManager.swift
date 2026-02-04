@@ -111,15 +111,15 @@ final class DownloadManager {
         self.transferState = transferState
         self.statisticsState = statisticsState
 
-        // Set up callbacks for peer address responses
-        print("🔧 DownloadManager: Setting up onPeerAddress callback")
-        networkClient.onPeerAddress = { [weak self] username, ip, port in
-            print("📞 DownloadManager.onPeerAddress closure called: \(username) @ \(ip):\(port)")
+        // Set up callbacks for peer address responses using multi-listener pattern
+        print("🔧 DownloadManager: Adding peer address handler")
+        networkClient.addPeerAddressHandler { [weak self] username, ip, port in
+            print("📞 DownloadManager.peerAddressHandler called: \(username) @ \(ip):\(port)")
             Task { @MainActor in
                 await self?.handlePeerAddress(username: username, ip: ip, port: port)
             }
         }
-        print("✅ DownloadManager: onPeerAddress callback configured")
+        print("✅ DownloadManager: peer address handler added")
 
         // Set up callback for incoming connections that match pending downloads
         networkClient.onIncomingConnectionMatched = { [weak self] username, token, connection in
@@ -422,12 +422,34 @@ final class DownloadManager {
     }
 
     /// Set up callback for TransferRequest - must be called BEFORE sending QueueDownload
+    /// Uses filename-based matching to handle multiple concurrent downloads on same connection
     private func setupTransferRequestCallback(token: UInt32, connection: PeerConnection) async {
+        // Use a central callback that matches by filename instead of capturing a specific token
+        // This fixes the issue where multiple downloads on the same connection would overwrite callbacks
         await connection.setOnTransferRequest { [weak self] request in
             guard let self else { return }
-            await self.handleTransferRequest(token: token, request: request)
+            // Find pending download by filename match
+            await self.handleTransferRequestByFilename(request: request, fallbackToken: token)
         }
-        print("📝 TransferRequest callback set up for token=\(token)")
+        print("📝 TransferRequest callback set up (filename-based matching, fallback token=\(token))")
+    }
+
+    /// Handle TransferRequest by matching filename to pending downloads
+    /// This supports multiple concurrent downloads on the same connection
+    private func handleTransferRequestByFilename(request: TransferRequest, fallbackToken: UInt32) async {
+        // Try to find matching pending download by filename
+        let matchingEntry = pendingDownloads.first { (_, pending) in
+            pending.filename == request.filename
+        }
+
+        if let (token, _) = matchingEntry {
+            print("📨 Matched TransferRequest to pending download by filename: \(request.filename)")
+            await handleTransferRequest(token: token, request: request)
+        } else {
+            // Fall back to the original token if no filename match
+            print("📨 No filename match for TransferRequest, using fallback token=\(fallbackToken)")
+            await handleTransferRequest(token: fallbackToken, request: request)
+        }
     }
 
     private func waitForTransferResponse(token: UInt32) async {
@@ -1155,10 +1177,11 @@ final class DownloadManager {
         logger.info("Receiving file to: \(destPath.path)")
 
         do {
-            // Stop the normal message receive loop - we need raw data access
+            // Note: receive loop is already stopped in PeerConnection.handleInitMessage when F connection detected
+            // This call is now just a safety no-op (stopReceiving is idempotent)
             await connection.stopReceiving()
 
-            // Small delay to let any in-flight receive complete
+            // Small delay to let any in-flight network data arrive
             try await Task.sleep(for: .milliseconds(50))
 
             // Per SoulSeek/nicotine+ protocol on F connections:

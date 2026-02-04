@@ -149,7 +149,18 @@ final class NetworkClient {
     var onRoomLeft: ((String) -> Void)?
     var onUserJoinedRoom: ((String, String) -> Void)?
     var onUserLeftRoom: ((String, String) -> Void)?
+    /// @deprecated Use addPeerAddressHandler() instead for multi-listener support
     var onPeerAddress: ((String, String, Int) -> Void)?
+
+    // Multi-listener support for peer address responses
+    // This fixes the issue where DownloadManager and UploadManager callbacks could overwrite each other
+    private var peerAddressHandlers: [(String, String, Int) -> Void] = []
+
+    /// Add a handler for peer address responses (supports multiple listeners)
+    func addPeerAddressHandler(_ handler: @escaping (String, String, Int) -> Void) {
+        peerAddressHandlers.append(handler)
+        print("🔧 NetworkClient: Added peer address handler (total: \(peerAddressHandlers.count))")
+    }
     var onIncomingConnectionMatched: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     var onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     var onPierceFirewall: ((UInt32, PeerConnection) async -> Void)?  // (token, connection)
@@ -521,7 +532,7 @@ final class NetworkClient {
 
     // MARK: - Peer Address Response Handling
 
-    /// Internal handler for peer address responses - dispatches to pending requests AND external callback
+    /// Internal handler for peer address responses - dispatches to pending requests AND all registered handlers
     func handlePeerAddressResponse(username: String, ip: String, port: Int) {
         print("🔔 handlePeerAddressResponse: \(username) @ \(ip):\(port)")
 
@@ -531,12 +542,22 @@ final class NetworkClient {
             continuation.resume(returning: (ip, port))
         }
 
-        // Always forward to external callback (for downloads via DownloadManager)
+        // Call all registered handlers (multi-listener pattern)
+        if !peerAddressHandlers.isEmpty {
+            print("  → Calling \(peerAddressHandlers.count) registered peer address handlers")
+            for handler in peerAddressHandlers {
+                handler(username, ip, port)
+            }
+        }
+
+        // Also call legacy single callback for backward compatibility
         if onPeerAddress != nil {
-            print("  → Forwarding to onPeerAddress callback")
+            print("  → Forwarding to legacy onPeerAddress callback")
             onPeerAddress?(username, ip, port)
-        } else {
-            print("  ⚠️ onPeerAddress callback is nil!")
+        }
+
+        if peerAddressHandlers.isEmpty && onPeerAddress == nil {
+            print("  ⚠️ No peer address handlers registered!")
         }
     }
 
@@ -608,7 +629,13 @@ final class NetworkClient {
             token: token
         )
 
-        print("📂 Browse: Connected to \(username), setting up callback...")
+        print("📂 Browse: Connected to \(username), waiting for peer handshake...")
+
+        // Wait for peer's PeerInit before sending any requests
+        // Per SoulSeek protocol: after establishing P connection, we send PeerInit
+        // and MUST wait for peer's PeerInit before sending SharesRequest
+        try await connection.waitForPeerHandshake(timeout: .seconds(10))
+        print("📂 Browse: Peer handshake complete, setting up callback...")
 
         // Set up callback BEFORE requesting shares
         nonisolated(unsafe) var sharesResumed = false
