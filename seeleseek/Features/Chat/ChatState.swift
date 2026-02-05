@@ -53,6 +53,19 @@ final class ChatState {
         client.onUserLeftRoom = { [weak self] roomName, username in
             self?.handleUserLeftRoom(roomName, username: username)
         }
+
+        // Listen for user status updates to update private chat online status
+        client.onUserStatus = { [weak self] username, status, _ in
+            self?.updateUserOnlineStatus(username: username, status: status)
+        }
+    }
+
+    // MARK: - User Status Updates
+
+    func updateUserOnlineStatus(username: String, status: UserStatus) {
+        if let index = privateChats.firstIndex(where: { $0.username == username }) {
+            privateChats[index].isOnline = status != .offline
+        }
     }
 
     private func handleRoomJoined(_ roomName: String, users: [String]) {
@@ -170,8 +183,15 @@ final class ChatState {
         selectedRoom = nil
 
         // Create chat if doesn't exist
-        if !privateChats.contains(where: { $0.username == username }) {
+        let isNew = !privateChats.contains(where: { $0.username == username })
+        if isNew {
             privateChats.append(PrivateChat(username: username))
+
+            // Request user status for new chat
+            Task {
+                try? await networkClient?.watchUser(username)
+                try? await networkClient?.getUserStatus(username)
+            }
         }
 
         // Clear unread
@@ -183,15 +203,25 @@ final class ChatState {
     func addPrivateMessage(_ username: String, message: ChatMessage) {
         if let index = privateChats.firstIndex(where: { $0.username == username }) {
             privateChats[index].messages.append(message)
+            // If receiving a message from them, they're online
+            if !message.isOwn {
+                privateChats[index].isOnline = true
+            }
             if selectedPrivateChat != username {
                 privateChats[index].unreadCount += 1
             }
         } else {
-            // Create new chat
-            var chat = PrivateChat(username: username)
+            // Create new chat - user is online since they sent us a message
+            var chat = PrivateChat(username: username, isOnline: !message.isOwn)
             chat.messages.append(message)
-            chat.unreadCount = 1
+            chat.unreadCount = selectedPrivateChat != username ? 1 : 0
             privateChats.append(chat)
+
+            // Request user status
+            Task {
+                try? await networkClient?.watchUser(username)
+                try? await networkClient?.getUserStatus(username)
+            }
         }
     }
 

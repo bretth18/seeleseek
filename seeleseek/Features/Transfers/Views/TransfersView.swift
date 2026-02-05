@@ -31,6 +31,12 @@ struct TransfersView: View {
             }
         }
         .background(SeeleColors.background)
+        .sheet(isPresented: Binding(
+            get: { appState.metadataState.isEditorPresented },
+            set: { appState.metadataState.isEditorPresented = $0 }
+        )) {
+            MetadataEditorSheet(state: appState.metadataState)
+        }
     }
 
     private var header: some View {
@@ -269,6 +275,7 @@ struct TransfersView: View {
 }
 
 struct TransferRow: View {
+    @Environment(\.appState) private var appState
     let transfer: Transfer
     let onCancel: () -> Void
     let onRetry: () -> Void
@@ -353,6 +360,13 @@ struct TransferRow: View {
                 if transfer.status == .completed && transfer.isAudioFile && transfer.localPath != nil {
                     IconButton(icon: isPlaying ? "pause.fill" : "play.fill") {
                         toggleAudioPreview()
+                    }
+
+                    // Edit metadata button
+                    IconButton(icon: "tag") {
+                        if let path = transfer.localPath {
+                            appState.metadataState.showEditor(for: path)
+                        }
                     }
                 }
 

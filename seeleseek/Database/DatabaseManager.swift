@@ -178,6 +178,16 @@ actor DatabaseManager {
             }
         }
 
+        // v3: Blocklist
+        migrator.registerMigration("v3") { db in
+            // blocked_users: Ignored/blocked users
+            try db.create(table: "blocked_users") { t in
+                t.column("username", .text).primaryKey()
+                t.column("reason", .text)
+                t.column("dateBlocked", .double).notNull()
+            }
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")

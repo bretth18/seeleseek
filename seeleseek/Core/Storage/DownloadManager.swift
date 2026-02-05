@@ -733,18 +733,11 @@ final class DownloadManager {
             print("✅ Outgoing F connection established to \(username)")
             logger.info("Outgoing F connection established to \(username)")
 
-            // Send PeerInit with type "F"
-            guard let networkClient else {
-                throw DownloadError.noPeerConnection
-            }
-
-            let peerInitMessage = MessageBuilder.peerInitMessage(
-                username: networkClient.username,
-                connectionType: "F",
-                token: 0  // F connections always use token 0 in PeerInit
-            )
-            try await sendData(connection: connection, data: peerInitMessage)
-            print("📤 Sent PeerInit type=F to \(username)")
+            // Send PierceFirewall with the transfer token
+            // This tells the uploader which pending upload this connection is for
+            let pierceMessage = MessageBuilder.pierceFirewallMessage(token: transferToken)
+            try await sendData(connection: connection, data: pierceMessage)
+            print("📤 Sent PierceFirewall token=\(transferToken) to \(username)")
 
             // Capture offset before removing from pending
             let resumeOffset = pending.offset

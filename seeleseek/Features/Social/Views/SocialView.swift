@@ -7,12 +7,16 @@ struct SocialView: View {
         case buddies = "Buddies"
         case interests = "Interests"
         case discover = "Discover"
+        case blocklist = "Blocklist"
+        case leech = "Leech"
 
         var icon: String {
             switch self {
             case .buddies: "person.2"
             case .interests: "heart"
             case .discover: "sparkles"
+            case .blocklist: "nosign"
+            case .leech: "exclamationmark.triangle"
             }
         }
     }
@@ -47,6 +51,10 @@ struct SocialView: View {
                     InterestsView()
                 case .discover:
                     SimilarUsersView()
+                case .blocklist:
+                    BlocklistView()
+                case .leech:
+                    LeechSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

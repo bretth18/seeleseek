@@ -10,6 +10,16 @@ final class SocialState {
     var buddySearchQuery: String = ""
     var showAddBuddySheet = false
 
+    // MARK: - Blocklist
+    var blockedUsers: [BlockedUser] = []
+    var showBlockUserSheet = false
+    var blockSearchQuery: String = ""
+
+    // MARK: - Leech Detection
+    var leechSettings = LeechSettings()
+    var detectedLeeches: Set<String> = []  // Usernames flagged as leeches
+    var warnedLeeches: Set<String> = []    // Leeches we've already warned/messaged
+
     // MARK: - Profiles
     var viewingProfile: UserProfile?
     var showProfileSheet = false
@@ -53,6 +63,19 @@ final class SocialState {
         buddies.filter { $0.status == .offline }
     }
 
+    var filteredBlockedUsers: [BlockedUser] {
+        guard !blockSearchQuery.isEmpty else { return blockedUsers }
+        return blockedUsers.filter { $0.username.localizedCaseInsensitiveContains(blockSearchQuery) }
+    }
+
+    func isBlocked(_ username: String) -> Bool {
+        blockedUsers.contains { $0.username.lowercased() == username.lowercased() }
+    }
+
+    func isLeech(_ username: String) -> Bool {
+        detectedLeeches.contains(username)
+    }
+
     // MARK: - Setup
 
     func setupCallbacks(client: NetworkClient) {
@@ -81,6 +104,8 @@ final class SocialState {
                 self.viewingProfile?.sharedFiles = files
                 self.viewingProfile?.sharedFolders = dirs
             }
+            // Check for leech
+            self.checkForLeech(username: username, files: files, folders: dirs)
         }
 
         // User interests response
@@ -138,6 +163,10 @@ final class SocialState {
             buddies = try await SocialRepository.fetchBuddies()
             logger.info("Loaded \(self.buddies.count) buddies from database")
 
+            // Load blocked users
+            blockedUsers = try await SocialRepository.fetchBlockedUsers()
+            logger.info("Loaded \(self.blockedUsers.count) blocked users from database")
+
             // Load interests
             let interests = try await SocialRepository.fetchInterests()
             myLikes = interests.likes
@@ -147,6 +176,12 @@ final class SocialState {
             // Load my profile settings
             if let desc = try await SocialRepository.getProfileSetting("description") {
                 myDescription = desc
+            }
+
+            // Load leech settings
+            if let leechJson = try await SocialRepository.getProfileSetting("leechSettings"),
+               let data = leechJson.data(using: .utf8) {
+                leechSettings = try JSONDecoder().decode(LeechSettings.self, from: data)
             }
 
             // Request status updates for all buddies after a short delay to ensure connection is ready
@@ -275,9 +310,26 @@ final class SocialState {
 
     func loadProfile(for username: String) async {
         isLoadingProfile = true
-        viewingProfile = UserProfile(username: username)
+
+        // Start with data from buddy list if available
+        if let buddy = buddies.first(where: { $0.username == username }) {
+            viewingProfile = UserProfile(
+                username: username,
+                averageSpeed: buddy.averageSpeed,
+                sharedFiles: buddy.fileCount,
+                sharedFolders: buddy.folderCount,
+                status: buddy.status,
+                isPrivileged: buddy.isPrivileged,
+                countryCode: buddy.countryCode
+            )
+        } else {
+            viewingProfile = UserProfile(username: username)
+        }
 
         do {
+            // Request user status first
+            try await networkClient?.getUserStatus(username)
+
             // Request user interests
             try await networkClient?.getUserInterests(username)
 
@@ -453,5 +505,119 @@ final class SocialState {
         }
 
         logger.info("Re-watched \(self.buddies.count) buddies")
+    }
+
+    // MARK: - Blocklist Actions
+
+    func blockUser(_ username: String, reason: String? = nil) async {
+        guard !isBlocked(username) else { return }
+
+        let blocked = BlockedUser(username: username, reason: reason)
+        blockedUsers.append(blocked)
+
+        // Persist to database
+        do {
+            try await SocialRepository.saveBlockedUser(blocked)
+            logger.info("Blocked user \(username)")
+        } catch {
+            logger.error("Failed to save blocked user: \(error.localizedDescription)")
+        }
+
+        // Note: Server-side ignore (code 11) is obsolete in the protocol
+        // Blocking is handled client-side by filtering messages and denying transfers
+    }
+
+    func unblockUser(_ username: String) async {
+        blockedUsers.removeAll { $0.username.lowercased() == username.lowercased() }
+
+        // Remove from database
+        do {
+            try await SocialRepository.deleteBlockedUser(username)
+            logger.info("Unblocked user \(username)")
+        } catch {
+            logger.error("Failed to remove blocked user: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Leech Detection
+
+    /// Check if a user is a leech based on their stats
+    func checkForLeech(username: String, files: UInt32, folders: UInt32) {
+        guard leechSettings.enabled else { return }
+        guard !isBlocked(username) else { return }
+
+        let isLeech = files < leechSettings.minSharedFiles || folders < leechSettings.minSharedFolders
+
+        if isLeech {
+            if !detectedLeeches.contains(username) {
+                detectedLeeches.insert(username)
+                logger.info("Detected leech: \(username) (files: \(files), folders: \(folders))")
+
+                // Take action based on settings
+                handleLeechDetected(username: username)
+            }
+        } else {
+            // User is no longer a leech (they started sharing)
+            detectedLeeches.remove(username)
+            warnedLeeches.remove(username)
+        }
+    }
+
+    private func handleLeechDetected(username: String) {
+        switch leechSettings.action {
+        case .ignore:
+            // Just track, no action
+            break
+
+        case .warn:
+            // UI will show warning indicator
+            break
+
+        case .message:
+            // Send a polite message (only once per session)
+            if !warnedLeeches.contains(username) {
+                warnedLeeches.insert(username)
+                Task {
+                    try? await networkClient?.sendPrivateMessage(to: username, message: leechSettings.customMessage)
+                    logger.info("Sent leech warning to \(username)")
+                }
+            }
+
+        case .deny:
+            // Upload manager will check isLeech() before allowing transfers
+            break
+
+        case .block:
+            Task {
+                await blockUser(username, reason: "Auto-blocked: No shared files")
+            }
+        }
+    }
+
+    /// Check if we should allow uploads to this user
+    func shouldAllowUpload(to username: String) -> Bool {
+        // Always deny if blocked
+        if isBlocked(username) {
+            return false
+        }
+
+        // Deny if leech and action is deny
+        if leechSettings.enabled && leechSettings.action == .deny && isLeech(username) {
+            return false
+        }
+
+        return true
+    }
+
+    func saveLeechSettings() async {
+        do {
+            let data = try JSONEncoder().encode(leechSettings)
+            if let json = String(data: data, encoding: .utf8) {
+                try await SocialRepository.setProfileSetting("leechSettings", value: json)
+                logger.info("Saved leech settings")
+            }
+        } catch {
+            logger.error("Failed to save leech settings: \(error.localizedDescription)")
+        }
     }
 }

@@ -187,9 +187,9 @@ struct PeerNode: View {
                     .foregroundStyle(.white)
             }
 
-            Text(info.username.isEmpty ? "Unknown" : info.username)
+            Text(info.username.isEmpty || info.username == "unknown" ? info.ip : info.username)
                 .font(SeeleTypography.caption2)
-                .foregroundStyle(SeeleColors.textSecondary)
+                .foregroundStyle(info.username.isEmpty || info.username == "unknown" ? SeeleColors.textTertiary : SeeleColors.textSecondary)
                 .lineLimit(1)
                 .frame(maxWidth: 80)
         }
@@ -210,10 +210,15 @@ struct PeerNode: View {
 
 struct PeerDetailPopover: View {
     let info: PeerConnectionPool.PeerConnectionInfo
+    @Environment(\.appState) private var appState
+
+    private var hasUsername: Bool {
+        !info.username.isEmpty && info.username != "unknown"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-            Text(info.username.isEmpty ? "Unknown Peer" : info.username)
+            Text(hasUsername ? info.username : "Peer: \(info.ip)")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
@@ -240,6 +245,30 @@ struct PeerDetailPopover: View {
                 Text("Connected \(formatDuration(since: connectedAt))")
                     .font(SeeleTypography.caption2)
                     .foregroundStyle(SeeleColors.textTertiary)
+            }
+
+            // Action buttons (only if we have a username)
+            if hasUsername {
+                Divider()
+                    .background(SeeleColors.surfaceSecondary)
+
+                HStack(spacing: SeeleSpacing.md) {
+                    Button {
+                        appState.browseState.browseUser(info.username)
+                        appState.sidebarSelection = .browse
+                    } label: {
+                        Label("Browse", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        appState.chatState.selectPrivateChat(info.username)
+                        appState.sidebarSelection = .chat
+                    } label: {
+                        Label("Chat", systemImage: "bubble.left")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(SeeleSpacing.md)

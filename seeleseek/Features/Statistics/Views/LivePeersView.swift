@@ -121,12 +121,12 @@ struct PeerRow: View {
 
             // Username and info
             VStack(alignment: .leading, spacing: 2) {
-                Text(peer.username)
+                Text(!peer.username.isEmpty && peer.username != "unknown" ? peer.username : peer.ip)
                     .font(SeeleTypography.subheadline)
                     .foregroundStyle(SeeleColors.textPrimary)
 
                 HStack(spacing: SeeleSpacing.sm) {
-                    Text(peer.ip)
+                    Text(!peer.username.isEmpty && peer.username != "unknown" ? peer.ip : peer.connectionType.rawValue)
                         .font(SeeleTypography.caption2)
                         .foregroundStyle(SeeleColors.textTertiary)
 
@@ -187,13 +187,22 @@ struct PeerRow: View {
 struct PeerInfoPopover: View {
     let peer: PeerConnectionPool.PeerConnectionInfo
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appState) private var appState
+
+    private var hasUsername: Bool {
+        !peer.username.isEmpty && peer.username != "unknown"
+    }
+
+    private var displayName: String {
+        hasUsername ? peer.username : peer.ip
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
             // Header
             HStack {
                 VStack(alignment: .leading) {
-                    Text(peer.username)
+                    Text(displayName)
                         .font(SeeleTypography.title2)
                         .foregroundStyle(SeeleColors.textPrimary)
 
@@ -266,39 +275,36 @@ struct PeerInfoPopover: View {
                 }
             }
 
-            Divider()
-                .background(SeeleColors.surfaceSecondary)
+            // Actions (only if we have a username)
+            if hasUsername {
+                Divider()
+                    .background(SeeleColors.surfaceSecondary)
 
-            // Actions
-            HStack(spacing: SeeleSpacing.md) {
-                Button {
-                    // Browse user's files
-                } label: {
-                    Label("Browse", systemImage: "folder")
-                        .font(SeeleTypography.subheadline)
+                HStack(spacing: SeeleSpacing.md) {
+                    Button {
+                        appState.browseState.browseUser(peer.username)
+                        appState.sidebarSelection = .browse
+                        dismiss()
+                    } label: {
+                        Label("Browse", systemImage: "folder")
+                            .font(SeeleTypography.subheadline)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SeeleColors.info)
+
+                    Button {
+                        appState.chatState.selectPrivateChat(peer.username)
+                        appState.sidebarSelection = .chat
+                        dismiss()
+                    } label: {
+                        Label("Message", systemImage: "bubble.left")
+                            .font(SeeleTypography.subheadline)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SeeleColors.info)
+
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(SeeleColors.info)
-
-                Button {
-                    // Send private message
-                } label: {
-                    Label("Message", systemImage: "bubble.left")
-                        .font(SeeleTypography.subheadline)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(SeeleColors.info)
-
-                Spacer()
-
-                Button {
-                    // Disconnect
-                } label: {
-                    Label("Disconnect", systemImage: "xmark.circle")
-                        .font(SeeleTypography.subheadline)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(SeeleColors.error)
             }
         }
         .padding(SeeleSpacing.lg)

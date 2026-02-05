@@ -71,10 +71,33 @@ struct SidebarRow: View {
         appState.sidebarSelection == item
     }
 
+    /// Badge count for this item (e.g., unread messages for chat)
+    var badgeCount: Int {
+        switch item {
+        case .chat:
+            return appState.chatState.totalUnreadCount
+        case .social:
+            return appState.socialState.onlineBuddies.count
+        default:
+            return 0
+        }
+    }
+
     var body: some View {
-        Label(item.title, systemImage: item.icon)
-            .tag(item)
-            .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
+        HStack {
+            Label(item.title, systemImage: item.icon)
+            Spacer()
+            if badgeCount > 0 {
+                Text("\(badgeCount)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(item == .chat ? .white : SeeleColors.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(item == .chat ? Color.red : SeeleColors.surfaceSecondary, in: Capsule())
+            }
+        }
+        .tag(item)
+        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
     }
 }
 

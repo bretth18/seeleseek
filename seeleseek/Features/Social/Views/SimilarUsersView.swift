@@ -23,6 +23,12 @@ struct SimilarUsersView: View {
                 .padding(SeeleSpacing.lg)
             }
         }
+        .onAppear {
+            // Load data when view appears if not already loaded
+            if socialState.similarUsers.isEmpty && socialState.recommendations.isEmpty {
+                refresh()
+            }
+        }
     }
 
     private var toolbar: some View {

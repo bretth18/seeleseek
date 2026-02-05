@@ -470,13 +470,17 @@ private struct QuickPeersCard: View {
 private struct QuickPeerRow: View {
     let peer: PeerConnectionPool.PeerConnectionInfo
 
+    private var displayName: String {
+        !peer.username.isEmpty && peer.username != "unknown" ? peer.username : peer.ip
+    }
+
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
             Circle()
                 .fill(peer.state == .connected ? SeeleColors.success : SeeleColors.textTertiary)
                 .frame(width: 8, height: 8)
 
-            Text(peer.username)
+            Text(displayName)
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)

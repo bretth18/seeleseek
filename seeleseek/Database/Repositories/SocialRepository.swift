@@ -110,4 +110,42 @@ struct SocialRepository {
                 .deleteAll(db)
         }
     }
+
+    // MARK: - Blocked Users
+
+    /// Fetch all blocked users
+    static func fetchBlockedUsers() async throws -> [BlockedUser] {
+        try await DatabaseManager.shared.read { db in
+            let records = try BlockedUserRecord
+                .order(Column("dateBlocked").desc)
+                .fetchAll(db)
+            return records.map { $0.toBlockedUser() }
+        }
+    }
+
+    /// Save a blocked user
+    static func saveBlockedUser(_ blockedUser: BlockedUser) async throws {
+        try await DatabaseManager.shared.write { db in
+            var record = BlockedUserRecord.from(blockedUser)
+            try record.save(db)
+        }
+    }
+
+    /// Delete a blocked user by username
+    static func deleteBlockedUser(_ username: String) async throws {
+        try await DatabaseManager.shared.write { db in
+            try BlockedUserRecord
+                .filter(Column("username") == username)
+                .deleteAll(db)
+        }
+    }
+
+    /// Check if a user is blocked
+    static func isUserBlocked(_ username: String) async throws -> Bool {
+        try await DatabaseManager.shared.read { db in
+            try BlockedUserRecord
+                .filter(Column("username").lowercased == username.lowercased())
+                .fetchCount(db) > 0
+        }
+    }
 }
