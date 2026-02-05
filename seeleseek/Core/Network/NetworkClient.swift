@@ -2,12 +2,13 @@ import Foundation
 import Network
 import os
 import CryptoKit
+import Synchronization
 
 /// Main network interface that coordinates server and peer connections
 @Observable
 @MainActor
 final class NetworkClient {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "NetworkClient")
+    private nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "NetworkClient")
 
     // MARK: - Connection State
     private(set) var isConnecting = false
@@ -34,6 +35,7 @@ final class NetworkClient {
     private var messageHandler: ServerMessageHandler?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var loginContinuation: CheckedContinuation<Bool, Error>?
 
     // MARK: - Keepalive Configuration
     /// Interval between ping messages (5 minutes)
@@ -62,44 +64,44 @@ final class NetworkClient {
     // MARK: - Initialization
 
     init() {
-        print("🚀 NetworkClient initializing...")
+        logger.info("NetworkClient initializing...")
         // Wire up peer connection pool callbacks to network client
         peerConnectionPool.onSearchResults = { [weak self] token, results in
-            print("🔔 NetworkClient: Received \(results.count) results for token \(token)")
+            self?.logger.debug("NetworkClient: Received \(results.count) results for token \(token)")
             if self?.onSearchResults != nil {
-                print("🔔 NetworkClient: Forwarding to SearchState callback...")
+                self?.logger.debug("NetworkClient: Forwarding to SearchState callback...")
                 self?.onSearchResults?(token, results)
-                print("✅ NetworkClient: Callback completed")
+                self?.logger.debug("NetworkClient: Callback completed")
             } else {
-                print("⚠️ NetworkClient: WARNING - onSearchResults callback is nil!")
+                self?.logger.warning("NetworkClient: onSearchResults callback is nil!")
             }
         }
 
         // Wire up incoming connection matching for downloads
         peerConnectionPool.onIncomingConnectionMatched = { [weak self] username, token, connection in
-            print("🔔 NetworkClient: Incoming connection matched: \(username) token=\(token)")
+            self?.logger.debug("NetworkClient: Incoming connection matched: \(username) token=\(token)")
             await self?.onIncomingConnectionMatched?(username, token, connection)
         }
 
         // Wire up file transfer connections
         peerConnectionPool.onFileTransferConnection = { [weak self] username, token, connection in
-            print("📁 NetworkClient: File transfer connection received - username='\(username)' token=\(token)")
+            self?.logger.debug("NetworkClient: File transfer connection received - username='\(username)' token=\(token)")
             if self?.onFileTransferConnection != nil {
-                print("📁 NetworkClient: Forwarding to DownloadManager...")
+                self?.logger.debug("NetworkClient: Forwarding to DownloadManager...")
                 await self?.onFileTransferConnection?(username, token, connection)
-                print("📁 NetworkClient: Forward complete")
+                self?.logger.debug("NetworkClient: Forward complete")
             } else {
-                print("❌ NetworkClient: onFileTransferConnection callback is nil!")
+                self?.logger.warning("NetworkClient: onFileTransferConnection callback is nil!")
             }
         }
 
         // Wire up PierceFirewall for indirect connections
         // First check if it matches a pending browse request, then delegate to DownloadManager
         peerConnectionPool.onPierceFirewall = { [weak self] token, connection in
-            print("🔓 NetworkClient: PierceFirewall token=\(token)")
+            self?.logger.debug("NetworkClient: PierceFirewall token=\(token)")
             // Check if this is for a pending browse request
             if self?.handlePierceFirewallForBrowse(token: token, connection: connection) == true {
-                print("🔓 NetworkClient: PierceFirewall handled as browse request")
+                self?.logger.debug("NetworkClient: PierceFirewall handled as browse request")
                 return
             }
             // Otherwise, delegate to DownloadManager
@@ -108,54 +110,54 @@ final class NetworkClient {
 
         // Wire up upload denied/failed
         peerConnectionPool.onUploadDenied = { [weak self] filename, reason in
-            print("🚫 NetworkClient: Upload denied: \(filename) - \(reason)")
+            self?.logger.warning("NetworkClient: Upload denied: \(filename) - \(reason)")
             self?.onUploadDenied?(filename, reason)
         }
 
         peerConnectionPool.onUploadFailed = { [weak self] filename in
-            print("❌ NetworkClient: Upload failed: \(filename)")
+            self?.logger.warning("NetworkClient: Upload failed: \(filename)")
             self?.onUploadFailed?(filename)
         }
 
         // Wire up QueueUpload for upload handling
         peerConnectionPool.onQueueUpload = { [weak self] username, filename, connection in
-            print("📥 NetworkClient: QueueUpload from \(username): \(filename)")
+            self?.logger.info("NetworkClient: QueueUpload from \(username): \(filename)")
             await self?.onQueueUpload?(username, filename, connection)
         }
 
         // Wire up TransferResponse for upload handling
         peerConnectionPool.onTransferResponse = { [weak self] token, allowed, filesize, connection in
-            print("📨 NetworkClient: TransferResponse token=\(token) allowed=\(allowed)")
+            self?.logger.debug("NetworkClient: TransferResponse token=\(token) allowed=\(allowed)")
             await self?.onTransferResponse?(token, allowed, filesize, connection)
         }
 
         // Wire up FolderContentsRequest for folder browsing
         peerConnectionPool.onFolderContentsRequest = { [weak self] username, token, folder, connection in
-            print("📁 NetworkClient: FolderContentsRequest from \(username): \(folder)")
+            self?.logger.debug("NetworkClient: FolderContentsRequest from \(username): \(folder)")
             await self?.handleFolderContentsRequest(username: username, token: token, folder: folder, connection: connection)
         }
 
         // Wire up FolderContentsResponse for folder browsing
         peerConnectionPool.onFolderContentsResponse = { [weak self] token, folder, files in
-            print("📁 NetworkClient: FolderContentsResponse: \(folder) with \(files.count) files")
+            self?.logger.debug("NetworkClient: FolderContentsResponse: \(folder) with \(files.count) files")
             self?.onFolderContentsResponse?(token, folder, files)
         }
 
         // Wire up PlaceInQueueRequest for queue position management
         peerConnectionPool.onPlaceInQueueRequest = { [weak self] username, filename, connection in
-            print("📊 NetworkClient: PlaceInQueueRequest from \(username): \(filename)")
+            self?.logger.debug("NetworkClient: PlaceInQueueRequest from \(username): \(filename)")
             await self?.onPlaceInQueueRequest?(username, filename, connection)
         }
 
         // Wire up SharesRequest for when peers want to browse our shared files
         peerConnectionPool.onSharesRequest = { [weak self] username, connection in
-            print("📂 NetworkClient: SharesRequest from \(username) - sending our shares")
+            self?.logger.info("NetworkClient: SharesRequest from \(username) - sending our shares")
             await self?.handleSharesRequest(username: username, connection: connection)
         }
 
         // Wire up UserInfoRequest for when peers want our user info
         peerConnectionPool.onUserInfoRequest = { [weak self] username, connection in
-            print("👤 NetworkClient: UserInfoRequest from \(username) - sending our user info")
+            self?.logger.info("NetworkClient: UserInfoRequest from \(username) - sending our user info")
             await self?.handleUserInfoRequest(username: username, connection: connection)
         }
 
@@ -164,7 +166,7 @@ final class NetworkClient {
             self?.userInfoCache.registerIP(ip, for: username)
         }
 
-        print("🚀 NetworkClient initialized, callbacks wired")
+        logger.info("NetworkClient initialized, callbacks wired")
     }
 
     // MARK: - Callbacks
@@ -187,7 +189,7 @@ final class NetworkClient {
     /// Add a handler for peer address responses (supports multiple listeners)
     func addPeerAddressHandler(_ handler: @escaping (String, String, Int) -> Void) {
         peerAddressHandlers.append(handler)
-        print("🔧 NetworkClient: Added peer address handler (total: \(peerAddressHandlers.count))")
+        logger.debug("NetworkClient: Added peer address handler (total: \(self.peerAddressHandlers.count))")
     }
     var onIncomingConnectionMatched: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     var onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
@@ -234,6 +236,9 @@ final class NetworkClient {
     // Admin/system message callback
     var onAdminMessage: ((String) -> Void)?  // Server-wide admin message
 
+    // Excluded search phrases callback
+    var onExcludedSearchPhrases: (([String]) -> Void)?  // Phrases excluded from search by server
+
     // MARK: - Connection
 
     func connect(server: String, port: UInt16, username: String, password: String, preferredListenPort: UInt16? = nil) async {
@@ -251,23 +256,24 @@ final class NetworkClient {
             // Step 1: Set up listener callback for incoming peer connections
             await listenerService.setOnNewConnection { [weak self] connection, isObfuscated in
                 guard let self else { return }
-                print("🟢 INCOMING PEER CONNECTION received (obfuscated: \(isObfuscated))")
+                logger.info("Incoming peer connection received (obfuscated: \(isObfuscated))")
                 self.logger.info("Incoming peer connection (obfuscated: \(isObfuscated))")
                 await self.peerConnectionPool.handleIncomingConnection(connection)
             }
 
             // Step 2: Start listener for incoming peer connections
             logger.info("Starting listener...")
-            print("🔵 Starting listener service (preferred port: \(preferredListenPort?.description ?? "auto"))...")
+            let portDesc = preferredListenPort?.description ?? "auto"
+            logger.info("Starting listener service (preferred port: \(portDesc))...")
             let ports = try await listenerService.start(preferredPort: preferredListenPort)
             listenPort = ports.port
             obfuscatedPort = ports.obfuscatedPort
             peerConnectionPool.listenPort = ports.port  // For NAT traversal - bind outgoing connections to listen port
             logger.info("Listening on port \(self.listenPort)")
-            print("🟢 LISTENING on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
+            logger.info("Listening on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 
             // Step 3: Connect to server FIRST (NAT runs in background)
-            print("🔌 Connecting to server...")
+            logger.info("Connecting to server...")
             let connection = ServerConnection(host: server, port: port)
             serverConnection = connection
             messageHandler = ServerMessageHandler(client: self)
@@ -288,13 +294,35 @@ final class NetworkClient {
             // Start receiving messages (login response will come through here)
             startReceiving()
 
-            // Wait briefly for login response
-            try await Task.sleep(for: .milliseconds(500))
+            // Wait for login response using continuation (resumed by setLoggedIn)
+            let loginSuccess: Bool
+            do {
+                loginSuccess = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+                    self.loginContinuation = continuation
 
-            if loggedIn {
+                    // Timeout after 10 seconds so we don't wait forever
+                    Task {
+                        try? await Task.sleep(for: .seconds(10))
+                        if let pending = self.loginContinuation {
+                            self.loginContinuation = nil
+                            pending.resume(throwing: ServerConnection.ConnectionError.timeout)
+                        }
+                    }
+                }
+            } catch {
+                // Login timed out or failed via continuation
+                isConnecting = false
+                isConnected = false
+                connectionError = error.localizedDescription
+                onConnectionStatusChanged?(.disconnected)
+                await listenerService.stop()
+                return
+            }
+
+            if loginSuccess {
                 // Step 5: Send listen port to server
                 logger.info("Sending listen port...")
-                let portMessage = MessageBuilder.setListenPortMessage(port: UInt32(listenPort), obfuscatedPort: UInt32(obfuscatedPort))
+                let portMessage = MessageBuilder.setListenPortMessage(port: UInt32(listenPort))
                 try await connection.send(portMessage)
 
                 // Step 6: Set online status
@@ -312,26 +340,26 @@ final class NetworkClient {
                 // Tell server we need a distributed parent
                 let haveNoParentMessage = MessageBuilder.haveNoParent(true)
                 try await connection.send(haveNoParentMessage)
-                print("🌐 Sent HaveNoParent(true) - requesting distributed network parent")
+                logger.info("Sent HaveNoParent(true) - requesting distributed network parent")
 
                 // Tell server we accept child connections
                 let acceptChildrenMessage = MessageBuilder.acceptChildren(acceptDistributedChildren)
                 try await connection.send(acceptChildrenMessage)
-                print("🌐 Sent AcceptChildren(\(acceptDistributedChildren))")
+                logger.info("Sent AcceptChildren(\(self.acceptDistributedChildren))")
 
                 // Tell server our branch level (0 = not connected to distributed network yet)
                 let branchLevelMessage = MessageBuilder.branchLevel(0)
                 try await connection.send(branchLevelMessage)
-                print("🌐 Sent BranchLevel(0)")
+                logger.info("Sent BranchLevel(0)")
 
                 // Print diagnostic info
-                print("📊 CONNECTION DIAGNOSTICS:")
-                print("   Listen port: \(self.listenPort)")
-                print("   Obfuscated port: \(self.obfuscatedPort)")
+                logger.info("CONNECTION DIAGNOSTICS:")
+                logger.info("  Listen port: \(self.listenPort)")
+                logger.info("  Obfuscated port: \(self.obfuscatedPort)")
                 if let extIP = self.externalIP {
-                    print("   External IP: \(extIP)")
+                    logger.info("  External IP: \(extIP)")
                 } else {
-                    print("   External IP: unknown (NAT mapping may have failed)")
+                    logger.info("  External IP: unknown (NAT mapping may have failed)")
                 }
 
                 isConnecting = false
@@ -346,11 +374,6 @@ final class NetworkClient {
                 Task {
                     await self.setupNATInBackground()
                 }
-            } else if connectionError == nil {
-                // Still waiting for login response - give it more time
-                isConnecting = false
-                isConnected = true
-                onConnectionStatusChanged?(.connected)
             }
 
         } catch {
@@ -367,6 +390,12 @@ final class NetworkClient {
 
     func disconnect() {
         logger.info("Disconnecting...")
+
+        // Cancel any pending login wait
+        if let continuation = loginContinuation {
+            loginContinuation = nil
+            continuation.resume(throwing: ServerConnection.ConnectionError.notConnected)
+        }
 
         receiveTask?.cancel()
         receiveTask = nil
@@ -427,18 +456,18 @@ final class NetworkClient {
             : UserDefaults.standard.bool(forKey: "settings.enableUPnP")
 
         if !enableNAT {
-            print("🔧 NAT: Port mapping disabled in settings")
+            logger.info("NAT: Port mapping disabled in settings")
             // Still try to discover external IP via STUN/web service (non-invasive)
             if let extIP = await natService.discoverExternalIP() {
                 await MainActor.run {
                     self.externalIP = extIP
                 }
-                print("✅ NAT: External IP: \(extIP)")
+                logger.info("NAT: External IP: \(extIP)")
             }
             return
         }
 
-        print("🔧 NAT: Starting background port mapping...")
+        logger.info("NAT: Starting background port mapping...")
 
         // Add delay to avoid triggering IDS with rapid network activity at startup
         try? await Task.sleep(for: .seconds(2))
@@ -446,9 +475,9 @@ final class NetworkClient {
         // Try to map the listen port
         do {
             let mappedPort = try await natService.mapPort(listenPort)
-            print("✅ NAT: Mapped port \(listenPort) -> \(mappedPort)")
+            logger.info("NAT: Mapped port \(self.listenPort) -> \(mappedPort)")
         } catch {
-            print("⚠️ NAT: Port mapping failed (will rely on server-mediated connections)")
+            logger.warning("NAT: Port mapping failed (will rely on server-mediated connections)")
         }
 
         // Small delay between mapping attempts to avoid IDS triggers
@@ -458,7 +487,7 @@ final class NetworkClient {
         if obfuscatedPort > 0 {
             do {
                 let mappedObfuscated = try await natService.mapPort(obfuscatedPort)
-                print("✅ NAT: Mapped obfuscated port \(obfuscatedPort) -> \(mappedObfuscated)")
+                logger.info("NAT: Mapped obfuscated port \(self.obfuscatedPort) -> \(mappedObfuscated)")
             } catch {
                 // Silent failure for obfuscated port
             }
@@ -469,10 +498,10 @@ final class NetworkClient {
             await MainActor.run {
                 self.externalIP = extIP
             }
-            print("✅ NAT: External IP: \(extIP)")
+            logger.info("NAT: External IP: \(extIP)")
         }
 
-        print("🔧 NAT: Background setup complete")
+        logger.info("NAT: Background setup complete")
     }
 
     // MARK: - Message Receiving
@@ -516,7 +545,7 @@ final class NetworkClient {
             throw NetworkError.invalidResponse
         }
 
-        let message = MessageBuilder.fileSearch(token: token, query: sanitizedQuery)
+        let message = MessageBuilder.fileSearchMessage(token: token, query: sanitizedQuery)
         try await connection.send(message)
         logger.info("Sent search request: query='\(sanitizedQuery)' token=\(token)")
     }
@@ -526,7 +555,7 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.roomList()
+        let message = MessageBuilder.getRoomListMessage()
         try await connection.send(message)
     }
 
@@ -535,7 +564,7 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.joinRoom(name)
+        let message = MessageBuilder.joinRoomMessage(roomName: name)
         try await connection.send(message)
     }
 
@@ -544,7 +573,7 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.leaveRoom(name)
+        let message = MessageBuilder.leaveRoomMessage(roomName: name)
         try await connection.send(message)
     }
 
@@ -568,7 +597,7 @@ final class NetworkClient {
             return
         }
 
-        let data = MessageBuilder.sayInRoom(room: sanitizedRoom, message: sanitizedMessage)
+        let data = MessageBuilder.sayInChatRoomMessage(roomName: sanitizedRoom, message: sanitizedMessage)
         try await connection.send(data)
     }
 
@@ -587,7 +616,7 @@ final class NetworkClient {
             return
         }
 
-        let data = MessageBuilder.privateMessage(username: sanitizedUsername, message: sanitizedMessage)
+        let data = MessageBuilder.privateMessageMessage(username: sanitizedUsername, message: sanitizedMessage)
         try await connection.send(data)
     }
 
@@ -605,7 +634,7 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.setStatus(status)
+        let message = MessageBuilder.setOnlineStatusMessage(status: status)
         try await connection.send(message)
     }
 
@@ -614,7 +643,7 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.sharedFoldersFiles(folders: directories, files: files)
+        let message = MessageBuilder.sharedFoldersFilesMessage(folders: directories, files: files)
         try await connection.send(message)
     }
 
@@ -631,16 +660,29 @@ final class NetworkClient {
         }
     }
 
+    /// Acknowledge a private message to the server (code 23)
+    func acknowledgePrivateMessage(messageId: UInt32) async {
+        guard isConnected, let connection = serverConnection else { return }
+
+        let message = MessageBuilder.acknowledgePrivateMessageMessage(messageId: messageId)
+        do {
+            try await connection.send(message)
+            logger.info("Acknowledged private message \(messageId)")
+        } catch {
+            logger.error("Failed to acknowledge private message: \(error.localizedDescription)")
+        }
+    }
+
     /// Request server to tell peer to connect to us (indirect connection request)
     /// Server will forward this to the peer, who will then send PierceFirewall to us
     func sendConnectToPeer(token: UInt32, username: String, connectionType: String = "P") async {
         guard isConnected, let connection = serverConnection else { return }
 
-        let message = MessageBuilder.connectToPeer(token: token, username: username, connectionType: connectionType)
+        let message = MessageBuilder.connectToPeerMessage(token: token, username: username, connectionType: connectionType)
         do {
             try await connection.send(message)
             logger.info("Sent ConnectToPeer for \(username) token=\(token) type=\(connectionType)")
-            print("📤 Sent ConnectToPeer: token=\(token) username=\(username) type=\(connectionType)")
+            logger.debug("Sent ConnectToPeer: token=\(token) username=\(username) type=\(connectionType)")
         } catch {
             logger.error("Failed to send ConnectToPeer: \(error.localizedDescription)")
         }
@@ -650,17 +692,17 @@ final class NetworkClient {
 
     /// Internal handler for peer address responses - dispatches to pending requests AND all registered handlers
     func handlePeerAddressResponse(username: String, ip: String, port: Int) {
-        print("🔔 handlePeerAddressResponse: \(username) @ \(ip):\(port)")
+        logger.debug("handlePeerAddressResponse: \(username) @ \(ip):\(port)")
 
         // Check for pending internal request (browse/folder)
         if let pending = pendingPeerAddressRequests.removeValue(forKey: username) {
-            print("  → Resuming pending getPeerAddress continuation (requestID: \(pending.requestID))")
+            logger.debug("Resuming pending getPeerAddress continuation (requestID: \(pending.requestID))")
             pending.continuation.resume(returning: (ip, port))
         }
 
         // Call all registered handlers (multi-listener pattern)
         if !peerAddressHandlers.isEmpty {
-            print("  → Calling \(peerAddressHandlers.count) registered peer address handlers")
+            logger.debug("Calling \(self.peerAddressHandlers.count) registered peer address handlers")
             for handler in peerAddressHandlers {
                 handler(username, ip, port)
             }
@@ -668,12 +710,12 @@ final class NetworkClient {
 
         // Also call legacy single callback for backward compatibility
         if onPeerAddress != nil {
-            print("  → Forwarding to legacy onPeerAddress callback")
+            logger.debug("Forwarding to legacy onPeerAddress callback")
             onPeerAddress?(username, ip, port)
         }
 
         if peerAddressHandlers.isEmpty && onPeerAddress == nil {
-            print("  ⚠️ No peer address handlers registered!")
+            logger.warning("No peer address handlers registered!")
         }
     }
 
@@ -733,9 +775,9 @@ final class NetworkClient {
 
     /// Browse a user's shared files
     func browseUser(_ username: String) async throws -> [SharedFile] {
-        print("📂 Browse: START browseUser(\(username))")
+        logger.debug("Browse: START browseUser(\(username))")
         guard isConnected else {
-            print("📂 Browse: ERROR - not connected")
+            logger.error("Browse: ERROR - not connected")
             throw NetworkError.notConnected
         }
 
@@ -744,30 +786,30 @@ final class NetworkClient {
         // Step 0: Check if we already have an active connection to this user
         // This is common - the peer may have connected to us for search results
         if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
-            print("📂 Browse: Found existing connection to \(username), reusing it!")
+            logger.debug("Browse: Found existing connection to \(username), reusing it!")
             connection = existingConnection
         } else {
             // No existing connection - need to establish one
             let token = UInt32.random(in: 0...UInt32.max)
-            print("📂 Browse: No existing connection, using token \(token) for \(username)")
+            logger.debug("Browse: No existing connection, using token \(token) for \(username)")
 
             // CRITICAL: Register pending browse BEFORE sending ConnectToPeer to avoid race condition
             // PierceFirewall can arrive immediately after ConnectToPeer is sent!
             registerPendingBrowse(token: token, username: username, timeout: 20)
-            print("📂 Browse: Registered pending browse for token=\(token) BEFORE ConnectToPeer")
+            logger.debug("Browse: Registered pending browse for token=\(token) BEFORE ConnectToPeer")
 
             // Step 1: Send ConnectToPeer to server
             // This tells the server to forward a connection request to the peer
             // The peer will then try to connect to us with PierceFirewall
             await sendConnectToPeer(token: token, username: username, connectionType: "P")
-            print("📂 Browse: Sent ConnectToPeer to server")
+            logger.debug("Browse: Sent ConnectToPeer to server")
 
             // Step 2: Get peer address
-            print("📂 Browse: Getting peer address for \(username)...")
+            logger.debug("Browse: Getting peer address for \(username)...")
             let (ip, port) = try await getPeerAddress(for: username)
 
             logger.info("Got peer address for \(username): \(ip):\(port)")
-            print("📂 Browse: Got address \(ip):\(port), attempting direct connection...")
+            logger.debug("Browse: Got address \(ip):\(port), attempting direct connection...")
 
             // Step 3: Try direct connection first (race with indirect)
             do {
@@ -777,69 +819,70 @@ final class NetworkClient {
                     port: port,
                     token: token
                 )
-                print("📂 Browse: Direct connection to \(username) successful!")
+                logger.debug("Browse: Direct connection to \(username) successful!")
 
                 // Cancel the pending indirect connection since direct succeeded
                 cancelPendingBrowse(token: token)
-                print("📂 Browse: Cancelled indirect connection wait (direct succeeded)")
+                logger.debug("Browse: Cancelled indirect connection wait (direct succeeded")
             } catch {
                 // Direct connection failed - wait for indirect connection
                 // The server already told the peer to connect to us (step 1)
                 // The peer will send PierceFirewall with the same token
-                print("📂 Browse: Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
+                logger.debug("Browse: Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
                 logger.info("Direct connection to \(username) failed, waiting for PierceFirewall")
 
                 // Wait for the already-registered indirect connection
                 connection = try await waitForPendingBrowse(token: token)
-                print("📂 Browse: Indirect connection from \(username) received via PierceFirewall!")
+                logger.debug("Browse: Indirect connection from \(username) received via PierceFirewall!")
 
                 // CRITICAL: Resume receive loop for P connections (browse)
                 // PierceFirewall stops the receive loop assuming file transfer mode,
                 // but P connections need to continue receiving peer messages (SharesReply, etc.)
                 await connection.resumeReceivingForPeerConnection()
-                print("📂 Browse: Resumed receive loop for P connection")
+                logger.debug("Browse: Resumed receive loop for P connection")
             }
         }
 
-        print("📂 Browse: Connected to \(username), waiting for peer handshake...")
+        logger.debug("Browse: Connected to \(username), waiting for peer handshake...")
 
         // Wait for peer's PeerInit before sending any requests
         // Per SoulSeek protocol: after establishing P connection, we send PeerInit
         // and MUST wait for peer's PeerInit before sending SharesRequest
         try await connection.waitForPeerHandshake(timeout: .seconds(10))
-        print("📂 Browse: Peer handshake complete, setting up callback...")
+        logger.debug("Browse: Peer handshake complete, setting up callback...")
 
         // Set up callback BEFORE requesting shares
-        nonisolated(unsafe) var sharesResumed = false
-        nonisolated(unsafe) var receivedFiles: [SharedFile] = []
+        let sharesResumed = Mutex(false)
+        let receivedFiles = Mutex<[SharedFile]>([])
 
         // Set up the callback first (outside the continuation to avoid race)
-        await connection.setOnSharesReceived { files in
-            print("📂 Browse: Callback received \(files.count) files from \(username)")
-            receivedFiles = files
-            sharesResumed = true
+        await connection.setOnSharesReceived { [self] files in
+            self.logger.debug("Browse: Callback received \(files.count) files from \(username)")
+            receivedFiles.withLock { $0 = files }
+            sharesResumed.withLock { $0 = true }
         }
 
         // Request shares
-        print("📂 Browse: Requesting shares from \(username)...")
+        logger.debug("Browse: Requesting shares from \(username)...")
         try await connection.requestShares()
-        print("📂 Browse: Shares request sent, waiting for response...")
+        logger.debug("Browse: Shares request sent, waiting for response...")
 
         // Poll for response with timeout
         let startTime = Date()
         let timeoutSeconds: TimeInterval = 30
 
-        while !sharesResumed {
+        while !sharesResumed.withLock({ $0 }) {
             try await Task.sleep(for: .milliseconds(100))
 
             if Date().timeIntervalSince(startTime) > timeoutSeconds {
-                print("📂 Browse: Timeout waiting for shares from \(username)")
+                logger.warning("Browse: Timeout waiting for shares from \(username)")
                 throw NetworkError.timeout
             }
         }
 
-        print("📂 Browse: Got \(receivedFiles.count) files from \(username)")
-        return receivedFiles
+        let result = receivedFiles.withLock { $0 }
+        logger.debug("Browse: Got \(result.count) files from \(username)")
+        return result
     }
 
     // Pending browse state - tracks both waiting and received connections
@@ -864,7 +907,7 @@ final class NetworkClient {
             // If still pending without a connection, mark as timed out
             if var pending = self.pendingBrowseStates[token] {
                 if pending.receivedConnection == nil {
-                    print("📂 Browse: Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
+                    logger.warning("Browse: Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
                     pending.timedOut = true
                     self.pendingBrowseStates[token] = pending
 
@@ -886,7 +929,7 @@ final class NetworkClient {
         // Check if connection already arrived
         if let state = pendingBrowseStates[token] {
             if let connection = state.receivedConnection {
-                print("📂 Browse: PierceFirewall already received for token=\(token)")
+                logger.debug("Browse: PierceFirewall already received for token=\(token)")
                 pendingBrowseStates.removeValue(forKey: token)
                 return connection
             }
@@ -931,12 +974,12 @@ final class NetworkClient {
     /// Returns true if it was handled as a browse request
     func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) -> Bool {
         if var state = pendingBrowseStates[token] {
-            print("📂 Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
+            logger.debug("Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
 
             // Set the username on the connection (PierceFirewall doesn't include PeerInit with username)
             Task {
                 await connection.setPeerUsername(state.username)
-                print("📂 Browse: Set username '\(state.username)' on indirect connection")
+                logger.debug("Browse: Set username '\(state.username)' on indirect connection")
             }
 
             // Store the connection
@@ -1247,6 +1290,39 @@ final class NetworkClient {
         logger.info("Set ChildDepth(\(depth))")
     }
 
+    /// Reset distributed network state (called when server sends code 130)
+    func resetDistributedNetwork() async {
+        guard isConnected else { return }
+
+        logger.info("Resetting distributed network state")
+
+        // Disconnect all children
+        for child in distributedChildren {
+            await child.disconnect()
+        }
+        distributedChildren.removeAll()
+
+        // Reset branch state
+        distributedBranchLevel = 0
+        distributedBranchRoot = ""
+
+        // Tell server we have no parent and need one
+        do {
+            let haveNoParentMessage = MessageBuilder.haveNoParent(true)
+            try await serverConnection?.send(haveNoParentMessage)
+
+            let branchLevelMessage = MessageBuilder.branchLevel(0)
+            try await serverConnection?.send(branchLevelMessage)
+
+            let acceptChildrenMessage = MessageBuilder.acceptChildren(acceptDistributedChildren)
+            try await serverConnection?.send(acceptChildrenMessage)
+
+            logger.info("Distributed network reset complete, awaiting new parent assignment")
+        } catch {
+            logger.error("Failed to send distributed reset messages: \(error.localizedDescription)")
+        }
+    }
+
     /// Add a distributed child connection
     func addDistributedChild(_ connection: PeerConnection) {
         self.distributedChildren.append(connection)
@@ -1337,7 +1413,7 @@ final class NetworkClient {
     /// Handle incoming shares request - respond with our shared file list
     private func handleSharesRequest(username: String, connection: PeerConnection) async {
         logger.info("Shares request from \(username)")
-        print("📂 Handling SharesRequest from \(username)")
+        logger.info("Handling SharesRequest from \(username)")
 
         // Group files by directory
         var directoriesMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
@@ -1363,14 +1439,14 @@ final class NetworkClient {
             directoriesMap.map { (directory: $0.key, files: $0.value) }
                 .sorted { $0.directory < $1.directory }
 
-        print("📂 Sending \(directories.count) directories with \(shareManager.totalFiles) total files to \(username)")
+        logger.info("Sending \(directories.count) directories with \(self.shareManager.totalFiles) total files to \(username)")
 
         do {
             try await connection.sendShares(files: directories)
             logger.info("Sent shares to \(username): \(directories.count) directories")
         } catch {
             logger.error("Failed to send shares to \(username): \(error.localizedDescription)")
-            print("❌ Failed to send shares: \(error)")
+            logger.error("Failed to send shares: \(error)")
         }
     }
 
@@ -1379,7 +1455,7 @@ final class NetworkClient {
     /// Handle incoming user info request - respond with our profile info
     private func handleUserInfoRequest(username: String, connection: PeerConnection) async {
         logger.info("User info request from \(username)")
-        print("👤 Handling UserInfoRequest from \(username)")
+        logger.info("Handling UserInfoRequest from \(username)")
 
         // Get upload stats
         let totalUploads = UInt32(shareManager.totalFiles)  // Could track actual upload count
@@ -1398,10 +1474,10 @@ final class NetworkClient {
                 hasFreeSlots: hasFreeSlots
             )
             logger.info("Sent user info to \(username)")
-            print("👤 Sent user info to \(username)")
+            logger.info("Sent user info to \(username)")
         } catch {
             logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
-            print("❌ Failed to send user info: \(error)")
+            logger.error("Failed to send user info: \(error)")
         }
     }
 
@@ -1455,8 +1531,17 @@ final class NetworkClient {
 
     func setLoggedIn(_ success: Bool, message: String?) {
         loggedIn = success
-        if !success {
+        if success {
+            if let continuation = loginContinuation {
+                loginContinuation = nil
+                continuation.resume(returning: true)
+            }
+        } else {
             connectionError = message
+            if let continuation = loginContinuation {
+                loginContinuation = nil
+                continuation.resume(throwing: ServerConnection.ConnectionError.loginFailed(message ?? "Unknown error"))
+            }
             onConnectionStatusChanged?(.disconnected)
         }
     }

@@ -67,7 +67,7 @@ final class LiveServerTests: XCTestCase {
         }
 
         // Send SetListenPort
-        let portMsg = MessageBuilder.setListenPortMessage(port: 2234, obfuscatedPort: 2235)
+        let portMsg = MessageBuilder.setListenPortMessage(port: 2234)
         try await serverConn.send(portMsg)
         print("🧪 Sent SetListenPort: 2234")
 

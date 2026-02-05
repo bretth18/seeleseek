@@ -24,7 +24,7 @@ enum PeerConnectionError: Error, LocalizedError {
 @Observable
 @MainActor
 final class PeerConnectionPool {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnectionPool")
+    private nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnectionPool")
 
     // MARK: - Connection Tracking
 
@@ -204,7 +204,7 @@ final class PeerConnectionPool {
         // Validate IP address before attempting connection
         guard isValidPeerIP(ip) else {
             logger.error("Invalid peer IP address: \(ip) for \(username)")
-            print("❌ Invalid peer IP address: \(ip) (multicast/reserved) for \(username)")
+            logger.error("Invalid peer IP address: \(ip) (multicast/reserved) for \(username)")
             throw PeerConnectionError.invalidAddress
         }
 
@@ -224,12 +224,12 @@ final class PeerConnectionPool {
         if !isIndirect {
             if !ourUsername.isEmpty {
                 try await connection.sendPeerInit(username: ourUsername)
-                print("📤 Sent PeerInit to \(username) as '\(ourUsername)'")
+                logger.debug("Sent PeerInit to \(username) as '\(self.ourUsername)'")
             } else {
-                print("⚠️ Warning: ourUsername not set, skipping PeerInit")
+                logger.warning("ourUsername not set, skipping PeerInit")
             }
         } else {
-            print("📤 Indirect connection to \(username) - skipping PeerInit (will send PierceFirewall)")
+            logger.debug("Indirect connection to \(username) - skipping PeerInit (will send PierceFirewall)")
         }
 
         let connectionId = "\(username)-\(token)"
@@ -251,7 +251,7 @@ final class PeerConnectionPool {
         totalConnections += 1
 
         logger.info("Connected to peer \(username) at \(ip):\(port)")
-        print("🟢 OUTGOING CONNECTION stored: \(connectionId)")
+        logger.info("Outgoing connection stored: \(connectionId)")
 
         // Log to activity feed
         ActivityLog.shared.logPeerConnected(username: username, ip: ip)
@@ -280,7 +280,7 @@ final class PeerConnectionPool {
         // Enforce connection limit to prevent resource exhaustion
         if activeConnections >= maxConnections {
             logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
-            print("⚠️ Connection limit reached, rejecting: \(nwConnection.endpoint)")
+            logger.warning("Connection limit reached, rejecting: \(String(describing: nwConnection.endpoint))")
             nwConnection.cancel()
             return
         }
@@ -305,7 +305,7 @@ final class PeerConnectionPool {
             let currentCount = connectionsPerIP[ip] ?? 0
             if currentCount >= maxConnectionsPerIP {
                 logger.warning("Per-IP limit reached (\(self.maxConnectionsPerIP)) for \(ip), rejecting connection")
-                print("⚠️ Per-IP limit reached for \(ip), rejecting connection")
+                logger.warning("Per-IP limit reached for \(ip), rejecting connection")
                 nwConnection.cancel()
                 return
             }
@@ -319,7 +319,7 @@ final class PeerConnectionPool {
 
             if attempts.count >= maxConnectionAttemptsPerWindow {
                 logger.warning("Rate limit exceeded for \(ip) (\(attempts.count) attempts in \(self.rateLimitWindow)s), rejecting")
-                print("⚠️ Rate limit exceeded for \(ip), rejecting connection")
+                logger.warning("Rate limit exceeded for \(ip), rejecting connection")
                 nwConnection.cancel()
                 return
             }
@@ -344,7 +344,7 @@ final class PeerConnectionPool {
                 guard let self else { return }
                 await MainActor.run {
                     self.logger.info("Incoming connection \(connectionId) state changed: \(String(describing: state))")
-                    print("🔄 Connection \(connectionId) state: \(state)")
+                    self.logger.debug("Connection \(connectionId) state: \(String(describing: state))")
 
                     // Clean up disconnected connections using the captured connectionId
                     if case .disconnected = state {
@@ -352,7 +352,7 @@ final class PeerConnectionPool {
                         self.connections.removeValue(forKey: connectionId)
                         self.activeConnections_.removeValue(forKey: connectionId)
                         self.activeConnections = self.connections.count
-                        print("🔴 Connection \(connectionId) removed (disconnected)")
+                        self.logger.info("Connection \(connectionId) removed (disconnected)")
                     }
                 }
             }
@@ -361,7 +361,7 @@ final class PeerConnectionPool {
             // Close connection after receiving results (like Nicotine+) to prevent accumulation
             await connection.setOnSearchReply { [weak self, connectionId, capturedIP] token, results in
                 await MainActor.run {
-                    print("🔴 SEARCH RESULTS: \(results.count) from incoming connection (token=\(token))")
+                    self?.logger.info("Search results: \(results.count) from incoming connection (token=\(token))")
                     self?.logger.info("Received \(results.count) search results from incoming connection")
                     self?.onSearchResults?(token, results)
                 }
@@ -394,7 +394,7 @@ final class PeerConnectionPool {
             await connection.setOnUsernameDiscovered { [weak self, connectionId, peerIP] username, token in
                 guard let self else { return }
                 await MainActor.run {
-                    print("🔔 Username discovered on incoming connection: \(username) token=\(token)")
+                    self.logger.info("Username discovered on incoming connection: \(username) token=\(token)")
                     self.logger.info("Incoming connection identified: \(username) token=\(token)")
 
                     // Register IP for country flag lookup
@@ -418,7 +418,7 @@ final class PeerConnectionPool {
 
                     // Check if this matches a pending connection (for downloads)
                     if self.pendingConnections[token] != nil {
-                        print("✅ Matched incoming connection to pending download: \(username) token=\(token)")
+                        self.logger.info("Matched incoming connection to pending download: \(username) token=\(token)")
                         self.logger.info("Matched incoming connection to pending: \(username) token=\(token)")
                         self.pendingConnections.removeValue(forKey: token)
 
@@ -434,24 +434,24 @@ final class PeerConnectionPool {
             // Set up file transfer connection callback
             await connection.setOnFileTransferConnection { [weak self] username, token, fileConnection in
                 guard let self else {
-                    print("❌ PeerConnectionPool: self is nil in F connection callback!")
+                    // self is nil, cannot log
                     return
                 }
-                print("📁 PeerConnectionPool: F connection callback invoked - username='\(username)' token=\(token)")
+                self.logger.debug("PeerConnectionPool: F connection callback invoked - username='\(username)' token=\(token)")
                 self.logger.info("File transfer connection: \(username) token=\(token)")
                 if self.onFileTransferConnection != nil {
-                    print("📁 PeerConnectionPool: Forwarding to NetworkClient...")
+                    self.logger.debug("PeerConnectionPool: Forwarding to NetworkClient...")
                     await self.onFileTransferConnection?(username, token, fileConnection)
-                    print("📁 PeerConnectionPool: Forward complete")
+                    self.logger.debug("PeerConnectionPool: Forward complete")
                 } else {
-                    print("❌ PeerConnectionPool: onFileTransferConnection is nil!")
+                    self.logger.warning("PeerConnectionPool: onFileTransferConnection is nil!")
                 }
             }
 
             // Set up PierceFirewall callback for indirect connections
             await connection.setOnPierceFirewall { [weak self] token in
                 guard let self else { return }
-                print("🔓 PierceFirewall from incoming connection, token=\(token)")
+                self.logger.debug("PierceFirewall from incoming connection, token=\(token)")
                 self.logger.info("PierceFirewall received: token=\(token)")
                 await MainActor.run { self.incrementPierceFirewallCount() }
                 await self.onPierceFirewall?(token, connection)
@@ -460,14 +460,14 @@ final class PeerConnectionPool {
             // Set up upload denied/failed callbacks
             await connection.setOnUploadDenied { [weak self] filename, reason in
                 await MainActor.run {
-                    print("🚫 Upload denied: \(filename) - \(reason)")
+                    self?.logger.warning("Upload denied: \(filename) - \(reason)")
                     self?.onUploadDenied?(filename, reason)
                 }
             }
 
             await connection.setOnUploadFailed { [weak self] filename in
                 await MainActor.run {
-                    print("❌ Upload failed: \(filename)")
+                    self?.logger.warning("Upload failed: \(filename)")
                     self?.onUploadFailed?(filename)
                 }
             }
@@ -475,14 +475,14 @@ final class PeerConnectionPool {
             // Set up QueueUpload callback for incoming connections (peer wants to download from us)
             await connection.setOnQueueUpload { [weak self] peerUsername, filename in
                 guard let self else { return }
-                print("📥 QueueUpload from incoming connection \(peerUsername): \(filename)")
+                self.logger.info("QueueUpload from incoming connection \(peerUsername): \(filename)")
                 await self.onQueueUpload?(peerUsername, filename, connection)
             }
 
             // Set up TransferResponse callback for incoming connections
             await connection.setOnTransferResponse { [weak self] token, allowed, filesize in
                 guard let self else { return }
-                print("📨 TransferResponse from incoming: token=\(token) allowed=\(allowed)")
+                self.logger.debug("TransferResponse from incoming: token=\(token) allowed=\(allowed)")
                 await self.onTransferResponse?(token, allowed, filesize, connection)
             }
 
@@ -490,14 +490,14 @@ final class PeerConnectionPool {
             await connection.setOnFolderContentsRequest { [weak self] token, folder in
                 guard let self else { return }
                 let peerUsername = await connection.getPeerUsername()
-                print("📁 FolderContentsRequest from incoming (\(peerUsername)): \(folder)")
+                self.logger.debug("FolderContentsRequest from incoming (\(peerUsername)): \(folder)")
                 await self.onFolderContentsRequest?(peerUsername, token, folder, connection)
             }
 
             // Set up FolderContentsResponse callback for incoming connections
             await connection.setOnFolderContentsResponse { [weak self] token, folder, files in
                 await MainActor.run {
-                    print("📁 FolderContentsResponse from incoming: \(folder) with \(files.count) files")
+                    self?.logger.debug("FolderContentsResponse from incoming: \(folder) with \(files.count) files")
                     self?.onFolderContentsResponse?(token, folder, files)
                 }
             }
@@ -505,7 +505,7 @@ final class PeerConnectionPool {
             // Set up PlaceInQueueRequest callback for incoming connections
             await connection.setOnPlaceInQueueRequest { [weak self] peerUsername, filename in
                 guard let self else { return }
-                print("📊 PlaceInQueueRequest from incoming (\(peerUsername)): \(filename)")
+                self.logger.debug("PlaceInQueueRequest from incoming (\(peerUsername)): \(filename)")
                 await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
             }
 
@@ -513,7 +513,7 @@ final class PeerConnectionPool {
             await connection.setOnSharesRequest { [weak self] conn in
                 guard let self else { return }
                 let peerUsername = await conn.getPeerUsername()
-                print("📂 SharesRequest from incoming (\(peerUsername)): peer wants to browse our shares")
+                self.logger.info("SharesRequest from incoming (\(peerUsername)): peer wants to browse our shares")
                 await self.onSharesRequest?(peerUsername, conn)
             }
 
@@ -521,7 +521,7 @@ final class PeerConnectionPool {
             await connection.setOnUserInfoRequest { [weak self] conn in
                 guard let self else { return }
                 let peerUsername = await conn.getPeerUsername()
-                print("👤 UserInfoRequest from incoming (\(peerUsername)): peer wants our user info")
+                self.logger.info("UserInfoRequest from incoming (\(peerUsername)): peer wants our user info")
                 await self.onUserInfoRequest?(peerUsername, conn)
             }
 
@@ -548,7 +548,7 @@ final class PeerConnectionPool {
             await connection.beginReceiving()
 
             logger.info("Incoming connection accepted and callbacks configured")
-            print("🟢 INCOMING CONNECTION stored: \(connectionId), receive loop started")
+            logger.info("Incoming connection stored: \(connectionId), receive loop started")
         } catch {
             logger.error("Failed to handle incoming connection: \(error.localizedDescription)")
         }
@@ -585,7 +585,7 @@ final class PeerConnectionPool {
                         lastActivity: info.lastActivity
                     )
                     connections[key] = newInfo
-                    print("📝 Updated connection \(key) username to \(username)")
+                    logger.debug("Updated connection \(key) username to \(username)")
                 }
                 break
             }
@@ -619,7 +619,7 @@ final class PeerConnectionPool {
             if isConnected {
                 return connection
             } else {
-                print("⚠️ Found stale connection for \(username) (key: \(key)), removing")
+                logger.debug("Found stale connection for \(username) (key: \(key)), removing")
                 activeConnections_.removeValue(forKey: key)
                 connections.removeValue(forKey: key)
             }
@@ -631,10 +631,10 @@ final class PeerConnectionPool {
                 // CRITICAL: Verify the connection is actually still connected
                 let isConnected = await connection.isConnected
                 if isConnected {
-                    print("♻️ Found existing INCOMING connection for \(username) (key: \(key))")
+                    logger.debug("Found existing incoming connection for \(username) (key: \(key))")
                     return connection
                 } else {
-                    print("⚠️ Found stale incoming connection for \(username) (key: \(key)), removing")
+                    logger.debug("Found stale incoming connection for \(username) (key: \(key)), removing")
                     activeConnections_.removeValue(forKey: key)
                     connections.removeValue(forKey: key)
                 }
@@ -704,7 +704,7 @@ final class PeerConnectionPool {
                     await conn.disconnect()
                 }
                 logger.info("Closed idle connection: \(id)")
-                print("🧹 Closed idle connection: \(id)")
+                logger.debug("Closed idle connection: \(id)")
             }
             connections.removeValue(forKey: id)
             activeConnections_.removeValue(forKey: id)
@@ -785,17 +785,17 @@ final class PeerConnectionPool {
     // MARK: - Callbacks Setup
 
     private func setupCallbacks(for connection: PeerConnection, username: String) async {
-        print("🔧 Setting up callbacks for connection to \(username)")
+        logger.debug("Setting up callbacks for connection to \(username)")
 
         await connection.setOnSearchReply { [weak self] token, results in
-            print("🔔 PeerConnectionPool: Received search reply callback for \(username) - \(results.count) results, token=\(token)")
+            self?.logger.debug("PeerConnectionPool: Received search reply callback for \(username) - \(results.count) results, token=\(token)")
             await MainActor.run {
-                print("🔴 SEARCH RESULTS: \(results.count) from \(username) (token=\(token))")
+                self?.logger.info("Search results: \(results.count) from \(username) (token=\(token))")
                 if self?.onSearchResults != nil {
-                    print("🔔 PeerConnectionPool: Forwarding to NetworkClient callback...")
+                    self?.logger.debug("PeerConnectionPool: Forwarding to NetworkClient callback...")
                     self?.onSearchResults?(token, results)
                 } else {
-                    print("⚠️ PeerConnectionPool: onSearchResults callback is nil!")
+                    self?.logger.warning("PeerConnectionPool: onSearchResults callback is nil!")
                 }
             }
             // Close connection after receiving search results (like Nicotine+)
@@ -827,60 +827,60 @@ final class PeerConnectionPool {
 
         await connection.setOnUploadDenied { [weak self] filename, reason in
             await MainActor.run {
-                print("🚫 Upload denied: \(filename) - \(reason)")
+                self?.logger.warning("Upload denied: \(filename) - \(reason)")
                 self?.onUploadDenied?(filename, reason)
             }
         }
 
         await connection.setOnUploadFailed { [weak self] filename in
             await MainActor.run {
-                print("❌ Upload failed: \(filename)")
+                self?.logger.warning("Upload failed: \(filename)")
                 self?.onUploadFailed?(filename)
             }
         }
 
         await connection.setOnQueueUpload { [weak self] peerUsername, filename in
             guard let self else { return }
-            print("📥 QueueUpload from \(peerUsername): \(filename)")
+            self.logger.info("QueueUpload from \(peerUsername): \(filename)")
             await self.onQueueUpload?(peerUsername, filename, connection)
         }
 
         await connection.setOnTransferResponse { [weak self] token, allowed, filesize in
             guard let self else { return }
-            print("📨 TransferResponse: token=\(token) allowed=\(allowed)")
+            self.logger.debug("TransferResponse: token=\(token) allowed=\(allowed)")
             await self.onTransferResponse?(token, allowed, filesize, connection)
         }
 
         await connection.setOnFolderContentsRequest { [weak self] token, folder in
             guard let self else { return }
-            print("📁 FolderContentsRequest from \(username): \(folder)")
+            self.logger.debug("FolderContentsRequest from \(username): \(folder)")
             await self.onFolderContentsRequest?(username, token, folder, connection)
         }
 
         await connection.setOnFolderContentsResponse { [weak self] token, folder, files in
             await MainActor.run {
-                print("📁 FolderContentsResponse: \(folder) with \(files.count) files")
+                self?.logger.debug("FolderContentsResponse: \(folder) with \(files.count) files")
                 self?.onFolderContentsResponse?(token, folder, files)
             }
         }
 
         await connection.setOnPlaceInQueueRequest { [weak self] peerUsername, filename in
             guard let self else { return }
-            print("📊 PlaceInQueueRequest from \(peerUsername): \(filename)")
+            self.logger.debug("PlaceInQueueRequest from \(peerUsername): \(filename)")
             await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
         }
 
         // Set up SharesRequest callback (peer wants to browse us)
         await connection.setOnSharesRequest { [weak self] conn in
             guard let self else { return }
-            print("📂 SharesRequest from \(username): peer wants to browse our shares")
+            self.logger.info("SharesRequest from \(username): peer wants to browse our shares")
             await self.onSharesRequest?(username, conn)
         }
 
         // Set up UserInfoRequest callback (peer wants our user info)
         await connection.setOnUserInfoRequest { [weak self] conn in
             guard let self else { return }
-            print("👤 UserInfoRequest from \(username): peer wants our user info")
+            self.logger.info("UserInfoRequest from \(username): peer wants our user info")
             await self.onUserInfoRequest?(username, conn)
         }
 
@@ -888,20 +888,20 @@ final class PeerConnectionPool {
             await MainActor.run {
                 if let key = self?.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
                     self?.connections[key]?.state = state
-                    print("🔄 Outgoing connection to \(username) state: \(state)")
+                    self?.logger.debug("Outgoing connection to \(username) state: \(String(describing: state))")
 
                     // Clean up disconnected connections
                     if case .disconnected = state {
                         self?.connections.removeValue(forKey: key)
                         self?.activeConnections_.removeValue(forKey: key)
                         self?.activeConnections = self?.connections.count ?? 0
-                        print("🔴 Connection to \(username) removed (disconnected)")
+                        self?.logger.info("Connection to \(username) removed (disconnected)")
                     }
                 }
             }
         }
 
-        print("🔧 Callbacks set up for \(username)")
+        logger.debug("Callbacks set up for \(username)")
     }
 
     // MARK: - Analytics

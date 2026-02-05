@@ -2,10 +2,11 @@ import Foundation
 import Network
 import os
 import Compression
+import Synchronization
 
 /// Manages a single peer-to-peer connection
 actor PeerConnection {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnection")
+    private nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnection")
 
     // MARK: - Types
 
@@ -48,10 +49,12 @@ actor PeerConnection {
 
     // MARK: - Properties
 
-    // Note: peerInfo uses nonisolated(unsafe) because it may be updated after init
-    // when extracting IP/port from incoming connections. This is safe because
-    // updates only happen during connection setup, before concurrent access.
-    nonisolated(unsafe) var peerInfo: PeerInfo
+    // peerInfo is protected by Mutex for thread-safe access from outside the actor
+    // (e.g., PeerConnectionPool, NetworkClient, DownloadManager read it without await)
+    private nonisolated let _peerInfo: Mutex<PeerInfo>
+    nonisolated var peerInfo: PeerInfo {
+        _peerInfo.withLock { $0 }
+    }
     nonisolated let connectionType: ConnectionType
     nonisolated let isIncoming: Bool
     nonisolated let token: UInt32
@@ -120,13 +123,13 @@ actor PeerConnection {
     /// This allows multiple concurrent downloads on the same connection without callback conflicts
     func setOnTransferRequestForToken(_ token: UInt32, handler: @escaping (TransferRequest) async -> Void) {
         _tokenTransferRequestHandlers[token] = handler
-        print("📝 Registered TransferRequest handler for token \(token) (total handlers: \(_tokenTransferRequestHandlers.count))")
+        logger.debug("Registered TransferRequest handler for token \(token) (total handlers: \(self._tokenTransferRequestHandlers.count))")
     }
 
     /// Remove a per-token TransferRequest handler
     func removeTransferRequestHandlerForToken(_ token: UInt32) {
         _tokenTransferRequestHandlers.removeValue(forKey: token)
-        print("📝 Removed TransferRequest handler for token \(token) (remaining: \(_tokenTransferRequestHandlers.count))")
+        logger.debug("Removed TransferRequest handler for token \(token) (remaining: \(self._tokenTransferRequestHandlers.count))")
     }
 
     func setOnUsernameDiscovered(_ handler: @escaping (String, UInt32) async -> Void) {
@@ -186,18 +189,20 @@ actor PeerConnection {
     func setPeerUsername(_ username: String) {
         peerUsername = username
         // Also update peerInfo for consistency
-        peerInfo = PeerInfo(
-            username: username,
-            ip: peerInfo.ip,
-            port: peerInfo.port,
-            uploadSpeed: peerInfo.uploadSpeed,
-            downloadSpeed: peerInfo.downloadSpeed,
-            freeUploadSlots: peerInfo.freeUploadSlots,
-            queueLength: peerInfo.queueLength,
-            sharedFiles: peerInfo.sharedFiles,
-            sharedFolders: peerInfo.sharedFolders
-        )
-        print("📝 [\(username)] Updated peer username")
+        _peerInfo.withLock { info in
+            info = PeerInfo(
+                username: username,
+                ip: info.ip,
+                port: info.port,
+                uploadSpeed: info.uploadSpeed,
+                downloadSpeed: info.downloadSpeed,
+                freeUploadSlots: info.freeUploadSlots,
+                queueLength: info.queueLength,
+                sharedFiles: info.sharedFiles,
+                sharedFolders: info.sharedFolders
+            )
+        }
+        logger.debug("[\(username)] Updated peer username")
     }
 
     /// Get the connection state (for debug logging from other actors)
@@ -219,7 +224,7 @@ actor PeerConnection {
     private var localPort: UInt16 = 0
 
     init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0) {
-        self.peerInfo = peerInfo
+        self._peerInfo = Mutex(peerInfo)
         self.connectionType = type
         self.token = token
         self.isIncoming = isIncoming
@@ -247,17 +252,17 @@ actor PeerConnection {
                     extractedIP = "\(host)"
                 }
                 extractedPort = Int(port.rawValue)
-                print("📥 Incoming connection: extracted IP=\(extractedIP) port=\(extractedPort)")
+                logger.debug("Incoming connection: extracted IP=\(extractedIP) port=\(extractedPort)")
             default:
-                print("📥 Incoming connection: could not extract IP/port from endpoint: \(remoteEndpoint)")
+                logger.debug("Incoming connection: could not extract IP/port from endpoint: \(String(describing: remoteEndpoint))")
             }
         } else {
             // Path not available yet, try to extract from endpoint directly
             // This can happen before the connection is started
-            print("📥 Incoming connection: currentPath not available, IP/port unknown until connection starts")
+            logger.debug("Incoming connection: currentPath not available, IP/port unknown until connection starts")
         }
 
-        self.peerInfo = PeerInfo(username: "", ip: extractedIP, port: extractedPort)
+        self._peerInfo = Mutex(PeerInfo(username: "", ip: extractedIP, port: extractedPort))
         self.connectionType = .peer
         self.token = 0
         self.isIncoming = isIncoming
@@ -293,7 +298,7 @@ actor PeerConnection {
         params.allowLocalEndpointReuse = true
 
         let conn = NWConnection(to: endpoint, using: params)
-        print("🔌 Creating TCP connection to \(peerInfo.ip):\(peerInfo.port)")
+        logger.debug("Creating TCP connection to \(self.peerInfo.ip):\(self.peerInfo.port)")
         connection = conn
 
         return try await withTaskCancellationHandler {
@@ -309,7 +314,7 @@ actor PeerConnection {
             }
         } onCancel: {
             // Cancel the NWConnection when the task is cancelled (e.g., due to timeout)
-            print("⏰ Task cancelled, stopping NWConnection to \(self.peerInfo.ip):\(self.peerInfo.port)...")
+            logger.debug("Task cancelled, stopping NWConnection to \(self.peerInfo.ip):\(self.peerInfo.port)...")
             conn.cancel()
         }
     }
@@ -355,23 +360,25 @@ actor PeerConnection {
                     extractedIP = "\(host)"
                 }
                 let extractedPort = Int(port.rawValue)
-                print("📥 Connection ready: extracted IP=\(extractedIP) port=\(extractedPort)")
+                logger.debug("Connection ready: extracted IP=\(extractedIP) port=\(extractedPort)")
 
                 // Update peerInfo with extracted IP/port
-                peerInfo = PeerInfo(
-                    username: peerInfo.username,
-                    ip: extractedIP,
-                    port: extractedPort,
-                    uploadSpeed: peerInfo.uploadSpeed,
-                    downloadSpeed: peerInfo.downloadSpeed,
-                    freeUploadSlots: peerInfo.freeUploadSlots,
-                    queueLength: peerInfo.queueLength,
-                    sharedFiles: peerInfo.sharedFiles,
-                    sharedFolders: peerInfo.sharedFolders
-                )
-                print("✅ Updated peerInfo with IP=\(extractedIP) port=\(extractedPort)")
+                _peerInfo.withLock { info in
+                    info = PeerInfo(
+                        username: info.username,
+                        ip: extractedIP,
+                        port: extractedPort,
+                        uploadSpeed: info.uploadSpeed,
+                        downloadSpeed: info.downloadSpeed,
+                        freeUploadSlots: info.freeUploadSlots,
+                        queueLength: info.queueLength,
+                        sharedFiles: info.sharedFiles,
+                        sharedFolders: info.sharedFolders
+                    )
+                }
+                logger.debug("Updated peerInfo with IP=\(extractedIP) port=\(extractedPort)")
             default:
-                print("⚠️ Could not extract IP/port from endpoint type: \(remoteEndpoint)")
+                logger.warning("Could not extract IP/port from endpoint type: \(String(describing: remoteEndpoint))")
             }
         }
     }
@@ -430,39 +437,40 @@ actor PeerConnection {
             token: peerInitToken
         )
 
-        print("📤 PeerInit: username='\(username)' type='\(connectionType.rawValue)' token=\(peerInitToken)")
+        logger.debug("PeerInit: username='\(username)' type='\(self.connectionType.rawValue)' token=\(peerInitToken)")
         try await send(message)
 
         // Mark handshake as complete from our side after sending PeerInit
         // We can now receive peer messages (code >= 4) without waiting for peer's response
         handshakeComplete = true
-        print("📤 PeerInit sent, handshake marked complete")
+        logger.debug("PeerInit sent, handshake marked complete")
     }
 
     func sendPierceFirewall() async throws {
         let message = MessageBuilder.pierceFirewallMessage(token: token)
-        print("📤 Sending PierceFirewall to \(peerInfo.username) with token \(token) (\(message.count) bytes)")
-        print("📤 PierceFirewall data: \(message.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        logger.debug("Sending PierceFirewall to \(self.peerInfo.username) with token \(self.token) (\(message.count) bytes)")
+        let pfHex = message.map { String(format: "%02x", $0) }.joined(separator: " ")
+        logger.debug("PierceFirewall data: \(pfHex)")
         try await send(message)
         // Mark handshake as complete from our side - peer will send peer messages (not init messages) now
         handshakeComplete = true
-        print("📤 PierceFirewall sent successfully to \(peerInfo.username), handshake complete")
+        logger.debug("PierceFirewall sent successfully to \(self.peerInfo.username), handshake complete")
     }
 
     // MARK: - Peer Messages
 
     func requestShares() async throws {
         let message = MessageBuilder.sharesRequestMessage()
-        print("📂 [\(peerInfo.username)] Sending GetShareFileList (code 4), message: \(message.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        logger.debug("[\(self.peerInfo.username)] Sending GetShareFileList (code 4)")
         try await send(message)
-        print("📂 [\(peerInfo.username)] GetShareFileList sent successfully")
+        logger.debug("[\(self.peerInfo.username)] GetShareFileList sent successfully")
         logger.info("Requested shares from \(self.peerInfo.username)")
     }
 
     /// Send our shared files to a peer (response to SharesRequest)
     func sendShares(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) async throws {
         let message = MessageBuilder.sharesReplyMessage(files: files)
-        print("📂 [\(peerInfo.username)] Sending SharesReply with \(files.count) directories")
+        logger.debug("[\(self.peerInfo.username)] Sending SharesReply with \(files.count) directories")
         try await send(message)
         logger.info("Sent shares to \(self.peerInfo.username): \(files.count) directories")
     }
@@ -487,7 +495,7 @@ actor PeerConnection {
             queueSize: queueSize,
             hasFreeSlots: hasFreeSlots
         )
-        print("👤 [\(peerInfo.username)] Sending UserInfoResponse: desc='\(description)' uploads=\(totalUploads) queue=\(queueSize) freeSlots=\(hasFreeSlots)")
+        logger.debug("[\(self.peerInfo.username)] Sending UserInfoResponse: desc='\(description)' uploads=\(totalUploads) queue=\(queueSize) freeSlots=\(hasFreeSlots)")
         try await send(message)
         logger.info("Sent user info to \(self.peerInfo.username)")
     }
@@ -557,7 +565,7 @@ actor PeerConnection {
 
     func send(_ data: Data) async throws {
         guard let connection else {
-            print("❌ [\(peerInfo.username)] send() - no connection!")
+            logger.error("[\(self.peerInfo.username)] send() - no connection!")
             throw PeerError.notConnected
         }
         // Allow sending in connected or handshaking state
@@ -565,19 +573,19 @@ actor PeerConnection {
         case .connected, .handshaking:
             break
         default:
-            print("❌ [\(peerInfo.username)] send() - wrong state: \(state)")
+            logger.error("[\(self.peerInfo.username)] send() - wrong state: \(String(describing: self.state))")
             throw PeerError.notConnected
         }
 
-        print("📤 [\(peerInfo.username)] Sending \(data.count) bytes: \(data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " "))")
+        logger.debug("[\(self.peerInfo.username)] Sending \(data.count) bytes")
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
-                    print("❌ [\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
+                    self?.logger.error("[\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
-                    print("✅ [\(self?.peerInfo.username ?? "??")] send succeeded")
+                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] send succeeded")
                     Task {
                         await self?.recordSent(data.count)
                     }
@@ -614,15 +622,15 @@ actor PeerConnection {
             throw PeerError.notConnected
         }
 
-        print("📤 [\(peerInfo.username)] Sending RAW \(data.count) bytes: \(data.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        logger.debug("[\(self.peerInfo.username)] Sending RAW \(data.count) bytes")
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: data, completion: .contentProcessed { [weak self] error in
                 if let error {
-                    print("❌ [\(self?.peerInfo.username ?? "??")] sendRaw failed: \(error.localizedDescription)")
+                    self?.logger.error("[\(self?.peerInfo.username ?? "??")] sendRaw failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
-                    print("✅ [\(self?.peerInfo.username ?? "??")] sendRaw succeeded")
+                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] sendRaw succeeded")
                     Task {
                         await self?.recordSent(data.count)
                     }
@@ -643,23 +651,23 @@ actor PeerConnection {
         if fileTransferBuffer.count >= count {
             let data = fileTransferBuffer.prefix(count)
             fileTransferBuffer.removeFirst(count)
-            print("📥 [\(peerInfo.username)] Got \(count) raw bytes from file transfer buffer")
+            logger.debug("[\(self.peerInfo.username)] Got \(count) raw bytes from file transfer buffer")
             return Data(data)
         }
 
         // If we have some buffered data but not enough, we need to receive more
         let neededFromNetwork = count - fileTransferBuffer.count
-        print("📥 [\(peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
+        logger.debug("[\(self.peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(self.fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
 
         return try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask { [self] in
                 try await withCheckedThrowingContinuation { continuation in
                     connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
                         if let error {
-                            print("❌ [\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
+                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
                             continuation.resume(throwing: error)
                         } else if let data, data.count >= neededFromNetwork {
-                            print("✅ [\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
+                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
                             Task {
                                 await self?.recordReceived(data.count)
                             }
@@ -673,7 +681,7 @@ actor PeerConnection {
                                 continuation.resume(returning: data)
                             }
                         } else {
-                            print("❌ [\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
+                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
                             continuation.resume(throwing: PeerError.connectionClosed)
                         }
                     }
@@ -717,7 +725,7 @@ actor PeerConnection {
                 chunk = fileTransferBuffer.prefix(maxLength)
                 fileTransferBuffer.removeFirst(maxLength)
             }
-            print("📁 Using \(chunk.count) bytes from file transfer buffer")
+            logger.debug("Using \(chunk.count) bytes from file transfer buffer")
             return .data(chunk)
         }
 
@@ -767,7 +775,7 @@ actor PeerConnection {
         // Clear the message receive buffer - any pending data will go to file transfer buffer
         receiveBuffer.removeAll()
         logger.info("Stopping receive loop for file transfer")
-        print("📡 [\(peerInfo.username)] Stopped receive loop, cleared message buffer")
+        logger.debug("[\(self.peerInfo.username)] Stopped receive loop, cleared message buffer")
     }
 
     /// Get any data that was received after stopReceiving() was called
@@ -829,7 +837,7 @@ actor PeerConnection {
     private func handleConnectionState(_ state: NWConnection.State, continuation: CheckedContinuation<Void, Error>?) {
         switch state {
         case .ready:
-            print("🟢 PEER CONNECTED: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
+            logger.info("Peer connected: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             logger.info("Connected to peer \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             connectedAt = Date()
             updateState(.connected)
@@ -844,8 +852,8 @@ actor PeerConnection {
             }
 
         case .failed(let error):
-            print("🔴 PEER CONNECTION FAILED: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
-            print("🔴 Error details: \(error)")
+            logger.error("Peer connection failed: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
+            logger.error("Error details: \(error)")
             logger.error("Peer connection failed: \(error.localizedDescription)")
             updateState(.failed(error))
             // Cancel the connection to free resources
@@ -857,15 +865,15 @@ actor PeerConnection {
             }
 
         case .waiting(let error):
-            print("🟡 PEER CONNECTION WAITING: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
-            print("🟡 Waiting error: \(error)")
+            logger.debug("Peer connection waiting: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
+            logger.debug("Waiting error: \(error)")
             // Check if this is a definitive failure (not just a transient condition)
             // POSIX errors: 12 (ENOMEM), 51 (ENETUNREACH), 57 (ENOTCONN), 60 (ETIMEDOUT), 61 (ECONNREFUSED), 65 (EHOSTUNREACH)
             if case .posix(let posixError) = error {
                 let code = posixError.rawValue
                 if code == 12 || code == 51 || code == 57 || code == 60 || code == 61 || code == 65 {
                     // These are definitive failures, not transient
-                    print("🔴 PEER CONNECTION DEFINITIVE FAILURE: \(self.peerInfo.username) - POSIX \(code)")
+                    logger.error("Peer connection definitive failure: \(self.peerInfo.username) - POSIX \(code)")
                     updateState(.failed(error))
                     // Cancel connection to free resources
                     connection?.cancel()
@@ -878,10 +886,10 @@ actor PeerConnection {
             }
 
         case .preparing:
-            print("🔵 PEER CONNECTION PREPARING: \(self.peerInfo.username) -> \(self.peerInfo.ip):\(self.peerInfo.port)")
+            logger.debug("Peer connection preparing: \(self.peerInfo.username) -> \(self.peerInfo.ip):\(self.peerInfo.port)")
 
         case .cancelled:
-            print("⚪ PEER CONNECTION CANCELLED: \(self.peerInfo.username)")
+            logger.info("Peer connection cancelled: \(self.peerInfo.username)")
             updateState(.disconnected)
             // Resume with cancellation error if not already resumed (e.g., timeout cancelled the connection)
             if !connectContinuationResumed {
@@ -902,18 +910,18 @@ actor PeerConnection {
     /// but P connections need to continue receiving peer messages (SharesReply, etc.)
     func resumeReceivingForPeerConnection() {
         guard shouldStopReceiving else {
-            print("📡 [\(peerInfo.username)] resumeReceivingForPeerConnection: already receiving")
+            logger.debug("[\(self.peerInfo.username)] resumeReceivingForPeerConnection: already receiving")
             return
         }
 
-        print("📡 [\(peerInfo.username)] Resuming receive loop for P connection (browse)")
+        logger.debug("[\(self.peerInfo.username)] Resuming receive loop for P connection (browse)")
         shouldStopReceiving = false
 
         // Move any data from file transfer buffer back to receive buffer
         if !fileTransferBuffer.isEmpty {
             receiveBuffer.append(fileTransferBuffer)
             fileTransferBuffer.removeAll()
-            print("📡 [\(peerInfo.username)] Moved \(receiveBuffer.count) bytes back to receive buffer")
+            logger.debug("[\(self.peerInfo.username)] Moved \(self.receiveBuffer.count) bytes back to receive buffer")
         }
 
         startReceiving()
@@ -921,22 +929,22 @@ actor PeerConnection {
 
     private func startReceiving() {
         guard let connection else {
-            print("📡 [\(peerInfo.username)] startReceiving called but no connection!")
+            logger.warning("[\(self.peerInfo.username)] startReceiving called but no connection!")
             return
         }
 
-        print("📡 [\(peerInfo.username)] Starting receive loop...")
+        logger.debug("[\(self.peerInfo.username)] Starting receive loop...")
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else {
-                print("📡 startReceiving callback but self is nil!")
+                // self is nil, cannot log
                 return
             }
 
             Task {
                 let username = self.peerInfo.username
                 if let error {
-                    print("📡 [\(username)] Receive error: \(error.localizedDescription)")
+                    self.logger.debug("[\(username)] Receive error: \(error.localizedDescription)")
                 }
 
                 // Check if we should stop BEFORE processing data
@@ -944,7 +952,7 @@ actor PeerConnection {
                     // Store data for file transfer instead of parsing as messages
                     if let data {
                         await self.appendToFileTransferBuffer(data)
-                        print("📡 [\(username)] Receive loop stopped, stored \(data.count) bytes for file transfer")
+                        self.logger.debug("[\(username)] Receive loop stopped, stored \(data.count) bytes for file transfer")
                     }
                     return // Don't continue receive loop
                 }
@@ -952,7 +960,7 @@ actor PeerConnection {
                 if let data {
                     await self.handleReceivedData(data)
                 } else {
-                    print("📡 [\(username)] No data received")
+                    self.logger.debug("[\(username)] No data received")
                 }
 
                 // Re-check shouldStopReceiving AFTER processing data.
@@ -962,17 +970,17 @@ actor PeerConnection {
                 // If we start another receive here, we'd have two concurrent
                 // receives and cause a race condition.
                 if await self.shouldStopReceiving {
-                    print("📡 [\(username)] Receive loop stopped after processing (file transfer mode)")
+                    self.logger.debug("[\(username)] Receive loop stopped after processing (file transfer mode)")
                     return
                 }
 
                 if isComplete {
-                    print("📡 [\(username)] Connection complete, disconnecting")
+                    self.logger.debug("[\(username)] Connection complete, disconnecting")
                     await self.disconnect()
                 } else if error == nil {
                     await self.startReceiving()
                 } else {
-                    print("📡 [\(username)] Not continuing receive due to error")
+                    self.logger.debug("[\(username)] Not continuing receive due to error")
                 }
             }
         }
@@ -995,11 +1003,11 @@ actor PeerConnection {
         while !peerHandshakeReceived {
             try await Task.sleep(for: .milliseconds(50))
             if Date().timeIntervalSince(start) > timeoutSeconds {
-                print("⏱️ [\(peerInfo.username)] Timeout waiting for peer handshake")
+                logger.warning("[\(self.peerInfo.username)] Timeout waiting for peer handshake")
                 throw PeerError.timeout
             }
         }
-        print("✅ [\(peerInfo.username)] Peer handshake received")
+        logger.info("[\(self.peerInfo.username)] Peer handshake received")
     }
 
     /// Check if peer has completed handshake
@@ -1020,47 +1028,47 @@ actor PeerConnection {
         // SECURITY: Check buffer size to prevent memory exhaustion
         guard receiveBuffer.count <= Self.maxReceiveBufferSize else {
             logger.error("Receive buffer exceeded limit (\(Self.maxReceiveBufferSize) bytes), disconnecting malicious peer")
-            print("⚠️ SECURITY: [\(peerInfo.username)] Buffer overflow protection triggered, disconnecting")
+            logger.error("SECURITY: [\(self.peerInfo.username)] Buffer overflow protection triggered, disconnecting")
             receiveBuffer.removeAll()
             disconnect()
             return
         }
 
         let preview = data.prefix(40).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("📥 [\(peerInfo.username)] Received \(data.count) bytes, buffer=\(receiveBuffer.count) bytes")
-        print("📥 [\(peerInfo.username)] Data preview: \(preview)")
+        logger.debug("[\(self.peerInfo.username)] Received \(data.count) bytes, buffer=\(self.receiveBuffer.count) bytes")
+        logger.debug("[\(self.peerInfo.username)] Data preview: \(preview)")
 
         // Parse messages - init messages use 1-byte codes, peer messages use 4-byte codes
         while receiveBuffer.count >= 5 {
             guard let length = receiveBuffer.readUInt32(at: 0) else {
-                print("📥 [\(peerInfo.username)] Failed to read message length")
+                logger.debug("[\(self.peerInfo.username)] Failed to read message length")
                 break
             }
 
             // Sanity check - messages shouldn't be larger than 100MB
             guard length <= 100_000_000 else {
-                print("📥 [\(peerInfo.username)] Invalid message length: \(length) - likely file transfer data on wrong connection")
+                logger.warning("[\(self.peerInfo.username)] Invalid message length: \(length) - likely file transfer data on wrong connection")
                 receiveBuffer.removeAll()
                 break
             }
 
             let totalLength = 4 + Int(length)
             guard receiveBuffer.count >= totalLength else {
-                print("📥 [\(peerInfo.username)] Waiting for more data: have \(receiveBuffer.count), need \(totalLength)")
+                logger.debug("[\(self.peerInfo.username)] Waiting for more data: have \(self.receiveBuffer.count), need \(totalLength)")
                 break
             }
 
             // Check if this is an init message (1-byte code) or peer message (4-byte code)
             guard let firstByte = receiveBuffer.readByte(at: 4) else {
-                print("📥 [\(peerInfo.username)] Failed to read first byte")
+                logger.debug("[\(self.peerInfo.username)] Failed to read first byte")
                 break
             }
 
-            print("📥 [\(peerInfo.username)] Message: length=\(length), firstByte=\(firstByte), handshakeComplete=\(handshakeComplete)")
+            logger.debug("[\(self.peerInfo.username)] Message: length=\(length), firstByte=\(firstByte), handshakeComplete=\(self.handshakeComplete)")
 
             if !handshakeComplete && (firstByte == 0 || firstByte == 1) {
                 // Init message with 1-byte code
-                print("📥 [\(peerInfo.username)] Init message: code=\(firstByte) length=\(length)")
+                logger.debug("[\(self.peerInfo.username)] Init message: code=\(firstByte) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 5..<totalLength) ?? Data()
                 receiveBuffer.removeFirst(totalLength)
                 messagesReceived += 1
@@ -1069,7 +1077,7 @@ actor PeerConnection {
             } else if connectionType == .distributed {
                 // Distributed messages use 1-byte code: uint32 length + uint8 code + payload
                 let code = UInt32(firstByte)
-                print("📥 [\(peerInfo.username)] Distributed message: code=\(code) length=\(length)")
+                logger.debug("[\(self.peerInfo.username)] Distributed message: code=\(code) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 5..<totalLength) ?? Data()
 
                 receiveBuffer.removeFirst(totalLength)
@@ -1081,7 +1089,7 @@ actor PeerConnection {
                 // Peer message with 4-byte code
                 // Minimum valid peer message: 4 bytes length + 4 bytes code = 8 bytes total, so length >= 4
                 guard length >= 4 else {
-                    print("📥 [\(peerInfo.username)] Invalid peer message length \(length) < 4 - likely raw file transfer data")
+                    logger.warning("[\(self.peerInfo.username)] Invalid peer message length \(length) < 4 - likely raw file transfer data")
                     // This data is not a valid peer message - could be file transfer data on wrong connection
                     // Move to file transfer buffer and stop parsing
                     fileTransferBuffer.append(receiveBuffer)
@@ -1089,15 +1097,15 @@ actor PeerConnection {
                     break
                 }
                 guard receiveBuffer.count >= 8 else {
-                    print("📥 [\(peerInfo.username)] Buffer too small for peer message header")
+                    logger.debug("[\(self.peerInfo.username)] Buffer too small for peer message header")
                     break
                 }
                 guard let code = receiveBuffer.readUInt32(at: 4) else {
-                    print("📥 [\(peerInfo.username)] Failed to read message code")
+                    logger.debug("[\(self.peerInfo.username)] Failed to read message code")
                     break
                 }
                 let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid(\(code))"
-                print("📥 [\(peerInfo.username)] Peer message: code=\(code) (\(codeDescription)) length=\(length)")
+                logger.debug("[\(self.peerInfo.username)] Peer message: code=\(code) (\(codeDescription)) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 8..<totalLength) ?? Data()
 
                 receiveBuffer.removeFirst(totalLength)
@@ -1117,18 +1125,18 @@ actor PeerConnection {
             // This connection will now be used for file transfer (raw bytes, no message framing)
             if let token = payload.readUInt32(at: 0) {
                 logger.info("PierceFirewall with token: \(token)")
-                print("🔓 PierceFirewall received with token: \(token)")
+                logger.info("PierceFirewall received with token: \(token)")
 
                 // CRITICAL: Stop receive loop IMMEDIATELY before invoking callback
                 // After PierceFirewall, the connection switches to raw file transfer mode.
                 // The next bytes will be FileOffset (8 raw bytes), not a length-prefixed message.
                 shouldStopReceiving = true
-                print("🔓 PierceFirewall: stopped receive loop for file transfer mode")
+                logger.debug("PierceFirewall: stopped receive loop for file transfer mode")
 
                 // Move any remaining receive buffer data to file transfer buffer
                 if !receiveBuffer.isEmpty {
                     fileTransferBuffer.append(receiveBuffer)
-                    print("🔓 PierceFirewall: moved \(receiveBuffer.count) bytes to file transfer buffer")
+                    logger.debug("PierceFirewall: moved \(self.receiveBuffer.count) bytes to file transfer buffer")
                     receiveBuffer.removeAll()
                 }
 
@@ -1161,28 +1169,28 @@ actor PeerConnection {
                 if connType == "F" {
                     // File transfer connection - notify for file data handling
                     logger.info("File transfer connection from \(username) token=\(peerToken)")
-                    print("📁 F CONNECTION DETECTED: username='\(username)' token=\(peerToken)")
+                    logger.info("F connection detected: username='\(username)' token=\(peerToken)")
 
                     // CRITICAL: Stop receive loop IMMEDIATELY before invoking callback
                     // This prevents race condition where receive loop consumes FileTransferInit bytes
                     // before the callback handler can call stopReceiving()
                     shouldStopReceiving = true
-                    print("📁 F connection: stopped receive loop preemptively")
+                    logger.debug("F connection: stopped receive loop preemptively")
 
                     // Move any remaining receive buffer data to file transfer buffer
                     // This preserves FileTransferInit bytes that may have been received
                     if !receiveBuffer.isEmpty {
                         fileTransferBuffer.append(receiveBuffer)
-                        print("📁 F connection: moved \(receiveBuffer.count) bytes from receive buffer to file transfer buffer")
+                        logger.debug("F connection: moved \(self.receiveBuffer.count) bytes from receive buffer to file transfer buffer")
                         receiveBuffer.removeAll()
                     }
 
                     if _onFileTransferConnection != nil {
-                        print("📁 F connection callback IS set, invoking...")
+                        logger.debug("F connection callback is set, invoking...")
                         await _onFileTransferConnection?(username, peerToken, self)
-                        print("📁 F connection callback invoked")
+                        logger.debug("F connection callback invoked")
                     } else {
-                        print("❌ F connection callback is NIL!")
+                        logger.warning("F connection callback is nil!")
                     }
                 } else {
                     // Regular peer connection - notify the pool
@@ -1191,7 +1199,7 @@ actor PeerConnection {
             }
             handshakeComplete = true
             peerHandshakeReceived = true
-            print("✅ [\(peerUsername)] Peer handshake complete (received PeerInit)")
+            logger.info("[\(self.peerUsername)] Peer handshake complete (received PeerInit)")
 
         default:
             logger.warning("Unknown init message code: \(code)")
@@ -1202,17 +1210,17 @@ actor PeerConnection {
 
     private func handlePeerMessage(code: UInt32, payload: Data) async {
         let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid"
-        print("📨 [\(peerInfo.username)] handlePeerMessage: code=\(code) (\(codeDescription)) payload=\(payload.count) bytes")
+        logger.debug("[\(self.peerInfo.username)] handlePeerMessage: code=\(code) (\(codeDescription)) payload=\(payload.count) bytes")
         logger.debug("Peer message: code=\(code) length=\(payload.count)")
 
         // Handle based on message code
         switch code {
         case UInt32(PeerMessageCode.sharesRequest.rawValue):
-            print("📂 [\(peerInfo.username)] Received SharesRequest - peer wants to browse us")
+            logger.info("[\(self.peerInfo.username)] Received SharesRequest - peer wants to browse us")
             await handleSharesRequest()
 
         case UInt32(PeerMessageCode.sharesReply.rawValue):
-            print("📂 [\(peerInfo.username)] Routing to handleSharesReply...")
+            logger.debug("[\(self.peerInfo.username)] Routing to handleSharesReply...")
             await handleSharesReply(payload)
 
         case UInt32(PeerMessageCode.searchReply.rawValue):
@@ -1260,44 +1268,44 @@ actor PeerConnection {
     /// Handle SharesRequest (code 4) - peer wants to browse our shared files
     private func handleSharesRequest() async {
         logger.info("Peer \(self.peerUsername) requested our shares")
-        print("📂 [\(self.peerUsername)] Peer wants to browse our shares, invoking callback...")
+        logger.debug("[\(self.peerUsername)] Peer wants to browse our shares, invoking callback...")
 
         // Delegate to callback which will send the shares
         if let callback = _onSharesRequest {
             await callback(self)
         } else {
-            print("⚠️ [\(self.peerUsername)] No onSharesRequest callback set!")
+            logger.warning("[\(self.peerUsername)] No onSharesRequest callback set!")
         }
     }
 
     /// Handle UserInfoRequest (code 15) - peer wants our user info
     private func handleUserInfoRequest() async {
         logger.info("Peer \(self.peerUsername) requested our user info")
-        print("👤 [\(self.peerUsername)] Peer wants our user info, invoking callback...")
+        logger.debug("[\(self.peerUsername)] Peer wants our user info, invoking callback...")
 
         // Delegate to callback which will send the user info
         if let callback = _onUserInfoRequest {
             await callback(self)
         } else {
-            print("⚠️ [\(self.peerUsername)] No onUserInfoRequest callback set!")
+            logger.warning("[\(self.peerUsername)] No onUserInfoRequest callback set!")
         }
     }
 
     private func handleSharesReply(_ data: Data) async {
-        print("📂 [\(peerInfo.username)] handleSharesReply called with \(data.count) bytes")
+        logger.debug("[\(self.peerInfo.username)] handleSharesReply called with \(data.count) bytes")
         let dataPreview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("📂 [\(peerInfo.username)] Data starts with: \(dataPreview)")
+        logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
 
         // Shares are zlib compressed
         let decompressed: Data
         do {
             decompressed = try decompressZlib(data)
-            print("📂 [\(peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
+            logger.debug("[\(self.peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
         } catch {
-            print("📂 [\(peerInfo.username)] Failed to decompress shares: \(error)")
+            logger.warning("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
             logger.error("Failed to decompress shares: \(error)")
             // Try parsing raw data as fallback
-            print("📂 [\(peerInfo.username)] Trying raw data as fallback...")
+            logger.debug("[\(self.peerInfo.username)] Trying raw data as fallback...")
             decompressed = data
         }
 
@@ -1306,39 +1314,39 @@ actor PeerConnection {
 
         // Parse directory count
         guard let dirCount = decompressed.readUInt32(at: offset) else {
-            print("📂 [\(peerInfo.username)] Failed to read directory count at offset \(offset)")
+            logger.debug("[\(self.peerInfo.username)] Failed to read directory count at offset \(offset)")
             return
         }
         // SECURITY: Limit directory count to prevent DoS
         let maxDirCount: UInt32 = 100_000
         guard dirCount <= maxDirCount else {
-            print("⚠️ SECURITY: Directory count \(dirCount) exceeds limit \(maxDirCount)")
+            logger.warning("SECURITY: Directory count \(dirCount) exceeds limit \(maxDirCount)")
             return
         }
         offset += 4
-        print("📂 [\(peerInfo.username)] Directory count: \(dirCount)")
+        logger.debug("[\(self.peerInfo.username)] Directory count: \(dirCount)")
 
         for dirIndex in 0..<dirCount {
             guard let (dirName, dirLen) = decompressed.readString(at: offset) else {
-                print("📂 [\(peerInfo.username)] Failed to read dir name at offset \(offset)")
+                logger.debug("[\(self.peerInfo.username)] Failed to read dir name at offset \(offset)")
                 break
             }
             offset += dirLen
 
             guard let fileCount = decompressed.readUInt32(at: offset) else {
-                print("📂 [\(peerInfo.username)] Failed to read file count at offset \(offset)")
+                logger.debug("[\(self.peerInfo.username)] Failed to read file count at offset \(offset)")
                 break
             }
             // SECURITY: Limit file count per directory
             let maxFileCount: UInt32 = 100_000
             guard fileCount <= maxFileCount else {
-                print("⚠️ SECURITY: File count \(fileCount) exceeds limit")
+                logger.warning("SECURITY: File count \(fileCount) exceeds limit")
                 break
             }
             offset += 4
 
             if dirIndex < 3 {
-                print("📂 [\(peerInfo.username)] Dir[\(dirIndex)]: '\(dirName)' with \(fileCount) files")
+                logger.debug("[\(self.peerInfo.username)] Dir[\(dirIndex)]: '\(dirName)' with \(fileCount) files")
             }
 
             for _ in 0..<fileCount {
@@ -1397,11 +1405,11 @@ actor PeerConnection {
             // SECURITY: Limit private directory count
             let maxPrivateDirCount: UInt32 = 100_000
             guard privateDirCount <= maxPrivateDirCount else {
-                print("⚠️ SECURITY: Private directory count \(privateDirCount) exceeds limit")
+                logger.warning("SECURITY: Private directory count \(privateDirCount) exceeds limit")
                 return
             }
             offset += 4
-            print("📂 [\(peerInfo.username)] Private directory count: \(privateDirCount)")
+            logger.debug("[\(self.peerInfo.username)] Private directory count: \(privateDirCount)")
 
             for _ in 0..<privateDirCount {
                 guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break }
@@ -1460,13 +1468,13 @@ actor PeerConnection {
             }
         }
 
-        print("📂 [\(peerInfo.username)] Parsed \(files.count) files (including private), callback set: \(_onSharesReceived != nil)")
+        logger.debug("[\(self.peerInfo.username)] Parsed \(files.count) files (including private), callback set: \(self._onSharesReceived != nil)")
         logger.info("Received \(files.count) shared files from \(self.peerInfo.username)")
         await _onSharesReceived?(files)
     }
 
     private func handleSearchReply(_ data: Data) async {
-        print("🔍 [\(peerInfo.username)] handleSearchReply called with \(data.count) bytes")
+        logger.debug("[\(self.peerInfo.username)] handleSearchReply called with \(data.count) bytes")
         logger.info("handleSearchReply called with \(data.count) bytes")
 
         // Search replies may be zlib compressed - try decompression first
@@ -1475,22 +1483,22 @@ actor PeerConnection {
         if data.count > 4 {
             do {
                 let decompressed = try decompressZlib(data)
-                print("🔍 [\(peerInfo.username)] Decompressed from \(data.count) to \(decompressed.count) bytes")
+                logger.debug("[\(self.peerInfo.username)] Decompressed from \(data.count) to \(decompressed.count) bytes")
                 logger.info("Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
                 parseData = decompressed
                 wasCompressed = true
             } catch {
-                print("🔍 [\(peerInfo.username)] Not compressed or decompression failed: \(error)")
+                logger.debug("[\(self.peerInfo.username)] Not compressed or decompression failed: \(error)")
                 // Not compressed or decompression failed - try parsing raw data
             }
         }
 
         let dataPreview = parseData.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("🔍 [\(peerInfo.username)] Parsing data (compressed=\(wasCompressed)): \(dataPreview)")
+        logger.debug("[\(self.peerInfo.username)] Parsing data (compressed=\(wasCompressed))")
 
         guard let parsed = MessageParser.parseSearchReply(parseData) else {
-            print("❌ [\(peerInfo.username)] Failed to parse search reply!")
-            print("❌ [\(peerInfo.username)] Data starts with: \(parseData.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " "))")
+            logger.error("[\(self.peerInfo.username)] Failed to parse search reply!")
+            logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
             logger.error("Failed to parse search reply, data starts with: \(parseData.prefix(20).map { String(format: "%02x", $0) }.joined())")
             return
         }
@@ -1510,16 +1518,16 @@ actor PeerConnection {
         }
 
         let username = parsed.username.isEmpty ? peerUsername : parsed.username
-        print("✅ [\(peerInfo.username)] Parsed \(results.count) search results from \(username) for token \(parsed.token)")
+        logger.info("[\(self.peerInfo.username)] Parsed \(results.count) search results from \(username) for token \(parsed.token)")
         logger.info("Parsed \(results.count) search results from \(username) for token \(parsed.token)")
 
         if _onSearchReply != nil {
-            print("🔔 [\(peerInfo.username)] Invoking search reply callback for token \(parsed.token)...")
+            logger.debug("[\(self.peerInfo.username)] Invoking search reply callback for token \(parsed.token)...")
             await _onSearchReply?(parsed.token, results)
-            print("✅ [\(peerInfo.username)] Callback invoked successfully")
+            logger.debug("[\(self.peerInfo.username)] Callback invoked successfully")
             logger.info("Search results callback invoked for token \(parsed.token)")
         } else {
-            print("⚠️ [\(peerInfo.username)] No search reply callback set!")
+            logger.warning("[\(self.peerInfo.username)] No search reply callback set!")
             logger.warning("No search reply callback set!")
         }
     }
@@ -1552,17 +1560,17 @@ actor PeerConnection {
 
     private func handleTransferRequest(_ data: Data) async {
         guard let parsed = MessageParser.parseTransferRequest(data) else {
-            logger.error("Failed to parse TransferRequest")
-            print("❌ Failed to parse TransferRequest, data: \(data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " "))")
+            let hexDump = data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
+            logger.error("Failed to parse TransferRequest, data: \(hexDump)")
             return
         }
 
         let fileSize = parsed.fileSize ?? 0
         if fileSize == 0 && parsed.direction == .upload {
             logger.warning("TransferRequest has zero file size - this may cause issues")
-            print("⚠️ TransferRequest: direction=\(parsed.direction) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize) (WARNING: zero size!)")
+            logger.warning("TransferRequest: direction=\(String(describing: parsed.direction)) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize) (WARNING: zero size!)")
         } else {
-            print("📨 TransferRequest: direction=\(parsed.direction) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize)")
+            logger.info("TransferRequest: direction=\(String(describing: parsed.direction)) token=\(parsed.token) filename=\(parsed.filename) size=\(fileSize)")
         }
 
         let request = TransferRequest(
@@ -1575,16 +1583,16 @@ actor PeerConnection {
 
         // Check for per-token handler first (for concurrent downloads on same connection)
         if let tokenHandler = _tokenTransferRequestHandlers[parsed.token] {
-            print("📨 Dispatching TransferRequest to per-token handler for token \(parsed.token)")
+            logger.debug("Dispatching TransferRequest to per-token handler for token \(parsed.token)")
             await tokenHandler(request)
             // Remove the handler after use (one-shot callback)
             _tokenTransferRequestHandlers.removeValue(forKey: parsed.token)
         } else if let globalHandler = _onTransferRequest {
             // Fall back to global handler
-            print("📨 Dispatching TransferRequest to global handler")
+            logger.debug("Dispatching TransferRequest to global handler")
             await globalHandler(request)
         } else {
-            print("⚠️ No handler for TransferRequest token=\(parsed.token)")
+            logger.warning("No handler for TransferRequest token=\(parsed.token)")
         }
     }
 
@@ -1602,12 +1610,12 @@ actor PeerConnection {
             if let size = data.readUInt64(at: offset) {
                 filesize = size
                 logger.info("Transfer allowed: token=\(token) size=\(size)")
-                print("✅ TransferResponse: token=\(token) allowed=true size=\(size)")
+                logger.info("TransferResponse: token=\(token) allowed=true size=\(size)")
             }
         } else {
             if let (reason, _) = data.readString(at: offset) {
                 logger.info("Transfer denied: token=\(token) reason=\(reason)")
-                print("🚫 TransferResponse: token=\(token) allowed=false reason=\(reason)")
+                logger.info("TransferResponse: token=\(token) allowed=false reason=\(reason)")
             }
         }
 
@@ -1618,7 +1626,7 @@ actor PeerConnection {
         guard let (filename, _) = data.readString(at: 0) else { return }
         let username = self.peerUsername.isEmpty ? "unknown" : self.peerUsername
         logger.info("Queue upload request from \(username): \(filename)")
-        print("📥 QueueUpload received from \(self.peerUsername): \(filename)")
+        logger.info("QueueUpload received from \(self.peerUsername): \(filename)")
         await _onQueueUpload?(self.peerUsername, filename)
     }
 
@@ -1626,13 +1634,13 @@ actor PeerConnection {
         guard let (filename, len) = data.readString(at: 0) else { return }
         guard let place = data.readUInt32(at: len) else { return }
         logger.info("Queue position for \(filename): \(place)")
-        print("📊 Queue position for \(filename): \(place)")
+        logger.info("Queue position for \(filename): \(place)")
     }
 
     private func handleUploadFailed(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
         logger.warning("Upload failed for: \(filename)")
-        print("❌ UploadFailed from \(peerUsername): \(filename)")
+        logger.warning("UploadFailed from \(self.peerUsername): \(filename)")
         // Write to debug log file
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let logLine = "[\(timestamp)] ❌ UploadFailed from \(peerUsername): \(filename)\n"
@@ -1651,7 +1659,7 @@ actor PeerConnection {
         guard let (filename, filenameLen) = data.readString(at: 0) else { return }
         let reason = data.readString(at: filenameLen)?.string ?? "Unknown reason"
         logger.warning("Upload denied for \(filename): \(reason)")
-        print("🚫 UploadDenied: \(filename) - \(reason)")
+        logger.warning("UploadDenied: \(filename) - \(reason)")
         await _onUploadDenied?(filename, reason)
     }
 
@@ -1664,14 +1672,14 @@ actor PeerConnection {
         guard let (folder, _) = data.readString(at: offset) else { return }
 
         logger.info("Folder contents request: \(folder) token=\(token)")
-        print("📁 FolderContentsRequest: \(folder) token=\(token)")
+        logger.info("FolderContentsRequest: \(folder) token=\(token)")
         await _onFolderContentsRequest?(token, folder)
     }
 
     private func handlePlaceInQueueRequest(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
         logger.info("Place in queue request for: \(filename)")
-        print("📊 PlaceInQueueRequest for: \(filename) from \(self.peerUsername)")
+        logger.info("PlaceInQueueRequest for: \(filename) from \(self.peerUsername)")
         await _onPlaceInQueueRequest?(self.peerUsername, filename)
     }
 
@@ -1742,7 +1750,7 @@ actor PeerConnection {
         }
 
         logger.info("Received folder contents: \(folder) (\(files.count) files)")
-        print("📁 FolderContentsReply: \(folder) with \(files.count) files")
+        logger.info("FolderContentsReply: \(folder) with \(files.count) files")
         await _onFolderContentsResponse?(token, folder, files)
     }
 
@@ -1776,7 +1784,7 @@ actor PeerConnection {
         // We need to strip the 2-byte header and 4-byte footer.
 
         guard data.count > 6 else {
-            print("🗜️ Decompression: data too short (\(data.count) bytes)")
+            logger.debug("Decompression: data too short (\(data.count) bytes)")
             throw PeerError.decompressionFailed
         }
 
@@ -1784,24 +1792,26 @@ actor PeerConnection {
         let cmf = data[data.startIndex]
         let flg = data[data.startIndex + 1]
         let compressionMethod = cmf & 0x0F
-        print("🗜️ Decompression: CMF=0x\(String(format: "%02x", cmf)) FLG=0x\(String(format: "%02x", flg)) method=\(compressionMethod)")
+        let cmfHex = String(format: "%02x", cmf)
+        let flgHex = String(format: "%02x", flg)
+        logger.debug("Decompression: CMF=0x\(cmfHex) FLG=0x\(flgHex) method=\(compressionMethod)")
 
         guard compressionMethod == 8 else {
-            print("🗜️ Not zlib format (method != 8), trying raw deflate")
+            logger.debug("Not zlib format (method != 8), trying raw deflate")
             // Not zlib format, try raw deflate
             return try decompressRawDeflate(data)
         }
 
         // Strip zlib header (2 bytes) and Adler-32 checksum (4 bytes)
         let deflateData = data.dropFirst(2).dropLast(4)
-        print("🗜️ Stripped zlib header/footer: \(data.count) -> \(deflateData.count) bytes")
+        logger.debug("Stripped zlib header/footer: \(data.count) -> \(deflateData.count) bytes")
 
         let result = try decompressRawDeflate(Data(deflateData))
-        print("🗜️ Decompressed: \(deflateData.count) -> \(result.count) bytes")
+        logger.debug("Decompressed: \(deflateData.count) -> \(result.count) bytes")
 
         // Log first few bytes of decompressed data
         let preview = result.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("🗜️ Decompressed preview: \(preview)")
+        logger.debug("Decompressed preview: \(preview)")
 
         return result
     }
@@ -1836,7 +1846,7 @@ actor PeerConnection {
                 destinationSize = min(sourceSize * 100, maxDecompressedSize)
                 // SECURITY: Check if we've hit the limit
                 guard destinationSize <= maxDecompressedSize else {
-                    print("⚠️ SECURITY: Decompression size limit exceeded")
+                    logger.warning("SECURITY: Decompression size limit exceeded")
                     throw PeerError.decompressionFailed
                 }
                 destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
@@ -1857,13 +1867,13 @@ actor PeerConnection {
             // SECURITY: Check compression ratio
             let compressionRatio = decodedSize / max(sourceSize, 1)
             if compressionRatio > maxCompressionRatio {
-                print("⚠️ SECURITY: Suspicious compression ratio \(compressionRatio):1")
+                logger.warning("SECURITY: Suspicious compression ratio \(compressionRatio):1")
                 throw PeerError.decompressionFailed
             }
 
             // SECURITY: Final size check
             guard decodedSize <= maxDecompressedSize else {
-                print("⚠️ SECURITY: Decompressed size \(decodedSize) exceeds limit \(maxDecompressedSize)")
+                logger.warning("SECURITY: Decompressed size \(decodedSize) exceeds limit \(maxDecompressedSize)")
                 throw PeerError.decompressionFailed
             }
 

@@ -40,8 +40,7 @@ final class NetworkTests: XCTestCase {
 
     func testSetListenPortMessageFormat() throws {
         let port: UInt32 = 2244
-        let obfuscatedPort: UInt32 = 2245
-        let message = MessageBuilder.setListenPortMessage(port: port, obfuscatedPort: obfuscatedPort)
+        let message = MessageBuilder.setListenPortMessage(port: port)
 
         let code = message.readUInt32(at: 4)
         XCTAssertEqual(code, 2, "SetListenPort message code should be 2")

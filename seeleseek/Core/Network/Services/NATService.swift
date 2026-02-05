@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import Synchronization
 
 /// Handles NAT traversal using UPnP and NAT-PMP
 actor NATService {
@@ -214,9 +215,9 @@ actor NATService {
         let endpoint = NWEndpoint.hostPort(host: "239.255.255.250", port: 1900)
         let connection = NWConnection(to: endpoint, using: params)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) var didComplete = false
+        let didComplete = Mutex(false)
 
+        return try await withCheckedThrowingContinuation { continuation in
             connection.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
@@ -230,7 +231,7 @@ actor NATService {
                     // Receive response - NWConnection CAN receive unicast replies to multicast requests
                     @Sendable func receiveNext() {
                         connection.receiveMessage { data, context, _, error in
-                            guard !didComplete else { return }
+                            guard !didComplete.withLock({ $0 }) else { return }
 
                             if let data = data, let response = String(data: data, encoding: .utf8) {
                                 print("🔧 NAT: SSDP response (\(data.count) bytes)")
@@ -242,7 +243,11 @@ actor NATService {
                                         do {
                                             let gateway = try await self?.fetchGatewayInfo(from: location)
                                             if let gateway = gateway {
-                                                didComplete = true
+                                                guard didComplete.withLock({
+                                                    guard !$0 else { return false }
+                                                    $0 = true
+                                                    return true
+                                                }) else { return }
                                                 connection.cancel()
                                                 continuation.resume(returning: gateway)
                                             }
@@ -266,10 +271,12 @@ actor NATService {
                     receiveNext()
 
                 case .failed(let error):
-                    if !didComplete {
-                        didComplete = true
-                        continuation.resume(throwing: error)
-                    }
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
+                    continuation.resume(throwing: error)
 
                 default:
                     break
@@ -281,11 +288,13 @@ actor NATService {
             // Timeout after 1.5 seconds
             Task {
                 try? await Task.sleep(for: .milliseconds(1500))
-                if !didComplete {
-                    didComplete = true
-                    connection.cancel()
-                    continuation.resume(throwing: NATError.discoveryTimeout)
-                }
+                guard didComplete.withLock({
+                    guard !$0 else { return false }
+                    $0 = true
+                    return true
+                }) else { return }
+                connection.cancel()
+                continuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }
@@ -406,30 +415,37 @@ actor NATService {
         let connection = NWConnection(to: endpoint, using: params)
 
         // Build NAT-PMP request
-        nonisolated(unsafe) var request = Data()
-        request.append(0) // Version
-        request.append(proto == "TCP" ? 2 : 1) // Opcode: 1=UDP, 2=TCP
-        request.append(contentsOf: [0, 0]) // Reserved
-        request.appendUInt16(internalPort)
-        request.appendUInt16(externalPort)
-        request.appendUInt32(7200) // Lifetime in seconds
+        let request: Data = {
+            var data = Data()
+            data.append(0) // Version
+            data.append(proto == "TCP" ? 2 : 1) // Opcode: 1=UDP, 2=TCP
+            data.append(contentsOf: [0, 0]) // Reserved
+            data.appendUInt16(internalPort)
+            data.appendUInt16(externalPort)
+            data.appendUInt32(7200) // Lifetime in seconds
+            return data
+        }()
+
+        let didComplete = Mutex(false)
 
         return try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) var didComplete = false
-
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
                     connection.receiveMessage { data, _, _, error in
-                        guard !didComplete, let data = data, data.count >= 16 else { return }
+                        guard let data = data, data.count >= 16 else { return }
 
                         // Parse response
                         let resultCode = data.readUInt16(at: 2) ?? 0xFFFF
                         let mappedPort = data.readUInt16(at: 10) ?? 0
 
-                        didComplete = true
+                        guard didComplete.withLock({
+                            guard !$0 else { return false }
+                            $0 = true
+                            return true
+                        }) else { return }
                         connection.cancel()
 
                         if resultCode == 0 && mappedPort > 0 {
@@ -440,10 +456,12 @@ actor NATService {
                     }
 
                 case .failed(let error):
-                    if !didComplete {
-                        didComplete = true
-                        continuation.resume(throwing: error)
-                    }
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
+                    continuation.resume(throwing: error)
 
                 default:
                     break
@@ -454,11 +472,13 @@ actor NATService {
 
             Task {
                 try? await Task.sleep(for: .seconds(1))
-                if !didComplete {
-                    didComplete = true
-                    connection.cancel()
-                    continuation.resume(throwing: NATError.discoveryTimeout)
-                }
+                guard didComplete.withLock({
+                    guard !$0 else { return false }
+                    $0 = true
+                    return true
+                }) else { return }
+                connection.cancel()
+                continuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }
@@ -472,39 +492,48 @@ actor NATService {
         let connection = NWConnection(to: endpoint, using: params)
 
         // STUN Binding Request
-        nonisolated(unsafe) var request = Data()
-        request.appendUInt16(0x0001) // Binding Request
-        request.appendUInt16(0x0000) // Message Length
-        request.appendUInt32(0x2112A442) // Magic Cookie
-        // Transaction ID (12 bytes)
-        for _ in 0..<3 {
-            request.appendUInt32(UInt32.random(in: 0...UInt32.max))
-        }
+        let request: Data = {
+            var data = Data()
+            data.appendUInt16(0x0001) // Binding Request
+            data.appendUInt16(0x0000) // Message Length
+            data.appendUInt32(0x2112A442) // Magic Cookie
+            // Transaction ID (12 bytes)
+            for _ in 0..<3 {
+                data.appendUInt32(UInt32.random(in: 0...UInt32.max))
+            }
+            return data
+        }()
+
+        let didComplete = Mutex(false)
 
         return try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) var didComplete = false
-
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
                     connection.receiveMessage { data, _, _, error in
-                        guard !didComplete, let data = data else { return }
+                        guard let data = data else { return }
 
                         // Parse STUN response for XOR-MAPPED-ADDRESS
                         if let ip = self.parseSTUNResponse(data) {
-                            didComplete = true
+                            guard didComplete.withLock({
+                                guard !$0 else { return false }
+                                $0 = true
+                                return true
+                            }) else { return }
                             connection.cancel()
                             continuation.resume(returning: ip)
                         }
                     }
 
                 case .failed(let error):
-                    if !didComplete {
-                        didComplete = true
-                        continuation.resume(throwing: error)
-                    }
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
+                    continuation.resume(throwing: error)
 
                 default:
                     break
@@ -515,11 +544,13 @@ actor NATService {
 
             Task {
                 try? await Task.sleep(for: .seconds(1))
-                if !didComplete {
-                    didComplete = true
-                    connection.cancel()
-                    continuation.resume(throwing: NATError.discoveryTimeout)
-                }
+                guard didComplete.withLock({
+                    guard !$0 else { return false }
+                    $0 = true
+                    return true
+                }) else { return }
+                connection.cancel()
+                continuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }

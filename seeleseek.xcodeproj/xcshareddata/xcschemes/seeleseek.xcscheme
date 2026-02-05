@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "seeleseek"
+               BlueprintIdentifier = "A61208172F32A89C00995D21"
                BuildableName = "seeleseek.app"
                BlueprintName = "seeleseek"
                ReferencedContainer = "container:seeleseek.xcodeproj">
@@ -35,7 +35,7 @@
             parallelizable = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "seeleseekTests"
+               BlueprintIdentifier = "A6TESTS072F32CDA700995D21"
                BuildableName = "seeleseekTests.xctest"
                BlueprintName = "seeleseekTests"
                ReferencedContainer = "container:seeleseek.xcodeproj">
@@ -57,7 +57,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "seeleseek"
+            BlueprintIdentifier = "A61208172F32A89C00995D21"
             BuildableName = "seeleseek.app"
             BlueprintName = "seeleseek"
             ReferencedContainer = "container:seeleseek.xcodeproj">
@@ -74,7 +74,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "seeleseek"
+            BlueprintIdentifier = "A61208172F32A89C00995D21"
             BuildableName = "seeleseek.app"
             BlueprintName = "seeleseek"
             ReferencedContainer = "container:seeleseek.xcodeproj">

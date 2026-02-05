@@ -24,16 +24,15 @@ enum MessageBuilder {
         payload.appendString(hashHex)
 
         // Minor version
-        payload.appendUInt32(1)
+        payload.appendUInt32(3)
 
         return wrapMessage(payload)
     }
 
-    nonisolated static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
+    nonisolated static func setListenPortMessage(port: UInt32) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.setListenPort.rawValue)
         payload.appendUInt32(port)
-        payload.appendUInt32(obfuscatedPort)
         return wrapMessage(payload)
     }
 
@@ -257,29 +256,46 @@ enum MessageBuilder {
     nonisolated static func searchReplyMessage(
         username: String,
         token: UInt32,
-        results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]
+        results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])],
+        hasFreeSlots: Bool = true,
+        uploadSpeed: UInt32 = 0,
+        queueLength: UInt32 = 0
     ) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.searchReply.rawValue))
-        payload.appendString(username)
-        payload.appendUInt32(token)
-        payload.appendUInt32(UInt32(results.count))
+        var uncompressedPayload = Data()
+
+        uncompressedPayload.appendString(username)
+        uncompressedPayload.appendUInt32(token)
+        uncompressedPayload.appendUInt32(UInt32(results.count))
 
         for result in results {
-            payload.appendUInt8(1) // code
-            payload.appendString(result.filename)
-            payload.appendUInt64(result.size)
-            payload.appendString(result.extension_)
-            payload.appendUInt32(UInt32(result.attributes.count))
+            uncompressedPayload.appendUInt8(1) // code
+            uncompressedPayload.appendString(result.filename)
+            uncompressedPayload.appendUInt64(result.size)
+            uncompressedPayload.appendString(result.extension_)
+            uncompressedPayload.appendUInt32(UInt32(result.attributes.count))
             for attr in result.attributes {
-                payload.appendUInt32(attr.0)
-                payload.appendUInt32(attr.1)
+                uncompressedPayload.appendUInt32(attr.0)
+                uncompressedPayload.appendUInt32(attr.1)
             }
         }
 
-        payload.appendBool(true) // has free slots
-        payload.appendUInt32(100) // upload speed
-        payload.appendUInt32(0) // queue length
+        uncompressedPayload.appendBool(hasFreeSlots)
+        uncompressedPayload.appendUInt32(uploadSpeed)
+        uncompressedPayload.appendUInt32(queueLength)
+
+        // Compress with zlib
+        guard let compressed = compressZlib(uncompressedPayload) else {
+            // Fallback: send uncompressed (not ideal but better than nothing)
+            var payload = Data()
+            payload.appendUInt32(UInt32(PeerMessageCode.searchReply.rawValue))
+            payload.append(uncompressedPayload)
+            return wrapMessage(payload)
+        }
+
+        // Build final message
+        var payload = Data()
+        payload.appendUInt32(UInt32(PeerMessageCode.searchReply.rawValue))
+        payload.append(compressed)
 
         return wrapMessage(payload)
     }
@@ -347,8 +363,8 @@ enum MessageBuilder {
         compressed.append(0x78)  // CMF: compression method 8 (deflate), window size 7
         compressed.append(0x9C)  // FLG: default compression level
 
-        let pageSize = 65536
-        var compressedBuffer = [UInt8](repeating: 0, count: pageSize)
+        let bufferSize = max(65536, data.count)  // At least 64KB, or input size
+        var compressedBuffer = [UInt8](repeating: 0, count: bufferSize)
 
         let compressedSize = data.withUnsafeBytes { sourceBuffer -> Int in
             guard let baseAddress = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
@@ -356,7 +372,7 @@ enum MessageBuilder {
             }
             return compression_encode_buffer(
                 &compressedBuffer,
-                pageSize,
+                bufferSize,
                 baseAddress,
                 data.count,
                 nil,
@@ -439,42 +455,7 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    // MARK: - NetworkClient Convenience Methods
-
-    nonisolated static func login(username: String, password: String, version: UInt32, hash: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.login.rawValue)
-        payload.appendString(username)
-        payload.appendString(password)
-        payload.appendUInt32(version)
-        payload.appendString(hash)
-        payload.appendUInt32(1) // minor version
-        return wrapMessage(payload)
-    }
-
-    nonisolated static func fileSearch(token: UInt32, query: String) -> Data {
-        fileSearchMessage(token: token, query: query)
-    }
-
-    nonisolated static func roomList() -> Data {
-        getRoomListMessage()
-    }
-
-    nonisolated static func joinRoom(_ name: String) -> Data {
-        joinRoomMessage(roomName: name)
-    }
-
-    nonisolated static func leaveRoom(_ name: String) -> Data {
-        leaveRoomMessage(roomName: name)
-    }
-
-    nonisolated static func sayInRoom(room: String, message: String) -> Data {
-        sayInChatRoomMessage(roomName: room, message: message)
-    }
-
-    nonisolated static func privateMessage(username: String, message: String) -> Data {
-        privateMessageMessage(username: username, message: message)
-    }
+    // MARK: - Additional Server Messages
 
     nonisolated static func getUserAddress(_ username: String) -> Data {
         var payload = Data()
@@ -483,37 +464,10 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    nonisolated static func setStatus(_ status: UserStatus) -> Data {
-        setOnlineStatusMessage(status: status)
-    }
-
-    nonisolated static func sharedFoldersFiles(folders: UInt32, files: UInt32) -> Data {
-        sharedFoldersFilesMessage(folders: folders, files: files)
-    }
-
     nonisolated static func cantConnectToPeer(token: UInt32, username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.cantConnectToPeer.rawValue)
         payload.appendUInt32(token)
-        payload.appendString(username)
-        return wrapMessage(payload)
-    }
-
-    /// ConnectToPeer (code 18) - Request server to tell peer to connect to us
-    /// This is sent BEFORE or alongside GetPeerAddress to initiate indirect connection
-    nonisolated static func connectToPeer(token: UInt32, username: String, connectionType: String = "P") -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.connectToPeer.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(username)
-        payload.appendString(connectionType)
-        return wrapMessage(payload)
-    }
-
-    /// GetUserStatus (code 7) - Check if a user is online
-    nonisolated static func getUserStatus(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.getUserStatus.rawValue)
         payload.appendString(username)
         return wrapMessage(payload)
     }

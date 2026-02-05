@@ -1,8 +1,11 @@
 import Foundation
+import os
 
 /// Parser for SoulSeek protocol messages.
 /// All types are Sendable to allow use across actor boundaries.
 enum MessageParser {
+    private static let logger = Logger(subsystem: "com.seeleseek", category: "MessageParser")
+
     // MARK: - Security Limits
     // These limits prevent DoS attacks via malicious payloads with large counts
 
@@ -11,7 +14,7 @@ enum MessageParser {
     /// Maximum number of attributes per file
     private static let maxAttributeCount: UInt32 = 100
     /// Maximum message size (reduced from 100MB)
-    private static let maxMessageSize: UInt32 = 10_000_000  // 10MB
+    private static let maxMessageSize: UInt32 = 100_000_000  // 100MB - large share lists can exceed 10MB
 
     // MARK: - Frame Parsing
 
@@ -53,7 +56,7 @@ enum MessageParser {
             guard let ip = payload.readUInt32(at: offset) else { return nil }
             offset += 4
 
-            let ipString = "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
+            let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
 
             var hashString: String?
             if let (hash, _) = payload.readString(at: offset) {
@@ -130,7 +133,7 @@ enum MessageParser {
 
         let privileged = payload.readBool(at: offset) ?? false
 
-        let ipString = "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
+        let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
 
         return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
     }
@@ -347,7 +350,7 @@ enum MessageParser {
                 }
 
                 if privateFilesParsed > 0 {
-                    print("🔒 Parsed \(privateFilesParsed) private/buddy-only files from \(username)")
+                    logger.debug("Parsed \(privateFilesParsed) private/buddy-only files from \(username)")
                 }
             }
         }
@@ -374,38 +377,38 @@ enum MessageParser {
 
         // Debug: show raw bytes
         let preview = payload.prefix(min(100, payload.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
-        print("📦 TransferRequest raw (\(payload.count) bytes): \(preview)")
+        logger.debug("TransferRequest raw (\(payload.count) bytes): \(preview)")
 
         // Need at least 4 (direction) + 4 (token) + 4 (filename length) = 12 bytes minimum
         guard payload.count >= 12 else {
-            print("📦 Payload too short: \(payload.count) bytes, need at least 12")
+            logger.debug("Payload too short: \(payload.count) bytes, need at least 12")
             return nil
         }
 
         guard let directionRaw = payload.readUInt32(at: offset) else {
-            print("📦 Failed to read direction at offset \(offset)")
+            logger.debug("Failed to read direction at offset \(offset)")
             return nil
         }
-        print("📦 direction raw: \(directionRaw) at offset \(offset)")
+        logger.debug("direction raw: \(directionRaw) at offset \(offset)")
         offset += 4
 
         guard let direction = FileTransferDirection(rawValue: UInt8(directionRaw)) else {
-            print("📦 Invalid direction: \(directionRaw)")
+            logger.debug("Invalid direction: \(directionRaw)")
             return nil
         }
 
         guard let token = payload.readUInt32(at: offset) else {
-            print("📦 Failed to read token at offset \(offset)")
+            logger.debug("Failed to read token at offset \(offset)")
             return nil
         }
-        print("📦 token: \(token) at offset \(offset)")
+        logger.debug("token: \(token) at offset \(offset)")
         offset += 4
 
         guard let (filename, filenameLen) = payload.readString(at: offset) else {
-            print("📦 Failed to read filename at offset \(offset)")
+            logger.debug("Failed to read filename at offset \(offset)")
             return nil
         }
-        print("📦 filename: '\(filename)' (consumed=\(filenameLen) bytes) at offset \(offset)")
+        logger.debug("filename: '\(filename)' (consumed=\(filenameLen) bytes) at offset \(offset)")
         offset += filenameLen
 
         var fileSize: UInt64?
@@ -413,25 +416,25 @@ enum MessageParser {
             // For upload direction, file size should follow the filename
             // Check if we have enough bytes remaining (need 8 bytes for UInt64)
             let remainingBytes = payload.count - offset
-            print("📦 Remaining bytes after filename: \(remainingBytes), need 8 for fileSize")
+            logger.debug("Remaining bytes after filename: \(remainingBytes), need 8 for fileSize")
 
             if remainingBytes >= 8 {
                 // Debug: show the 8 bytes we're reading for file size
                 let sizeBytes = payload.dropFirst(offset).prefix(8)
                 let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-                print("📦 fileSize bytes at offset \(offset): \(sizeBytesHex)")
+                logger.debug("fileSize bytes at offset \(offset): \(sizeBytesHex)")
 
                 fileSize = payload.readUInt64(at: offset)
-                print("📦 fileSize parsed: \(fileSize ?? 0)")
+                logger.debug("fileSize parsed: \(fileSize ?? 0)")
 
                 // Validate: file size of 0 for upload direction is suspicious
                 if fileSize == 0 {
-                    print("⚠️ TransferRequest: fileSize is 0 for upload direction - this may indicate parsing issue")
-                    print("⚠️ Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                    logger.warning("TransferRequest: fileSize is 0 for upload direction - this may indicate parsing issue")
+                    logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
                 }
             } else {
-                print("⚠️ TransferRequest: Not enough bytes for fileSize! Have \(remainingBytes), need 8")
-                print("⚠️ Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                logger.warning("TransferRequest: Not enough bytes for fileSize! Have \(remainingBytes), need 8")
+                logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
                 // Still return what we have - fileSize will be nil
             }
         }

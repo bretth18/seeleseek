@@ -1,4 +1,5 @@
 import SwiftUI
+import Synchronization
 
 struct SettingsView: View {
     @Environment(\.appState) private var appState
@@ -748,27 +749,35 @@ struct DiagnosticsSection: View {
 
         let connection = NWConnection(to: endpoint, using: .tcp)
 
+        let didComplete = Mutex(false)
+
         return try await withCheckedThrowingContinuation { continuation in
-            nonisolated(unsafe) var didComplete = false
-
             connection.stateUpdateHandler = { state in
-                guard !didComplete else { return }
-
                 switch state {
                 case .ready:
-                    didComplete = true
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     connection.cancel()
                     continuation.resume()
 
                 case .failed(let error):
-                    didComplete = true
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     continuation.resume(throwing: error)
 
                 case .cancelled:
-                    if !didComplete {
-                        didComplete = true
-                        continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection cancelled"]))
-                    }
+                    guard didComplete.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
+                    continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection cancelled"]))
 
                 default:
                     break
@@ -779,11 +788,13 @@ struct DiagnosticsSection: View {
 
             Task {
                 try? await Task.sleep(for: .seconds(10))
-                if !didComplete {
-                    didComplete = true
-                    connection.cancel()
-                    continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection timed out"]))
-                }
+                guard didComplete.withLock({
+                    guard !$0 else { return false }
+                    $0 = true
+                    return true
+                }) else { return }
+                connection.cancel()
+                continuation.resume(throwing: NSError(domain: "Connection", code: -1, userInfo: [NSLocalizedDescriptionKey: "Connection timed out"]))
             }
         }
     }

@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import Synchronization
 
 /// Listens for incoming peer connections
 actor ListenerService {
@@ -29,7 +30,7 @@ actor ListenerService {
     var obfuscated: UInt16 { obfuscatedPort }
 
     func start(preferredPort: UInt16? = nil) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
-        print("🔊 ListenerService.start() called")
+        logger.info("ListenerService.start() called")
 
         // Try preferred port first, then scan for available port
         let portsToTry: [UInt16]
@@ -39,11 +40,11 @@ actor ListenerService {
             portsToTry = Array(Self.defaultPortRange)
         }
 
-        print("🔊 Trying ports: \(portsToTry)")
+        logger.debug("Trying ports: \(portsToTry)")
 
         for port in portsToTry {
             do {
-                print("🔊 Trying port \(port)...")
+                logger.debug("Trying port \(port)...")
                 try await startListener(on: port)
                 listeningPort = port
                 obfuscatedPort = port + Self.obfuscatedPortOffset
@@ -52,16 +53,16 @@ actor ListenerService {
                 try? await startObfuscatedListener(on: obfuscatedPort)
 
                 logger.info("Listening on port \(port) (obfuscated: \(self.obfuscatedPort))")
-                print("🟢 LISTENER STARTED on port \(port) (obfuscated: \(self.obfuscatedPort))")
+                logger.info("Listener started on port \(port) (obfuscated: \(self.obfuscatedPort))")
                 return (port, obfuscatedPort)
             } catch {
                 logger.debug("Port \(port) unavailable: \(error.localizedDescription)")
-                print("🟠 Port \(port) unavailable: \(error.localizedDescription)")
+                logger.debug("Port \(port) unavailable: \(error.localizedDescription)")
                 continue
             }
         }
 
-        print("🔴 LISTENER FAILED - no available port")
+        logger.error("Listener failed - no available port")
         throw ListenerError.noAvailablePort
     }
 
@@ -97,22 +98,28 @@ actor ListenerService {
         )
 
         let newListener = try NWListener(using: parameters)
-        print("🔊 Created IPv4 listener for port \(port)")
+        logger.debug("Created IPv4 listener for port \(port)")
 
-        // Use nonisolated(unsafe) for the flag since NWListener callbacks are on a different queue
-        nonisolated(unsafe) var hasResumed = false
+        let hasResumed = Mutex(false)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             newListener.stateUpdateHandler = { state in
-                print("🔊 Listener state on port \(port): \(state)")
-                guard !hasResumed else { return }
+                // logger state changes handled via NWListener callbacks
 
                 switch state {
                 case .ready:
-                    hasResumed = true
+                    guard hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     continuation.resume()
                 case .failed(let error):
-                    hasResumed = true
+                    guard hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     continuation.resume(throwing: error)
                 case .cancelled:
                     break
@@ -122,7 +129,7 @@ actor ListenerService {
             }
 
             newListener.newConnectionHandler = { [weak self] connection in
-                print("🔵 NEW INCOMING CONNECTION on port \(port) from \(connection.endpoint)")
+                // Incoming connection logged in handleNewConnection
                 Task {
                     await self?.handleNewConnection(connection, obfuscated: false)
                 }
@@ -163,12 +170,12 @@ actor ListenerService {
 
     private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) async {
         logger.info("New \(obfuscated ? "obfuscated " : "")connection from \(String(describing: connection.endpoint))")
-        print("🔵 INCOMING CONNECTION from \(connection.endpoint) (obfuscated: \(obfuscated))")
+        logger.info("Incoming connection from \(String(describing: connection.endpoint)) (obfuscated: \(obfuscated))")
 
         if _onNewConnection != nil {
             await _onNewConnection?(connection, obfuscated)
         } else {
-            print("⚠️ No connection handler set!")
+            logger.warning("No connection handler set!")
         }
     }
 

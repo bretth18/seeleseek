@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import Synchronization
 
 /// Manages upload queue and file transfers to peers
 @Observable
@@ -488,16 +489,23 @@ final class UploadManager {
         let connection = NWConnection(to: endpoint, using: params)
 
         // Wait for connection
+        let hasResumed = Mutex(false)
         let connected: Bool = await withCheckedContinuation { continuation in
-            nonisolated(unsafe) var hasResumed = false
             connection.stateUpdateHandler = { state in
-                guard !hasResumed else { return }
                 switch state {
                 case .ready:
-                    hasResumed = true
+                    guard hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     continuation.resume(returning: true)
                 case .failed, .cancelled:
-                    hasResumed = true
+                    guard hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
                     continuation.resume(returning: false)
                 default:
                     break
@@ -508,8 +516,11 @@ final class UploadManager {
             // Timeout
             Task {
                 try? await Task.sleep(for: .seconds(30))
-                guard !hasResumed else { return }
-                hasResumed = true
+                guard hasResumed.withLock({
+                    guard !$0 else { return false }
+                    $0 = true
+                    return true
+                }) else { return }
                 connection.cancel()
                 continuation.resume(returning: false)
             }

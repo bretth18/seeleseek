@@ -29,7 +29,7 @@ final class ServerMessageHandler {
 
         // Extra logging for distributed network messages
         if codeValue == 102 || codeValue == 93 || codeValue == 83 || codeValue == 84 || codeValue == 71 {
-            print("🌐 DISTRIBUTED MSG: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
+            logger.debug("DISTRIBUTED MSG: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
         }
 
         guard let code = code else {
@@ -116,9 +116,13 @@ final class ServerMessageHandler {
             handleCantConnectToPeer(payload)
         case .adminMessage:
             handleAdminMessage(payload)
+        case .relogged:
+            handleRelogged()
+        case .excludedSearchPhrases:
+            handleExcludedSearchPhrases(payload)
         default:
             // Log unhandled message with more detail
-            print("📨 Unhandled server message: \(code) (code=\(codeValue)) payload=\(payload.count) bytes")
+            logger.info("Unhandled server message: \(code.description) (code=\(codeValue)) payload=\(payload.count) bytes")
         }
     }
 
@@ -150,8 +154,8 @@ final class ServerMessageHandler {
             if let ip = data.readUInt32(at: offset) {
                 offset += 4
                 let ipStr = self.ipString(from: ip)
-                print("📍 SERVER REPORTS OUR IP: \(ipStr)")
-                print("📍 Peers will connect to: \(ipStr):\(client?.listenPort ?? 0)")
+                logger.info("Server reports our IP: \(ipStr)")
+                logger.info("Peers will connect to: \(ipStr):\(self.client?.listenPort ?? 0)")
                 logger.info("Server reports IP: \(ipStr)")
             }
 
@@ -309,8 +313,7 @@ final class ServerMessageHandler {
     }
 
     private func acknowledgePrivateMessage(_ messageId: UInt32) async {
-        // Would send ack back to server
-        // MessageBuilder.acknowledgePrivateMessage(messageId)
+        await client?.acknowledgePrivateMessage(messageId: messageId)
     }
 
     private func handleGetUserAddress(_ data: Data) {
@@ -347,7 +350,7 @@ final class ServerMessageHandler {
 
         let status = UserStatus(rawValue: statusRaw) ?? .offline
 
-        print("User \(username) status: \(status.description), privileged: \(privileged)")
+        logger.info("User \(username) status: \(status.description), privileged: \(privileged)")
 
         // Dispatch to handler (handles both pending status checks and external callback)
         Task { @MainActor in
@@ -401,13 +404,13 @@ final class ServerMessageHandler {
 
         // Log sparingly to reduce noise
         if connectToPeerCount <= 5 || connectToPeerCount % 100 == 0 {
-            print("📞 ConnectToPeer #\(connectToPeerCount): \(username) type=\(connectionType)")
+            logger.info("ConnectToPeer #\(self.connectToPeerCount): \(username) type=\(connectionType)")
         }
 
         // If we're getting tons of ConnectToPeer, our listener isn't reachable
         if connectToPeerCount == 100 && !hasWarnedAboutListener {
             hasWarnedAboutListener = true
-            print("⚠️ WARNING: Received 100+ ConnectToPeer requests - your listen port may not be reachable!")
+            logger.warning("Received 100+ ConnectToPeer requests - your listen port may not be reachable!")
         }
 
         // Skip invalid addresses (peer behind NAT without reachable port)
@@ -469,18 +472,17 @@ final class ServerMessageHandler {
     }
 
     private func connectToPeerThrottled(username: String, connectionType: String, ip: String, port: UInt32, token: UInt32) async {
-        print("🔗 connectToPeerThrottled START: \(username) at \(ip):\(port)")
+        logger.debug("connectToPeerThrottled START: \(username) at \(ip):\(port)")
         do {
             guard let pool = client?.peerConnectionPool else {
-                print("❌ connectToPeerThrottled: pool is nil")
+                logger.error("connectToPeerThrottled: pool is nil")
                 return
             }
 
             // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
             // We'll send PierceFirewall instead (correct protocol for indirect connections)
-            print("🔗 connectToPeerThrottled: calling pool.connect with 10s timeout...")
+            logger.debug("connectToPeerThrottled: calling pool.connect with 10s timeout...")
             let connection = try await withTimeout(seconds: 10) {
-                print("🔗 withTimeout task: starting pool.connect...")
                 let conn = try await pool.connect(
                     to: username,
                     ip: ip,
@@ -488,16 +490,15 @@ final class ServerMessageHandler {
                     token: token,
                     isIndirect: true
                 )
-                print("🔗 withTimeout task: pool.connect completed!")
                 return conn
             }
-            print("🔗 connectToPeerThrottled: connection established, sending PierceFirewall...")
+            logger.debug("connectToPeerThrottled: connection established, sending PierceFirewall...")
 
             try await connection.sendPierceFirewall()
-            print("🔗 connectToPeerThrottled SUCCESS: \(username)")
+            logger.info("connectToPeerThrottled SUCCESS: \(username)")
 
         } catch {
-            print("❌ connectToPeerThrottled FAILED: \(username) - \(error)")
+            logger.error("connectToPeerThrottled FAILED: \(username) - \(error)")
             await client?.sendCantConnectToPeer(token: token, username: username)
         }
     }
@@ -508,24 +509,20 @@ final class ServerMessageHandler {
             group.addTask {
                 do {
                     let result = try await operation()
-                    print("⏱️ withTimeout: operation completed after \(Date().timeIntervalSince(startTime))s")
                     return result
                 } catch {
-                    print("⏱️ withTimeout: operation threw error after \(Date().timeIntervalSince(startTime))s: \(error)")
                     throw error
                 }
             }
 
             group.addTask {
                 try await Task.sleep(for: .seconds(seconds))
-                print("⏱️ withTimeout: TIMEOUT after \(seconds)s!")
                 throw NetworkError.timeout
             }
 
             guard let result = try await group.next() else {
                 throw NetworkError.timeout
             }
-            print("⏱️ withTimeout: got result after \(Date().timeIntervalSince(startTime))s, cancelling other task")
             group.cancelAll()
             return result
         }
@@ -539,7 +536,7 @@ final class ServerMessageHandler {
         guard let parentCount = data.readUInt32(at: offset) else { return }
         offset += 4
 
-        print("🌐 Received \(parentCount) possible distributed parents")
+        logger.info("Received \(parentCount) possible distributed parents")
 
         var parents: [(username: String, ip: String, port: Int)] = []
 
@@ -555,7 +552,7 @@ final class ServerMessageHandler {
 
             let ipStr = ipString(from: ip)
             parents.append((username: username, ip: ipStr, port: Int(port)))
-            print("🌐   Parent \(i+1): \(username) at \(ipStr):\(port)")
+            logger.debug("Parent \(i+1): \(username) at \(ipStr):\(port)")
         }
 
         // Try to connect to first few parents until one succeeds (limit to avoid resource exhaustion)
@@ -569,7 +566,7 @@ final class ServerMessageHandler {
                     port: parent.port
                 )
                 if success {
-                    print("🌐 Successfully connected to distributed parent \(parent.username)")
+                    logger.info("Successfully connected to distributed parent \(parent.username)")
                     break
                 }
             }
@@ -579,7 +576,7 @@ final class ServerMessageHandler {
     private var distributedParentConnection: PeerConnection?
 
     private func connectToDistributedParent(username: String, ip: String, port: Int) async -> Bool {
-        print("🌐 Connecting to distributed parent: \(username) at \(ip):\(port)")
+        logger.info("Connecting to distributed parent: \(username) at \(ip):\(port)")
 
         let token = UInt32.random(in: 0...UInt32.max)
 
@@ -598,8 +595,7 @@ final class ServerMessageHandler {
                 try await connection.sendPeerInit(username: myUsername)
             }
 
-            print("🟢 Connected to distributed parent: \(username)")
-            logger.info("Connected to distributed parent \(username)")
+            logger.info("Connected to distributed parent: \(username)")
 
             // Store the connection to keep it alive
             distributedParentConnection = connection
@@ -611,7 +607,6 @@ final class ServerMessageHandler {
 
             return true
         } catch {
-            print("🔴 Failed to connect to distributed parent \(username): \(error)")
             logger.error("Failed to connect to distributed parent \(username): \(error.localizedDescription)")
             // Explicitly disconnect to free resources
             await connection.disconnect()
@@ -620,20 +615,20 @@ final class ServerMessageHandler {
     }
 
     private func handleDistributedMessage(code: UInt32, payload: Data) async {
-        print("🌐 Distributed message received: code=\(code) size=\(payload.count)")
+        logger.debug("Distributed message received: code=\(code) size=\(payload.count)")
 
         // Distributed messages use the same codes as DistributedMessageCode
         switch code {
         case UInt32(DistributedMessageCode.branchLevel.rawValue):
             // uint32 branch level
             if let level = payload.readUInt32(at: 0) {
-                print("🌐 Branch level: \(level)")
+                logger.debug("Branch level: \(level)")
             }
 
         case UInt32(DistributedMessageCode.branchRoot.rawValue):
             // string branch root username
             if let (rootUsername, _) = payload.readString(at: 0) {
-                print("🌐 Branch root: \(rootUsername)")
+                logger.debug("Branch root: \(rootUsername)")
             }
 
         case UInt32(DistributedMessageCode.searchRequest.rawValue):
@@ -641,7 +636,7 @@ final class ServerMessageHandler {
             handleDistributedSearch(payload)
 
         default:
-            print("🌐 Unknown distributed message code: \(code)")
+            logger.warning("Unknown distributed message code: \(code)")
         }
     }
 
@@ -652,7 +647,7 @@ final class ServerMessageHandler {
 
         let payload = data.safeSubdata(in: 1..<data.count) ?? Data()
 
-        print("🌐 Received embedded distributed message: code=\(distribCode) size=\(payload.count)")
+        logger.debug("Received embedded distributed message: code=\(distribCode) size=\(payload.count)")
 
         if distribCode == DistributedMessageCode.searchRequest.rawValue {
             // This is a distributed search - we should check our files and respond
@@ -678,7 +673,7 @@ final class ServerMessageHandler {
         // string query
         guard let (query, _) = data.readString(at: offset) else { return }
 
-        print("🔍 Distributed search from \(username): '\(query)' token=\(token)")
+        logger.debug("Distributed search from \(username): '\(query)' token=\(token)")
 
         // Forward to children
         Task {
@@ -696,11 +691,10 @@ final class ServerMessageHandler {
 
         let matchingFiles = shareManager.search(query: query)
         guard !matchingFiles.isEmpty else {
-            print("🔍 No matches for distributed search: '\(query)'")
+            logger.debug("No matches for distributed search: '\(query)'")
             return
         }
 
-        print("🔍 Found \(matchingFiles.count) matches for distributed search: '\(query)'")
         logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
 
         // Send search results back to the searching user
@@ -722,10 +716,10 @@ final class ServerMessageHandler {
 
         do {
             // Get peer address using concurrent-safe method
-            print("📤 Getting address for \(username) to send search results...")
+            logger.debug("Getting address for \(username) to send search results...")
             let address = try await client.getPeerAddress(for: username)
 
-            print("📤 Connecting to \(username) at \(address.ip):\(address.port) to send search results...")
+            logger.debug("Connecting to \(username) at \(address.ip):\(address.port) to send search results...")
 
             // Connect to peer
             let connectionToken = UInt32.random(in: 0...UInt32.max)
@@ -759,28 +753,57 @@ final class ServerMessageHandler {
                 results: results
             )
 
-            print("✅ Sent \(files.count) search results to \(username) for token \(token)")
-            logger.info("Sent \(files.count) search results to \(username)")
+            logger.info("Sent \(files.count) search results to \(username) for token \(token)")
 
         } catch {
-            print("❌ Failed to send search results to \(username): \(error)")
             logger.error("Failed to send search results to \(username): \(error.localizedDescription)")
         }
     }
 
     private func handleResetDistributed() {
-        print("🌐 Server requested distributed network reset")
-        // TODO: Disconnect from parent, clear children, and request new parent
+        logger.info("Server requested distributed network reset")
+
+        // Disconnect from current distributed parent
+        if let parentConnection = distributedParentConnection {
+            Task {
+                await parentConnection.disconnect()
+            }
+            distributedParentConnection = nil
+        }
+
+        // Reset distributed state on client and re-register with server
+        Task {
+            await client?.resetDistributedNetwork()
+        }
     }
 
     private func handleParentMinSpeed(_ data: Data) {
         guard let speed = data.readUInt32(at: 0) else { return }
-        print("🌐 Parent minimum speed: \(speed)")
+        logger.debug("Parent minimum speed: \(speed)")
     }
 
     private func handleParentSpeedRatio(_ data: Data) {
         guard let ratio = data.readUInt32(at: 0) else { return }
-        print("🌐 Parent speed ratio: \(ratio)")
+        logger.debug("Parent speed ratio: \(ratio)")
+    }
+
+    // MARK: - Excluded Search Phrases
+
+    private func handleExcludedSearchPhrases(_ data: Data) {
+        var offset = 0
+
+        guard let count = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var phrases: [String] = []
+        for _ in 0..<count {
+            guard let (phrase, phraseLen) = data.readString(at: offset) else { break }
+            phrases.append(phrase)
+            offset += phraseLen
+        }
+
+        logger.info("Received \(phrases.count) excluded search phrases")
+        client?.onExcludedSearchPhrases?(phrases)
     }
 
     // MARK: - User Interests & Recommendations
@@ -814,7 +837,7 @@ final class ServerMessageHandler {
             unrecommendations.append((item, score))
         }
 
-        print("📚 Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
+        logger.info("Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
         client?.onRecommendations?(recommendations, unrecommendations)
     }
 
@@ -847,7 +870,7 @@ final class ServerMessageHandler {
             unrecommendations.append((item, score))
         }
 
-        print("🌍 Global Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
+        logger.info("Global Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
         client?.onGlobalRecommendations?(recommendations, unrecommendations)
     }
 
@@ -879,7 +902,7 @@ final class ServerMessageHandler {
             offset += interestLen
         }
 
-        print("📚 User \(username) interests - likes: \(likes.count), hates: \(hates.count)")
+        logger.info("User \(username) interests - likes: \(likes.count), hates: \(hates.count)")
         client?.onUserInterests?(username, likes, hates)
     }
 
@@ -898,7 +921,7 @@ final class ServerMessageHandler {
             users.append((username, rating))
         }
 
-        print("📚 Similar users: \(users.count)")
+        logger.info("Similar users: \(users.count)")
         client?.onSimilarUsers?(users)
     }
 
@@ -920,7 +943,7 @@ final class ServerMessageHandler {
             recommendations.append((recItem, score))
         }
 
-        print("📚 Item recommendations for '\(item)': \(recommendations.count)")
+        logger.info("Item recommendations for '\(item)': \(recommendations.count)")
         client?.onItemRecommendations?(item, recommendations)
     }
 
@@ -940,7 +963,7 @@ final class ServerMessageHandler {
             offset += usernameLen
         }
 
-        print("📚 Similar users for '\(item)': \(users.count)")
+        logger.info("Similar users for '\(item)': \(users.count)")
         client?.onItemSimilarUsers?(item, users)
     }
 
@@ -963,13 +986,13 @@ final class ServerMessageHandler {
 
         guard let dirs = data.readUInt32(at: offset) else { return }
 
-        print("📊 User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
+        logger.info("User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
         client?.onUserStats?(username, avgSpeed, uploadNum, files, dirs)
     }
 
     private func handleCheckPrivileges(_ data: Data) {
         guard let timeLeft = data.readUInt32(at: 0) else { return }
-        print("⭐ Privileges time remaining: \(timeLeft) seconds")
+        logger.info("Privileges time remaining: \(timeLeft) seconds")
         client?.onPrivilegesChecked?(timeLeft)
     }
 
@@ -981,7 +1004,7 @@ final class ServerMessageHandler {
 
         guard let privileged = data.readBool(at: offset) else { return }
 
-        print("⭐ User \(username) privileged: \(privileged)")
+        logger.info("User \(username) privileged: \(privileged)")
         client?.onUserPrivileges?(username, privileged)
     }
 
@@ -998,7 +1021,7 @@ final class ServerMessageHandler {
             offset += usernameLen
         }
 
-        print("⭐ Privileged users: \(users.count)")
+        logger.info("Privileged users: \(users.count)")
         client?.onPrivilegedUsers?(users)
     }
 
@@ -1022,7 +1045,7 @@ final class ServerMessageHandler {
             tickers.append((username, ticker))
         }
 
-        print("🎫 Room ticker state for \(room): \(tickers.count) tickers")
+        logger.info("Room ticker state for \(room): \(tickers.count) tickers")
         client?.onRoomTickerState?(room, tickers)
     }
 
@@ -1037,7 +1060,7 @@ final class ServerMessageHandler {
 
         guard let (ticker, _) = data.readString(at: offset) else { return }
 
-        print("🎫 Room ticker added in \(room): \(username) = '\(ticker)'")
+        logger.info("Room ticker added in \(room): \(username) = '\(ticker)'")
         client?.onRoomTickerAdd?(room, username, ticker)
     }
 
@@ -1049,7 +1072,7 @@ final class ServerMessageHandler {
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
-        print("🎫 Room ticker removed in \(room): \(username)")
+        logger.info("Room ticker removed in \(room): \(username)")
         client?.onRoomTickerRemove?(room, username)
     }
 
@@ -1057,7 +1080,7 @@ final class ServerMessageHandler {
 
     private func handleWishlistInterval(_ data: Data) {
         guard let interval = data.readUInt32(at: 0) else { return }
-        print("🌟 Wishlist interval: \(interval) seconds")
+        logger.info("Wishlist interval: \(interval) seconds")
         client?.onWishlistInterval?(interval)
     }
 
@@ -1079,7 +1102,7 @@ final class ServerMessageHandler {
             offset += usernameLen
         }
 
-        print("🔒 Private room \(room) members: \(members.count)")
+        logger.info("Private room \(room) members: \(members.count)")
         client?.onPrivateRoomMembers?(room, members)
     }
 
@@ -1091,7 +1114,7 @@ final class ServerMessageHandler {
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
-        print("🔒 Private room \(room) member added: \(username)")
+        logger.info("Private room \(room) member added: \(username)")
         client?.onPrivateRoomMemberAdded?(room, username)
     }
 
@@ -1103,19 +1126,19 @@ final class ServerMessageHandler {
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
-        print("🔒 Private room \(room) member removed: \(username)")
+        logger.info("Private room \(room) member removed: \(username)")
         client?.onPrivateRoomMemberRemoved?(room, username)
     }
 
     private func handlePrivateRoomOperatorGranted(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
-        print("🔒 Granted operator in room: \(room)")
+        logger.info("Granted operator in room: \(room)")
         client?.onPrivateRoomOperatorGranted?(room)
     }
 
     private func handlePrivateRoomOperatorRevoked(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
-        print("🔒 Revoked operator in room: \(room)")
+        logger.info("Revoked operator in room: \(room)")
         client?.onPrivateRoomOperatorRevoked?(room)
     }
 
@@ -1135,7 +1158,7 @@ final class ServerMessageHandler {
             offset += usernameLen
         }
 
-        print("🔒 Private room \(room) operators: \(operators.count)")
+        logger.info("Private room \(room) operators: \(operators.count)")
         client?.onPrivateRoomOperators?(room, operators)
     }
 
@@ -1147,10 +1170,7 @@ final class ServerMessageHandler {
             return
         }
 
-        logger.warning("Peer couldn't connect to us (CantConnectToPeer): token=\(token)")
-        print("❌ PEER COULDN'T CONNECT: CantConnectToPeer token=\(token)")
-        print("   This means the peer received our ConnectToPeer but couldn't reach our listen port.")
-        print("   Possible causes: NAT/firewall blocking incoming connections, wrong listen port reported")
+        logger.warning("Peer couldn't reach our listen port (CantConnectToPeer token=\(token)). Possible causes: NAT/firewall blocking, wrong listen port reported.")
 
         // TODO: Could notify the upload/download manager to mark the transfer as failed
         // For now, just log it for debugging
@@ -1165,11 +1185,18 @@ final class ServerMessageHandler {
             return
         }
 
-        logger.info("📢 Admin Message: \(message)")
-        print("📢 ADMIN MESSAGE FROM SERVER: \(message)")
+        logger.info("Admin message from server: \(message)")
 
         // Notify the client about the admin message
         client?.onAdminMessage?(message)
+    }
+
+    // MARK: - Relogged
+
+    private func handleRelogged() {
+        logger.warning("Relogged: another client logged in with the same credentials")
+        logger.warning("Relogged: kicked from server because another client logged in with the same credentials")
+        client?.disconnect()
     }
 
     // MARK: - Helpers

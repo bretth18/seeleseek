@@ -22,11 +22,9 @@ enum ServerMessageCode: UInt32 {
     case fileSearch = 26
     case setOnlineStatus = 28
     case ping = 32
-    case sendConnectToken = 33
-    case sendUploadSpeed = 34
     case sharedFoldersFiles = 35
     case getUserStats = 36
-    case getMoreParents = 41
+    case relogged = 41
     case addThingILike = 51
     case removeThingILike = 52
     case recommendations = 54
@@ -89,6 +87,9 @@ enum ServerMessageCode: UInt32 {
     case privateRoomOperatorRevoked = 146
     case privateRoomOperators = 148
 
+    // Search
+    case excludedSearchPhrases = 160
+
     // Special codes (1000+)
     case cantConnectToPeer = 1001
     case cantCreateRoom = 1003
@@ -112,10 +113,9 @@ enum ServerMessageCode: UInt32 {
         case .fileSearch: "FileSearch"
         case .setOnlineStatus: "SetOnlineStatus"
         case .ping: "Ping"
-        case .sendConnectToken: "SendConnectToken"
-        case .sendUploadSpeed: "SendUploadSpeed"
         case .sharedFoldersFiles: "SharedFoldersFiles"
         case .getUserStats: "GetUserStats"
+        case .relogged: "Relogged"
         case .cantConnectToPeer: "CantConnectToPeer"
         case .cantCreateRoom: "CantCreateRoom"
         case .haveNoParent: "HaveNoParent"
@@ -126,6 +126,7 @@ enum ServerMessageCode: UInt32 {
         case .branchRoot: "BranchRoot"
         case .acceptChildren: "AcceptChildren"
         case .roomList: "RoomList"
+        case .excludedSearchPhrases: "ExcludedSearchPhrases"
         default: "Code(\(rawValue))"
         }
     }
