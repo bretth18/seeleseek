@@ -124,24 +124,15 @@ struct BuddyRowView: View {
     }
 
     private func formatNumber(_ value: UInt32) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        NumberFormatters.format(value)
     }
 
     private func formatSpeed(_ bytesPerSecond: UInt32) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .binary) + "/s"
+        ByteFormatter.formatSpeed(bytesPerSecond)
     }
 
     private func countryFlag(for code: String) -> String {
-        let base: UInt32 = 127397
-        var flag = ""
-        for scalar in code.uppercased().unicodeScalars {
-            if let unicode = UnicodeScalar(base + scalar.value) {
-                flag.append(Character(unicode))
-            }
-        }
-        return flag
+        CountryFormatter.flag(for: code)
     }
 }
 

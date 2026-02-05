@@ -70,6 +70,32 @@ enum SeeleSpacing {
     static let buttonHeight: CGFloat = 28
     static let tabBarHeight: CGFloat = 36
     static let progressBarHeight: CGFloat = 4
+
+    // MARK: - Toggle Component
+    static let toggleWidth: CGFloat = 46
+    static let toggleHeight: CGFloat = 26
+    static let toggleCornerRadius: CGFloat = 13
+    static let toggleKnobSize: CGFloat = 20
+    static let toggleKnobOffset: CGFloat = 10
+
+    // MARK: - Stroke Widths
+    static let strokeThin: CGFloat = 1
+    static let strokeMedium: CGFloat = 2
+    static let strokeThick: CGFloat = 4
+
+    // MARK: - Animation Durations
+    static let animationFast: CGFloat = 0.15
+    static let animationStandard: CGFloat = 0.25
+    static let animationSlow: CGFloat = 0.35
+
+    // MARK: - Scale Effects
+    static let scaleSmall: CGFloat = 0.5
+    static let scaleMedium: CGFloat = 0.7
+    static let scaleLarge: CGFloat = 1.3
+    static let scaleHover: CGFloat = 1.05
+
+    // MARK: - Text Tracking
+    static let trackingWide: CGFloat = 0.5
 }
 
 // MARK: - Continuous Corner Shape Helpers

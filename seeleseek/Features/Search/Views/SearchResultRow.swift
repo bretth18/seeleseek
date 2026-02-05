@@ -56,14 +56,14 @@ struct SearchResultRow: View {
             // Metadata badges
             HStack(spacing: SeeleSpacing.sm) {
                 if let bitrate = result.formattedBitrate {
-                    metadataBadge(bitrate, color: bitrateColor)
+                    StandardMetadataBadge(bitrate, color: bitrateColor)
                 }
 
                 if let duration = result.formattedDuration {
-                    metadataBadge(duration, color: SeeleColors.textTertiary)
+                    StandardMetadataBadge(duration, color: SeeleColors.textTertiary)
                 }
 
-                metadataBadge(result.formattedSize, color: SeeleColors.textTertiary)
+                StandardMetadataBadge(result.formattedSize, color: SeeleColors.textTertiary)
 
                 // Private/locked indicator (buddy-only)
                 if result.isPrivate {
@@ -213,60 +213,16 @@ struct SearchResultRow: View {
         }
     }
 
-    @ViewBuilder
     private var downloadButtonIcon: some View {
-        switch downloadStatus {
-        case .transferring:
-            Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: SeeleSpacing.iconSizeMedium))
-                .foregroundStyle(SeeleColors.accent)
-                .symbolEffect(.pulse)
-        case .queued, .waiting, .connecting:
-            Image(systemName: "clock.fill")
-                .font(.system(size: SeeleSpacing.iconSizeMedium))
-                .foregroundStyle(SeeleColors.warning)
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: SeeleSpacing.iconSizeMedium))
-                .foregroundStyle(SeeleColors.success)
-        case .failed, .cancelled, nil:
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: SeeleSpacing.iconSizeMedium))
-                .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
-        }
+        DownloadStatusIcon(status: downloadStatus, isHovered: isHovered)
     }
 
     private var downloadButtonHelp: String {
-        switch downloadStatus {
-        case .transferring:
-            return "Downloading..."
-        case .queued, .waiting:
-            return "Queued for download"
-        case .connecting:
-            return "Connecting..."
-        case .completed:
-            return "Download complete"
-        case .failed:
-            return "Download failed - click to retry"
-        case .cancelled:
-            return "Download cancelled - click to retry"
-        case nil:
-            return "Download file"
-        }
+        DownloadStatusIcon(status: downloadStatus).helpText
     }
 
     private var countryFlag: String? {
         appState.networkClient.userInfoCache.flag(for: result.username)
-    }
-
-    private func metadataBadge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(SeeleTypography.monoSmall)
-            .foregroundStyle(color)
-            .padding(.horizontal, SeeleSpacing.xs)
-            .padding(.vertical, SeeleSpacing.xxs)
-            .background(color.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func downloadFile() {

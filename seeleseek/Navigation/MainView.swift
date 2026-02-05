@@ -81,7 +81,9 @@ struct MainView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        if appState.connection.connectionStatus == .disconnected {
+        // Show login when disconnected OR when there's a login error (so user can retry)
+        if appState.connection.connectionStatus == .disconnected ||
+           appState.connection.connectionStatus == .error {
             LoginView()
         } else {
             switch appState.sidebarSelection {

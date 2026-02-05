@@ -251,14 +251,7 @@ struct UserProfileSheet: View {
     }
 
     private func countryFlag(for code: String) -> String {
-        let base: UInt32 = 127397
-        var flag = ""
-        for scalar in code.uppercased().unicodeScalars {
-            if let unicode = UnicodeScalar(base + scalar.value) {
-                flag.append(Character(unicode))
-            }
-        }
-        return flag
+        CountryFormatter.flag(for: code)
     }
 }
 

@@ -9,8 +9,6 @@ enum SeeleColors {
 
     // MARK: - Accent (Pink/Magenta brand color)
     static let accent = Color(hex: 0xFF0B55)
-    static let accentMuted = Color(hex: 0xD90A48)
-    static let accentSubtle = Color(hex: 0xFF0B55).opacity(0.12)
 
     // MARK: - Text
     static let textPrimary = Color(hex: 0xF5F5F5)
@@ -31,6 +29,18 @@ enum SeeleColors {
     // MARK: - Borders & Dividers
     static let border = Color(hex: 0x2A2A2A)
     static let divider = Color(hex: 0x222222)
+
+    // MARK: - Shadows
+    static let shadowColor = Color.black.opacity(0.15)
+    static let shadowColorStrong = Color.black.opacity(0.3)
+
+    // MARK: - Opacity Levels
+    /// Opacity presets for consistent styling. Usage: color.opacity(SeeleColors.alphaSubtle)
+    static let alphaSubtle: Double = 0.05
+    static let alphaLight: Double = 0.1
+    static let alphaMedium: Double = 0.15
+    static let alphaStrong: Double = 0.3
+    static let alphaHalf: Double = 0.5
 }
 
 extension Color {

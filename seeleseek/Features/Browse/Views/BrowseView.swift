@@ -588,46 +588,12 @@ struct FileTreeRow: View {
         return count
     }
 
-    @ViewBuilder
     private var downloadButtonIcon: some View {
-        switch downloadStatus {
-        case .transferring:
-            Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(SeeleColors.accent)
-                .symbolEffect(.pulse)
-        case .queued, .waiting, .connecting:
-            Image(systemName: "clock.fill")
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(SeeleColors.warning)
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(SeeleColors.success)
-        case .failed, .cancelled, nil:
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(SeeleColors.textSecondary)
-        }
+        DownloadStatusIcon(status: downloadStatus, size: SeeleSpacing.iconSize)
     }
 
     private var downloadButtonHelp: String {
-        switch downloadStatus {
-        case .transferring:
-            return "Downloading..."
-        case .queued, .waiting:
-            return "Queued for download"
-        case .connecting:
-            return "Connecting..."
-        case .completed:
-            return "Download complete"
-        case .failed:
-            return "Download failed - click to retry"
-        case .cancelled:
-            return "Download cancelled - click to retry"
-        case nil:
-            return "Download file"
-        }
+        DownloadStatusIcon(status: downloadStatus).helpText
     }
 }
 

@@ -101,7 +101,7 @@ struct SpeedBadge: View {
         HStack(spacing: SeeleSpacing.xxs) {
             Image(systemName: direction.icon)
                 .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-            Text(formatSpeed(bytesPerSecond))
+            Text(ByteFormatter.formatSpeed(bytesPerSecond))
                 .font(SeeleTypography.monoSmall)
         }
         .foregroundStyle(direction.color)
@@ -109,23 +109,6 @@ struct SpeedBadge: View {
         .padding(.vertical, SeeleSpacing.xxs)
         .background(direction.color.opacity(0.15))
         .clipShape(Capsule())
-    }
-
-    private func formatSpeed(_ bytesPerSecond: Int64) -> String {
-        let units = ["B/s", "KB/s", "MB/s", "GB/s"]
-        var value = Double(bytesPerSecond)
-        var unitIndex = 0
-
-        while value >= 1024 && unitIndex < units.count - 1 {
-            value /= 1024
-            unitIndex += 1
-        }
-
-        if unitIndex == 0 {
-            return String(format: "%.0f %@", value, units[unitIndex])
-        } else {
-            return String(format: "%.1f %@", value, units[unitIndex])
-        }
     }
 }
 
