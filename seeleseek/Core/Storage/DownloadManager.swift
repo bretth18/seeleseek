@@ -358,6 +358,14 @@ final class DownloadManager {
         }
 
         print("📍 Found pending download for \(username), token=\(token)")
+
+        // Check if peer has same external IP as us (hairpin NAT issue)
+        if let ourExternalIP = networkClient.externalIP, ourExternalIP == ip {
+            print("⚠️ WARNING: Peer \(username) has same external IP as us (\(ip))")
+            print("   This usually means you're on the same network/NAT.")
+            print("   Connection will likely fail due to hairpin NAT limitations.")
+            logger.warning("Peer \(username) has same external IP - hairpin NAT issue likely")
+        }
         logger.info("Got peer address for \(username): \(ip):\(port)")
 
         // Store peer address for potential outgoing F connection
@@ -461,6 +469,10 @@ final class DownloadManager {
             print("   The peer should connect to us with PierceFirewall message...")
             print("   If this fails, both parties may be behind restrictive NAT.")
 
+            // Capture peer IP for error detection
+            let peerIP = ip
+            let isSameNetwork = networkClient.externalIP == peerIP
+
             // Set a dedicated timeout for indirect connection
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))
@@ -471,12 +483,21 @@ final class DownloadManager {
                 if self.pendingDownloads[token] != nil && self.pendingDownloads[token]?.peerConnection == nil {
                     print("⏰ TIMEOUT: Indirect connection to \(username) timed out after 15s")
                     print("❌ Could not establish connection - both direct and indirect failed")
-                    print("   Possible causes:")
-                    print("   - Both you and the peer are behind NAT/firewall")
-                    print("   - Try downloading from a different user")
-                    print("   - Configure port forwarding for port \(networkClient.listenPort)")
 
-                    let errorMsg = "Connection timeout - peer unreachable"
+                    let errorMsg: String
+                    if isSameNetwork {
+                        print("   ⚠️ SAME NETWORK DETECTED: You and \(username) have the same external IP")
+                        print("   This is a hairpin NAT limitation - your router can't route traffic to itself.")
+                        print("   Solutions: Use local file sharing, or configure port forwarding with internal IPs.")
+                        errorMsg = "Same network - hairpin NAT limitation"
+                    } else {
+                        print("   Possible causes:")
+                        print("   - Both you and the peer are behind NAT/firewall")
+                        print("   - Try downloading from a different user")
+                        print("   - Configure port forwarding for port \(networkClient.listenPort)")
+                        errorMsg = "Connection timeout - peer unreachable"
+                    }
+
                     let currentRetryCount = self.transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
 
                     self.transferState?.updateTransfer(id: pending.transferId) { t in
@@ -485,8 +506,8 @@ final class DownloadManager {
                     }
                     self.pendingDownloads.removeValue(forKey: token)
 
-                    // Auto-retry for connection timeouts (nicotine+ style)
-                    if currentRetryCount < self.maxRetries {
+                    // Auto-retry for connection timeouts (only if not same network - that won't help)
+                    if !isSameNetwork && currentRetryCount < self.maxRetries {
                         self.scheduleRetry(
                             transferId: pending.transferId,
                             username: pending.username,
@@ -494,6 +515,8 @@ final class DownloadManager {
                             size: pending.size,
                             retryCount: currentRetryCount
                         )
+                    } else if isSameNetwork {
+                        print("   ⚠️ Not retrying - same network issue won't resolve with retry")
                     }
                 }
             }
