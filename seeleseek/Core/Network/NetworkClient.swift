@@ -462,14 +462,25 @@ final class NetworkClient {
 
     // MARK: - Server Commands
 
+    // SECURITY: Maximum search query length
+    private static let maxSearchQueryLength = 500
+
     func search(query: String, token: UInt32) async throws {
         guard isConnected, let connection = serverConnection else {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.fileSearch(token: token, query: query)
+        // SECURITY: Truncate query if too long
+        let sanitizedQuery = String(query.prefix(Self.maxSearchQueryLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sanitizedQuery.isEmpty else {
+            throw NetworkError.invalidResponse
+        }
+
+        let message = MessageBuilder.fileSearch(token: token, query: sanitizedQuery)
         try await connection.send(message)
-        logger.info("Sent search request: query='\(query)' token=\(token)")
+        logger.info("Sent search request: query='\(sanitizedQuery)' token=\(token)")
     }
 
     func getRoomList() async throws {
@@ -499,12 +510,27 @@ final class NetworkClient {
         try await connection.send(message)
     }
 
+    // SECURITY: Maximum chat message length
+    private static let maxMessageLength = 2000
+    // SECURITY: Maximum username/room name length
+    private static let maxNameLength = 100
+
     func sendRoomMessage(_ room: String, message: String) async throws {
         guard isConnected, let connection = serverConnection else {
             throw NetworkError.notConnected
         }
 
-        let data = MessageBuilder.sayInRoom(room: room, message: message)
+        // SECURITY: Validate and sanitize input
+        let sanitizedRoom = String(room.prefix(Self.maxNameLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitizedMessage = String(message.prefix(Self.maxMessageLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sanitizedRoom.isEmpty, !sanitizedMessage.isEmpty else {
+            return
+        }
+
+        let data = MessageBuilder.sayInRoom(room: sanitizedRoom, message: sanitizedMessage)
         try await connection.send(data)
     }
 
@@ -513,7 +539,17 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        let data = MessageBuilder.privateMessage(username: username, message: message)
+        // SECURITY: Validate and sanitize input
+        let sanitizedUsername = String(username.prefix(Self.maxNameLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitizedMessage = String(message.prefix(Self.maxMessageLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sanitizedUsername.isEmpty, !sanitizedMessage.isEmpty else {
+            return
+        }
+
+        let data = MessageBuilder.privateMessage(username: sanitizedUsername, message: sanitizedMessage)
         try await connection.send(data)
     }
 

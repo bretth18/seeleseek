@@ -796,7 +796,9 @@ final class UploadManager {
                 throw UploadError.timeout
             }
 
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw UploadError.timeout
+            }
             group.cancelAll()
             return result
         }

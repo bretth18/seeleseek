@@ -953,13 +953,22 @@ final class DownloadManager {
                 throw DownloadError.timeout
             }
 
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw DownloadError.timeout
+            }
             group.cancelAll()
             return result
         }
     }
 
     private func receiveFileData(connection: NWConnection, destPath: URL, expectedSize: UInt64, transferId: UUID, resumeOffset: UInt64 = 0) async throws {
+        // SECURITY: Check for symlink attacks before creating any files
+        let baseDir = getDownloadDirectory()
+        guard isPathSafe(destPath, within: baseDir) else {
+            logger.error("SECURITY: Symlink attack detected for path \(destPath.path)")
+            throw DownloadError.cannotCreateFile
+        }
+
         // Ensure parent directory exists
         let parentDir = destPath.deletingLastPathComponent()
         do {
@@ -1137,7 +1146,8 @@ final class DownloadManager {
 
         // Build path: username/Artist/Album/Song.mp3
         // Include username to avoid conflicts between different users' files
-        var destURL = downloadDir.appendingPathComponent(username)
+        // SECURITY: Sanitize username to prevent directory traversal attacks
+        var destURL = downloadDir.appendingPathComponent(sanitizeFilename(username))
         for component in pathComponents {
             // Sanitize each component (remove invalid filesystem characters)
             let sanitized = sanitizeFilename(component)
@@ -1178,6 +1188,44 @@ final class DownloadManager {
             sanitized = "_" + sanitized.dropFirst()
         }
         return sanitized.isEmpty ? "unnamed" : sanitized
+    }
+
+    /// SECURITY: Check if a path contains any symlinks that could be used for symlink attacks
+    /// Returns true if the path is safe (no symlinks), false if symlinks are detected
+    private func isPathSafe(_ url: URL, within baseDir: URL) -> Bool {
+        let fileManager = FileManager.default
+
+        // Resolve the actual path (following symlinks)
+        let resolvedPath = url.resolvingSymlinksInPath().path
+        let resolvedBasePath = baseDir.resolvingSymlinksInPath().path
+
+        // Ensure the resolved path is still within the base directory
+        guard resolvedPath.hasPrefix(resolvedBasePath) else {
+            print("⚠️ SECURITY: Path \(url.path) resolves outside base directory")
+            return false
+        }
+
+        // Check each existing component of the path for symlinks
+        var currentPath = baseDir
+        let pathComponents = url.pathComponents.dropFirst(baseDir.pathComponents.count)
+
+        for component in pathComponents {
+            currentPath = currentPath.appendingPathComponent(component)
+
+            // Only check if the path exists
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: currentPath.path, isDirectory: &isDirectory) {
+                // Check if it's a symbolic link
+                if let attributes = try? fileManager.attributesOfItem(atPath: currentPath.path),
+                   let fileType = attributes[.type] as? FileAttributeType,
+                   fileType == .typeSymbolicLink {
+                    print("⚠️ SECURITY: Symlink detected at \(currentPath.path)")
+                    return false
+                }
+            }
+        }
+
+        return true
     }
 
     /// Check if a filename is a macOS resource fork file (._xxx in __MACOSX folders)
@@ -1437,6 +1485,13 @@ final class DownloadManager {
         transferId: UUID,
         resumeOffset: UInt64 = 0
     ) async throws {
+        // SECURITY: Check for symlink attacks before creating any files
+        let baseDir = getDownloadDirectory()
+        guard isPathSafe(destPath, within: baseDir) else {
+            logger.error("SECURITY: Symlink attack detected for path \(destPath.path)")
+            throw DownloadError.cannotCreateFile
+        }
+
         // Ensure parent directory exists
         let parentDir = destPath.deletingLastPathComponent()
         do {
@@ -1516,7 +1571,9 @@ final class DownloadManager {
                         try await Task.sleep(for: .seconds(60))
                         throw DownloadError.timeout
                     }
-                    let result = try await group.next()!
+                    guard let result = try await group.next() else {
+                        throw DownloadError.timeout
+                    }
                     group.cancelAll()
                     return result
                 }

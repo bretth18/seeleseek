@@ -651,7 +651,9 @@ actor PeerConnection {
                 throw PeerError.timeout
             }
 
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw PeerError.timeout
+            }
             group.cancelAll()
             return result
         }
@@ -1259,6 +1261,12 @@ actor PeerConnection {
             print("📂 [\(peerInfo.username)] Failed to read directory count at offset \(offset)")
             return
         }
+        // SECURITY: Limit directory count to prevent DoS
+        let maxDirCount: UInt32 = 100_000
+        guard dirCount <= maxDirCount else {
+            print("⚠️ SECURITY: Directory count \(dirCount) exceeds limit \(maxDirCount)")
+            return
+        }
         offset += 4
         print("📂 [\(peerInfo.username)] Directory count: \(dirCount)")
 
@@ -1271,6 +1279,12 @@ actor PeerConnection {
 
             guard let fileCount = decompressed.readUInt32(at: offset) else {
                 print("📂 [\(peerInfo.username)] Failed to read file count at offset \(offset)")
+                break
+            }
+            // SECURITY: Limit file count per directory
+            let maxFileCount: UInt32 = 100_000
+            guard fileCount <= maxFileCount else {
+                print("⚠️ SECURITY: File count \(fileCount) exceeds limit")
                 break
             }
             offset += 4
@@ -1293,6 +1307,9 @@ actor PeerConnection {
                 offset += extLen
 
                 guard let attrCount = decompressed.readUInt32(at: offset) else { break }
+                // SECURITY: Limit attribute count
+                let maxAttrCount: UInt32 = 100
+                guard attrCount <= maxAttrCount else { break }
                 offset += 4
 
                 var bitrate: UInt32?
@@ -1329,6 +1346,12 @@ actor PeerConnection {
 
         // Parse private directories (buddy-only files)
         if let privateDirCount = decompressed.readUInt32(at: offset) {
+            // SECURITY: Limit private directory count
+            let maxPrivateDirCount: UInt32 = 100_000
+            guard privateDirCount <= maxPrivateDirCount else {
+                print("⚠️ SECURITY: Private directory count \(privateDirCount) exceeds limit")
+                return
+            }
             offset += 4
             print("📂 [\(peerInfo.username)] Private directory count: \(privateDirCount)")
 
@@ -1337,6 +1360,9 @@ actor PeerConnection {
                 offset += dirLen
 
                 guard let fileCount = decompressed.readUInt32(at: offset) else { break }
+                // SECURITY: Limit file count per directory
+                let maxFileCount: UInt32 = 100_000
+                guard fileCount <= maxFileCount else { break }
                 offset += 4
 
                 for _ in 0..<fileCount {
@@ -1353,6 +1379,9 @@ actor PeerConnection {
                     offset += extLen
 
                     guard let attrCount = decompressed.readUInt32(at: offset) else { break }
+                    // SECURITY: Limit attribute count
+                    let maxAttrCount: UInt32 = 100
+                    guard attrCount <= maxAttrCount else { break }
                     offset += 4
 
                     var bitrate: UInt32?
@@ -1730,6 +1759,11 @@ actor PeerConnection {
     }
 
     private func decompressRawDeflate(_ data: Data) throws -> Data {
+        // SECURITY: Maximum decompressed size to prevent decompression bombs
+        let maxDecompressedSize = 50 * 1024 * 1024  // 50MB max
+        // SECURITY: Maximum compression ratio (normal zlib is ~10-50x, >1000x is suspicious)
+        let maxCompressionRatio = 1000
+
         let decompressed = try data.withUnsafeBytes { sourceBuffer -> Data in
             let sourceSize = data.count
             guard let baseAddress = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
@@ -1737,7 +1771,7 @@ actor PeerConnection {
             }
 
             // Start with a reasonable estimate, expand if needed
-            var destinationSize = max(sourceSize * 20, 65536)
+            var destinationSize = min(max(sourceSize * 20, 65536), maxDecompressedSize)
             var destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
 
             var decodedSize = compression_decode_buffer(
@@ -1749,9 +1783,14 @@ actor PeerConnection {
                 COMPRESSION_ZLIB
             )
 
-            // If output buffer was too small, try with larger buffer
+            // If output buffer was too small, try with larger buffer (but capped)
             if decodedSize == 0 || decodedSize == destinationSize {
-                destinationSize = sourceSize * 100
+                destinationSize = min(sourceSize * 100, maxDecompressedSize)
+                // SECURITY: Check if we've hit the limit
+                guard destinationSize <= maxDecompressedSize else {
+                    print("⚠️ SECURITY: Decompression size limit exceeded")
+                    throw PeerError.decompressionFailed
+                }
                 destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
                 decodedSize = compression_decode_buffer(
                     &destinationBuffer,
@@ -1764,6 +1803,19 @@ actor PeerConnection {
             }
 
             guard decodedSize > 0 else {
+                throw PeerError.decompressionFailed
+            }
+
+            // SECURITY: Check compression ratio
+            let compressionRatio = decodedSize / max(sourceSize, 1)
+            if compressionRatio > maxCompressionRatio {
+                print("⚠️ SECURITY: Suspicious compression ratio \(compressionRatio):1")
+                throw PeerError.decompressionFailed
+            }
+
+            // SECURITY: Final size check
+            guard decodedSize <= maxDecompressedSize else {
+                print("⚠️ SECURITY: Decompressed size \(decodedSize) exceeds limit \(maxDecompressedSize)")
                 throw PeerError.decompressionFailed
             }
 

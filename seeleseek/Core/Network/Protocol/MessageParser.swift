@@ -3,6 +3,16 @@ import Foundation
 /// Parser for SoulSeek protocol messages.
 /// All types are Sendable to allow use across actor boundaries.
 enum MessageParser {
+    // MARK: - Security Limits
+    // These limits prevent DoS attacks via malicious payloads with large counts
+
+    /// Maximum number of items in any list (files, rooms, users, etc.)
+    private static let maxItemCount: UInt32 = 100_000
+    /// Maximum number of attributes per file
+    private static let maxAttributeCount: UInt32 = 100
+    /// Maximum message size (reduced from 100MB)
+    private static let maxMessageSize: UInt32 = 10_000_000  // 10MB
+
     // MARK: - Frame Parsing
 
     struct ParsedFrame: Sendable {
@@ -15,8 +25,8 @@ enum MessageParser {
 
         guard let length = data.readUInt32(at: 0) else { return nil }
 
-        // Sanity check - messages shouldn't be excessively large
-        guard length <= 100_000_000 else { return nil }
+        // SECURITY: Reject excessively large messages
+        guard length <= maxMessageSize else { return nil }
 
         let totalLength = 4 + Int(length)
 
@@ -69,6 +79,8 @@ enum MessageParser {
         var rooms: [RoomListEntry] = []
 
         guard let roomCount = payload.readUInt32(at: offset) else { return nil }
+        // SECURITY: Limit room count to prevent DoS
+        guard roomCount <= maxItemCount else { return nil }
         offset += 4
 
         var roomNames: [String] = []
@@ -246,6 +258,8 @@ enum MessageParser {
         offset += 4
 
         guard let fileCount = payload.readUInt32(at: offset) else { return nil }
+        // SECURITY: Limit file count to prevent DoS
+        guard fileCount <= maxItemCount else { return nil }
         offset += 4
 
         var files: [SearchResultFile] = []
@@ -263,6 +277,8 @@ enum MessageParser {
             offset += extLen
 
             guard let attrCount = payload.readUInt32(at: offset) else { return nil }
+            // SECURITY: Limit attribute count to prevent DoS
+            guard attrCount <= maxAttributeCount else { return nil }
             offset += 4
 
             var attributes: [FileAttribute] = []
@@ -294,8 +310,8 @@ enum MessageParser {
             let potentialPrivateCount = payload.readUInt32(at: offset) ?? 0
 
             // Validate: private file count should be reasonable (not garbage data)
-            // If it's 0 or suspiciously large (> 10000), it's likely not a private file count
-            if potentialPrivateCount > 0 && potentialPrivateCount <= 10000 {
+            // SECURITY: Limit private file count
+            if potentialPrivateCount > 0 && potentialPrivateCount <= maxItemCount {
                 offset += 4
                 var privateFilesParsed = 0
 
@@ -313,6 +329,8 @@ enum MessageParser {
                     offset += extLen
 
                     guard let attrCount = payload.readUInt32(at: offset) else { break }
+                    // SECURITY: Limit attribute count
+                    guard attrCount <= maxAttributeCount else { break }
                     offset += 4
 
                     var attributes: [FileAttribute] = []

@@ -79,8 +79,14 @@ final class PeerConnectionPool {
     let maxConnectionsPerIP = 5  // Prevent single IP from exhausting connections
     let connectionTimeout: TimeInterval = 30
 
+    // SECURITY: Rate limiting configuration
+    private let rateLimitWindow: TimeInterval = 60  // 1 minute window
+    private let maxConnectionAttemptsPerWindow = 10  // Max attempts per IP per window
+
     // MARK: - Per-IP Connection Tracking
     private var connectionsPerIP: [String: Int] = [:]
+    // SECURITY: Track connection attempts per IP for rate limiting
+    private var connectionAttempts: [String: [Date]] = [:]
 
     // MARK: - Types
 
@@ -303,6 +309,25 @@ final class PeerConnectionPool {
                 nwConnection.cancel()
                 return
             }
+
+            // SECURITY: Rate limiting - check connection attempts in time window
+            let now = Date()
+            var attempts = connectionAttempts[ip] ?? []
+
+            // Remove old attempts outside the window
+            attempts = attempts.filter { now.timeIntervalSince($0) < rateLimitWindow }
+
+            if attempts.count >= maxConnectionAttemptsPerWindow {
+                logger.warning("Rate limit exceeded for \(ip) (\(attempts.count) attempts in \(self.rateLimitWindow)s), rejecting")
+                print("⚠️ Rate limit exceeded for \(ip), rejecting connection")
+                nwConnection.cancel()
+                return
+            }
+
+            // Record this attempt
+            attempts.append(now)
+            connectionAttempts[ip] = attempts
+
             // Increment per-IP counter
             connectionsPerIP[ip] = currentCount + 1
         }

@@ -96,14 +96,18 @@ struct SearchTimelineView: View {
         // Create buckets for last 30 minutes
         let now = Date()
         for i in 0..<30 {
-            let minute = calendar.date(byAdding: .minute, value: -i, to: now)!
-            let truncated = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: minute))!
+            guard let minute = calendar.date(byAdding: .minute, value: -i, to: now),
+                  let truncated = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: minute)) else {
+                continue
+            }
             grouped[truncated] = 0
         }
 
         // Count events
         for event in events {
-            let truncated = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: event.timestamp))!
+            guard let truncated = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: event.timestamp)) else {
+                continue
+            }
             grouped[truncated, default: 0] += 1
         }
 

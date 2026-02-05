@@ -522,7 +522,9 @@ final class ServerMessageHandler {
                 throw NetworkError.timeout
             }
 
-            let result = try await group.next()!
+            guard let result = try await group.next() else {
+                throw NetworkError.timeout
+            }
             print("⏱️ withTimeout: got result after \(Date().timeIntervalSince(startTime))s, cancelling other task")
             group.cancelAll()
             return result

@@ -55,28 +55,91 @@ final class ConnectionState {
     }
 }
 
-// MARK: - Credential Storage
+// MARK: - Credential Storage (Keychain-based)
+
+import Security
 
 enum CredentialStorage {
+    private static let service = "com.seeleseek.credentials"
     private static let usernameKey = "seeleseek.username"
-    private static let passwordKey = "seeleseek.password"
 
     static func save(username: String, password: String) {
+        // Save username to UserDefaults (not sensitive)
         UserDefaults.standard.set(username, forKey: usernameKey)
-        // In production, use Keychain for password
-        UserDefaults.standard.set(password, forKey: passwordKey)
+
+        // Save password to Keychain (secure)
+        saveToKeychain(password: password, account: username)
     }
 
     static func load() -> (username: String, password: String)? {
-        guard let username = UserDefaults.standard.string(forKey: usernameKey),
-              let password = UserDefaults.standard.string(forKey: passwordKey) else {
+        guard let username = UserDefaults.standard.string(forKey: usernameKey) else {
             return nil
         }
+
+        guard let password = loadFromKeychain(account: username) else {
+            return nil
+        }
+
         return (username, password)
     }
 
     static func clear() {
+        if let username = UserDefaults.standard.string(forKey: usernameKey) {
+            deleteFromKeychain(account: username)
+        }
         UserDefaults.standard.removeObject(forKey: usernameKey)
-        UserDefaults.standard.removeObject(forKey: passwordKey)
+    }
+
+    // MARK: - Keychain Operations
+
+    private static func saveToKeychain(password: String, account: String) {
+        guard let passwordData = password.data(using: .utf8) else { return }
+
+        // Delete existing item first
+        deleteFromKeychain(account: account)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: passwordData,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("⚠️ Keychain save failed: \(status)")
+        }
+    }
+
+    private static func loadFromKeychain(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let passwordData = result as? Data,
+              let password = String(data: passwordData, encoding: .utf8) else {
+            return nil
+        }
+
+        return password
+    }
+
+    private static func deleteFromKeychain(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+
+        SecItemDelete(query as CFDictionary)
     }
 }

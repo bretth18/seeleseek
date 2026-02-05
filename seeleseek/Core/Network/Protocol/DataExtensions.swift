@@ -38,11 +38,14 @@ extension Data {
         return Int32(bitPattern: uint)
     }
 
+    // SECURITY: Maximum string length for protocol parsing
+    private static let maxStringLength: UInt32 = 1_000_000  // 1MB max for any single string
+
     nonisolated func readString(at offset: Int) -> (string: String, bytesConsumed: Int)? {
         guard let length = readUInt32(at: offset) else { return nil }
 
-        // Sanity check - strings shouldn't be excessively long
-        guard length <= 10_000_000 else { return nil }
+        // SECURITY: Reject excessively long strings to prevent memory exhaustion
+        guard length <= Self.maxStringLength else { return nil }
 
         let stringStart = offset + 4
         let stringEnd = stringStart + Int(length)

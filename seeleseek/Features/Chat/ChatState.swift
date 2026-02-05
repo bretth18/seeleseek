@@ -128,8 +128,12 @@ final class ChatState {
         privateChats.reduce(0) { $0 + $1.unreadCount }
     }
 
+    // SECURITY: Maximum message length to prevent abuse
+    private static let maxMessageLength = 2000
+
     var canSendMessage: Bool {
-        !messageInput.trimmingCharacters(in: .whitespaces).isEmpty
+        let trimmed = messageInput.trimmingCharacters(in: .whitespaces)
+        return !trimmed.isEmpty && trimmed.count <= Self.maxMessageLength
     }
 
     // MARK: - Room Actions
@@ -236,7 +240,11 @@ final class ChatState {
     func sendMessage() {
         guard canSendMessage else { return }
 
-        let content = messageInput.trimmingCharacters(in: .whitespaces)
+        var content = messageInput.trimmingCharacters(in: .whitespaces)
+        // SECURITY: Truncate message if it exceeds max length
+        if content.count > Self.maxMessageLength {
+            content = String(content.prefix(Self.maxMessageLength))
+        }
         messageInput = ""
 
         if let roomName = selectedRoom {

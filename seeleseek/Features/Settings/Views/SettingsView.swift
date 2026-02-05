@@ -738,9 +738,12 @@ struct DiagnosticsSection: View {
     }
 
     private func testTCPConnection(host: String, port: UInt16) async throws {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw NSError(domain: "SettingsView", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid port: \(port)"])
+        }
         let endpoint = NWEndpoint.hostPort(
             host: NWEndpoint.Host(host),
-            port: NWEndpoint.Port(rawValue: port)!
+            port: nwPort
         )
 
         let connection = NWConnection(to: endpoint, using: .tcp)

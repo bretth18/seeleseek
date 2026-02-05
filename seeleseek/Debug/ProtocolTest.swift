@@ -79,7 +79,8 @@ class ProtocolTest {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
 
-        guard let listener = try? NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!) else {
+        guard let nwPort = NWEndpoint.Port(rawValue: port),
+              let listener = try? NWListener(using: params, on: nwPort) else {
             print("🧪 ❌ Failed to create listener")
             return
         }
