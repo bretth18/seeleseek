@@ -29,7 +29,7 @@ struct LiveActivityFeed: View {
                     activityLog.clear()
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 12))
+                        .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
@@ -38,7 +38,7 @@ struct LiveActivityFeed: View {
             // Activity list
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                         ForEach(activityLog.events) { event in
                             ActivityEventRow(event: event)
                                 .id(event.id)
@@ -71,12 +71,12 @@ struct ActivityEventRow: View {
         HStack(alignment: .top, spacing: SeeleSpacing.sm) {
             // Icon
             Image(systemName: event.type.icon)
-                .font(.system(size: 12))
+                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                 .foregroundStyle(event.type.color)
-                .frame(width: 20)
+                .frame(width: SeeleSpacing.iconSizeMedium)
 
             // Content
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 HStack(spacing: SeeleSpacing.xs) {
                     Text(event.title)
                         .font(SeeleTypography.caption)

@@ -53,7 +53,7 @@ struct UserProfileSheet: View {
                         .clipShape(Circle())
                 } else {
                     Image(systemName: "person.fill")
-                        .font(.system(size: 36))
+                        .font(.system(size: SeeleSpacing.iconSizeXL + 4))
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
             }
@@ -66,13 +66,13 @@ struct UserProfileSheet: View {
 
                     if profile.isPrivileged {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 14))
+                            .font(.system(size: SeeleSpacing.iconSizeSmall))
                             .foregroundStyle(SeeleColors.warning)
                     }
 
                     if let code = profile.countryCode {
                         Text(countryFlag(for: code))
-                            .font(.system(size: 16))
+                            .font(.system(size: SeeleSpacing.iconSize))
                     }
                 }
 
@@ -80,7 +80,7 @@ struct UserProfileSheet: View {
                 HStack(spacing: SeeleSpacing.xs) {
                     Circle()
                         .fill(statusColor)
-                        .frame(width: 8, height: 8)
+                        .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
                     Text(profile.status.description)
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -93,7 +93,7 @@ struct UserProfileSheet: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 24))
+                    .font(.system(size: SeeleSpacing.iconSizeLarge))
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -134,7 +134,7 @@ struct UserProfileSheet: View {
     }
 
     private func statItem(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
@@ -188,7 +188,7 @@ struct UserProfileSheet: View {
             .font(SeeleTypography.caption)
             .foregroundStyle(color)
             .padding(.horizontal, SeeleSpacing.sm)
-            .padding(.vertical, 4)
+            .padding(.vertical, SeeleSpacing.xs)
             .background(color.opacity(0.15), in: Capsule())
     }
 

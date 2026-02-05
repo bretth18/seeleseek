@@ -100,7 +100,7 @@ private struct LiveStatsBadge: View {
             // Download
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "arrow.down")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                     .foregroundStyle(SeeleColors.success)
                 Text(ByteFormatter.formatSpeed(Int64(downloadSpeed)))
                     .font(SeeleTypography.mono)
@@ -110,7 +110,7 @@ private struct LiveStatsBadge: View {
             // Upload
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "arrow.up")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                     .foregroundStyle(SeeleColors.accent)
                 Text(ByteFormatter.formatSpeed(Int64(uploadSpeed)))
                     .font(SeeleTypography.mono)
@@ -120,7 +120,7 @@ private struct LiveStatsBadge: View {
             // Peers
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "person.2.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(SeeleColors.info)
                 Text("\(peerCount)")
                     .font(SeeleTypography.mono)
@@ -307,7 +307,7 @@ private struct BandwidthChartCard: View {
                 HStack(spacing: SeeleSpacing.xs) {
                     Circle()
                         .fill(SeeleColors.success)
-                        .frame(width: 8, height: 8)
+                        .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
                     Text("Download")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -315,7 +315,7 @@ private struct BandwidthChartCard: View {
                 HStack(spacing: SeeleSpacing.xs) {
                     Circle()
                         .fill(SeeleColors.accent)
-                        .frame(width: 8, height: 8)
+                        .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
                     Text("Upload")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -478,7 +478,7 @@ private struct QuickPeerRow: View {
         HStack(spacing: SeeleSpacing.sm) {
             Circle()
                 .fill(peer.state == .connected ? SeeleColors.success : SeeleColors.textTertiary)
-                .frame(width: 8, height: 8)
+                .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
 
             Text(displayName)
                 .font(SeeleTypography.subheadline)

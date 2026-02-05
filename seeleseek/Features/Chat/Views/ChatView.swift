@@ -32,7 +32,7 @@ struct ChatView: View {
                     showRoomList = true
                 } label: {
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 18))
+                        .font(.system(size: SeeleSpacing.iconSize))
                         .foregroundStyle(SeeleColors.accent)
                 }
                 .buttonStyle(.plain)
@@ -112,11 +112,11 @@ struct ChatView: View {
         Button(action: action) {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
-                    .frame(width: 24)
+                    .frame(width: SeeleSpacing.xl)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(title)
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
@@ -131,9 +131,9 @@ struct ChatView: View {
                 if unread > 0 {
                     Text("\(unread)")
                         .font(SeeleTypography.caption)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .foregroundStyle(SeeleColors.textOnAccent)
+                        .padding(.horizontal, SeeleSpacing.rowVertical)
+                        .padding(.vertical, SeeleSpacing.xxs)
                         .background(SeeleColors.accent)
                         .clipShape(Capsule())
                 }
@@ -148,7 +148,7 @@ struct ChatView: View {
     private var emptyListView: some View {
         VStack(spacing: SeeleSpacing.md) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 32, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("No chats yet")
@@ -178,7 +178,7 @@ struct ChatView: View {
     private var noChatSelectedView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("Select a chat")
@@ -201,7 +201,7 @@ struct ChatRoomContentView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(room.name)
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
@@ -257,7 +257,7 @@ struct PrivateChatContentView: View {
             HStack {
                 Circle()
                     .fill(chat.isOnline ? SeeleColors.success : SeeleColors.textTertiary)
-                    .frame(width: 8, height: 8)
+                    .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
 
                 Text(chat.username)
                     .font(SeeleTypography.headline)
@@ -269,7 +269,7 @@ struct PrivateChatContentView: View {
                     chatState.closePrivateChat(chat.username)
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 12))
+                        .font(.system(size: SeeleSpacing.iconSizeXS))
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -308,7 +308,7 @@ struct MessageBubble: View {
                 Spacer()
             }
 
-            VStack(alignment: message.isOwn ? .trailing : .leading, spacing: 2) {
+            VStack(alignment: message.isOwn ? .trailing : .leading, spacing: SeeleSpacing.xxs) {
                 if !message.isOwn && !message.isSystem {
                     Text(message.username)
                         .font(SeeleTypography.caption)
@@ -356,7 +356,7 @@ struct MessageInput: View {
 
             Button(action: onSend) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 24))
+                    .font(.system(size: SeeleSpacing.iconSizeLarge))
                     .foregroundStyle(
                         text.trimmingCharacters(in: .whitespaces).isEmpty ?
                         SeeleColors.textTertiary : SeeleColors.accent
@@ -388,7 +388,7 @@ struct RoomListSheet: View {
                     isPresented = false
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
+                        .font(.system(size: SeeleSpacing.iconSizeMedium))
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
@@ -428,7 +428,7 @@ struct RoomListSheet: View {
                 Spacer()
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                         ForEach(chatState.filteredRooms) { room in
                             roomRow(room)
                         }
@@ -447,7 +447,7 @@ struct RoomListSheet: View {
         let isJoined = chatState.joinedRooms.contains { $0.name == room.name }
 
         return HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(room.name)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)

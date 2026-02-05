@@ -65,10 +65,10 @@ struct ConnectionBadge: View {
                 .progressViewStyle(.circular)
                 .scaleEffect(0.4)
                 .tint(status.color)
-                .frame(width: 12, height: 12)
+                .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
         } else {
             Image(systemName: status.icon)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: SeeleSpacing.iconSizeSmall - 2, weight: .medium))
                 .foregroundStyle(status.color)
         }
     }
@@ -100,7 +100,7 @@ struct SpeedBadge: View {
     var body: some View {
         HStack(spacing: SeeleSpacing.xxs) {
             Image(systemName: direction.icon)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
             Text(formatSpeed(bytesPerSecond))
                 .font(SeeleTypography.monoSmall)
         }
@@ -142,14 +142,14 @@ struct ProgressIndicator: View {
         HStack(spacing: SeeleSpacing.sm) {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
                         .fill(SeeleColors.surfaceSecondary)
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
                         .fill(SeeleColors.accent)
                         .frame(width: geometry.size.width * min(max(progress, 0), 1))
                 }
             }
-            .frame(height: 4)
+            .frame(height: SeeleSpacing.progressBarHeight)
 
             if showPercentage {
                 Text("\(Int(progress * 100))%")

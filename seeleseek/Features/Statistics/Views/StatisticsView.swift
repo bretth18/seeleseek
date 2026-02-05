@@ -283,7 +283,7 @@ struct StatisticsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(SeeleSpacing.xl)
             } else {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                     ForEach(combinedHistory.prefix(10)) { entry in
                         TransferHistoryRow(entry: entry)
                     }
@@ -503,7 +503,7 @@ struct TransferRatioView: View {
                 // Center
                 VStack(spacing: 0) {
                     Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 20))
+                        .font(.system(size: SeeleSpacing.iconSizeMedium))
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
             }
@@ -544,19 +544,19 @@ struct PeerActivityHeatmap: View {
     }
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: SeeleSpacing.xxs) {
             ForEach(0..<buckets, id: \.self) { hour in
                 let data = activityData[hour] ?? (0, 0)
                 let intensity = Double(data.downloads + data.uploads) / Double(max(maxActivity, 1))
 
-                VStack(spacing: 2) {
+                VStack(spacing: SeeleSpacing.xxs) {
                     // Download bar
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
                         .fill(SeeleColors.success.opacity(0.3 + intensity * 0.7))
                         .frame(height: CGFloat(data.downloads) / CGFloat(max(maxActivity, 1)) * 40)
 
                     // Upload bar
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
                         .fill(SeeleColors.accent.opacity(0.3 + intensity * 0.7))
                         .frame(height: CGFloat(data.uploads) / CGFloat(max(maxActivity, 1)) * 40)
                 }
@@ -599,10 +599,10 @@ struct TransferHistoryRow: View {
             // Direction indicator
             Image(systemName: entry.isDownload ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
                 .foregroundStyle(entry.isDownload ? SeeleColors.success : SeeleColors.accent)
-                .font(.system(size: 20))
+                .font(.system(size: SeeleSpacing.iconSizeMedium))
 
             // File info
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(entry.filename.split(separator: "\\").last.map(String.init) ?? entry.filename)
                     .font(SeeleTypography.subheadline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -616,7 +616,7 @@ struct TransferHistoryRow: View {
             Spacer()
 
             // Stats
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
                 Text(ByteFormatter.format(Int64(entry.size)))
                     .font(SeeleTypography.mono)
                     .foregroundStyle(SeeleColors.textSecondary)

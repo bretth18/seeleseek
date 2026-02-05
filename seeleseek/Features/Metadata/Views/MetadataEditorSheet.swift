@@ -126,7 +126,7 @@ struct MetadataEditorSheet: View {
             Task { await state.selectRecording(recording) }
         } label: {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(recording.title)
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
@@ -155,9 +155,9 @@ struct MetadataEditorSheet: View {
                     .font(SeeleTypography.monoSmall)
                     .foregroundStyle(scoreColor(recording.score))
                     .padding(.horizontal, SeeleSpacing.xs)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, SeeleSpacing.xxs)
                     .background(scoreColor(recording.score).opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
 
                 if state.selectedRecording?.id == recording.id {
                     Image(systemName: "checkmark.circle.fill")
@@ -166,7 +166,7 @@ struct MetadataEditorSheet: View {
             }
             .padding(SeeleSpacing.sm)
             .background(state.selectedRecording?.id == recording.id ? SeeleColors.accent.opacity(0.1) : Color.clear)
-            .cornerRadius(6)
+            .cornerRadius(SeeleSpacing.cornerRadius)
         }
         .buttonStyle(.plain)
     }
@@ -228,7 +228,7 @@ struct MetadataEditorSheet: View {
             // Cover art display
             ZStack {
                 if state.isLoadingCoverArt {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusMedium)
                         .fill(SeeleColors.surfaceSecondary)
                         .frame(width: 150, height: 150)
                         .overlay {
@@ -241,7 +241,7 @@ struct MetadataEditorSheet: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 150, height: 150)
-                            .cornerRadius(8)
+                            .cornerRadius(SeeleSpacing.cornerRadiusMedium)
                             .shadow(radius: 4)
                     }
                     #else
@@ -250,18 +250,18 @@ struct MetadataEditorSheet: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 150, height: 150)
-                            .cornerRadius(8)
+                            .cornerRadius(SeeleSpacing.cornerRadiusMedium)
                             .shadow(radius: 4)
                     }
                     #endif
                 } else {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusMedium)
                         .fill(SeeleColors.surfaceSecondary)
                         .frame(width: 150, height: 150)
                         .overlay {
                             VStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "photo.badge.plus")
-                                    .font(.system(size: 32))
+                                    .font(.system(size: SeeleSpacing.iconSizeXL))
                                     .foregroundStyle(SeeleColors.textTertiary)
                                 Text("Drop image here")
                                     .font(SeeleTypography.caption)
@@ -344,7 +344,7 @@ struct MetadataEditorSheet: View {
     }
 
     private func editableField(_ label: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)

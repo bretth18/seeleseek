@@ -111,7 +111,7 @@ struct PlaceholderView: View {
     var body: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: icon)
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text(title)

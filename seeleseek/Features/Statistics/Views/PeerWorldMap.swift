@@ -34,7 +34,7 @@ struct PeerWorldMap: View {
                         .overlay {
                             VStack(spacing: SeeleSpacing.md) {
                                 Image(systemName: "map")
-                                    .font(.system(size: 32, weight: .light))
+                                    .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
                                     .foregroundStyle(SeeleColors.textTertiary)
                                 Text("No peer connections")
                                     .font(SeeleTypography.subheadline)
@@ -168,7 +168,7 @@ struct StatPill: View {
     let color: Color
 
     var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: SeeleSpacing.xxs) {
             Text(value)
                 .font(SeeleTypography.mono)
                 .foregroundStyle(color)
@@ -179,7 +179,7 @@ struct StatPill: View {
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.xs)
         .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
     }
 }
 

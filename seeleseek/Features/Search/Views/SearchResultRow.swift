@@ -25,7 +25,7 @@ struct SearchResultRow: View {
                         // Country flag (if available)
                         if let flag = countryFlag, !flag.isEmpty {
                             Text(flag)
-                                .font(.system(size: 12))
+                                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                         }
 
                         Label(result.username, systemImage: "person")
@@ -59,12 +59,12 @@ struct SearchResultRow: View {
                 // Queue/slot indicator
                 if result.freeSlots {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
                         .foregroundStyle(SeeleColors.success)
                 } else {
-                    HStack(spacing: 2) {
+                    HStack(spacing: SeeleSpacing.xxs) {
                         Image(systemName: "hourglass")
-                            .font(.system(size: 12))
+                            .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                         Text("\(result.queueLength)")
                             .font(SeeleTypography.monoSmall)
                     }
@@ -77,7 +77,7 @@ struct SearchResultRow: View {
                 browseUser()
             } label: {
                 Image(systemName: "folder")
-                    .font(.system(size: 18))
+                    .font(.system(size: SeeleSpacing.iconSizeMedium - 2))
                     .foregroundStyle(isHovered ? SeeleColors.textSecondary : SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -88,7 +88,7 @@ struct SearchResultRow: View {
                 downloadFile()
             } label: {
                 Image(systemName: "arrow.down.circle")
-                    .font(.system(size: 20))
+                    .font(.system(size: SeeleSpacing.iconSizeMedium))
                     .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
             }
             .buttonStyle(.plain)
@@ -141,12 +141,12 @@ struct SearchResultRow: View {
 
     private var fileIcon: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
                 .fill(iconColor.opacity(0.15))
-                .frame(width: 36, height: 36)
+                .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
 
             Image(systemName: iconName)
-                .font(.system(size: 16))
+                .font(.system(size: SeeleSpacing.iconSize))
                 .foregroundStyle(iconColor)
         }
     }
@@ -193,9 +193,9 @@ struct SearchResultRow: View {
             .font(SeeleTypography.monoSmall)
             .foregroundStyle(color)
             .padding(.horizontal, SeeleSpacing.xs)
-            .padding(.vertical, 2)
+            .padding(.vertical, SeeleSpacing.xxs)
             .background(color.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
     }
 
     private func downloadFile() {

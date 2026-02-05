@@ -93,7 +93,7 @@ struct TransfersView: View {
     private func speedStat(icon: String, label: String, speed: Int64, color: Color) -> some View {
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .bold))
                 .foregroundStyle(color)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -130,8 +130,8 @@ struct TransfersView: View {
                     Text("\(count)")
                         .font(SeeleTypography.badgeText)
                         .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, SeeleSpacing.rowVertical)
+                        .padding(.vertical, SeeleSpacing.xxs)
                         .background(isSelected ? SeeleColors.accent : SeeleColors.surfaceElevated, in: Capsule())
                 }
             }
@@ -144,7 +144,7 @@ struct TransfersView: View {
             if isSelected {
                 Rectangle()
                     .fill(SeeleColors.accent)
-                    .frame(height: 2)
+                    .frame(height: SeeleSpacing.xxs)
             }
         }
     }
@@ -216,7 +216,7 @@ struct TransfersView: View {
                 Divider().background(SeeleColors.surfaceSecondary)
 
                 ScrollView {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                         ForEach(transferState.history) { item in
                             HistoryRow(item: item)
                         }
@@ -229,7 +229,7 @@ struct TransfersView: View {
     private func statItem(icon: String, label: String, value: String, color: Color) -> some View {
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                 .foregroundStyle(color)
             VStack(alignment: .leading, spacing: 0) {
                 Text(label)
@@ -245,7 +245,7 @@ struct TransfersView: View {
     private func emptyState(icon: String, title: String, subtitle: String) -> some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: icon)
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text(title)
@@ -261,7 +261,7 @@ struct TransfersView: View {
 
     private func transferList(transfers: [Transfer]) -> some View {
         ScrollView {
-            LazyVStack(spacing: 1) {
+            LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                 ForEach(transfers) { transfer in
                     TransferRow(
                         transfer: transfer,
@@ -413,7 +413,7 @@ struct TransferRow: View {
         ZStack {
             Circle()
                 .fill(transfer.statusColor.opacity(0.15))
-                .frame(width: 32, height: 32)
+                .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
 
             if transfer.status == .transferring {
                 ProgressView()
@@ -422,7 +422,7 @@ struct TransferRow: View {
                     .tint(transfer.statusColor)
             } else {
                 Image(systemName: transfer.status.icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(transfer.statusColor)
             }
         }
@@ -467,10 +467,10 @@ struct HistoryRow: View {
             ZStack {
                 Circle()
                     .fill((item.isDownload ? SeeleColors.info : SeeleColors.success).opacity(0.15))
-                    .frame(width: 32, height: 32)
+                    .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
 
                 Image(systemName: item.isDownload ? "arrow.down" : "arrow.up")
-                    .font(.system(size: 14))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(item.isDownload ? SeeleColors.info : SeeleColors.success)
             }
 

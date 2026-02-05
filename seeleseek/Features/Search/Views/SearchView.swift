@@ -91,7 +91,7 @@ struct SearchView: View {
             if search.isSearching {
                 ProgressView()
                     .scaleEffect(0.5)
-                    .frame(width: 12, height: 12)
+                    .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
             }
 
             Text(search.query)
@@ -107,7 +107,7 @@ struct SearchView: View {
                 searchState.closeSearch(at: index)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: SeeleSpacing.iconSizeXS - 2, weight: .bold))
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -162,7 +162,7 @@ struct SearchView: View {
     private var noResultsView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("No results found")
@@ -179,7 +179,7 @@ struct SearchView: View {
     private var emptyStateView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "music.note.list")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("Search for Music")
@@ -241,7 +241,7 @@ struct SearchView: View {
                         Text("Sort: \(searchState.sortOrder.rawValue)")
                             .font(SeeleTypography.caption)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 10))
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
                     }
                     .foregroundStyle(SeeleColors.textSecondary)
                 }
@@ -252,7 +252,7 @@ struct SearchView: View {
 
             // Results list
             ScrollView {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                     ForEach(searchState.filteredResults) { result in
                         SearchResultRow(result: result)
                     }

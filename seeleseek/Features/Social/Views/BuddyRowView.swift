@@ -11,10 +11,10 @@ struct BuddyRowView: View {
             // Status indicator
             Circle()
                 .fill(statusColor)
-                .frame(width: 10, height: 10)
+                .frame(width: SeeleSpacing.statusDotLarge, height: SeeleSpacing.statusDotLarge)
 
             // Username and info
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 HStack(spacing: SeeleSpacing.sm) {
                     Text(buddy.username)
                         .font(SeeleTypography.body)
@@ -22,13 +22,13 @@ struct BuddyRowView: View {
 
                     if buddy.isPrivileged {
                         Image(systemName: "star.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
                             .foregroundStyle(SeeleColors.warning)
                     }
 
                     if let code = buddy.countryCode {
                         Text(countryFlag(for: code))
-                            .font(.system(size: 12))
+                            .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                     }
                 }
 

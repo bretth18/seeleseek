@@ -37,7 +37,7 @@ struct LivePeersView: View {
                 // Empty state
                 VStack(spacing: SeeleSpacing.md) {
                     Image(systemName: "person.2.slash")
-                        .font(.system(size: 32, weight: .light))
+                        .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
                         .foregroundStyle(SeeleColors.textTertiary)
                     Text("No peers connected")
                         .font(SeeleTypography.subheadline)
@@ -46,7 +46,7 @@ struct LivePeersView: View {
                 .frame(maxWidth: .infinity, minHeight: 100)
             } else {
                 // Peers list
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                     ForEach(sortedPeers) { peer in
                         PeerRow(peer: peer)
                     }
@@ -120,7 +120,7 @@ struct PeerRow: View {
             }
 
             // Username and info
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(!peer.username.isEmpty && peer.username != "unknown" ? peer.username : peer.ip)
                     .font(SeeleTypography.subheadline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -144,14 +144,14 @@ struct PeerRow: View {
             // Transfer stats
             HStack(spacing: SeeleSpacing.lg) {
                 // Download
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
                     Text("↓ \(ByteFormatter.format(Int64(peer.bytesReceived)))")
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.success)
                 }
 
                 // Upload
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
                     Text("↑ \(ByteFormatter.format(Int64(peer.bytesSent)))")
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.accent)

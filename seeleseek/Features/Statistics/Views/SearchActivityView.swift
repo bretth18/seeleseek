@@ -116,14 +116,14 @@ struct SearchTimelineView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            HStack(alignment: .bottom, spacing: 2) {
+            HStack(alignment: .bottom, spacing: SeeleSpacing.xxs) {
                 ForEach(groupedByMinute.keys.sorted().suffix(30), id: \.self) { minute in
                     let count = groupedByMinute[minute] ?? 0
                     let height = CGFloat(count) / CGFloat(maxCount) * geometry.size.height
 
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
                         .fill(count > 0 ? SeeleColors.info : SeeleColors.surfaceSecondary)
-                        .frame(width: max((geometry.size.width - 60) / 30, 4), height: max(height, 2))
+                        .frame(width: max((geometry.size.width - 60) / 30, SeeleSpacing.xs), height: max(height, SeeleSpacing.xxs))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -158,7 +158,7 @@ struct SearchEventRow: View {
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: icon)
                 .foregroundStyle(color)
-                .font(.system(size: 14))
+                .font(.system(size: SeeleSpacing.iconSizeSmall))
 
             Text(event.query)
                 .font(SeeleTypography.subheadline)
@@ -204,7 +204,7 @@ struct IncomingSearchRow: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(search.username)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textSecondary)
@@ -217,7 +217,7 @@ struct IncomingSearchRow: View {
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
                 Text("\(search.matchCount) matches")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.success)
@@ -227,7 +227,7 @@ struct IncomingSearchRow: View {
                     .foregroundStyle(SeeleColors.textTertiary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, SeeleSpacing.xs)
     }
 
     private func formatTime(_ date: Date) -> String {

@@ -13,7 +13,7 @@ struct LoginView: View {
                 // Logo / Title
                 VStack(spacing: SeeleSpacing.md) {
                     Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: 64, weight: .light))
+                        .font(.system(size: SeeleSpacing.iconSizeHero + 16, weight: .light))
                         .foregroundStyle(SeeleColors.accent)
 
                     Text("SeeleSeek")

@@ -74,9 +74,9 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
                     .foregroundStyle(selectedTab == tab ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .frame(width: 20)
+                    .frame(width: SeeleSpacing.iconSizeMedium)
 
                 Text(tab.rawValue)
                     .font(SeeleTypography.body)
@@ -217,7 +217,7 @@ struct SharesSettingsSection: View {
                             } label: {
                                 HStack(spacing: SeeleSpacing.xs) {
                                     Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 10))
+                                        .font(.system(size: SeeleSpacing.iconSizeXS))
                                     Text("Rescan")
                                 }
                                 .font(SeeleTypography.caption)

@@ -83,7 +83,7 @@ struct SocialView: View {
         } label: {
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
                 Text(tab.rawValue)
                     .fontWeight(isSelected ? .medium : .regular)
             }

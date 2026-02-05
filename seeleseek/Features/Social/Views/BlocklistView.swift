@@ -105,7 +105,7 @@ struct BlocklistView: View {
                         .padding(SeeleSpacing.xl)
                 }
             } else {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                     ForEach(socialState.filteredBlockedUsers) { blocked in
                         blockedUserRow(blocked)
                     }
@@ -118,7 +118,7 @@ struct BlocklistView: View {
     private var emptyState: some View {
         VStack(spacing: SeeleSpacing.md) {
             Image(systemName: "person.crop.circle.badge.checkmark")
-                .font(.system(size: 40, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero - 8, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("No blocked users")
@@ -138,14 +138,14 @@ struct BlocklistView: View {
             // Avatar placeholder
             Circle()
                 .fill(SeeleColors.error.opacity(0.2))
-                .frame(width: 36, height: 36)
+                .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
                 .overlay {
                     Image(systemName: "nosign")
-                        .font(.system(size: 14))
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
                         .foregroundStyle(SeeleColors.error)
                 }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(blocked.username)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)

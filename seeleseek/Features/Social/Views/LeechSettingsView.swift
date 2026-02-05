@@ -49,7 +49,7 @@ struct LeechSettingsView: View {
     private var enableSection: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Toggle(isOn: Bindable(socialState).leechSettings.enabled) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
                     Text("Enable Leech Detection")
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
@@ -143,7 +143,7 @@ struct LeechSettingsView: View {
                 Image(systemName: socialState.leechSettings.action == action ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(socialState.leechSettings.action == action ? SeeleColors.accent : SeeleColors.textTertiary)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(action.displayName)
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
@@ -240,12 +240,12 @@ struct LeechSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(SeeleSpacing.lg)
             } else {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                     ForEach(Array(socialState.detectedLeeches).sorted(), id: \.self) { username in
                         leechRow(username)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
             }
         }
         .padding(SeeleSpacing.lg)

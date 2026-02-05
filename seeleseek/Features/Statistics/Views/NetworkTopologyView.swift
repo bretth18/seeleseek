@@ -111,7 +111,7 @@ struct CenterNode: View {
     let username: String
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: SeeleSpacing.xs) {
             ZStack {
                 // Outer glow
                 Circle()
@@ -133,7 +133,7 @@ struct CenterNode: View {
 
                 // Icon
                 Image(systemName: "person.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: SeeleSpacing.iconSizeMedium, weight: .semibold))
                     .foregroundStyle(.white)
             }
 
@@ -166,7 +166,7 @@ struct PeerNode: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: SeeleSpacing.xs) {
             ZStack {
                 // Selection ring
                 if isSelected {
@@ -337,10 +337,10 @@ struct LegendItem: View {
     let label: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: SeeleSpacing.xs) {
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textSecondary)

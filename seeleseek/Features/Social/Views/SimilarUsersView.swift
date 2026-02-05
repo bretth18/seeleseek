@@ -164,7 +164,7 @@ struct SimilarUsersView: View {
             // Avatar placeholder
             Circle()
                 .fill(SeeleColors.surfaceSecondary)
-                .frame(width: 36, height: 36)
+                .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
                 .overlay {
                     Text(String(username.prefix(1)).uppercased())
                         .font(SeeleTypography.body)
@@ -179,16 +179,16 @@ struct SimilarUsersView: View {
             Spacer()
 
             // Similarity score
-            HStack(spacing: 4) {
+            HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "star.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(SeeleColors.warning)
                 Text("\(rating)")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textSecondary)
             }
             .padding(.horizontal, SeeleSpacing.sm)
-            .padding(.vertical, 4)
+            .padding(.vertical, SeeleSpacing.xs)
             .background(SeeleColors.surface, in: Capsule())
 
             // Actions
@@ -236,7 +236,7 @@ struct SimilarUsersView: View {
                     .font(SeeleTypography.body)
 
                 Image(systemName: "plus.circle")
-                    .font(.system(size: 12))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
             }
             .foregroundStyle(SeeleColors.accent)
             .padding(.horizontal, SeeleSpacing.md)

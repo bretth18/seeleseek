@@ -83,7 +83,7 @@ struct MyProfileView: View {
                         if !socialState.myLikes.isEmpty {
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: SeeleSpacing.iconSizeXS))
                                     .foregroundStyle(SeeleColors.success)
                                 Text(socialState.myLikes.prefix(5).joined(separator: ", "))
                                     .font(SeeleTypography.caption)
@@ -99,7 +99,7 @@ struct MyProfileView: View {
                         if !socialState.myHates.isEmpty {
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.slash.fill")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: SeeleSpacing.iconSizeXS))
                                     .foregroundStyle(SeeleColors.error)
                                 Text(socialState.myHates.prefix(5).joined(separator: ", "))
                                     .font(SeeleTypography.caption)

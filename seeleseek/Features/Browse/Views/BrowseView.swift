@@ -27,7 +27,7 @@ struct BrowseView: View {
 
     private var browseTabBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
+            HStack(spacing: SeeleSpacing.xxs) {
                 ForEach(Array(browseState.browses.enumerated()), id: \.element.id) { index, browse in
                     BrowseTabButton(
                         browse: browse,
@@ -133,7 +133,7 @@ struct BrowseView: View {
     private var errorView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.error)
 
             Text("Failed to load shares")
@@ -159,7 +159,7 @@ struct BrowseView: View {
     private var emptySharesView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("No shared files")
@@ -176,7 +176,7 @@ struct BrowseView: View {
     private var emptyStateView: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "folder.badge.person.crop")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("Browse User Files")
@@ -257,7 +257,7 @@ struct BrowseView: View {
                             browseState.navigateToRoot()
                         } label: {
                             Image(systemName: "house.fill")
-                                .font(.system(size: 12))
+                                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
@@ -267,7 +267,7 @@ struct BrowseView: View {
                             browseState.navigateUp()
                         } label: {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 12))
+                                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
@@ -335,14 +335,14 @@ struct BrowseTabButton: View {
             if browse.isLoading {
                 ProgressView()
                     .scaleEffect(0.5)
-                    .frame(width: 12, height: 12)
+                    .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
             } else if browse.error != nil {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(SeeleColors.error)
             } else {
                 Image(systemName: "folder.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(SeeleColors.warning)
             }
 
@@ -363,7 +363,7 @@ struct BrowseTabButton: View {
                 onClose()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: SeeleSpacing.iconSizeXS - 2, weight: .bold))
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -410,16 +410,16 @@ struct FileTreeRow: View {
                 // Expand/collapse for folders
                 if file.isDirectory {
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                         .foregroundStyle(SeeleColors.textTertiary)
-                        .frame(width: 16)
+                        .frame(width: SeeleSpacing.iconSize)
                 } else {
-                    Spacer().frame(width: 16)
+                    Spacer().frame(width: SeeleSpacing.iconSize)
                 }
 
                 // Icon
                 Image(systemName: file.icon)
-                    .font(.system(size: 16))
+                    .font(.system(size: SeeleSpacing.iconSize))
                     .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
 
                 // Name
@@ -441,7 +441,7 @@ struct FileTreeRow: View {
                         downloadFile()
                     } label: {
                         Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 16))
+                            .font(.system(size: SeeleSpacing.iconSize))
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
                     .buttonStyle(.plain)
@@ -708,14 +708,14 @@ struct StatCard: View {
         VStack(spacing: SeeleSpacing.sm) {
             HStack {
                 Image(systemName: icon)
-                    .font(.system(size: 16))
+                    .font(.system(size: SeeleSpacing.iconSize))
                     .foregroundStyle(color)
 
                 Spacer()
             }
 
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(value)
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)

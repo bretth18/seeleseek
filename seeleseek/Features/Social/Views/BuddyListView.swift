@@ -37,7 +37,7 @@ struct BuddyListView: View {
                     socialState.showAddBuddySheet = true
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(SeeleColors.accent)
@@ -58,7 +58,7 @@ struct BuddyListView: View {
     private var emptyState: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: "person.2.slash")
-                .font(.system(size: 48, weight: .light))
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
 
             Text("No buddies yet")

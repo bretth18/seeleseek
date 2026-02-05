@@ -11,8 +11,8 @@ struct Sidebar: View {
                 .padding(.top, SeeleSpacing.md)
                 .padding(.bottom, SeeleSpacing.sm)
 
-            Divider()
-                .background(SeeleColors.divider)
+//            Divider()
+//                .background(SeeleColors.divider)
 
             // Navigation sections
             VStack(alignment: .leading, spacing: SeeleSpacing.md) {
@@ -67,14 +67,14 @@ struct Sidebar: View {
 
             HStack(spacing: SeeleSpacing.xs) {
                 Circle()
-                    .fill(appState.connection.connectionStatus.color)
+                    .fill(appState.connection.connectionStatus.color.opacity(0.8))
                     .frame(width: 8, height: 8)
 
                 if appState.connection.connectionStatus == .connected,
                    let username = appState.connection.username {
                     Text(username)
                         .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textPrimary)
+                        .foregroundStyle(SeeleColors.textPrimary.opacity(0.8))
                 } else {
                     Text(appState.connection.connectionStatus.label)
                         .font(SeeleTypography.caption)
