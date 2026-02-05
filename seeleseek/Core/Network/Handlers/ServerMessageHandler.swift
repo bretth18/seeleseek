@@ -1091,10 +1091,12 @@ final class ServerMessageHandler {
     // MARK: - Helpers
 
     private func ipString(from value: UInt32) -> String {
-        let b1 = value & 0xFF
-        let b2 = (value >> 8) & 0xFF
-        let b3 = (value >> 16) & 0xFF
-        let b4 = (value >> 24) & 0xFF
+        // Soulseek sends IP addresses in network byte order (big-endian)
+        // High byte is the first octet
+        let b1 = (value >> 24) & 0xFF
+        let b2 = (value >> 16) & 0xFF
+        let b3 = (value >> 8) & 0xFF
+        let b4 = value & 0xFF
         return "\(b1).\(b2).\(b3).\(b4)"
     }
 }

@@ -198,6 +198,10 @@ struct UserShares: Identifiable, Sendable {
     var isLoading: Bool
     var error: String?
 
+    // Cached stats - computed once when tree is built
+    private(set) var cachedTotalFiles: Int?
+    private(set) var cachedTotalSize: UInt64?
+
     init(
         id: UUID = UUID(),
         username: String,
@@ -213,11 +217,17 @@ struct UserShares: Identifiable, Sendable {
     }
 
     var totalFiles: Int {
-        countFiles(in: folders)
+        cachedTotalFiles ?? countFiles(in: folders)
     }
 
     var totalSize: UInt64 {
-        sumSize(in: folders)
+        cachedTotalSize ?? sumSize(in: folders)
+    }
+
+    /// Compute and cache stats (call this after building tree, off main thread)
+    mutating func computeStats() {
+        cachedTotalFiles = countFiles(in: folders)
+        cachedTotalSize = sumSize(in: folders)
     }
 
     private func countFiles(in files: [SharedFile]) -> Int {

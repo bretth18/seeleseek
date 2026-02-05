@@ -168,6 +168,32 @@ final class DownloadManager {
 
     // MARK: - Download API
 
+    /// Resume all queued/waiting downloads (called on app launch after loading from database)
+    func resumeQueuedDownloads() {
+        guard let transferState else {
+            logger.error("TransferState not configured for resume")
+            return
+        }
+
+        let queuedDownloads = transferState.downloads.filter {
+            $0.status == .queued || $0.status == .waiting || $0.status == .connecting
+        }
+
+        guard !queuedDownloads.isEmpty else {
+            logger.info("No queued downloads to resume")
+            return
+        }
+
+        logger.info("Resuming \(queuedDownloads.count) queued downloads")
+        print("🔄 Resuming \(queuedDownloads.count) queued downloads from previous session")
+
+        for transfer in queuedDownloads {
+            Task {
+                await startDownload(transfer: transfer)
+            }
+        }
+    }
+
     /// Queue a file for download
     func queueDownload(from result: SearchResult) {
         // Skip macOS resource fork files (._xxx in __MACOSX folders)

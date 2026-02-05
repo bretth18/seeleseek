@@ -916,6 +916,16 @@ actor PeerConnection {
                 messagesReceived += 1
 
                 await handleInitMessage(code: firstByte, payload: payload)
+            } else if connectionType == .distributed {
+                // Distributed messages use 1-byte code: uint32 length + uint8 code + payload
+                let code = UInt32(firstByte)
+                print("📥 [\(peerInfo.username)] Distributed message: code=\(code) length=\(length)")
+                let payload = receiveBuffer.safeSubdata(in: 5..<totalLength) ?? Data()
+
+                receiveBuffer.removeFirst(totalLength)
+                messagesReceived += 1
+
+                await handlePeerMessage(code: code, payload: payload)
             } else {
                 // Peer message with 4-byte code
                 guard receiveBuffer.count >= 8 else {

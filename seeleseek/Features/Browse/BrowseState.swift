@@ -335,14 +335,17 @@ final class BrowseState {
                 // Build hierarchical tree structure (do this off main thread for large file lists)
                 let treeFiles = SharedFile.buildTree(from: flatFiles)
 
+                // Pre-compute stats off main thread
+                var userShares = UserShares(id: browseId, username: username, folders: treeFiles, isLoading: false)
+                userShares.computeStats()
+                let precomputedShares = userShares
+
                 // Update on main actor
                 await MainActor.run {
                     guard let self else { return }
                     // Find the browse by ID (index may have changed)
                     if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
-                        self.browses[idx].folders = treeFiles
-                        self.browses[idx].isLoading = false
-                        self.browses[idx].error = nil
+                        self.browses[idx] = precomputedShares
                         self.logger.info("Got \(flatFiles.count) files -> \(treeFiles.count) root folders for \(username)")
                         print("📂 BrowseState: Built tree with \(treeFiles.count) root folders from \(flatFiles.count) flat files")
 

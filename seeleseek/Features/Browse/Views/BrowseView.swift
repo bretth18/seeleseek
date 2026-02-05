@@ -501,40 +501,113 @@ struct FileTreeRow: View {
 struct SharesVisualizationPanel: View {
     let shares: UserShares
 
+    // Cache computed data to avoid expensive recalculations
+    @State private var cachedAllFiles: [SharedFile]?
+    @State private var cachedAudioFiles: [SharedFile]?
+    @State private var cachedTopFiles: [(String, UInt64)]?
+    @State private var isComputing = false
+
     private var allFiles: [SharedFile] {
-        shares.folders.flatMap { collectFiles(from: $0) }
+        cachedAllFiles ?? []
+    }
+
+    private var audioFiles: [SharedFile] {
+        cachedAudioFiles ?? []
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
-                // Quick stats
+                // Quick stats (use cached totalFiles/totalSize from UserShares)
                 quickStatsSection
 
-                Divider().background(SeeleColors.surfaceSecondary)
-
-                // File type distribution
-                fileTypeSection
-
-                Divider().background(SeeleColors.surfaceSecondary)
-
-                // Bitrate distribution (for audio)
-                if hasAudioFiles {
-                    bitrateSection
+                if isComputing {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Analyzing files...")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                    .padding()
+                } else if cachedAllFiles != nil {
                     Divider().background(SeeleColors.surfaceSecondary)
-                }
 
-                // Largest files
-                largestFilesSection
+                    // File type distribution
+                    fileTypeSection
 
-                // Treemap visualization
-                if !allFiles.isEmpty {
-                    treemapSection
+                    Divider().background(SeeleColors.surfaceSecondary)
+
+                    // Bitrate distribution (for audio)
+                    if !audioFiles.isEmpty {
+                        bitrateSection
+                        Divider().background(SeeleColors.surfaceSecondary)
+                    }
+
+                    // Largest files
+                    largestFilesSection
+
+                    // Treemap visualization
+                    if !allFiles.isEmpty {
+                        treemapSection
+                    }
                 }
             }
             .padding(SeeleSpacing.lg)
         }
         .background(SeeleColors.surface)
+        .onAppear {
+            computeStatsIfNeeded()
+        }
+        .onChange(of: shares.id) { _, _ in
+            // Reset cache when shares change
+            cachedAllFiles = nil
+            cachedAudioFiles = nil
+            cachedTopFiles = nil
+            computeStatsIfNeeded()
+        }
+    }
+
+    private func computeStatsIfNeeded() {
+        guard cachedAllFiles == nil && !isComputing else { return }
+
+        isComputing = true
+        let folders = shares.folders
+
+        // Compute on background thread
+        Task.detached(priority: .userInitiated) {
+            let files = Self.collectFilesNonRecursive(from: folders)
+            let audio = files.filter { $0.isAudioFile }
+            let top = files
+                .sorted { $0.size > $1.size }
+                .prefix(5)
+                .map { ($0.displayFilename, $0.size) }
+
+            await MainActor.run {
+                cachedAllFiles = files
+                cachedAudioFiles = audio
+                cachedTopFiles = Array(top)
+                isComputing = false
+            }
+        }
+    }
+
+    /// Non-recursive file collection using a stack (avoids stack overflow for deep trees)
+    nonisolated private static func collectFilesNonRecursive(from folders: [SharedFile]) -> [SharedFile] {
+        var result: [SharedFile] = []
+        var stack = folders
+
+        while let current = stack.popLast() {
+            if current.isDirectory {
+                if let children = current.children {
+                    stack.append(contentsOf: children)
+                }
+            } else {
+                result.append(current)
+            }
+        }
+
+        return result
     }
 
     private var quickStatsSection: some View {
@@ -549,7 +622,7 @@ struct SharesVisualizationPanel: View {
             ], spacing: SeeleSpacing.md) {
                 StatCard(
                     title: "Files",
-                    value: "\(allFiles.count)",
+                    value: "\(shares.totalFiles)",
                     icon: "doc.fill",
                     color: SeeleColors.accent
                 )
@@ -570,7 +643,7 @@ struct SharesVisualizationPanel: View {
 
                 StatCard(
                     title: "Avg Size",
-                    value: ByteFormatter.format(Int64(shares.totalSize / UInt64(max(allFiles.count, 1)))),
+                    value: ByteFormatter.format(Int64(shares.totalSize / UInt64(max(shares.totalFiles, 1)))),
                     icon: "chart.bar.fill",
                     color: SeeleColors.success
                 )
@@ -604,13 +677,8 @@ struct SharesVisualizationPanel: View {
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
-            let topFiles = allFiles
-                .filter { !$0.isDirectory }
-                .sorted { $0.size > $1.size }
-                .prefix(5)
-
             SizeComparisonBars(
-                items: topFiles.map { ($0.displayFilename, $0.size) }
+                items: cachedTopFiles ?? []
             )
         }
     }
@@ -622,35 +690,11 @@ struct SharesVisualizationPanel: View {
                 .foregroundStyle(SeeleColors.textPrimary)
 
             FileTreemap(
-                files: Array(allFiles.filter { !$0.isDirectory }.prefix(50))
+                files: Array(allFiles.prefix(50))
             )
             .frame(height: 200)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
         }
-    }
-
-    private var hasAudioFiles: Bool {
-        !audioFiles.isEmpty
-    }
-
-    private var audioFiles: [SharedFile] {
-        allFiles.filter { $0.isAudioFile }
-    }
-
-    private func collectFiles(from folder: SharedFile) -> [SharedFile] {
-        var files: [SharedFile] = []
-
-        if folder.isDirectory {
-            if let children = folder.children {
-                for child in children {
-                    files.append(contentsOf: collectFiles(from: child))
-                }
-            }
-        } else {
-            files.append(folder)
-        }
-
-        return files
     }
 }
 

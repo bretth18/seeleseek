@@ -120,6 +120,8 @@ struct LoginView: View {
                     ip: "",
                     greeting: nil
                 )
+                // Resume any queued downloads from previous session
+                appState.downloadManager.resumeQueuedDownloads()
             case .disconnected:
                 appState.connection.setDisconnected()
             case .connecting:
