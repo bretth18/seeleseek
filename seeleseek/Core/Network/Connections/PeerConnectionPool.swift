@@ -76,7 +76,11 @@ final class PeerConnectionPool {
     // MARK: - Configuration
 
     let maxConnections = 50
+    let maxConnectionsPerIP = 5  // Prevent single IP from exhausting connections
     let connectionTimeout: TimeInterval = 30
+
+    // MARK: - Per-IP Connection Tracking
+    private var connectionsPerIP: [String: Int] = [:]
 
     // MARK: - Types
 
@@ -275,29 +279,43 @@ final class PeerConnectionPool {
             return
         }
 
+        // Extract IP from endpoint for per-IP limit check
+        var peerIP: String?
+        if case .hostPort(let host, _) = nwConnection.endpoint {
+            switch host {
+            case .ipv4(let addr):
+                peerIP = "\(addr)"
+            case .ipv6(let addr):
+                peerIP = "\(addr)"
+            case .name(let name, _):
+                peerIP = name
+            @unknown default:
+                break
+            }
+        }
+
+        // Enforce per-IP connection limit to prevent single peer from exhausting resources
+        if let ip = peerIP {
+            let currentCount = connectionsPerIP[ip] ?? 0
+            if currentCount >= maxConnectionsPerIP {
+                logger.warning("Per-IP limit reached (\(self.maxConnectionsPerIP)) for \(ip), rejecting connection")
+                print("⚠️ Per-IP limit reached for \(ip), rejecting connection")
+                nwConnection.cancel()
+                return
+            }
+            // Increment per-IP counter
+            connectionsPerIP[ip] = currentCount + 1
+        }
+
         do {
             let connection = try await acceptIncoming(nwConnection, obfuscated: false)
 
             let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 
-            // Extract IP from the connection endpoint for country flag lookup
-            var peerIP: String?
-            if case .hostPort(let host, _) = nwConnection.endpoint {
-                switch host {
-                case .ipv4(let addr):
-                    peerIP = "\(addr)"
-                case .ipv6(let addr):
-                    peerIP = "\(addr)"
-                case .name(let name, _):
-                    peerIP = name
-                @unknown default:
-                    break
-                }
-            }
-
             // Set up ALL callbacks for the incoming connection - this is critical for receiving search results!
-            // Capture connectionId to properly clean up THIS specific connection
-            await connection.setOnStateChanged { [weak self, connectionId] state in
+            // Capture connectionId and peerIP to properly clean up THIS specific connection
+            let capturedIP = peerIP ?? ""
+            await connection.setOnStateChanged { [weak self, connectionId, capturedIP] state in
                 guard let self else { return }
                 await MainActor.run {
                     self.logger.info("Incoming connection \(connectionId) state changed: \(String(describing: state))")
@@ -305,6 +323,7 @@ final class PeerConnectionPool {
 
                     // Clean up disconnected connections using the captured connectionId
                     if case .disconnected = state {
+                        self.decrementIPCounter(for: capturedIP)
                         self.connections.removeValue(forKey: connectionId)
                         self.activeConnections_.removeValue(forKey: connectionId)
                         self.activeConnections = self.connections.count
@@ -315,7 +334,7 @@ final class PeerConnectionPool {
 
             // IMPORTANT: Set up search reply callback so we receive search results
             // Close connection after receiving results (like Nicotine+) to prevent accumulation
-            await connection.setOnSearchReply { [weak self, connectionId] token, results in
+            await connection.setOnSearchReply { [weak self, connectionId, capturedIP] token, results in
                 await MainActor.run {
                     print("🔴 SEARCH RESULTS: \(results.count) from incoming connection (token=\(token))")
                     self?.logger.info("Received \(results.count) search results from incoming connection")
@@ -326,6 +345,7 @@ final class PeerConnectionPool {
                     try? await Task.sleep(for: .milliseconds(500))
                     await connection.disconnect()
                     await MainActor.run {
+                        self?.decrementIPCounter(for: capturedIP)
                         self?.connections.removeValue(forKey: connectionId)
                         self?.activeConnections_.removeValue(forKey: connectionId)
                         self?.activeConnections = self?.connections.count ?? 0
@@ -632,6 +652,11 @@ final class PeerConnectionPool {
 
         // Actually close and remove stale connections
         for id in toRemove {
+            // Decrement per-IP counter before removing
+            if let info = connections[id] {
+                decrementIPCounter(for: info.ip)
+            }
+
             if let conn = activeConnections_[id] {
                 Task {
                     await conn.disconnect()
@@ -647,6 +672,18 @@ final class PeerConnectionPool {
 
         if !toRemove.isEmpty {
             logger.info("Cleaned up \(toRemove.count) stale connections, \(self.activeConnections) active")
+        }
+    }
+
+    /// Decrement per-IP connection counter (call when removing a connection)
+    private func decrementIPCounter(for ip: String) {
+        guard !ip.isEmpty else { return }
+        if let count = connectionsPerIP[ip] {
+            if count <= 1 {
+                connectionsPerIP.removeValue(forKey: ip)
+            } else {
+                connectionsPerIP[ip] = count - 1
+            }
         }
     }
 

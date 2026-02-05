@@ -12,15 +12,18 @@ struct LoginView: View {
             VStack(spacing: SeeleSpacing.xxl) {
                 // Logo / Title
                 VStack(spacing: SeeleSpacing.md) {
-                    Image(systemName: "waveform.circle.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeHero + 16, weight: .light))
-                        .foregroundStyle(SeeleColors.accent)
+                    Image(nsImage: .gsgaag2)
+                        .renderingMode(.template)
+//                        .frame(width: SeeleSpacing.iconSize, height: SeeleSpacing.iconSize)
 
-                    Text("SeeleSeek")
+//                    .font(.system(size: SeeleSpacing.iconSizeHero + 16, weight: .light))
+                    .foregroundStyle(SeeleColors.accent)
+
+                    Text("seeleseek")
                         .font(SeeleTypography.largeTitle)
                         .foregroundStyle(SeeleColors.textPrimary)
 
-                    Text("SoulSeek Client for macOS")
+                    Text("a soulseek client from The Virtuous Corporation")
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
@@ -275,3 +278,4 @@ struct SeeleFormRow<Content: View>: View {
     return LoginView()
         .environment(\.appState, state)
 }
+

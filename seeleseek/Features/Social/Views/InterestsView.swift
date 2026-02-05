@@ -21,6 +21,7 @@ struct InterestsView: View {
             addInterestSection
 
             Divider().background(SeeleColors.surfaceSecondary)
+                .padding(SeeleSpacing.dividerSpacing)
 
             // Interests lists
             ScrollView {
@@ -38,8 +39,9 @@ struct InterestsView: View {
             // Interest input
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: interestType == .like ? "heart" : "heart.slash")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
+//                    .padding(Seele)
 
                 TextField("Add an interest...", text: $newInterest)
                     .textFieldStyle(.plain)
@@ -58,8 +60,9 @@ struct InterestsView: View {
                     Text(type.rawValue).tag(type)
                 }
             }
+            .font(SeeleTypography.caption2)
             .pickerStyle(.segmented)
-            .frame(width: 120)
+            .frame(width: 180)
 
             // Add button
             Button("Add") {

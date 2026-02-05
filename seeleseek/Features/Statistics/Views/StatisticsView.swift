@@ -138,8 +138,9 @@ struct StatisticsView: View {
                         Text(range.rawValue).tag(range)
                     }
                 }
+                .font(SeeleTypography.caption2)
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .frame(width: 180)
             }
 
             SpeedChartView(

@@ -33,8 +33,9 @@ struct SeeleSeekApp: App {
 
         #if os(macOS)
         Settings {
-            Text("Settings")
-                .frame(width: 400, height: 300)
+            SettingsView()
+                .environment(\.appState, appState)
+                .frame(minWidth: 700, minHeight: 500)
         }
         #endif
     }

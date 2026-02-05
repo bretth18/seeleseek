@@ -1669,6 +1669,10 @@ actor PeerConnection {
     private func decompressRawDeflate(_ data: Data) throws -> Data {
         let decompressed = try data.withUnsafeBytes { sourceBuffer -> Data in
             let sourceSize = data.count
+            guard let baseAddress = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                throw PeerError.decompressionFailed
+            }
+
             // Start with a reasonable estimate, expand if needed
             var destinationSize = max(sourceSize * 20, 65536)
             var destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
@@ -1676,7 +1680,7 @@ actor PeerConnection {
             var decodedSize = compression_decode_buffer(
                 &destinationBuffer,
                 destinationSize,
-                sourceBuffer.bindMemory(to: UInt8.self).baseAddress!,
+                baseAddress,
                 sourceSize,
                 nil,
                 COMPRESSION_ZLIB
@@ -1689,7 +1693,7 @@ actor PeerConnection {
                 decodedSize = compression_decode_buffer(
                     &destinationBuffer,
                     destinationSize,
-                    sourceBuffer.bindMemory(to: UInt8.self).baseAddress!,
+                    baseAddress,
                     sourceSize,
                     nil,
                     COMPRESSION_ZLIB

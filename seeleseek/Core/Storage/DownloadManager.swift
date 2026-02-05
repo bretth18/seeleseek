@@ -363,8 +363,8 @@ final class DownloadManager {
         if let ourExternalIP = networkClient.externalIP, ourExternalIP == ip {
             print("⚠️ WARNING: Peer \(username) has same external IP as us (\(ip))")
             print("   This usually means you're on the same network/NAT.")
-            print("   Connection will likely fail due to hairpin NAT limitations.")
-            logger.warning("Peer \(username) has same external IP - hairpin NAT issue likely")
+            print("   If connection fails, check that the peer's client is running and port forwarding is configured.")
+            logger.warning("Peer \(username) has same external IP - may need manual network config")
         }
         logger.info("Got peer address for \(username): \(ip):\(port)")
 
@@ -400,7 +400,7 @@ final class DownloadManager {
             return
         }
 
-        print("📍 No existing connection, trying direct connection (10s timeout)...")
+        print("📍 No existing connection, trying direct connection to \(ip):\(port) (10s timeout)...")
 
         // Try to connect to peer with a timeout
         do {
@@ -1148,13 +1148,30 @@ final class DownloadManager {
     }
 
     /// Sanitize a filename/folder name for the filesystem
+    /// Prevents directory traversal attacks and invalid filesystem characters
     private func sanitizeFilename(_ name: String) -> String {
+        // SECURITY: Prevent directory traversal attacks
+        // Reject ".." and "." components that could escape the download directory
+        if name == ".." || name == "." {
+            return "unnamed"
+        }
+
         // Remove/replace characters that are invalid in macOS filenames
         var sanitized = name
-        let invalidChars: [Character] = [":", "/", "\0"]
+        let invalidChars: [Character] = [":", "/", "\\", "\0"]
         for char in invalidChars {
             sanitized = sanitized.replacingOccurrences(of: String(char), with: "_")
         }
+
+        // SECURITY: Remove any embedded ".." sequences (e.g., "foo..bar" is fine, but "foo/../bar" is not)
+        // After replacing slashes above, this catches edge cases
+        while sanitized.contains("..") {
+            sanitized = sanitized.replacingOccurrences(of: "..", with: "_")
+        }
+
+        // Remove ~ which could reference home directory in some contexts
+        sanitized = sanitized.replacingOccurrences(of: "~", with: "_")
+
         // Trim whitespace and dots from ends
         sanitized = sanitized.trimmingCharacters(in: .whitespaces)
         if sanitized.hasPrefix(".") {

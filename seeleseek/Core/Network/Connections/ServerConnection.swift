@@ -102,9 +102,12 @@ actor ServerConnection {
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
 
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            throw ConnectionError.connectionFailed("Invalid port: \(port)")
+        }
         let endpoint = NWEndpoint.hostPort(
             host: NWEndpoint.Host(host),
-            port: NWEndpoint.Port(rawValue: port)!
+            port: nwPort
         )
 
         let conn = NWConnection(to: endpoint, using: parameters)

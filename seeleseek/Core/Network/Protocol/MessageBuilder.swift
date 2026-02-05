@@ -18,7 +18,8 @@ enum MessageBuilder {
 
         // MD5 hash of username + password
         let hashInput = username + password
-        let digest = Insecure.MD5.hash(data: hashInput.data(using: .utf8)!)
+        let hashData = hashInput.data(using: .utf8) ?? Data()
+        let digest = Insecure.MD5.hash(data: hashData)
         let hashHex = digest.map { String(format: "%02x", $0) }.joined()
         payload.appendString(hashHex)
 
@@ -349,11 +350,14 @@ enum MessageBuilder {
         let pageSize = 65536
         var compressedBuffer = [UInt8](repeating: 0, count: pageSize)
 
-        let compressedSize = data.withUnsafeBytes { sourceBuffer in
-            compression_encode_buffer(
+        let compressedSize = data.withUnsafeBytes { sourceBuffer -> Int in
+            guard let baseAddress = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                return 0
+            }
+            return compression_encode_buffer(
                 &compressedBuffer,
                 pageSize,
-                sourceBuffer.bindMemory(to: UInt8.self).baseAddress!,
+                baseAddress,
                 data.count,
                 nil,
                 COMPRESSION_ZLIB
