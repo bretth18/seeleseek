@@ -226,6 +226,33 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// UserInfoResponse (code 16) - respond to peer's request for our user info
+    nonisolated static func userInfoResponseMessage(
+        description: String,
+        picture: Data? = nil,
+        totalUploads: UInt32,
+        queueSize: UInt32,
+        hasFreeSlots: Bool
+    ) -> Data {
+        var payload = Data()
+        payload.appendUInt32(UInt32(PeerMessageCode.userInfoReply.rawValue))
+        payload.appendString(description)
+
+        if let picture = picture, !picture.isEmpty {
+            payload.appendUInt8(1)  // has picture = true
+            payload.appendUInt32(UInt32(picture.count))
+            payload.append(picture)
+        } else {
+            payload.appendUInt8(0)  // has picture = false
+        }
+
+        payload.appendUInt32(totalUploads)
+        payload.appendUInt32(queueSize)
+        payload.appendUInt8(hasFreeSlots ? 1 : 0)
+
+        return wrapMessage(payload)
+    }
+
     nonisolated static func searchReplyMessage(
         username: String,
         token: UInt32,

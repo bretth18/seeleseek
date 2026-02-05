@@ -71,6 +71,7 @@ final class PeerConnectionPool {
     var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
     var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
     var onSharesRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants to browse our shares
+    var onUserInfoRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants our user info
 
     // MARK: - Configuration
 
@@ -460,6 +461,14 @@ final class PeerConnectionPool {
                 await self.onSharesRequest?(peerUsername, conn)
             }
 
+            // Set up UserInfoRequest callback for incoming connections (peer wants our user info)
+            await connection.setOnUserInfoRequest { [weak self] conn in
+                guard let self else { return }
+                let peerUsername = await conn.getPeerUsername()
+                print("👤 UserInfoRequest from incoming (\(peerUsername)): peer wants our user info")
+                await self.onUserInfoRequest?(peerUsername, conn)
+            }
+
             // Track the connection (username will be determined after handshake)
             let info = PeerConnectionInfo(
                 id: connectionId,
@@ -716,6 +725,13 @@ final class PeerConnectionPool {
             guard let self else { return }
             print("📂 SharesRequest from \(username): peer wants to browse our shares")
             await self.onSharesRequest?(username, conn)
+        }
+
+        // Set up UserInfoRequest callback (peer wants our user info)
+        await connection.setOnUserInfoRequest { [weak self] conn in
+            guard let self else { return }
+            print("👤 UserInfoRequest from \(username): peer wants our user info")
+            await self.onUserInfoRequest?(username, conn)
         }
 
         await connection.setOnStateChanged { [weak self] state in

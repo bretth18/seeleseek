@@ -398,24 +398,30 @@ final class UploadManager {
         )
         activeUploads[pending.transferId] = active
 
-        // Request peer address for F connection
+        // Per protocol: Send ConnectToPeer FIRST, then GetPeerAddress
+        // ConnectToPeer (code 18) tells the server to forward our connection request to the peer
+        // If our direct connection fails, the peer will connect back to us with PierceFirewall
+
+        // Step 1: Send ConnectToPeer to server
+        // Use type "F" since this is for a file transfer connection
+        await networkClient.sendConnectToPeer(token: token, username: pending.username, connectionType: "F")
+        print("📤 Sent ConnectToPeer to server for upload to \(pending.username)")
+
+        // Register pending transfer BEFORE getting address, so PierceFirewall can find it
+        pendingTransfers[token] = pending
+        print("📝 Registered pending upload token=\(token) for PierceFirewall")
+
+        // Step 2: Request peer address for direct F connection attempt
+        // IMPORTANT: Always use getUserAddress to get the peer's actual LISTEN port,
+        // not the ephemeral source port from the existing P connection
         do {
-            // Get peer info from the existing connection
-            let peerInfo = pending.connection.peerInfo
-            let ip = peerInfo.ip
-            let port = peerInfo.port
-
-            guard !ip.isEmpty, port > 0 else {
-                // Need to get address from server - track this upload for when address comes back
-                logger.info("Requesting peer address for \(pending.username)")
-                pendingAddressLookups[pending.username] = (pending, token)
-                try await networkClient.getUserAddress(pending.username)
-                // The actual F connection will be triggered by handlePeerAddressForUpload callback
-                return
-            }
-
-            // Open F connection to peer
-            await openFileConnection(to: ip, port: port, pending: pending, token: token)
+            logger.info("Requesting peer address for F connection to \(pending.username)")
+            print("📞 Requesting peer address for upload to \(pending.username)")
+            pendingAddressLookups[pending.username] = (pending, token)
+            print("📝 Stored pending address lookup: \(pending.username) -> token=\(token)")
+            try await networkClient.getUserAddress(pending.username)
+            print("📤 GetPeerAddress request sent for \(pending.username)")
+            // The actual F connection will be triggered by handlePeerAddressForUpload callback
 
         } catch {
             logger.error("Failed to get peer address: \(error.localizedDescription)")
@@ -429,13 +435,17 @@ final class UploadManager {
 
     /// Handle peer address callback for pending uploads
     private func handlePeerAddressForUpload(username: String, ip: String, port: Int) async {
+        print("📬 handlePeerAddressForUpload called: \(username) -> \(ip):\(port)")
+        print("📝 Current pending lookups: \(Array(pendingAddressLookups.keys))")
+
         guard let (pending, token) = pendingAddressLookups.removeValue(forKey: username) else {
             // No pending upload for this username
+            print("⚠️ No pending upload lookup for \(username)")
             return
         }
 
         logger.info("Received peer address for upload to \(username): \(ip):\(port)")
-        print("📬 Received peer address for upload: \(username) -> \(ip):\(port)")
+        print("✅ Found pending upload for \(username), opening F connection to \(ip):\(port)")
 
         guard port > 0 else {
             logger.warning("Invalid port for \(username)")
@@ -507,24 +517,25 @@ final class UploadManager {
 
         guard connected else {
             logger.error("Failed direct F connection to peer \(pending.username)")
-            print("❌ Direct F connection failed, requesting indirect connection via server")
+            print("❌ Direct F connection failed, waiting for peer to connect to us")
 
-            // Try indirect connection - send CantConnectToPeer to server
-            // The server will tell the peer to connect to us instead
-            await networkClient.sendCantConnectToPeer(token: token, username: pending.username)
-            logger.info("Sent CantConnectToPeer for \(pending.username), waiting for indirect connection")
-            print("📤 Sent CantConnectToPeer for \(pending.username)")
+            // Direct connection failed (likely NAT/firewall)
+            // We already sent ConnectToPeer to the server before GetPeerAddress,
+            // so the server has already forwarded our request to the peer.
+            // The peer will now attempt to connect to us via PierceFirewall.
+            // We registered pendingTransfers[token] before GetPeerAddress, so we're ready.
+            // NOTE: Do NOT send CantConnectToPeer - that's what the PEER sends if THEY can't connect to US
 
-            // The peer should now connect to us with PierceFirewall
-            // We need to register this pending upload for when they connect
+            logger.info("Waiting for peer \(pending.username) to connect via PierceFirewall (token=\(token))")
+            print("⏳ Waiting for PierceFirewall from \(pending.username) with token=\(token)")
+
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .connecting
                 t.error = "Waiting for peer to connect (firewall)"
             }
 
-            // The indirect connection will be handled by the existing
-            // PierceFirewall handler in NetworkClient/PeerConnectionPool
-            // We just need to make sure our pending transfer is tracked
+            // Wait for PierceFirewall - the peer will connect to us with this token
+            // handlePierceFirewall will be called when the connection arrives
             return
         }
 
@@ -806,6 +817,238 @@ final class UploadManager {
                 t.error = "Cancelled"
             }
             logger.info("Cancelled upload: \(upload.filename)")
+        }
+    }
+
+    // MARK: - PierceFirewall Handling
+
+    /// Check if we have a pending upload for this token
+    func hasPendingUpload(token: UInt32) -> Bool {
+        return pendingTransfers[token] != nil
+    }
+
+    /// Handle PierceFirewall for upload (indirect connection from peer)
+    func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
+        guard let pending = pendingTransfers.removeValue(forKey: token) else {
+            logger.warning("No pending upload for PierceFirewall token \(token)")
+            print("⚠️ UploadManager: No pending upload for token \(token)")
+            return
+        }
+
+        logger.info("PierceFirewall matched to pending upload: \(pending.filename)")
+        print("✅ Upload PierceFirewall matched: \(pending.filename) for \(pending.username), token=\(token)")
+
+        // Update the connection's username (PierceFirewall doesn't include PeerInit with username)
+        await connection.setPeerUsername(pending.username)
+
+        // Update transfer status
+        transferState?.updateTransfer(id: pending.transferId) { t in
+            t.status = .connecting
+            t.error = nil
+        }
+
+        // Continue with file transfer using this connection
+        await continueUploadWithConnection(pending: pending, connection: connection)
+    }
+
+    /// Continue upload after indirect connection established via PierceFirewall
+    private func continueUploadWithConnection(pending: PendingUpload, connection: PeerConnection) async {
+        guard networkClient != nil else {
+            print("❌ NetworkClient is nil in continueUploadWithConnection")
+            return
+        }
+
+        // Track as active upload
+        let active = ActiveUpload(
+            transferId: pending.transferId,
+            username: pending.username,
+            filename: pending.filename,
+            localPath: pending.localPath,
+            size: pending.size,
+            token: pending.token,
+            startTime: Date()
+        )
+        activeUploads[pending.transferId] = active
+
+        transferState?.updateTransfer(id: pending.transferId) { t in
+            t.status = .transferring
+            t.startTime = Date()
+        }
+
+        do {
+            // For INDIRECT connections (via PierceFirewall), we do NOT send PeerInit.
+            // The connection is already identified by the token in PierceFirewall.
+            // PeerInit is only sent when WE initiate an outgoing connection.
+            //
+            // Per protocol for F connections after PierceFirewall:
+            // 1. Uploader sends FileTransferInit (just uint32 token, NO length prefix)
+            // 2. Downloader sends FileOffset (just uint64 offset, NO length prefix)
+            // 3. Uploader sends raw file data
+
+            print("📤 [UPLOAD] About to send FileTransferInit for token=\(pending.token)")
+            let connState = await connection.getState()
+            print("📤 [UPLOAD] Connection state: \(connState)")
+
+            // Send FileTransferInit - just the token, no length prefix
+            var tokenData = Data()
+            tokenData.appendUInt32(pending.token)
+            let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("📤 [UPLOAD] FileTransferInit bytes: \(tokenHex) (4 bytes)")
+
+            try await connection.sendRaw(tokenData)
+            print("📤 [UPLOAD] FileTransferInit sent successfully for token=\(pending.token)")
+
+            // Receive FileOffset from downloader (8 bytes, no length prefix)
+            print("📥 [UPLOAD] Waiting for FileOffset from downloader (8 bytes, 30s timeout)...")
+            let preReceiveState = await connection.getState()
+            print("📥 [UPLOAD] Connection state before receive: \(preReceiveState)")
+            let offsetData = try await connection.receiveRawBytes(count: 8, timeout: 30)
+            let offsetHex = offsetData.map { String(format: "%02x", $0) }.joined(separator: " ")
+            print("📥 [UPLOAD] FileOffset raw bytes: \(offsetHex)")
+            let offset = offsetData.readUInt64(at: 0) ?? 0
+            print("📥 [UPLOAD] Received FileOffset: offset=\(offset)")
+
+            // Send file data starting from offset
+            await sendFileDataViaPeerConnection(
+                connection: connection,
+                filePath: pending.localPath,
+                offset: offset,
+                transferId: pending.transferId,
+                totalSize: pending.size
+            )
+        } catch {
+            logger.error("Failed to continue upload via PierceFirewall: \(error.localizedDescription)")
+            print("❌ [UPLOAD] Failed upload via PierceFirewall: \(error)")
+            let failState = await connection.getState()
+            print("❌ [UPLOAD] Connection state at failure: \(failState)")
+            print("❌ [UPLOAD] Error type: \(type(of: error))")
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.status = .failed
+                t.error = error.localizedDescription
+            }
+            activeUploads.removeValue(forKey: pending.transferId)
+        }
+    }
+
+    /// Send file data over a PeerConnection (for indirect/PierceFirewall uploads)
+    private func sendFileDataViaPeerConnection(
+        connection: PeerConnection,
+        filePath: String,
+        offset: UInt64,
+        transferId: UUID,
+        totalSize: UInt64
+    ) async {
+        logger.info("Starting file transfer via PeerConnection: \(filePath) offset=\(offset)")
+        print("📤 Starting file send via PeerConnection: \(filePath) from offset \(offset)")
+
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            logger.error("File not found: \(filePath)")
+            transferState?.updateTransfer(id: transferId) { t in
+                t.status = .failed
+                t.error = "File not found"
+            }
+            activeUploads.removeValue(forKey: transferId)
+            return
+        }
+
+        guard let fileHandle = FileHandle(forReadingAtPath: filePath) else {
+            logger.error("Could not open file: \(filePath)")
+            transferState?.updateTransfer(id: transferId) { t in
+                t.status = .failed
+                t.error = "Could not open file"
+            }
+            activeUploads.removeValue(forKey: transferId)
+            return
+        }
+
+        defer {
+            try? fileHandle.close()
+        }
+
+        do {
+            try fileHandle.seek(toOffset: offset)
+        } catch {
+            logger.error("Could not seek to offset \(offset): \(error)")
+            transferState?.updateTransfer(id: transferId) { t in
+                t.status = .failed
+                t.error = "Could not seek in file"
+            }
+            activeUploads.removeValue(forKey: transferId)
+            return
+        }
+
+        let chunkSize = 16384  // 16KB chunks
+        var bytesSent: UInt64 = offset
+        let startTime = Date()
+        var lastProgressUpdate = Date()
+
+        while bytesSent < totalSize {
+            autoreleasepool {
+                // Read chunk from file
+                guard let chunk = try? fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                    return
+                }
+
+                // Send chunk
+                Task {
+                    do {
+                        try await connection.send(chunk)
+                    } catch {
+                        logger.error("Failed to send chunk: \(error)")
+                    }
+                }
+
+                bytesSent += UInt64(chunk.count)
+
+                // Update progress periodically
+                if Date().timeIntervalSince(lastProgressUpdate) >= 0.5 {
+                    lastProgressUpdate = Date()
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    let bytesTransferred = bytesSent - offset
+                    let speed = elapsed > 0 ? Int64(Double(bytesTransferred) / elapsed) : 0
+
+                    Task { @MainActor in
+                        self.transferState?.updateTransfer(id: transferId) { t in
+                            t.bytesTransferred = bytesSent
+                            t.speed = speed
+                        }
+                    }
+                }
+            }
+
+            // Small delay to prevent overwhelming the connection
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        // Complete
+        let elapsed = Date().timeIntervalSince(startTime)
+        let bytesTransferred = bytesSent - offset
+        let avgSpeed = elapsed > 0 ? Double(bytesTransferred) / elapsed : 0
+
+        logger.info("Upload complete: \(filePath) (\(bytesTransferred) bytes in \(String(format: "%.1f", elapsed))s, \(Int64(avgSpeed)) B/s)")
+        print("✅ Upload complete: \(ByteFormatter.format(Int64(bytesTransferred))) in \(String(format: "%.1f", elapsed))s")
+
+        transferState?.updateTransfer(id: transferId) { t in
+            t.status = .completed
+            t.bytesTransferred = bytesSent
+        }
+
+        activeUploads.removeValue(forKey: transferId)
+
+        // Record statistics
+        if let transfer = transferState?.getTransfer(id: transferId) {
+            statisticsState?.recordTransfer(
+                filename: transfer.filename,
+                username: transfer.username,
+                size: UInt64(bytesTransferred),
+                duration: elapsed,
+                isDownload: false
+            )
+
+            // Record to history database
+            Task {
+                try? await TransferRepository.recordCompletion(transfer)
+            }
         }
     }
 }

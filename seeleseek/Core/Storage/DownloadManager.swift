@@ -39,6 +39,7 @@ final class DownloadManager {
     private weak var networkClient: NetworkClient?
     private weak var transferState: TransferState?
     private weak var statisticsState: StatisticsState?
+    private weak var uploadManager: UploadManager?
 
     // MARK: - Pending Downloads
     // Maps token to pending download info
@@ -106,10 +107,11 @@ final class DownloadManager {
 
     // MARK: - Initialization
 
-    func configure(networkClient: NetworkClient, transferState: TransferState, statisticsState: StatisticsState) {
+    func configure(networkClient: NetworkClient, transferState: TransferState, statisticsState: StatisticsState, uploadManager: UploadManager) {
         self.networkClient = networkClient
         self.transferState = transferState
         self.statisticsState = statisticsState
+        self.uploadManager = uploadManager
 
         // Set up callbacks for peer address responses using multi-listener pattern
         print("🔧 DownloadManager: Adding peer address handler")
@@ -1610,6 +1612,13 @@ final class DownloadManager {
 
         // Find pending download by token
         guard let pending = pendingDownloads[token] else {
+            // Check if this is for a pending upload instead
+            if let uploadManager, uploadManager.hasPendingUpload(token: token) {
+                print("🔓 PierceFirewall token \(token) is for pending upload, delegating to UploadManager")
+                await uploadManager.handlePierceFirewall(token: token, connection: connection)
+                return
+            }
+
             print("⚠️ No pending download for PierceFirewall token \(token)")
             logger.debug("No pending download for PierceFirewall token \(token)")
             return

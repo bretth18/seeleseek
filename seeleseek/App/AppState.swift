@@ -31,7 +31,7 @@ final class AppState {
             searchState.setupCallbacks(client: _networkClient!)
             chatState.setupCallbacks(client: _networkClient!)
             browseState.configure(networkClient: _networkClient!)
-            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState)
+            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
         }
         return _networkClient!

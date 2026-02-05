@@ -144,6 +144,12 @@ final class NetworkClient {
             await self?.handleSharesRequest(username: username, connection: connection)
         }
 
+        // Wire up UserInfoRequest for when peers want our user info
+        peerConnectionPool.onUserInfoRequest = { [weak self] username, connection in
+            print("👤 NetworkClient: UserInfoRequest from \(username) - sending our user info")
+            await self?.handleUserInfoRequest(username: username, connection: connection)
+        }
+
         // Wire up user IP discovery for country flags
         peerConnectionPool.onUserIPDiscovered = { [weak self] username, ip in
             self?.userInfoCache.registerIP(ip, for: username)
@@ -1101,6 +1107,37 @@ final class NetworkClient {
         } catch {
             logger.error("Failed to send shares to \(username): \(error.localizedDescription)")
             print("❌ Failed to send shares: \(error)")
+        }
+    }
+
+    // MARK: - User Info Request Handling
+
+    /// Handle incoming user info request - respond with our profile info
+    private func handleUserInfoRequest(username: String, connection: PeerConnection) async {
+        logger.info("User info request from \(username)")
+        print("👤 Handling UserInfoRequest from \(username)")
+
+        // Get upload stats
+        let totalUploads = UInt32(shareManager.totalFiles)  // Could track actual upload count
+        let queueSize = UInt32(0)  // Could get from upload manager
+        let hasFreeSlots = true  // Could check upload manager
+
+        // User description - could be configurable
+        let description = "SeeleSeek - Soulseek client for macOS"
+
+        do {
+            try await connection.sendUserInfo(
+                description: description,
+                picture: nil,  // No picture support yet
+                totalUploads: totalUploads,
+                queueSize: queueSize,
+                hasFreeSlots: hasFreeSlots
+            )
+            logger.info("Sent user info to \(username)")
+            print("👤 Sent user info to \(username)")
+        } catch {
+            logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
+            print("❌ Failed to send user info: \(error)")
         }
     }
 

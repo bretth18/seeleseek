@@ -82,6 +82,7 @@ actor PeerConnection {
     private var _onFolderContentsResponse: ((UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
     private var _onPlaceInQueueRequest: ((String, String) async -> Void)?  // (username, filename) - peer asks for queue position
     private var _onSharesRequest: ((PeerConnection) async -> Void)?  // Peer wants to browse our shares
+    private var _onUserInfoRequest: ((PeerConnection) async -> Void)?  // Peer wants our user info
 
     // Callback setters for external access
     func setOnStateChanged(_ handler: @escaping (State) async -> Void) {
@@ -161,9 +162,36 @@ actor PeerConnection {
         _onSharesRequest = handler
     }
 
+    func setOnUserInfoRequest(_ handler: @escaping (PeerConnection) async -> Void) {
+        _onUserInfoRequest = handler
+    }
+
     /// Get the discovered peer username (from PeerInit message)
     func getPeerUsername() -> String {
         return peerUsername
+    }
+
+    /// Set the peer username (used when matching PierceFirewall to pending uploads)
+    func setPeerUsername(_ username: String) {
+        peerUsername = username
+        // Also update peerInfo for consistency
+        peerInfo = PeerInfo(
+            username: username,
+            ip: peerInfo.ip,
+            port: peerInfo.port,
+            uploadSpeed: peerInfo.uploadSpeed,
+            downloadSpeed: peerInfo.downloadSpeed,
+            freeUploadSlots: peerInfo.freeUploadSlots,
+            queueLength: peerInfo.queueLength,
+            sharedFiles: peerInfo.sharedFiles,
+            sharedFolders: peerInfo.sharedFolders
+        )
+        print("📝 [\(username)] Updated peer username")
+    }
+
+    /// Get the connection state (for debug logging from other actors)
+    func getState() -> State {
+        return state
     }
 
     // Statistics
@@ -410,6 +438,26 @@ actor PeerConnection {
         try await send(message)
     }
 
+    /// Send our user info in response to UserInfoRequest
+    func sendUserInfo(
+        description: String,
+        picture: Data? = nil,
+        totalUploads: UInt32,
+        queueSize: UInt32,
+        hasFreeSlots: Bool
+    ) async throws {
+        let message = MessageBuilder.userInfoResponseMessage(
+            description: description,
+            picture: picture,
+            totalUploads: totalUploads,
+            queueSize: queueSize,
+            hasFreeSlots: hasFreeSlots
+        )
+        print("👤 [\(peerInfo.username)] Sending UserInfoResponse: desc='\(description)' uploads=\(totalUploads) queue=\(queueSize) freeSlots=\(hasFreeSlots)")
+        try await send(message)
+        logger.info("Sent user info to \(self.peerInfo.username)")
+    }
+
     func sendSearchReply(username: String, token: UInt32, results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]) async throws {
         let message = MessageBuilder.searchReplyMessage(
             username: username,
@@ -556,23 +604,42 @@ actor PeerConnection {
             throw PeerError.notConnected
         }
 
-        print("📥 [\(peerInfo.username)] Waiting for \(count) raw bytes (timeout: \(timeout)s)...")
+        // First, check if we already have enough data in the file transfer buffer
+        // (this can happen when data arrives before we stop the receive loop)
+        if fileTransferBuffer.count >= count {
+            let data = fileTransferBuffer.prefix(count)
+            fileTransferBuffer.removeFirst(count)
+            print("📥 [\(peerInfo.username)] Got \(count) raw bytes from file transfer buffer")
+            return Data(data)
+        }
+
+        // If we have some buffered data but not enough, we need to receive more
+        let neededFromNetwork = count - fileTransferBuffer.count
+        print("📥 [\(peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
 
         return try await withThrowingTaskGroup(of: Data.self) { group in
-            group.addTask {
+            group.addTask { [self] in
                 try await withCheckedThrowingContinuation { continuation in
-                    connection.receive(minimumIncompleteLength: count, maximumLength: count) { [weak self] data, _, _, error in
+                    connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
                         if let error {
                             print("❌ [\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
                             continuation.resume(throwing: error)
-                        } else if let data, data.count >= count {
-                            print("✅ [\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes")
+                        } else if let data, data.count >= neededFromNetwork {
+                            print("✅ [\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
                             Task {
                                 await self?.recordReceived(data.count)
                             }
-                            continuation.resume(returning: data)
+                            // Combine buffered data with newly received data
+                            if let self = self, !self.fileTransferBuffer.isEmpty {
+                                var combined = self.fileTransferBuffer
+                                combined.append(data)
+                                self.fileTransferBuffer.removeAll()
+                                continuation.resume(returning: Data(combined.prefix(count)))
+                            } else {
+                                continuation.resume(returning: data)
+                            }
                         } else {
-                            print("❌ [\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(count)")
+                            print("❌ [\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
                             continuation.resume(throwing: PeerError.connectionClosed)
                         }
                     }
@@ -830,6 +897,17 @@ actor PeerConnection {
                     print("📡 [\(username)] No data received")
                 }
 
+                // Re-check shouldStopReceiving AFTER processing data.
+                // This is critical because handleReceivedData may have processed
+                // a PierceFirewall message that set shouldStopReceiving = true
+                // and already started a receiveRawBytes() call.
+                // If we start another receive here, we'd have two concurrent
+                // receives and cause a race condition.
+                if await self.shouldStopReceiving {
+                    print("📡 [\(username)] Receive loop stopped after processing (file transfer mode)")
+                    return
+                }
+
                 if isComplete {
                     print("📡 [\(username)] Connection complete, disconnecting")
                     await self.disconnect()
@@ -925,9 +1003,19 @@ actor PeerConnection {
                 receiveBuffer.removeFirst(totalLength)
                 messagesReceived += 1
 
-                await handlePeerMessage(code: code, payload: payload)
+                // Route to distributed message handler (connected via setOnMessage in ServerMessageHandler)
+                await _onMessage?(code, payload)
             } else {
                 // Peer message with 4-byte code
+                // Minimum valid peer message: 4 bytes length + 4 bytes code = 8 bytes total, so length >= 4
+                guard length >= 4 else {
+                    print("📥 [\(peerInfo.username)] Invalid peer message length \(length) < 4 - likely raw file transfer data")
+                    // This data is not a valid peer message - could be file transfer data on wrong connection
+                    // Move to file transfer buffer and stop parsing
+                    fileTransferBuffer.append(receiveBuffer)
+                    receiveBuffer.removeAll()
+                    break
+                }
                 guard receiveBuffer.count >= 8 else {
                     print("📥 [\(peerInfo.username)] Buffer too small for peer message header")
                     break
@@ -954,9 +1042,24 @@ actor PeerConnection {
         switch code {
         case PeerMessageCode.pierceFirewall.rawValue:
             // Firewall pierce - extract token and notify for matching to pending downloads
+            // This connection will now be used for file transfer (raw bytes, no message framing)
             if let token = payload.readUInt32(at: 0) {
                 logger.info("PierceFirewall with token: \(token)")
                 print("🔓 PierceFirewall received with token: \(token)")
+
+                // CRITICAL: Stop receive loop IMMEDIATELY before invoking callback
+                // After PierceFirewall, the connection switches to raw file transfer mode.
+                // The next bytes will be FileOffset (8 raw bytes), not a length-prefixed message.
+                shouldStopReceiving = true
+                print("🔓 PierceFirewall: stopped receive loop for file transfer mode")
+
+                // Move any remaining receive buffer data to file transfer buffer
+                if !receiveBuffer.isEmpty {
+                    fileTransferBuffer.append(receiveBuffer)
+                    print("🔓 PierceFirewall: moved \(receiveBuffer.count) bytes to file transfer buffer")
+                    receiveBuffer.removeAll()
+                }
+
                 await _onPierceFirewall?(token)
             }
             handshakeComplete = true
@@ -1073,6 +1176,9 @@ actor PeerConnection {
         case UInt32(PeerMessageCode.placeInQueueRequest.rawValue):
             await handlePlaceInQueueRequest(payload)
 
+        case UInt32(PeerMessageCode.userInfoRequest.rawValue):
+            await handleUserInfoRequest()
+
         default:
             logger.debug("Unhandled peer message code: \(code)")
             await _onMessage?(code, payload)
@@ -1089,6 +1195,19 @@ actor PeerConnection {
             await callback(self)
         } else {
             print("⚠️ [\(self.peerUsername)] No onSharesRequest callback set!")
+        }
+    }
+
+    /// Handle UserInfoRequest (code 15) - peer wants our user info
+    private func handleUserInfoRequest() async {
+        logger.info("Peer \(self.peerUsername) requested our user info")
+        print("👤 [\(self.peerUsername)] Peer wants our user info, invoking callback...")
+
+        // Delegate to callback which will send the user info
+        if let callback = _onUserInfoRequest {
+            await callback(self)
+        } else {
+            print("⚠️ [\(self.peerUsername)] No onUserInfoRequest callback set!")
         }
     }
 

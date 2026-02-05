@@ -110,6 +110,8 @@ final class ServerMessageHandler {
             handlePrivateRoomOperatorRevoked(payload)
         case .privateRoomOperators:
             handlePrivateRoomOperators(payload)
+        case .cantConnectToPeer:
+            handleCantConnectToPeer(payload)
         default:
             // Log unhandled message with more detail
             print("📨 Unhandled server message: \(code) (code=\(codeValue)) payload=\(payload.count) bytes")
@@ -1086,6 +1088,23 @@ final class ServerMessageHandler {
 
         print("🔒 Private room \(room) operators: \(operators.count)")
         client?.onPrivateRoomOperators?(room, operators)
+    }
+
+    private func handleCantConnectToPeer(_ data: Data) {
+        // Server tells us the peer couldn't connect to us
+        // Format: uint32 token
+        guard let token = data.readUInt32(at: 0) else {
+            logger.warning("Failed to parse CantConnectToPeer token")
+            return
+        }
+
+        logger.warning("Peer couldn't connect to us (CantConnectToPeer): token=\(token)")
+        print("❌ PEER COULDN'T CONNECT: CantConnectToPeer token=\(token)")
+        print("   This means the peer received our ConnectToPeer but couldn't reach our listen port.")
+        print("   Possible causes: NAT/firewall blocking incoming connections, wrong listen port reported")
+
+        // TODO: Could notify the upload/download manager to mark the transfer as failed
+        // For now, just log it for debugging
     }
 
     // MARK: - Helpers
