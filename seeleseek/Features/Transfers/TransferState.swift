@@ -191,6 +191,23 @@ final class TransferState {
         return uploads.first(where: { $0.id == id })
     }
 
+    /// Check if a file is already queued or downloading
+    func downloadStatus(for filename: String, from username: String) -> Transfer.TransferStatus? {
+        downloads.first {
+            $0.filename == filename && $0.username == username
+        }?.status
+    }
+
+    /// Check if any file with this exact path exists in downloads (any state except completed/cancelled)
+    func isFileQueued(filename: String, username: String) -> Bool {
+        downloads.contains {
+            $0.filename == filename &&
+            $0.username == username &&
+            $0.status != .completed &&
+            $0.status != .cancelled
+        }
+    }
+
     func addDownload(_ transfer: Transfer) {
         downloads.insert(transfer, at: 0)
         persistTransfer(transfer)

@@ -11,6 +11,7 @@ struct SearchResult: Identifiable, Hashable, Sendable {
     let freeSlots: Bool
     let uploadSpeed: UInt32
     let queueLength: UInt32
+    let isPrivate: Bool  // Buddy-only / locked file
 
     nonisolated init(
         id: UUID = UUID(),
@@ -22,7 +23,8 @@ struct SearchResult: Identifiable, Hashable, Sendable {
         isVBR: Bool = false,
         freeSlots: Bool = true,
         uploadSpeed: UInt32 = 0,
-        queueLength: UInt32 = 0
+        queueLength: UInt32 = 0,
+        isPrivate: Bool = false
     ) {
         self.id = id
         self.username = username
@@ -34,6 +36,7 @@ struct SearchResult: Identifiable, Hashable, Sendable {
         self.freeSlots = freeSlots
         self.uploadSpeed = uploadSpeed
         self.queueLength = queueLength
+        self.isPrivate = isPrivate
     }
 
     var displayFilename: String {

@@ -34,6 +34,7 @@ final class AppState {
         if _networkClient == nil {
             _networkClient = NetworkClient()
             // Set up callbacks when client is first accessed
+            searchState.settings = settings
             searchState.setupCallbacks(client: _networkClient!)
             chatState.setupCallbacks(client: _networkClient!)
             browseState.configure(networkClient: _networkClient!)

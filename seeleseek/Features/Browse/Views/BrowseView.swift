@@ -389,6 +389,17 @@ struct FileTreeRow: View {
         browseState.expandedFolders.contains(file.id)
     }
 
+    /// Check download status for this file
+    private var downloadStatus: Transfer.TransferStatus? {
+        guard !file.isDirectory else { return nil }
+        return appState.transferState.downloadStatus(for: file.filename, from: username)
+    }
+
+    private var isQueued: Bool {
+        guard let status = downloadStatus else { return false }
+        return status != .completed && status != .cancelled && status != .failed
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: SeeleSpacing.sm) {
@@ -419,17 +430,28 @@ struct FileTreeRow: View {
                     .foregroundStyle(SeeleColors.textPrimary)
                     .lineLimit(1)
 
+                // Private/locked indicator (buddy-only)
+                if file.isPrivate {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: SeeleSpacing.iconSizeXS))
+                        .foregroundStyle(SeeleColors.warning)
+                        .help("Private file - only shared with buddies")
+                }
+
                 Spacer()
 
-                // Size (for files)
-                if !file.isDirectory {
-                    Text(file.formattedSize)
-                        .font(SeeleTypography.monoSmall)
-                        .foregroundStyle(SeeleColors.textTertiary)
+                // Size (for files) or file count (for folders)
+                if file.isDirectory {
+                    if let children = file.children {
+                        let fileCount = countFiles(in: children)
+                        Text("\(fileCount) files")
+                            .font(SeeleTypography.monoSmall)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
 
-                    // Download button
+                    // Download folder button
                     Button {
-                        downloadFile()
+                        downloadFolder()
                     } label: {
                         Image(systemName: "arrow.down.circle")
                             .font(.system(size: SeeleSpacing.iconSize))
@@ -437,7 +459,24 @@ struct FileTreeRow: View {
                     }
                     .buttonStyle(.plain)
                     .opacity(isHovered ? 1 : 0)
-                    .help("Download file")
+                    .help("Download folder")
+                } else {
+                    Text(file.formattedSize)
+                        .font(SeeleTypography.monoSmall)
+                        .foregroundStyle(SeeleColors.textTertiary)
+
+                    // Download button with status indicator
+                    Button {
+                        if !isQueued {
+                            downloadFile()
+                        }
+                    } label: {
+                        downloadButtonIcon
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(isHovered || isQueued ? 1 : 0)
+                    .disabled(isQueued)
+                    .help(downloadButtonHelp)
                 }
             }
             .padding(.horizontal, SeeleSpacing.lg)
@@ -484,6 +523,111 @@ struct FileTreeRow: View {
         )
 
         appState.downloadManager.queueDownload(from: result)
+    }
+
+    private func downloadFolder() {
+        guard file.isDirectory, let children = file.children else { return }
+
+        let allFiles = collectAllFiles(in: children)
+        print("📁 Browse download folder: \(file.displayName) (\(allFiles.count) files)")
+
+        var queuedCount = 0
+        for childFile in allFiles {
+            // Skip if already queued
+            if !appState.transferState.isFileQueued(filename: childFile.filename, username: username) {
+                let result = SearchResult(
+                    username: username,
+                    filename: childFile.filename,
+                    size: childFile.size,
+                    bitrate: childFile.bitrate,
+                    duration: childFile.duration,
+                    isVBR: false,
+                    freeSlots: true,
+                    uploadSpeed: 0,
+                    queueLength: 0
+                )
+                appState.downloadManager.queueDownload(from: result)
+                queuedCount += 1
+            }
+        }
+
+        if queuedCount > 0 {
+            print("✅ Queued \(queuedCount) files from folder")
+        } else {
+            print("ℹ️ All files in folder already queued")
+        }
+    }
+
+    /// Recursively collect all files from a folder
+    private func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {
+        var result: [SharedFile] = []
+        for f in files {
+            if f.isDirectory {
+                if let children = f.children {
+                    result.append(contentsOf: collectAllFiles(in: children))
+                }
+            } else {
+                result.append(f)
+            }
+        }
+        return result
+    }
+
+    /// Count files recursively in a folder
+    private func countFiles(in files: [SharedFile]) -> Int {
+        var count = 0
+        for f in files {
+            if f.isDirectory {
+                if let children = f.children {
+                    count += countFiles(in: children)
+                }
+            } else {
+                count += 1
+            }
+        }
+        return count
+    }
+
+    @ViewBuilder
+    private var downloadButtonIcon: some View {
+        switch downloadStatus {
+        case .transferring:
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: SeeleSpacing.iconSize))
+                .foregroundStyle(SeeleColors.accent)
+                .symbolEffect(.pulse)
+        case .queued, .waiting, .connecting:
+            Image(systemName: "clock.fill")
+                .font(.system(size: SeeleSpacing.iconSize))
+                .foregroundStyle(SeeleColors.warning)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: SeeleSpacing.iconSize))
+                .foregroundStyle(SeeleColors.success)
+        case .failed, .cancelled, nil:
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: SeeleSpacing.iconSize))
+                .foregroundStyle(SeeleColors.textSecondary)
+        }
+    }
+
+    private var downloadButtonHelp: String {
+        switch downloadStatus {
+        case .transferring:
+            return "Downloading..."
+        case .queued, .waiting:
+            return "Queued for download"
+        case .connecting:
+            return "Connecting..."
+        case .completed:
+            return "Download complete"
+        case .failed:
+            return "Download failed - click to retry"
+        case .cancelled:
+            return "Download cancelled - click to retry"
+        case nil:
+            return "Download file"
+        }
     }
 }
 

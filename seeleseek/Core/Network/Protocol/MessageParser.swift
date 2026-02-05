@@ -200,6 +200,15 @@ enum MessageParser {
         let size: UInt64
         let `extension`: String
         let attributes: [FileAttribute]
+        let isPrivate: Bool  // Buddy-only / locked file
+
+        init(filename: String, size: UInt64, extension: String, attributes: [FileAttribute], isPrivate: Bool = false) {
+            self.filename = filename
+            self.size = size
+            self.extension = `extension`
+            self.attributes = attributes
+            self.isPrivate = isPrivate
+        }
     }
 
     struct FileAttribute: Sendable {
@@ -265,7 +274,7 @@ enum MessageParser {
                 attributes.append(FileAttribute(type: attrType, value: attrValue))
             }
 
-            files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes))
+            files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes, isPrivate: false))
         }
 
         let freeSlots = payload.readBool(at: offset) ?? true
@@ -275,6 +284,55 @@ enum MessageParser {
         offset += 4
 
         let queueLength = payload.readUInt32(at: offset) ?? 0
+        offset += 4
+
+        // Parse privately shared results (buddy-only files)
+        // These come after the regular file list and are only visible if we're on the user's buddy list
+        // Note: Some clients may send an extra "free upload slots" uint32 after queueLength
+        let remainingBytes = payload.count - offset
+        if remainingBytes >= 4 {
+            let potentialPrivateCount = payload.readUInt32(at: offset) ?? 0
+
+            // Validate: private file count should be reasonable (not garbage data)
+            // If it's 0 or suspiciously large (> 10000), it's likely not a private file count
+            if potentialPrivateCount > 0 && potentialPrivateCount <= 10000 {
+                offset += 4
+                var privateFilesParsed = 0
+
+                for _ in 0..<potentialPrivateCount {
+                    guard payload.readUInt8(at: offset) != nil else { break }
+                    offset += 1
+
+                    guard let (filename, filenameLen) = payload.readString(at: offset) else { break }
+                    offset += filenameLen
+
+                    guard let size = payload.readUInt64(at: offset) else { break }
+                    offset += 8
+
+                    guard let (ext, extLen) = payload.readString(at: offset) else { break }
+                    offset += extLen
+
+                    guard let attrCount = payload.readUInt32(at: offset) else { break }
+                    offset += 4
+
+                    var attributes: [FileAttribute] = []
+                    for _ in 0..<attrCount {
+                        guard let attrType = payload.readUInt32(at: offset) else { break }
+                        offset += 4
+                        guard let attrValue = payload.readUInt32(at: offset) else { break }
+                        offset += 4
+                        attributes.append(FileAttribute(type: attrType, value: attrValue))
+                    }
+
+                    files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes, isPrivate: true))
+                    privateFilesParsed += 1
+                }
+
+                if privateFilesParsed > 0 {
+                    print("🔒 Parsed \(privateFilesParsed) private/buddy-only files from \(username)")
+                }
+            }
+        }
 
         return SearchReplyInfo(
             username: username,

@@ -1315,13 +1315,75 @@ actor PeerConnection {
                     filename: "\(dirName)\\\(filename)",
                     size: size,
                     bitrate: bitrate,
-                    duration: duration
+                    duration: duration,
+                    isPrivate: false
                 )
                 files.append(file)
             }
         }
 
-        print("📂 [\(peerInfo.username)] Parsed \(files.count) files, callback set: \(_onSharesReceived != nil)")
+        // Skip the "unknown" uint32 (always 0 per protocol)
+        if offset + 4 <= decompressed.count {
+            offset += 4
+        }
+
+        // Parse private directories (buddy-only files)
+        if let privateDirCount = decompressed.readUInt32(at: offset) {
+            offset += 4
+            print("📂 [\(peerInfo.username)] Private directory count: \(privateDirCount)")
+
+            for _ in 0..<privateDirCount {
+                guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break }
+                offset += dirLen
+
+                guard let fileCount = decompressed.readUInt32(at: offset) else { break }
+                offset += 4
+
+                for _ in 0..<fileCount {
+                    guard decompressed.readByte(at: offset) != nil else { break }
+                    offset += 1
+
+                    guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
+                    offset += filenameLen
+
+                    guard let size = decompressed.readUInt64(at: offset) else { break }
+                    offset += 8
+
+                    guard let (_, extLen) = decompressed.readString(at: offset) else { break }
+                    offset += extLen
+
+                    guard let attrCount = decompressed.readUInt32(at: offset) else { break }
+                    offset += 4
+
+                    var bitrate: UInt32?
+                    var duration: UInt32?
+
+                    for _ in 0..<attrCount {
+                        guard let attrType = decompressed.readUInt32(at: offset) else { break }
+                        offset += 4
+                        guard let attrValue = decompressed.readUInt32(at: offset) else { break }
+                        offset += 4
+
+                        switch attrType {
+                        case 0: bitrate = attrValue
+                        case 1: duration = attrValue
+                        default: break
+                        }
+                    }
+
+                    let file = SharedFile(
+                        filename: "\(dirName)\\\(filename)",
+                        size: size,
+                        bitrate: bitrate,
+                        duration: duration,
+                        isPrivate: true  // Mark as private/locked
+                    )
+                    files.append(file)
+                }
+            }
+        }
+
+        print("📂 [\(peerInfo.username)] Parsed \(files.count) files (including private), callback set: \(_onSharesReceived != nil)")
         logger.info("Received \(files.count) shared files from \(self.peerInfo.username)")
         await _onSharesReceived?(files)
     }
@@ -1365,7 +1427,8 @@ actor PeerConnection {
                 duration: file.attributes.first { $0.type == 1 }?.value,
                 freeSlots: parsed.freeSlots,
                 uploadSpeed: parsed.uploadSpeed,
-                queueLength: parsed.queueLength
+                queueLength: parsed.queueLength,
+                isPrivate: file.isPrivate
             )
         }
 

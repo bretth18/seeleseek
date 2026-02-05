@@ -116,6 +116,15 @@ struct GeneralSettingsSection: View {
                 folderPicker("Incomplete Files", url: $settings.incompleteLocation)
             }
 
+            settingsGroup("Search") {
+                settingsNumberField("Max Results", value: $settings.maxSearchResults, range: 0...10000, placeholder: "0 = Unlimited")
+                settingsRow {
+                    Text("Stop collecting results after this limit. 0 = unlimited.")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+            }
+
             settingsGroup("Startup") {
                 settingsToggle("Launch at login", isOn: $settings.launchAtLogin)
                 settingsToggle("Show in menu bar", isOn: $settings.showInMenuBar)

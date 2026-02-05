@@ -32,6 +32,9 @@ final class SearchState {
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
 
+    // MARK: - Settings Reference
+    weak var settings: SettingsState?
+
     // MARK: - Shared Activity Tracker
     static let activityTracker = SearchActivityState()
 
@@ -279,11 +282,40 @@ final class SearchState {
             return
         }
 
-        searches[index].results.append(contentsOf: results)
-        logger.info("Added \(results.count) results to '\(self.searches[index].query)' (total: \(self.searches[index].results.count))")
+        let maxResults = settings?.maxSearchResults ?? 500
+        let currentCount = searches[index].results.count
+
+        // Check if we've already reached the limit
+        if maxResults > 0 && currentCount >= maxResults {
+            // Already at limit, mark search complete if still searching
+            if searches[index].isSearching {
+                logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
+                searches[index].isSearching = false
+            }
+            return
+        }
+
+        // Calculate how many results we can add
+        var resultsToAdd = results
+        if maxResults > 0 {
+            let remaining = maxResults - currentCount
+            if results.count > remaining {
+                resultsToAdd = Array(results.prefix(remaining))
+                logger.info("Truncating results from \(results.count) to \(remaining) to stay within limit")
+            }
+        }
+
+        searches[index].results.append(contentsOf: resultsToAdd)
+        logger.info("Added \(resultsToAdd.count) results to '\(self.searches[index].query)' (total: \(self.searches[index].results.count))")
 
         // Record results count in activity tracker
-        SearchState.activityTracker.recordSearchResults(query: searches[index].query, count: results.count)
+        SearchState.activityTracker.recordSearchResults(query: searches[index].query, count: resultsToAdd.count)
+
+        // Check if we've now reached the limit
+        if maxResults > 0 && searches[index].results.count >= maxResults {
+            logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
+            searches[index].isSearching = false
+        }
     }
 
     /// Mark a search as complete (no longer receiving results)

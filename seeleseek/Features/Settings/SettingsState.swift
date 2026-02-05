@@ -11,6 +11,7 @@ final class SettingsState {
     private let maxUploadSlotsKey = "settings.maxUploadSlots"
     private let uploadSpeedLimitKey = "settings.uploadSpeedLimit"
     private let downloadSpeedLimitKey = "settings.downloadSpeedLimit"
+    private let maxSearchResultsKey = "settings.maxSearchResults"
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -62,6 +63,15 @@ final class SettingsState {
         }
     }
 
+    // MARK: - Search Settings
+    /// Maximum number of search results to collect (0 = unlimited)
+    var maxSearchResults: Int = 500 {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
     // MARK: - Shares Settings
     var sharedFolders: [URL] = []
     var rescanOnStartup: Bool = true
@@ -105,6 +115,7 @@ final class SettingsState {
         maxUploadSlots = 5
         uploadSpeedLimit = 0
         downloadSpeedLimit = 0
+        maxSearchResults = 500
         rescanOnStartup = true
         shareHiddenFiles = false
         autoFetchMetadata = true
@@ -131,6 +142,7 @@ final class SettingsState {
         UserDefaults.standard.set(maxUploadSlots, forKey: maxUploadSlotsKey)
         UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
         UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
+        UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
 
         // Save to database asynchronously
         Task {
@@ -147,6 +159,7 @@ final class SettingsState {
             try await SettingsRepository.set("maxUploadSlots", value: maxUploadSlots)
             try await SettingsRepository.set("uploadSpeedLimit", value: uploadSpeedLimit)
             try await SettingsRepository.set("downloadSpeedLimit", value: downloadSpeedLimit)
+            try await SettingsRepository.set("maxSearchResults", value: maxSearchResults)
             logger.debug("Settings saved to database")
         } catch {
             logger.error("Failed to save settings to database: \(error.localizedDescription)")
@@ -181,6 +194,9 @@ final class SettingsState {
         if UserDefaults.standard.object(forKey: downloadSpeedLimitKey) != nil {
             downloadSpeedLimit = UserDefaults.standard.integer(forKey: downloadSpeedLimitKey)
         }
+        if UserDefaults.standard.object(forKey: maxSearchResultsKey) != nil {
+            maxSearchResults = UserDefaults.standard.integer(forKey: maxSearchResultsKey)
+        }
     }
 
     /// Load settings from database (called after DB initialization)
@@ -197,6 +213,7 @@ final class SettingsState {
             maxUploadSlots = try await SettingsRepository.get("maxUploadSlots", default: maxUploadSlots)
             uploadSpeedLimit = try await SettingsRepository.get("uploadSpeedLimit", default: uploadSpeedLimit)
             downloadSpeedLimit = try await SettingsRepository.get("downloadSpeedLimit", default: downloadSpeedLimit)
+            maxSearchResults = try await SettingsRepository.get("maxSearchResults", default: maxSearchResults)
 
             logger.info("Settings loaded from database")
         } catch {

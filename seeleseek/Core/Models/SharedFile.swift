@@ -7,6 +7,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     let bitrate: UInt32?
     let duration: UInt32?
     let isDirectory: Bool
+    let isPrivate: Bool  // Buddy-only / locked file
     var children: [SharedFile]?
 
     nonisolated init(
@@ -16,6 +17,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         bitrate: UInt32? = nil,
         duration: UInt32? = nil,
         isDirectory: Bool = false,
+        isPrivate: Bool = false,
         children: [SharedFile]? = nil
     ) {
         self.id = id
@@ -24,6 +26,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         self.bitrate = bitrate
         self.duration = duration
         self.isDirectory = isDirectory
+        self.isPrivate = isPrivate
         self.children = children
     }
 

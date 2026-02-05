@@ -8,6 +8,15 @@ struct SearchResultRow: View {
     let result: SearchResult
     @State private var isHovered = false
 
+    /// Check if this file is already queued/downloading
+    private var downloadStatus: Transfer.TransferStatus? {
+        appState.transferState.downloadStatus(for: result.filename, from: result.username)
+    }
+
+    private var isQueued: Bool {
+        downloadStatus != nil && downloadStatus != .completed && downloadStatus != .cancelled && downloadStatus != .failed
+    }
+
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
             // File type icon
@@ -56,6 +65,14 @@ struct SearchResultRow: View {
 
                 metadataBadge(result.formattedSize, color: SeeleColors.textTertiary)
 
+                // Private/locked indicator (buddy-only)
+                if result.isPrivate {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
+                        .foregroundStyle(SeeleColors.warning)
+                        .help("Private file - only shared with buddies")
+                }
+
                 // Queue/slot indicator
                 if result.freeSlots {
                     Image(systemName: "checkmark.circle.fill")
@@ -85,14 +102,15 @@ struct SearchResultRow: View {
 
             // Download button
             Button {
-                downloadFile()
+                if !isQueued {
+                    downloadFile()
+                }
             } label: {
-                Image(systemName: "arrow.down.circle")
-                    .font(.system(size: SeeleSpacing.iconSizeMedium))
-                    .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
+                downloadButtonIcon
             }
             .buttonStyle(.plain)
-            .help("Download file")
+            .disabled(isQueued)
+            .help(downloadButtonHelp)
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)
@@ -106,7 +124,18 @@ struct SearchResultRow: View {
             Button {
                 downloadFile()
             } label: {
-                Label("Download", systemImage: "arrow.down.circle")
+                if isQueued {
+                    Label("Downloading...", systemImage: "arrow.down.circle.fill")
+                } else {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
+            }
+            .disabled(isQueued)
+
+            Button {
+                downloadFolder()
+            } label: {
+                Label("Download folder", systemImage: "folder.badge.plus")
             }
 
             Divider()
@@ -184,6 +213,48 @@ struct SearchResultRow: View {
         }
     }
 
+    @ViewBuilder
+    private var downloadButtonIcon: some View {
+        switch downloadStatus {
+        case .transferring:
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: SeeleSpacing.iconSizeMedium))
+                .foregroundStyle(SeeleColors.accent)
+                .symbolEffect(.pulse)
+        case .queued, .waiting, .connecting:
+            Image(systemName: "clock.fill")
+                .font(.system(size: SeeleSpacing.iconSizeMedium))
+                .foregroundStyle(SeeleColors.warning)
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: SeeleSpacing.iconSizeMedium))
+                .foregroundStyle(SeeleColors.success)
+        case .failed, .cancelled, nil:
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: SeeleSpacing.iconSizeMedium))
+                .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
+        }
+    }
+
+    private var downloadButtonHelp: String {
+        switch downloadStatus {
+        case .transferring:
+            return "Downloading..."
+        case .queued, .waiting:
+            return "Queued for download"
+        case .connecting:
+            return "Connecting..."
+        case .completed:
+            return "Download complete"
+        case .failed:
+            return "Download failed - click to retry"
+        case .cancelled:
+            return "Download cancelled - click to retry"
+        case nil:
+            return "Download file"
+        }
+    }
+
     private var countryFlag: String? {
         appState.networkClient.userInfoCache.flag(for: result.username)
     }
@@ -214,6 +285,36 @@ struct SearchResultRow: View {
         // Pass the full filename path so we can expand to the file's location
         appState.browseState.browseUser(result.username, targetPath: result.filename)
         appState.sidebarSelection = .browse
+    }
+
+    private func downloadFolder() {
+        // Find all files from the same folder and user in current search results
+        guard let currentSearch = appState.searchState.currentSearch else {
+            // Fallback: just download this file
+            downloadFile()
+            return
+        }
+
+        let folderFiles = currentSearch.results.filter {
+            $0.username == result.username && $0.folderPath == result.folderPath
+        }
+
+        print("📁 Download folder: \(result.folderPath) from \(result.username) (\(folderFiles.count) files)")
+
+        var queuedCount = 0
+        for file in folderFiles {
+            // Skip if already queued
+            if !appState.transferState.isFileQueued(filename: file.filename, username: file.username) {
+                appState.downloadManager.queueDownload(from: file)
+                queuedCount += 1
+            }
+        }
+
+        if queuedCount > 0 {
+            print("✅ Queued \(queuedCount) files from folder")
+        } else {
+            print("ℹ️ All files in folder already queued")
+        }
     }
 
     private func copyFilename() {
