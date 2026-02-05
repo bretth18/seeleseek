@@ -203,6 +203,12 @@ enum MessageBuilder {
             }
         }
 
+        // Unknown uint32 (always 0 per protocol)
+        uncompressedPayload.appendUInt32(0)
+
+        // Private directory count (0 = no private shares)
+        uncompressedPayload.appendUInt32(0)
+
         // Compress with zlib
         guard let compressed = compressZlib(uncompressedPayload) else {
             // Fallback: send uncompressed (not ideal but better than nothing)
@@ -283,6 +289,12 @@ enum MessageBuilder {
         uncompressedPayload.appendUInt32(uploadSpeed)
         uncompressedPayload.appendUInt32(queueLength)
 
+        // Unknown uint32 (always 0 per protocol)
+        uncompressedPayload.appendUInt32(0)
+
+        // Private results count (0 = no private results)
+        uncompressedPayload.appendUInt32(0)
+
         // Compress with zlib
         guard let compressed = compressZlib(uncompressedPayload) else {
             // Fallback: send uncompressed (not ideal but better than nothing)
@@ -326,11 +338,17 @@ enum MessageBuilder {
         // string folder
         uncompressedPayload.appendString(folder)
 
+        // uint32 number of folders (1 - the requested folder)
+        uncompressedPayload.appendUInt32(1)
+
+        // Directory entry: string directory name
+        uncompressedPayload.appendString(folder)
+
         // uint32 file count
         uncompressedPayload.appendUInt32(UInt32(files.count))
 
         for file in files {
-            // uint8 code (always 1?)
+            // uint8 code (always 1)
             uncompressedPayload.appendUInt8(1)
             // string filename
             uncompressedPayload.appendString(file.filename)
