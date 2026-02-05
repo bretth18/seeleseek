@@ -314,11 +314,22 @@ final class PeerConnectionPool {
             }
 
             // IMPORTANT: Set up search reply callback so we receive search results
-            await connection.setOnSearchReply { [weak self] token, results in
+            // Close connection after receiving results (like Nicotine+) to prevent accumulation
+            await connection.setOnSearchReply { [weak self, connectionId] token, results in
                 await MainActor.run {
                     print("🔴 SEARCH RESULTS: \(results.count) from incoming connection (token=\(token))")
                     self?.logger.info("Received \(results.count) search results from incoming connection")
                     self?.onSearchResults?(token, results)
+                }
+                // Close connection after a brief delay to prevent connection accumulation
+                Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    await connection.disconnect()
+                    await MainActor.run {
+                        self?.connections.removeValue(forKey: connectionId)
+                        self?.activeConnections_.removeValue(forKey: connectionId)
+                        self?.activeConnections = self?.connections.count ?? 0
+                    }
                 }
             }
 
@@ -597,26 +608,46 @@ final class PeerConnectionPool {
 
     func cleanupStaleConnections() {
         let timeout = Date().addingTimeInterval(-connectionTimeout)
+        let shortTimeout = Date().addingTimeInterval(-10)  // 10s for connections with no activity
 
         // Remove stale pending connections
         pendingConnections = pendingConnections.filter { $0.value.timestamp > timeout }
 
-        // Find stale connection IDs
-        let staleIds = connections.filter { info in
-            if let lastActivity = info.value.lastActivity {
-                return lastActivity <= timeout
-            }
-            return false
-        }.keys
+        // Find stale connection IDs (30s idle) and ghost connections (10s with no activity)
+        var toRemove: [String] = []
 
-        // Remove stale active connections and their PeerConnection objects
-        for id in staleIds {
+        for (id, info) in connections {
+            if let lastActivity = info.lastActivity {
+                // Regular idle timeout (30s)
+                if lastActivity <= timeout {
+                    toRemove.append(id)
+                }
+            } else {
+                // Ghost connection - never had activity, close after 10s
+                if let connectedAt = info.connectedAt, connectedAt <= shortTimeout {
+                    toRemove.append(id)
+                }
+            }
+        }
+
+        // Actually close and remove stale connections
+        for id in toRemove {
+            if let conn = activeConnections_[id] {
+                Task {
+                    await conn.disconnect()
+                }
+                logger.info("Closed idle connection: \(id)")
+                print("🧹 Closed idle connection: \(id)")
+            }
             connections.removeValue(forKey: id)
             activeConnections_.removeValue(forKey: id)
-            logger.debug("Cleaned up stale connection: \(id)")
         }
 
         activeConnections = connections.count
+
+        if !toRemove.isEmpty {
+            logger.info("Cleaned up \(toRemove.count) stale connections, \(self.activeConnections) active")
+        }
     }
 
     // MARK: - Statistics
@@ -686,6 +717,19 @@ final class PeerConnectionPool {
                     self?.onSearchResults?(token, results)
                 } else {
                     print("⚠️ PeerConnectionPool: onSearchResults callback is nil!")
+                }
+            }
+            // Close connection after receiving search results (like Nicotine+)
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                await connection.disconnect()
+                await MainActor.run {
+                    // Find and remove this connection by username prefix
+                    if let key = self?.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+                        self?.connections.removeValue(forKey: key)
+                        self?.activeConnections_.removeValue(forKey: key)
+                        self?.activeConnections = self?.connections.count ?? 0
+                    }
                 }
             }
         }

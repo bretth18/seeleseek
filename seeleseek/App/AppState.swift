@@ -15,6 +15,11 @@ final class AppState {
     var metadataState = MetadataState()
     var socialState = SocialState()
 
+    // MARK: - Admin Messages
+    var adminMessages: [AdminMessage] = []
+    var showAdminMessageAlert = false
+    var latestAdminMessage: AdminMessage?
+
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
     var sidebarSelection: SidebarItem? = .search
@@ -35,6 +40,18 @@ final class AppState {
             socialState.setupCallbacks(client: _networkClient!)
             downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
+
+            // Set up admin message callback
+            _networkClient!.onAdminMessage = { [weak self] message in
+                Task { @MainActor in
+                    guard let self else { return }
+                    let adminMessage = AdminMessage(message: message)
+                    self.adminMessages.append(adminMessage)
+                    self.latestAdminMessage = adminMessage
+                    self.showAdminMessageAlert = true
+                    self.logger.info("Received admin message: \(message)")
+                }
+            }
         }
         return _networkClient!
     }
@@ -216,6 +233,19 @@ enum SidebarItem: Hashable, Identifiable {
         case .networkMonitor: "network"
         case .settings: "gear"
         }
+    }
+}
+
+// MARK: - Admin Message
+
+struct AdminMessage: Identifiable {
+    let id = UUID()
+    let message: String
+    let timestamp: Date
+
+    init(message: String) {
+        self.message = message
+        self.timestamp = Date()
     }
 }
 

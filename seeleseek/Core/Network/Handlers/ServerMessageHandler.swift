@@ -114,6 +114,8 @@ final class ServerMessageHandler {
             handlePrivateRoomOperators(payload)
         case .cantConnectToPeer:
             handleCantConnectToPeer(payload)
+        case .adminMessage:
+            handleAdminMessage(payload)
         default:
             // Log unhandled message with more detail
             print("📨 Unhandled server message: \(code) (code=\(codeValue)) payload=\(payload.count) bytes")
@@ -347,9 +349,9 @@ final class ServerMessageHandler {
 
         print("User \(username) status: \(status.description), privileged: \(privileged)")
 
-        // Dispatch to callback
+        // Dispatch to handler (handles both pending status checks and external callback)
         Task { @MainActor in
-            self.client?.onUserStatus?(username, status, privileged)
+            self.client?.handleUserStatusResponse(username: username, status: status, privileged: privileged)
         }
     }
 
@@ -1150,6 +1152,22 @@ final class ServerMessageHandler {
 
         // TODO: Could notify the upload/download manager to mark the transfer as failed
         // For now, just log it for debugging
+    }
+
+    private func handleAdminMessage(_ data: Data) {
+        // Server Code 66 - Global/Admin Message
+        // A global message from the server admin has arrived
+        var offset = 0
+        guard let (message, _) = data.readString(at: offset) else {
+            logger.warning("Failed to parse AdminMessage")
+            return
+        }
+
+        logger.info("📢 Admin Message: \(message)")
+        print("📢 ADMIN MESSAGE FROM SERVER: \(message)")
+
+        // Notify the client about the admin message
+        client?.onAdminMessage?(message)
     }
 
     // MARK: - Helpers

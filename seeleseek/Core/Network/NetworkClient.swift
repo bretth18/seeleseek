@@ -50,6 +50,9 @@ final class NetworkClient {
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
     private var pendingPeerAddressRequests: [String: CheckedContinuation<(ip: String, port: Int), Error>] = [:]
 
+    // MARK: - Pending Status Requests (for checking if user is online before browse/download)
+    private var pendingStatusRequests: [String: CheckedContinuation<(status: UserStatus, privileged: Bool), Never>] = [:]
+
     // MARK: - Initialization
 
     init() {
@@ -221,6 +224,9 @@ final class NetworkClient {
     var onPrivateRoomOperatorGranted: ((String) -> Void)?  // room
     var onPrivateRoomOperatorRevoked: ((String) -> Void)?  // room
     var onPrivateRoomOperators: ((String, [String]) -> Void)?  // (room, operators)
+
+    // Admin/system message callback
+    var onAdminMessage: ((String) -> Void)?  // Server-wide admin message
 
     // MARK: - Connection
 
@@ -641,7 +647,7 @@ final class NetworkClient {
 
     // Pending browse requests waiting for indirect connections (keyed by TOKEN)
     // When peer connects via PierceFirewall, they send the same token we used in ConnectToPeer
-    private var pendingBrowseConnections: [UInt32: (username: String, continuation: CheckedContinuation<PeerConnection, Error>)] = [:]
+    // (pendingBrowseStates is defined below in the browse section)
 
     /// Browse a user's shared files
     func browseUser(_ username: String) async throws -> [SharedFile] {
@@ -663,7 +669,12 @@ final class NetworkClient {
             let token = UInt32.random(in: 0...UInt32.max)
             print("📂 Browse: No existing connection, using token \(token) for \(username)")
 
-            // Step 1: Send ConnectToPeer to server FIRST
+            // CRITICAL: Register pending browse BEFORE sending ConnectToPeer to avoid race condition
+            // PierceFirewall can arrive immediately after ConnectToPeer is sent!
+            registerPendingBrowse(token: token, username: username, timeout: 20)
+            print("📂 Browse: Registered pending browse for token=\(token) BEFORE ConnectToPeer")
+
+            // Step 1: Send ConnectToPeer to server
             // This tells the server to forward a connection request to the peer
             // The peer will then try to connect to us with PierceFirewall
             await sendConnectToPeer(token: token, username: username, connectionType: "P")
@@ -676,7 +687,7 @@ final class NetworkClient {
             logger.info("Got peer address for \(username): \(ip):\(port)")
             print("📂 Browse: Got address \(ip):\(port), attempting direct connection...")
 
-            // Step 3: Try direct connection first
+            // Step 3: Try direct connection first (race with indirect)
             do {
                 connection = try await peerConnectionPool.connect(
                     to: username,
@@ -685,17 +696,26 @@ final class NetworkClient {
                     token: token
                 )
                 print("📂 Browse: Direct connection to \(username) successful!")
+
+                // Cancel the pending indirect connection since direct succeeded
+                cancelPendingBrowse(token: token)
+                print("📂 Browse: Cancelled indirect connection wait (direct succeeded)")
             } catch {
                 // Direct connection failed - wait for indirect connection
                 // The server already told the peer to connect to us (step 1)
                 // The peer will send PierceFirewall with the same token
                 print("📂 Browse: Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
                 logger.info("Direct connection to \(username) failed, waiting for PierceFirewall")
-                print("📂 Browse: Waiting for PierceFirewall with token=\(token)...")
 
-                // Wait for the peer to connect to us via PierceFirewall with matching token
-                connection = try await waitForIndirectBrowseConnection(token: token, username: username, timeout: 15)
+                // Wait for the already-registered indirect connection
+                connection = try await waitForPendingBrowse(token: token)
                 print("📂 Browse: Indirect connection from \(username) received via PierceFirewall!")
+
+                // CRITICAL: Resume receive loop for P connections (browse)
+                // PierceFirewall stops the receive loop assuming file transfer mode,
+                // but P connections need to continue receiving peer messages (SharesReply, etc.)
+                await connection.resumeReceivingForPeerConnection()
+                print("📂 Browse: Resumed receive loop for P connection")
             }
         }
 
@@ -740,31 +760,115 @@ final class NetworkClient {
         return receivedFiles
     }
 
-    /// Wait for an indirect connection via PierceFirewall with matching token
-    private func waitForIndirectBrowseConnection(token: UInt32, username: String, timeout: TimeInterval) async throws -> PeerConnection {
-        return try await withCheckedThrowingContinuation { continuation in
-            // Register that we're waiting for this token
-            pendingBrowseConnections[token] = (username: username, continuation: continuation)
-            print("📂 Browse: Registered pending browse for token=\(token) username=\(username)")
+    // Pending browse state - tracks both waiting and received connections
+    private struct PendingBrowseState {
+        let username: String
+        var continuation: CheckedContinuation<PeerConnection, Error>?
+        var receivedConnection: PeerConnection?  // Set if PierceFirewall arrives before we start waiting
+        var timeoutTask: Task<Void, Never>?
+        var timedOut = false
+    }
+    private var pendingBrowseStates: [UInt32: PendingBrowseState] = [:]
 
-            // Set up timeout
-            Task {
-                try? await Task.sleep(for: .seconds(timeout))
-                // If still pending, resume with timeout error
-                if let pending = pendingBrowseConnections.removeValue(forKey: token) {
+    /// Register a pending browse BEFORE sending ConnectToPeer (to avoid race condition)
+    private func registerPendingBrowse(token: UInt32, username: String, timeout: TimeInterval) {
+        var state = PendingBrowseState(username: username)
+
+        // Set up timeout
+        state.timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard let self else { return }
+
+            // If still pending without a connection, mark as timed out
+            if var pending = self.pendingBrowseStates[token] {
+                if pending.receivedConnection == nil {
                     print("📂 Browse: Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
-                    pending.continuation.resume(throwing: NetworkError.timeout)
+                    pending.timedOut = true
+                    self.pendingBrowseStates[token] = pending
+
+                    // If there's a continuation waiting, resume it with error
+                    if let continuation = pending.continuation {
+                        pending.continuation = nil
+                        self.pendingBrowseStates[token] = pending
+                        continuation.resume(throwing: NetworkError.timeout)
+                    }
                 }
             }
+        }
+
+        pendingBrowseStates[token] = state
+    }
+
+    /// Wait for a previously registered pending browse to receive PierceFirewall
+    private func waitForPendingBrowse(token: UInt32) async throws -> PeerConnection {
+        // Check if connection already arrived
+        if let state = pendingBrowseStates[token] {
+            if let connection = state.receivedConnection {
+                print("📂 Browse: PierceFirewall already received for token=\(token)")
+                pendingBrowseStates.removeValue(forKey: token)
+                return connection
+            }
+            if state.timedOut {
+                pendingBrowseStates.removeValue(forKey: token)
+                throw NetworkError.timeout
+            }
+        }
+
+        // Wait for connection
+        return try await withCheckedThrowingContinuation { continuation in
+            if var state = pendingBrowseStates[token] {
+                // Check again if connection arrived while we were setting up
+                if let connection = state.receivedConnection {
+                    pendingBrowseStates.removeValue(forKey: token)
+                    continuation.resume(returning: connection)
+                    return
+                }
+                if state.timedOut {
+                    pendingBrowseStates.removeValue(forKey: token)
+                    continuation.resume(throwing: NetworkError.timeout)
+                    return
+                }
+                state.continuation = continuation
+                pendingBrowseStates[token] = state
+            } else {
+                // Token was already removed (cancelled or error)
+                continuation.resume(throwing: NetworkError.timeout)
+            }
+        }
+    }
+
+    /// Cancel a pending browse (used when direct connection succeeds)
+    private func cancelPendingBrowse(token: UInt32) {
+        if let state = pendingBrowseStates.removeValue(forKey: token) {
+            state.timeoutTask?.cancel()
+            // Don't resume continuation - caller will handle the success case
         }
     }
 
     /// Called when PierceFirewall is received - check if it matches a pending browse request
     /// Returns true if it was handled as a browse request
     func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) -> Bool {
-        if let pending = pendingBrowseConnections.removeValue(forKey: token) {
-            print("📂 Browse: PierceFirewall token=\(token) matched pending browse for \(pending.username)")
-            pending.continuation.resume(returning: connection)
+        if var state = pendingBrowseStates[token] {
+            print("📂 Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
+
+            // Set the username on the connection (PierceFirewall doesn't include PeerInit with username)
+            Task {
+                await connection.setPeerUsername(state.username)
+                print("📂 Browse: Set username '\(state.username)' on indirect connection")
+            }
+
+            // Store the connection
+            state.receivedConnection = connection
+            state.timeoutTask?.cancel()
+
+            // If there's a continuation waiting, resume it immediately
+            if let continuation = state.continuation {
+                pendingBrowseStates.removeValue(forKey: token)
+                continuation.resume(returning: connection)
+            } else {
+                // No one waiting yet - store for later
+                pendingBrowseStates[token] = state
+            }
             return true
         }
         return false
@@ -876,6 +980,48 @@ final class NetworkClient {
         let message = MessageBuilder.getUserStatusMessage(username: username)
         try await serverConnection?.send(message)
         logger.info("Requested status for: \(username)")
+    }
+
+    /// Check if a user is online before attempting to connect
+    /// Returns the user's status (offline, away, online) with a timeout
+    func checkUserOnlineStatus(_ username: String, timeout: TimeInterval = 5.0) async throws -> (status: UserStatus, privileged: Bool) {
+        guard isConnected else { throw NetworkError.notConnected }
+
+        // Check if we already have a pending request for this user
+        if pendingStatusRequests[username] != nil {
+            logger.warning("Already have pending status request for \(username)")
+        }
+
+        // Send the status request
+        let message = MessageBuilder.getUserStatusMessage(username: username)
+        try await serverConnection?.send(message)
+        logger.info("Checking online status for: \(username)")
+
+        // Wait for response with timeout
+        return await withCheckedContinuation { continuation in
+            pendingStatusRequests[username] = continuation
+
+            // Set up timeout
+            Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                // If still pending, assume offline (no response = user doesn't exist or server issue)
+                if let pending = pendingStatusRequests.removeValue(forKey: username) {
+                    logger.warning("Status check timeout for \(username), assuming offline")
+                    pending.resume(returning: (status: .offline, privileged: false))
+                }
+            }
+        }
+    }
+
+    /// Handle status response - resumes pending status checks
+    func handleUserStatusResponse(username: String, status: UserStatus, privileged: Bool) {
+        // Resume any pending status check for this user
+        if let continuation = pendingStatusRequests.removeValue(forKey: username) {
+            continuation.resume(returning: (status: status, privileged: privileged))
+        }
+
+        // Also call the regular callback for SocialState etc.
+        onUserStatus?(username, status, privileged)
     }
 
     // MARK: - User Stats & Privileges

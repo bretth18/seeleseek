@@ -329,7 +329,28 @@ final class BrowseState {
             self?.logger.info("Starting browse request for \(username)")
 
             do {
-                // This is the actual network call - returns flat files
+                // Step 1: Check if user is online BEFORE attempting connection
+                self?.logger.info("Checking if \(username) is online...")
+                print("📂 BrowseState: Checking if \(username) is online before browse...")
+
+                let (status, _) = try await networkClient.checkUserOnlineStatus(username, timeout: 5.0)
+
+                if status == .offline {
+                    print("📂 BrowseState: User \(username) is OFFLINE, aborting browse")
+                    await MainActor.run {
+                        guard let self else { return }
+                        if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
+                            self.browses[idx].error = "User \(username) is offline"
+                            self.browses[idx].isLoading = false
+                        }
+                        self.activeBrowseTasks.removeValue(forKey: browseId)
+                    }
+                    return
+                }
+
+                print("📂 BrowseState: User \(username) is \(status == .online ? "online" : "away"), proceeding with browse...")
+
+                // Step 2: User is online, proceed with the actual browse
                 let flatFiles = try await networkClient.browseUser(username)
 
                 // Build hierarchical tree structure (do this off main thread for large file lists)

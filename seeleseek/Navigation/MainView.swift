@@ -12,6 +12,16 @@ struct MainView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        .alert("Server Message", isPresented: Binding(
+            get: { appState.showAdminMessageAlert },
+            set: { appState.showAdminMessageAlert = $0 }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if let msg = appState.latestAdminMessage {
+                Text(msg.message)
+            }
+        }
         #if DEBUG
         .onAppear {
             // Cmd+Shift+T to run protocol test

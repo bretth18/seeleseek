@@ -861,6 +861,28 @@ actor PeerConnection {
         }
     }
 
+    /// Resume receiving for P connections (browse) after PierceFirewall
+    /// PierceFirewall normally stops the receive loop for file transfers,
+    /// but P connections need to continue receiving peer messages (SharesReply, etc.)
+    func resumeReceivingForPeerConnection() {
+        guard shouldStopReceiving else {
+            print("📡 [\(peerInfo.username)] resumeReceivingForPeerConnection: already receiving")
+            return
+        }
+
+        print("📡 [\(peerInfo.username)] Resuming receive loop for P connection (browse)")
+        shouldStopReceiving = false
+
+        // Move any data from file transfer buffer back to receive buffer
+        if !fileTransferBuffer.isEmpty {
+            receiveBuffer.append(fileTransferBuffer)
+            fileTransferBuffer.removeAll()
+            print("📡 [\(peerInfo.username)] Moved \(receiveBuffer.count) bytes back to receive buffer")
+        }
+
+        startReceiving()
+    }
+
     private func startReceiving() {
         guard let connection else {
             print("📡 [\(peerInfo.username)] startReceiving called but no connection!")

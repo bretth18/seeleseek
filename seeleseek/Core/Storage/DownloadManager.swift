@@ -295,21 +295,48 @@ final class DownloadManager {
             // Set a timeout
             try await Task.sleep(for: .seconds(30))
 
-            // If we're still here and not connected, mark as failed
+            // If we're still here and not connected, mark as failed and schedule retry
             if let pending = pendingDownloads[token], pending.peerConnection == nil {
+                let errorMsg = "Connection timeout"
+                let currentRetryCount = transferState.getTransfer(id: transfer.id)?.retryCount ?? 0
+
                 transferState.updateTransfer(id: transfer.id) { t in
                     t.status = .failed
-                    t.error = "Connection timeout"
+                    t.error = errorMsg
                 }
                 pendingDownloads.removeValue(forKey: token)
+
+                // Auto-retry for connection timeouts
+                if currentRetryCount < maxRetries {
+                    scheduleRetry(
+                        transferId: transfer.id,
+                        username: transfer.username,
+                        filename: transfer.filename,
+                        size: transfer.size,
+                        retryCount: currentRetryCount
+                    )
+                }
             }
         } catch {
             logger.error("Download failed: \(error.localizedDescription)")
+            let currentRetryCount = transferState.getTransfer(id: transfer.id)?.retryCount ?? 0
+
             transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .failed
                 t.error = error.localizedDescription
             }
             pendingDownloads.removeValue(forKey: token)
+
+            // Auto-retry for retriable errors
+            if isRetriableError(error.localizedDescription) && currentRetryCount < maxRetries {
+                scheduleRetry(
+                    transferId: transfer.id,
+                    username: transfer.username,
+                    filename: transfer.filename,
+                    size: transfer.size,
+                    retryCount: currentRetryCount
+                )
+            }
         }
     }
 
@@ -435,11 +462,13 @@ final class DownloadManager {
             print("   If this fails, both parties may be behind restrictive NAT.")
 
             // Set a dedicated timeout for indirect connection
-            Task {
+            Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))
 
+                guard let self else { return }
+
                 // Check if still pending after 15 seconds
-                if pendingDownloads[token] != nil && pendingDownloads[token]?.peerConnection == nil {
+                if self.pendingDownloads[token] != nil && self.pendingDownloads[token]?.peerConnection == nil {
                     print("⏰ TIMEOUT: Indirect connection to \(username) timed out after 15s")
                     print("❌ Could not establish connection - both direct and indirect failed")
                     print("   Possible causes:")
@@ -447,11 +476,25 @@ final class DownloadManager {
                     print("   - Try downloading from a different user")
                     print("   - Configure port forwarding for port \(networkClient.listenPort)")
 
-                    transferState.updateTransfer(id: pending.transferId) { t in
+                    let errorMsg = "Connection timeout - peer unreachable"
+                    let currentRetryCount = self.transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+
+                    self.transferState?.updateTransfer(id: pending.transferId) { t in
                         t.status = .failed
-                        t.error = "Connection failed - peer unreachable (NAT/firewall)"
+                        t.error = errorMsg
                     }
-                    pendingDownloads.removeValue(forKey: token)
+                    self.pendingDownloads.removeValue(forKey: token)
+
+                    // Auto-retry for connection timeouts (nicotine+ style)
+                    if currentRetryCount < self.maxRetries {
+                        self.scheduleRetry(
+                            transferId: pending.transferId,
+                            username: pending.username,
+                            filename: pending.filename,
+                            size: pending.size,
+                            retryCount: currentRetryCount
+                        )
+                    }
                 }
             }
         }

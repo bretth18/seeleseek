@@ -266,7 +266,13 @@ struct TransfersView: View {
                     TransferRow(
                         transfer: transfer,
                         onCancel: { transferState.cancelTransfer(id: transfer.id) },
-                        onRetry: { transferState.retryTransfer(id: transfer.id) },
+                        onRetry: {
+                            // Reset transfer state and trigger actual retry via DownloadManager
+                            transferState.retryTransfer(id: transfer.id)
+                            if transfer.direction == .download {
+                                appState.downloadManager.retryFailedDownload(transferId: transfer.id)
+                            }
+                        },
                         onRemove: { transferState.removeTransfer(id: transfer.id) }
                     )
                 }
