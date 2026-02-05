@@ -123,18 +123,19 @@ struct TransfersView: View {
         } label: {
             HStack(spacing: SeeleSpacing.xs) {
                 Text(tab.rawValue)
-                    .font(SeeleTypography.headline)
+                    .font(SeeleTypography.body)
+                    .fontWeight(isSelected ? .semibold : .regular)
 
                 if count > 0 {
                     Text("\(count)")
-                        .font(SeeleTypography.caption)
+                        .font(SeeleTypography.badgeText)
+                        .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textTertiary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(isSelected ? SeeleColors.accent : SeeleColors.textTertiary.opacity(0.3))
-                        .clipShape(Capsule())
+                        .background(isSelected ? SeeleColors.accent : SeeleColors.surfaceElevated, in: Capsule())
                 }
             }
-            .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
+            .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
             .padding(.horizontal, SeeleSpacing.lg)
             .padding(.vertical, SeeleSpacing.sm)
         }

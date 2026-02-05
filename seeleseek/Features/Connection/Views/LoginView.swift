@@ -157,13 +157,14 @@ struct LoginView: View {
 struct SeeleTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<_Label>) -> some View {
         configuration
-            .padding(SeeleSpacing.md)
+            .padding(.horizontal, SeeleSpacing.md)
+            .padding(.vertical, SeeleSpacing.sm + 2)
             .background(SeeleColors.surfaceSecondary)
             .foregroundStyle(SeeleColors.textPrimary)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
             .overlay(
                 RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
-                    .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
+                    .stroke(SeeleColors.border, lineWidth: 1)
             )
     }
 }
@@ -177,20 +178,85 @@ struct SeeleToggleStyle: ToggleStyle {
 
             Spacer()
 
-            RoundedRectangle(cornerRadius: 12)
-                .fill(configuration.isOn ? SeeleColors.accent : SeeleColors.surfaceSecondary)
-                .frame(width: 44, height: 24)
-                .overlay(
-                    Circle()
-                        .fill(Color.white)
-                        .padding(2)
-                        .offset(x: configuration.isOn ? 10 : -10)
-                )
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        configuration.isOn.toggle()
-                    }
+            ZStack {
+                RoundedRectangle(cornerRadius: 13)
+                    .fill(configuration.isOn ? SeeleColors.accent : SeeleColors.surfaceElevated)
+                    .frame(width: 46, height: 26)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13)
+                            .stroke(configuration.isOn ? SeeleColors.accent : SeeleColors.border, lineWidth: 1)
+                    )
+
+                Circle()
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+                    .frame(width: 20, height: 20)
+                    .offset(x: configuration.isOn ? 10 : -10)
+            }
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    configuration.isOn.toggle()
                 }
+            }
+        }
+    }
+}
+
+// MARK: - Form Section Style
+
+struct SeeleFormSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+            Text(title)
+                .font(SeeleTypography.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(SeeleColors.textTertiary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+
+            VStack(spacing: 0) {
+                content
+            }
+            .background(SeeleColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+                    .stroke(SeeleColors.border, lineWidth: 1)
+            )
+        }
+    }
+}
+
+// MARK: - Form Row Style
+
+struct SeeleFormRow<Content: View>: View {
+    let content: Content
+    let showDivider: Bool
+
+    init(showDivider: Bool = true, @ViewBuilder content: () -> Content) {
+        self.showDivider = showDivider
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+                .padding(.horizontal, SeeleSpacing.md)
+                .padding(.vertical, SeeleSpacing.sm + 2)
+
+            if showDivider {
+                Divider()
+                    .background(SeeleColors.border)
+                    .padding(.leading, SeeleSpacing.md)
+            }
         }
     }
 }

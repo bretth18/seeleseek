@@ -42,7 +42,7 @@ struct SettingsView: View {
 
             // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
                     switch selectedTab {
                     case .profile:
                         MyProfileView()
@@ -62,7 +62,7 @@ struct SettingsView: View {
                         DiagnosticsSection()
                     }
                 }
-                .padding(SeeleSpacing.xl)
+                .padding(SeeleSpacing.lg)
             }
             .background(SeeleColors.background)
         }
@@ -74,20 +74,31 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 14))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(selectedTab == tab ? SeeleColors.accent : SeeleColors.textTertiary)
                     .frame(width: 20)
 
                 Text(tab.rawValue)
-                    .font(SeeleTypography.subheadline)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(selectedTab == tab ? SeeleColors.textPrimary : SeeleColors.textSecondary)
 
                 Spacer()
             }
-            .foregroundStyle(selectedTab == tab ? SeeleColors.accent : SeeleColors.textSecondary)
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
-            .background(selectedTab == tab ? SeeleColors.surfaceSecondary : .clear)
+            .background(
+                selectedTab == tab
+                    ? SeeleColors.selectionBackground
+                    : Color.clear
+            )
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                    .stroke(selectedTab == tab ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, SeeleSpacing.xs)
     }
 }
 
@@ -97,7 +108,7 @@ struct GeneralSettingsSection: View {
     @Bindable var settings: SettingsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             settingsHeader("General")
 
             settingsGroup("Downloads") {
@@ -117,7 +128,7 @@ struct NetworkSettingsSection: View {
     @Bindable var settings: SettingsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             settingsHeader("Network")
 
             settingsGroup("Connection") {
@@ -147,40 +158,45 @@ struct SharesSettingsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.sectionSpacing) {
             settingsHeader("Shares")
 
             // Summary stats
-            HStack(spacing: SeeleSpacing.xl) {
-                StatBox(title: "Folders", value: "\(shareManager.totalFolders)", icon: "folder.fill", color: SeeleColors.warning)
-                StatBox(title: "Files", value: "\(shareManager.totalFiles)", icon: "doc.fill", color: SeeleColors.accent)
-                StatBox(title: "Size", value: ByteFormatter.format(Int64(shareManager.totalSize)), icon: "externaldrive.fill", color: SeeleColors.info)
+            HStack(spacing: SeeleSpacing.md) {
+                statItem(icon: "folder.fill", value: "\(shareManager.totalFolders)", label: "Folders", color: SeeleColors.warning)
+                statItem(icon: "doc.fill", value: "\(shareManager.totalFiles)", label: "Files", color: SeeleColors.accent)
+                statItem(icon: "externaldrive.fill", value: ByteFormatter.format(Int64(shareManager.totalSize)), label: "Size", color: SeeleColors.info)
+                Spacer()
             }
 
             settingsGroup("Shared Folders") {
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    if shareManager.sharedFolders.isEmpty {
+                if shareManager.sharedFolders.isEmpty {
+                    settingsRow {
                         Text("No folders shared")
-                            .font(SeeleTypography.subheadline)
+                            .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.textTertiary)
-                            .padding(SeeleSpacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                }
 
-                    ForEach(shareManager.sharedFolders) { folder in
-                        SharedFolderRow(folder: folder) {
-                            shareManager.removeFolder(folder)
-                        }
+                ForEach(shareManager.sharedFolders) { folder in
+                    SharedFolderRow(folder: folder) {
+                        shareManager.removeFolder(folder)
                     }
+                }
 
-                    HStack(spacing: SeeleSpacing.md) {
+                // Actions row
+                settingsRow {
+                    HStack {
                         Button {
                             showFolderPicker()
                         } label: {
-                            HStack {
-                                Image(systemName: "plus.circle")
+                            HStack(spacing: SeeleSpacing.xs) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                                 Text("Add Folder")
                             }
-                            .font(SeeleTypography.subheadline)
+                            .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
@@ -188,10 +204,10 @@ struct SharesSettingsSection: View {
                         Spacer()
 
                         if shareManager.isScanning {
-                            HStack(spacing: SeeleSpacing.sm) {
+                            HStack(spacing: SeeleSpacing.xs) {
                                 ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("Scanning... \(Int(shareManager.scanProgress * 100))%")
+                                    .scaleEffect(0.6)
+                                Text("Scanning \(Int(shareManager.scanProgress * 100))%")
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
@@ -199,8 +215,9 @@ struct SharesSettingsSection: View {
                             Button {
                                 Task { await shareManager.rescanAll() }
                             } label: {
-                                HStack {
+                                HStack(spacing: SeeleSpacing.xs) {
                                     Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 10))
                                     Text("Rescan")
                                 }
                                 .font(SeeleTypography.caption)
@@ -209,7 +226,6 @@ struct SharesSettingsSection: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.top, SeeleSpacing.sm)
                 }
             }
 
@@ -217,6 +233,20 @@ struct SharesSettingsSection: View {
                 settingsToggle("Rescan on startup", isOn: $settings.rescanOnStartup)
                 settingsToggle("Share hidden files", isOn: $settings.shareHiddenFiles)
             }
+        }
+    }
+
+    private func statItem(icon: String, value: String, label: String, color: Color) -> some View {
+        HStack(spacing: SeeleSpacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: SeeleSpacing.iconSizeSmall))
+                .foregroundStyle(color)
+            Text(value)
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+            Text(label)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
         }
     }
 
@@ -243,11 +273,12 @@ struct SharedFolderRow: View {
     let onRemove: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: "folder.fill")
+                .font(.system(size: SeeleSpacing.iconSizeSmall))
                 .foregroundStyle(SeeleColors.warning)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(folder.displayName)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -261,52 +292,24 @@ struct SharedFolderRow: View {
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(folder.fileCount) files")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
+            Text("\(folder.fileCount) files")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textSecondary)
 
-                Text(ByteFormatter.format(Int64(folder.totalSize)))
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-            }
+            Text(ByteFormatter.format(Int64(folder.totalSize)))
+                .font(SeeleTypography.mono)
+                .foregroundStyle(SeeleColors.textTertiary)
 
             Button(action: onRemove) {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(SeeleColors.error)
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.error.opacity(0.8))
             }
             .buttonStyle(.plain)
         }
-        .padding(SeeleSpacing.sm)
-        .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
-    }
-}
-
-struct StatBox: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: icon)
-                .font(.system(size: 20))
-                .foregroundStyle(color)
-
-            Text(value)
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            Text(title)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(SeeleSpacing.md)
-        .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .padding(.horizontal, SeeleSpacing.rowHorizontal)
+        .padding(.vertical, SeeleSpacing.rowVertical)
+        .background(SeeleColors.surface)
     }
 }
 
@@ -314,7 +317,7 @@ struct MetadataSettingsSection: View {
     @Bindable var settings: SettingsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             settingsHeader("Metadata")
 
             settingsGroup("Auto-fetch") {
@@ -351,7 +354,7 @@ struct ChatSettingsSection: View {
     @Bindable var settings: SettingsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             settingsHeader("Chat")
 
             settingsGroup("Messages") {
@@ -371,7 +374,7 @@ struct PrivacySettingsSection: View {
     @Bindable var settings: SettingsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             settingsHeader("Privacy")
 
             settingsGroup("Visibility") {
@@ -393,7 +396,7 @@ struct DiagnosticsSection: View {
     @State private var isTestingBrowse: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.sectionSpacing) {
             settingsHeader("Diagnostics")
 
             settingsGroup("Connection Status") {
@@ -422,125 +425,150 @@ struct DiagnosticsSection: View {
                 diagRow("ConnectToPeer Received", value: "\(appState.networkClient.peerConnectionPool.connectToPeerCount)")
                 diagRow("PierceFirewall Received", value: "\(appState.networkClient.peerConnectionPool.pierceFirewallCount)",
                        color: appState.networkClient.peerConnectionPool.pierceFirewallCount > 0 ? SeeleColors.success : SeeleColors.textSecondary)
-
-                Text("Note: If ConnectToPeer is high but PierceFirewall is 0, your port is not reachable.")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .padding(.top, SeeleSpacing.xs)
+                settingsRow {
+                    Text("Note: If ConnectToPeer is high but PierceFirewall is 0, your port is not reachable.")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
             }
 
             settingsGroup("Port Reachability Test") {
-                Text("Tests if your listen port is reachable from the internet.")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
+                settingsRow {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        Text("Tests if your listen port is reachable from the internet.")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
 
-                if isTestingPort {
-                    HStack {
-                        ProgressView().scaleEffect(0.8)
-                        Text("Testing port reachability...")
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                } else {
-                    Button("Test Port Reachability") {
-                        testPortReachability()
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(SeeleColors.accent)
-                }
+                        if isTestingPort {
+                            HStack(spacing: SeeleSpacing.sm) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Testing port reachability...")
+                                    .font(SeeleTypography.body)
+                                    .foregroundStyle(SeeleColors.textSecondary)
+                            }
+                        } else {
+                            Button("Test Port Reachability") {
+                                testPortReachability()
+                            }
+                            .font(SeeleTypography.body)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(SeeleColors.accent)
+                        }
 
-                if !portTestResult.isEmpty {
-                    Text(portTestResult)
-                        .font(SeeleTypography.mono)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                        .textSelection(.enabled)
+                        if !portTestResult.isEmpty {
+                            Text(portTestResult)
+                                .font(SeeleTypography.mono)
+                                .foregroundStyle(SeeleColors.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             settingsGroup("Browse Test") {
-                Text("Test browsing a specific user to diagnose connection issues.")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
+                settingsRow {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        Text("Test browsing a specific user to diagnose connection issues.")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
 
-                HStack {
-                    TextField("Username", text: $browseTestUsername)
-                        .textFieldStyle(.plain)
-                        .padding(SeeleSpacing.sm)
-                        .background(SeeleColors.surfaceSecondary)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        HStack(spacing: SeeleSpacing.sm) {
+                            TextField("Username", text: $browseTestUsername)
+                                .textFieldStyle(SeeleTextFieldStyle())
 
-                    if isTestingBrowse {
-                        ProgressView().scaleEffect(0.8)
-                    } else {
-                        Button("Test Browse") {
-                            testBrowse()
+                            if isTestingBrowse {
+                                ProgressView().scaleEffect(0.7)
+                            } else {
+                                Button("Test Browse") {
+                                    testBrowse()
+                                }
+                                .font(SeeleTypography.body)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(SeeleColors.accent)
+                                .disabled(browseTestUsername.isEmpty)
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(SeeleColors.accent)
-                        .disabled(browseTestUsername.isEmpty)
-                    }
-                }
 
-                if !browseTestResult.isEmpty {
-                    Text(browseTestResult)
-                        .font(SeeleTypography.mono)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                        .textSelection(.enabled)
+                        if !browseTestResult.isEmpty {
+                            Text(browseTestResult)
+                                .font(SeeleTypography.mono)
+                                .foregroundStyle(SeeleColors.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             settingsGroup("Server Connection Test") {
-                if isTesting {
-                    HStack {
-                        ProgressView().scaleEffect(0.8)
-                        Text("Testing...")
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                } else {
-                    Button("Test Server Connection") {
-                        testConnection()
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(SeeleColors.accent)
-                }
+                settingsRow {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        if isTesting {
+                            HStack(spacing: SeeleSpacing.sm) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("Testing...")
+                                    .font(SeeleTypography.body)
+                                    .foregroundStyle(SeeleColors.textSecondary)
+                            }
+                        } else {
+                            Button("Test Server Connection") {
+                                testConnection()
+                            }
+                            .font(SeeleTypography.body)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(SeeleColors.accent)
+                        }
 
-                if !testResult.isEmpty {
-                    Text(testResult)
-                        .font(SeeleTypography.mono)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                        .textSelection(.enabled)
+                        if !testResult.isEmpty {
+                            Text(testResult)
+                                .font(SeeleTypography.mono)
+                                .foregroundStyle(SeeleColors.textSecondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             settingsGroup("Troubleshooting Tips") {
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    tipRow("Port Forwarding", "Ensure port \(appState.settings.listenPort) is forwarded in your router to this computer")
-                    tipRow("Firewall", "Allow SeeleSeek through your firewall for incoming connections")
-                    tipRow("NAT Type", "Strict NAT may prevent peers from connecting to you")
-                    tipRow("UPnP", "Enable UPnP in your router settings for automatic port forwarding")
+                settingsRow {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        tipRow("Port Forwarding", "Ensure port \(appState.settings.listenPort) is forwarded in your router to this computer")
+                        tipRow("Firewall", "Allow SeeleSeek through your firewall for incoming connections")
+                        tipRow("NAT Type", "Strict NAT may prevent peers from connecting to you")
+                        tipRow("UPnP", "Enable UPnP in your router settings for automatic port forwarding")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
     }
 
     private func diagRow(_ label: String, value: String, color: Color = SeeleColors.textSecondary) -> some View {
-        HStack {
-            Text(label)
-                .foregroundStyle(SeeleColors.textPrimary)
-            Spacer()
-            Text(value)
-                .foregroundStyle(color)
-                .lineLimit(1)
+        settingsRow {
+            HStack {
+                Text(label)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textPrimary)
+                Spacer()
+                Text(value)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+            }
         }
     }
 
     private func tipRow(_ title: String, _ description: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text("• \(title)")
-                .font(SeeleTypography.subheadline)
+                .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
             Text(description)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+                .padding(.leading, SeeleSpacing.md)
         }
     }
 
@@ -755,84 +783,108 @@ import Network
 
 private func settingsHeader(_ title: String) -> some View {
     Text(title)
-        .font(SeeleTypography.title2)
+        .font(SeeleTypography.title)
         .foregroundStyle(SeeleColors.textPrimary)
 }
 
 private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+    VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
         Text(title)
-            .font(SeeleTypography.headline)
-            .foregroundStyle(SeeleColors.textSecondary)
+            .font(SeeleTypography.caption)
+            .foregroundStyle(SeeleColors.textTertiary)
 
-        VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+        VStack(spacing: 0) {
             content()
         }
-        .padding(SeeleSpacing.md)
-        .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                .stroke(SeeleColors.border, lineWidth: 1)
+        )
     }
 }
 
+private func settingsRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    content()
+        .padding(.horizontal, SeeleSpacing.rowHorizontal)
+        .padding(.vertical, SeeleSpacing.rowVertical)
+        .background(SeeleColors.surface)
+}
+
 private func settingsToggle(_ title: String, isOn: Binding<Bool>) -> some View {
-    Toggle(title, isOn: isOn)
-        .toggleStyle(SeeleToggleStyle())
-        .font(SeeleTypography.body)
-        .foregroundStyle(SeeleColors.textPrimary)
+    settingsRow {
+        HStack {
+            Text(title)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            Spacer()
+
+            Toggle("", isOn: isOn)
+                .toggleStyle(SeeleToggleStyle())
+                .labelsHidden()
+        }
+    }
 }
 
 private func settingsNumberField(_ title: String, value: Binding<Int>, range: ClosedRange<Int>, placeholder: String = "") -> some View {
-    HStack {
-        Text(title)
-            .font(SeeleTypography.body)
-            .foregroundStyle(SeeleColors.textPrimary)
+    settingsRow {
+        HStack {
+            Text(title)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
 
-        Spacer()
+            Spacer()
 
-        TextField(placeholder, value: value, format: .number)
-            .textFieldStyle(SeeleTextFieldStyle())
-            .frame(width: 100)
-            .multilineTextAlignment(.trailing)
+            TextField(placeholder, value: value, format: .number)
+                .textFieldStyle(SeeleTextFieldStyle())
+                .frame(width: 80)
+                .multilineTextAlignment(.trailing)
+        }
     }
 }
 
 private func settingsStepper(_ title: String, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
-    HStack {
-        Text(title)
-            .font(SeeleTypography.body)
-            .foregroundStyle(SeeleColors.textPrimary)
+    settingsRow {
+        HStack {
+            Text(title)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
 
-        Spacer()
+            Spacer()
 
-        Stepper("\(value.wrappedValue)", value: value, in: range)
-            .labelsHidden()
+            Stepper("", value: value, in: range)
+                .labelsHidden()
 
-        Text("\(value.wrappedValue)")
-            .font(SeeleTypography.mono)
-            .foregroundStyle(SeeleColors.textPrimary)
-            .frame(width: 30)
+            Text("\(value.wrappedValue)")
+                .font(SeeleTypography.mono)
+                .foregroundStyle(SeeleColors.textPrimary)
+                .frame(width: 24, alignment: .trailing)
+        }
     }
 }
 
 private func folderPicker(_ title: String, url: Binding<URL>) -> some View {
-    HStack {
-        Text(title)
-            .font(SeeleTypography.body)
-            .foregroundStyle(SeeleColors.textPrimary)
+    settingsRow {
+        HStack {
+            Text(title)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
 
-        Spacer()
+            Spacer()
 
-        Text(url.wrappedValue.lastPathComponent)
-            .font(SeeleTypography.mono)
-            .foregroundStyle(SeeleColors.textSecondary)
-            .lineLimit(1)
+            Text(url.wrappedValue.lastPathComponent)
+                .font(SeeleTypography.mono)
+                .foregroundStyle(SeeleColors.textSecondary)
+                .lineLimit(1)
 
-        Button("Choose...") {
-            // Show folder picker
+            Button("Choose...") {
+                // Show folder picker
+            }
+            .font(SeeleTypography.caption)
+            .foregroundStyle(SeeleColors.accent)
+            .buttonStyle(.plain)
         }
-        .font(SeeleTypography.caption)
-        .foregroundStyle(SeeleColors.accent)
-        .buttonStyle(.plain)
     }
 }
 

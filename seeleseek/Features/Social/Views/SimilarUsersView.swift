@@ -182,7 +182,7 @@ struct SimilarUsersView: View {
             HStack(spacing: 4) {
                 Image(systemName: "star.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(.yellow)
+                    .foregroundStyle(SeeleColors.warning)
                 Text("\(rating)")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textSecondary)

@@ -23,7 +23,7 @@ struct BuddyRowView: View {
                     if buddy.isPrivileged {
                         Image(systemName: "star.fill")
                             .font(.system(size: 10))
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(SeeleColors.warning)
                     }
 
                     if let code = buddy.countryCode {
@@ -101,9 +101,9 @@ struct BuddyRowView: View {
 
     private var statusColor: Color {
         switch buddy.status {
-        case .online: .green
-        case .away: .yellow
-        case .offline: .gray
+        case .online: SeeleColors.success
+        case .away: SeeleColors.warning
+        case .offline: SeeleColors.textTertiary
         }
     }
 

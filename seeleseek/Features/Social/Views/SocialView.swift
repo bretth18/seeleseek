@@ -30,14 +30,14 @@ struct SocialView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Tab bar
-            HStack(spacing: SeeleSpacing.md) {
+            HStack(spacing: SeeleSpacing.sm) {
                 ForEach(SocialTab.allCases, id: \.self) { tab in
                     tabButton(for: tab)
                 }
                 Spacer()
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.md)
+            .padding(.horizontal, SeeleSpacing.md)
+            .padding(.vertical, SeeleSpacing.sm)
             .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
@@ -77,20 +77,27 @@ struct SocialView: View {
     }
 
     private func tabButton(for tab: SocialTab) -> some View {
-        Button {
+        let isSelected = selectedTab == tab
+        return Button {
             selectedTab = tab
         } label: {
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: tab.icon)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                 Text(tab.rawValue)
+                    .fontWeight(isSelected ? .medium : .regular)
             }
             .font(SeeleTypography.body)
-            .foregroundStyle(selectedTab == tab ? SeeleColors.accent : SeeleColors.textSecondary)
+            .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
             .background(
-                selectedTab == tab ? SeeleColors.accent.opacity(0.1) : Color.clear,
-                in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+                isSelected ? SeeleColors.selectionBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

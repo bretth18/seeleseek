@@ -24,30 +24,33 @@ struct InterestsView: View {
 
             // Interests lists
             ScrollView {
-                VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.md) {
                     likesSection
                     hatesSection
                 }
-                .padding(SeeleSpacing.lg)
+                .padding(SeeleSpacing.sm)
             }
         }
     }
 
     private var addInterestSection: some View {
-        HStack(spacing: SeeleSpacing.md) {
+        HStack(spacing: SeeleSpacing.sm) {
             // Interest input
-            HStack(spacing: SeeleSpacing.sm) {
+            HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: interestType == .like ? "heart" : "heart.slash")
-                    .foregroundStyle(interestType == .like ? .green : .red)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
 
                 TextField("Add an interest...", text: $newInterest)
                     .textFieldStyle(.plain)
+                    .font(SeeleTypography.body)
                     .onSubmit {
                         addInterest()
                     }
             }
-            .padding(SeeleSpacing.sm)
-            .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .padding(.horizontal, SeeleSpacing.sm)
+            .padding(.vertical, SeeleSpacing.rowVertical)
+            .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
 
             // Type picker
             Picker("Type", selection: $interestType) {
@@ -56,25 +59,27 @@ struct InterestsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 150)
+            .frame(width: 120)
 
             // Add button
             Button("Add") {
                 addInterest()
             }
             .buttonStyle(.borderedProminent)
-            .tint(SeeleColors.accent)
+            .controlSize(.small)
             .disabled(newInterest.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(SeeleSpacing.lg)
+        .padding(.horizontal, SeeleSpacing.sm)
+        .padding(.vertical, SeeleSpacing.rowVertical)
         .background(SeeleColors.surface)
     }
 
     private var likesSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
             HStack {
                 Image(systemName: "heart.fill")
-                    .foregroundStyle(.green)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.success)
                 Text("Things I Like")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -87,16 +92,17 @@ struct InterestsView: View {
             }
 
             if socialState.myLikes.isEmpty {
-                Text("No likes added yet. Add interests to help discover similar users.")
+                Text("No likes added yet.")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .padding(.horizontal, SeeleSpacing.rowHorizontal)
+                    .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(SeeleSpacing.md)
-                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
             } else {
-                FlowLayout(spacing: SeeleSpacing.sm) {
+                FlowLayout(spacing: SeeleSpacing.tagSpacing) {
                     ForEach(socialState.myLikes, id: \.self) { interest in
-                        interestTag(interest, color: .green) {
+                        interestTag(interest, color: SeeleColors.success) {
                             Task {
                                 await socialState.removeLike(interest)
                             }
@@ -108,10 +114,11 @@ struct InterestsView: View {
     }
 
     private var hatesSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
             HStack {
                 Image(systemName: "heart.slash.fill")
-                    .foregroundStyle(.red)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.error)
                 Text("Things I Dislike")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -127,13 +134,14 @@ struct InterestsView: View {
                 Text("No dislikes added yet.")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .padding(.horizontal, SeeleSpacing.rowHorizontal)
+                    .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(SeeleSpacing.md)
-                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
             } else {
-                FlowLayout(spacing: SeeleSpacing.sm) {
+                FlowLayout(spacing: SeeleSpacing.tagSpacing) {
                     ForEach(socialState.myHates, id: \.self) { interest in
-                        interestTag(interest, color: .red) {
+                        interestTag(interest, color: SeeleColors.error) {
                             Task {
                                 await socialState.removeHate(interest)
                             }
@@ -154,14 +162,14 @@ struct InterestsView: View {
                 onRemove()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(color.opacity(0.6))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.sm)
-        .background(color.opacity(0.1), in: Capsule())
+        .padding(.horizontal, SeeleSpacing.sm)
+        .padding(.vertical, SeeleSpacing.xs)
+        .background(color.opacity(0.12), in: Capsule())
     }
 
     private func addInterest() {

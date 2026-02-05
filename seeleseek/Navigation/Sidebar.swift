@@ -4,62 +4,84 @@ struct Sidebar: View {
     @Environment(\.appState) private var appState
 
     var body: some View {
-        @Bindable var state = appState
+        VStack(alignment: .leading, spacing: 0) {
+            // Logo and connection header
+            connectionHeader
+                .padding(.horizontal, SeeleSpacing.md)
+                .padding(.top, SeeleSpacing.md)
+                .padding(.bottom, SeeleSpacing.sm)
 
-        List(selection: $state.sidebarSelection) {
-            Section {
-                connectionHeader
-            }
+            Divider()
+                .background(SeeleColors.divider)
 
-            Section("Navigation") {
-                SidebarRow(item: .search)
-                SidebarRow(item: .transfers)
-                SidebarRow(item: .browse)
-            }
+            // Navigation sections
+            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                sidebarSection("Navigation") {
+                    SidebarRow(item: .search)
+                    SidebarRow(item: .transfers)
+                    SidebarRow(item: .browse)
+                }
 
-            Section("Social") {
-                SidebarRow(item: .social)
-                SidebarRow(item: .chat)
-            }
+                sidebarSection("Social") {
+                    SidebarRow(item: .social)
+                    SidebarRow(item: .chat)
+                }
 
-            Section("Monitor") {
-                SidebarRow(item: .statistics)
-                SidebarRow(item: .networkMonitor)
-            }
+                sidebarSection("Monitor") {
+                    SidebarRow(item: .statistics)
+                    SidebarRow(item: .networkMonitor)
+                }
 
-            Section {
+                Spacer()
+
                 SidebarRow(item: .settings)
+                    .padding(.horizontal, SeeleSpacing.sm)
             }
+            .padding(.vertical, SeeleSpacing.sm)
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
         .background(SeeleColors.surface)
-        .navigationTitle("SeeleSeek")
         #if os(macOS)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         #endif
+    }
+
+    private func sidebarSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+            Text(title)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+                .padding(.horizontal, SeeleSpacing.md)
+
+            VStack(spacing: SeeleSpacing.xxs) {
+                content()
+            }
+            .padding(.horizontal, SeeleSpacing.sm)
+        }
     }
 
     private var connectionHeader: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-            
             Text("seeleseek")
                 .font(SeeleTypography.logo)
                 .foregroundStyle(SeeleColors.textPrimary)
-            
-            HStack {
-                ConnectionBadge(status: appState.connection.connectionStatus)
-                Spacer()
-            }
 
-            if appState.connection.connectionStatus == .connected,
-               let username = appState.connection.username {
-                Text(username)
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
+            HStack(spacing: SeeleSpacing.xs) {
+                Circle()
+                    .fill(appState.connection.connectionStatus.color)
+                    .frame(width: 8, height: 8)
+
+                if appState.connection.connectionStatus == .connected,
+                   let username = appState.connection.username {
+                    Text(username)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textPrimary)
+                } else {
+                    Text(appState.connection.connectionStatus.label)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
             }
         }
-        .padding(.vertical, SeeleSpacing.xs)
     }
 }
 
@@ -67,12 +89,11 @@ struct SidebarRow: View {
     let item: SidebarItem
     @Environment(\.appState) private var appState
 
-    var isSelected: Bool {
+    private var isSelected: Bool {
         appState.sidebarSelection == item
     }
 
-    /// Badge count for this item (e.g., unread messages for chat)
-    var badgeCount: Int {
+    private var badgeCount: Int {
         switch item {
         case .chat:
             return appState.chatState.totalUnreadCount
@@ -84,20 +105,45 @@ struct SidebarRow: View {
     }
 
     var body: some View {
-        HStack {
-            Label(item.title, systemImage: item.icon)
-            Spacer()
-            if badgeCount > 0 {
-                Text("\(badgeCount)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(item == .chat ? .white : SeeleColors.textSecondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(item == .chat ? Color.red : SeeleColors.surfaceSecondary, in: Capsule())
+        Button {
+            appState.sidebarSelection = item
+        } label: {
+            HStack(spacing: SeeleSpacing.sm) {
+                Image(systemName: item.icon)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
+                    .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
+                    .frame(width: 18)
+
+                Text(item.title)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
+
+                Spacer()
+
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
+                        .font(SeeleTypography.badgeText)
+                        .foregroundStyle(item == .chat ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
+                        .padding(.horizontal, SeeleSpacing.xs)
+                        .padding(.vertical, SeeleSpacing.xxs)
+                        .background(
+                            item == .chat ? SeeleColors.accent : SeeleColors.surfaceElevated,
+                            in: Capsule()
+                        )
+                }
             }
+            .padding(.horizontal, SeeleSpacing.sm)
+            .padding(.vertical, SeeleSpacing.rowVertical)
+            .background(
+                isSelected ? SeeleColors.selectionBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
+            )
         }
-        .tag(item)
-        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
+        .buttonStyle(.plain)
     }
 }
 

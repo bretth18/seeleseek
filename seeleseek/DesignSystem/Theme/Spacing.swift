@@ -12,17 +12,20 @@ enum SeeleSpacing {
     static let xxxl: CGFloat = 48
 
     // MARK: - Component Specific
+    static let rowVertical: CGFloat = 6      // Compact row vertical padding
+    static let rowHorizontal: CGFloat = 10   // Compact row horizontal padding
     static let cardPadding: CGFloat = 16
     static let listRowPadding: CGFloat = 12
-    static let sectionSpacing: CGFloat = 24
+    static let sectionSpacing: CGFloat = 16
+    static let tagSpacing: CGFloat = 6       // Gap between tags in flow layouts
     static let iconSize: CGFloat = 20
-    static let iconSizeSmall: CGFloat = 16
+    static let iconSizeSmall: CGFloat = 14
     static let iconSizeLarge: CGFloat = 28
 
     // MARK: - Corner Radius
     static let cornerRadiusSmall: CGFloat = 6
-    static let cornerRadius: CGFloat = 10
-    static let cornerRadiusLarge: CGFloat = 16
+    static let cornerRadius: CGFloat = 8
+    static let cornerRadiusLarge: CGFloat = 12
 }
 
 extension EdgeInsets {

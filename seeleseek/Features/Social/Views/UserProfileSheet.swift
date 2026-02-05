@@ -67,7 +67,7 @@ struct UserProfileSheet: View {
                     if profile.isPrivileged {
                         Image(systemName: "star.fill")
                             .font(.system(size: 14))
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(SeeleColors.warning)
                     }
 
                     if let code = profile.countryCode {
@@ -161,7 +161,7 @@ struct UserProfileSheet: View {
 
                     FlowLayout(spacing: SeeleSpacing.xs) {
                         ForEach(profile.likedInterests, id: \.self) { interest in
-                            interestTag(interest, color: .green)
+                            interestTag(interest, color: SeeleColors.success)
                         }
                     }
                 }
@@ -175,7 +175,7 @@ struct UserProfileSheet: View {
 
                     FlowLayout(spacing: SeeleSpacing.xs) {
                         ForEach(profile.hatedInterests, id: \.self) { interest in
-                            interestTag(interest, color: .red)
+                            interestTag(interest, color: SeeleColors.error)
                         }
                     }
                 }
@@ -222,9 +222,9 @@ struct UserProfileSheet: View {
 
     private var statusColor: Color {
         switch profile.status {
-        case .online: .green
-        case .away: .yellow
-        case .offline: .gray
+        case .online: SeeleColors.success
+        case .away: SeeleColors.warning
+        case .offline: SeeleColors.textTertiary
         }
     }
 

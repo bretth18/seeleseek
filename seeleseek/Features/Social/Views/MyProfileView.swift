@@ -84,7 +84,7 @@ struct MyProfileView: View {
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 10))
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(SeeleColors.success)
                                 Text(socialState.myLikes.prefix(5).joined(separator: ", "))
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.textSecondary)
@@ -100,7 +100,7 @@ struct MyProfileView: View {
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.slash.fill")
                                     .font(.system(size: 10))
-                                    .foregroundStyle(.red)
+                                    .foregroundStyle(SeeleColors.error)
                                 Text(socialState.myHates.prefix(5).joined(separator: ", "))
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.textSecondary)
