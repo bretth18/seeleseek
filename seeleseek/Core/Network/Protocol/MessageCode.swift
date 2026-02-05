@@ -30,6 +30,7 @@ enum ServerMessageCode: UInt32 {
     case addThingILike = 51
     case removeThingILike = 52
     case recommendations = 54
+    case globalRecommendations = 56
     case userInterests = 57
     case roomList = 64
     case exactFileSearch = 65

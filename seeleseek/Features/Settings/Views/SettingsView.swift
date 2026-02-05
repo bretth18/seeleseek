@@ -5,6 +5,7 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .general
 
     enum SettingsTab: String, CaseIterable {
+        case profile = "Profile"
         case general = "General"
         case network = "Network"
         case shares = "Shares"
@@ -15,6 +16,7 @@ struct SettingsView: View {
 
         var icon: String {
             switch self {
+            case .profile: "person.crop.circle"
             case .general: "gear"
             case .network: "network"
             case .shares: "folder"
@@ -42,6 +44,8 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
                     switch selectedTab {
+                    case .profile:
+                        MyProfileView()
                     case .general:
                         GeneralSettingsSection(settings: appState.settings)
                     case .network:

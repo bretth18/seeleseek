@@ -112,22 +112,35 @@ struct SimilarUsersView: View {
     }
 
     private var emptyInterestsPrompt: some View {
-        VStack(spacing: SeeleSpacing.md) {
-            Image(systemName: "heart.text.square")
-                .font(.system(size: 36))
-                .foregroundStyle(SeeleColors.textTertiary)
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            HStack {
+                Image(systemName: "globe")
+                    .foregroundStyle(SeeleColors.accent)
+                Text("Popular Interests")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textPrimary)
+            }
 
-            Text("Add some interests first")
-                .font(SeeleTypography.body)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Go to the Interests tab and add things you like or dislike to discover similar users.")
+            Text("Add some interests to find similar users. Here are popular interests across the network:")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
-                .multilineTextAlignment(.center)
+
+            if socialState.globalRecommendations.isEmpty {
+                Text("Loading popular interests...")
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(SeeleSpacing.md)
+            } else {
+                FlowLayout(spacing: SeeleSpacing.sm) {
+                    ForEach(socialState.globalRecommendations.prefix(30), id: \.item) { rec in
+                        recommendationTag(item: rec.item, score: rec.score)
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(SeeleSpacing.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
     }
 

@@ -74,6 +74,8 @@ final class ServerMessageHandler {
             handleParentSpeedRatio(payload)
         case .recommendations:
             handleRecommendations(payload)
+        case .globalRecommendations:
+            handleGlobalRecommendations(payload)
         case .userInterests:
             handleUserInterests(payload)
         case .similarUsers:
@@ -810,6 +812,39 @@ final class ServerMessageHandler {
 
         print("📚 Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
         client?.onRecommendations?(recommendations, unrecommendations)
+    }
+
+    private func handleGlobalRecommendations(_ data: Data) {
+        var offset = 0
+
+        // Global recommendations (same format as personal recommendations)
+        guard let recCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var recommendations: [(item: String, score: Int32)] = []
+        for _ in 0..<recCount {
+            guard let (item, itemLen) = data.readString(at: offset) else { break }
+            offset += itemLen
+            guard let score = data.readInt32(at: offset) else { break }
+            offset += 4
+            recommendations.append((item, score))
+        }
+
+        // Unrecommendations
+        guard let unrecCount = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        var unrecommendations: [(item: String, score: Int32)] = []
+        for _ in 0..<unrecCount {
+            guard let (item, itemLen) = data.readString(at: offset) else { break }
+            offset += itemLen
+            guard let score = data.readInt32(at: offset) else { break }
+            offset += 4
+            unrecommendations.append((item, score))
+        }
+
+        print("🌍 Global Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
+        client?.onGlobalRecommendations?(recommendations, unrecommendations)
     }
 
     private func handleUserInterests(_ data: Data) {

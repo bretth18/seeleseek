@@ -539,6 +539,13 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// Get global network-wide recommendations (code 56)
+    nonisolated static func getGlobalRecommendations() -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.globalRecommendations.rawValue)
+        return wrapMessage(payload)
+    }
+
     /// Get user's interests (code 57)
     nonisolated static func getUserInterests(_ username: String) -> Data {
         var payload = Data()

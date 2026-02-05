@@ -28,6 +28,7 @@ final class SocialState {
     var similarUsers: [(username: String, rating: UInt32)] = []
     var recommendations: [(item: String, score: Int32)] = []
     var unrecommendations: [(item: String, score: Int32)] = []
+    var globalRecommendations: [(item: String, score: Int32)] = []  // Network-wide popular interests
     var isLoadingSimilar = false
     var isLoadingRecommendations = false
 
@@ -62,12 +63,24 @@ final class SocialState {
         client.onUserStatus = { [weak self] username, status, privileged in
             guard let self else { return }
             self.updateBuddyStatus(username: username, status: status, privileged: privileged)
+            // Also update viewing profile if this is the user we're looking at
+            if self.viewingProfile?.username == username {
+                self.viewingProfile?.status = BuddyStatus(from: status)
+                self.viewingProfile?.isPrivileged = privileged
+            }
         }
 
         // User stats updates
-        client.onUserStats = { [weak self] username, avgSpeed, _, files, dirs in
+        client.onUserStats = { [weak self] username, avgSpeed, uploadNum, files, dirs in
             guard let self else { return }
             self.updateBuddyStats(username: username, speed: avgSpeed, files: files, dirs: dirs)
+            // Also update viewing profile if this is the user we're looking at
+            if self.viewingProfile?.username == username {
+                self.viewingProfile?.averageSpeed = avgSpeed
+                self.viewingProfile?.totalUploads = UInt32(uploadNum)
+                self.viewingProfile?.sharedFiles = files
+                self.viewingProfile?.sharedFolders = dirs
+            }
         }
 
         // User interests response
@@ -91,6 +104,22 @@ final class SocialState {
             self.unrecommendations = unrecs
             self.isLoadingRecommendations = false
             self.logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
+        }
+
+        // Global recommendations response (network-wide popular interests)
+        client.onGlobalRecommendations = { [weak self] recs, _ in
+            guard let self else { return }
+            self.globalRecommendations = recs
+            self.logger.info("Received \(recs.count) global recommendations")
+        }
+
+        // User privileges response (for viewing profiles)
+        client.onUserPrivileges = { [weak self] username, privileged in
+            guard let self else { return }
+            // Update viewing profile if this is the user we're looking at
+            if self.viewingProfile?.username == username {
+                self.viewingProfile?.isPrivileged = privileged
+            }
         }
 
         logger.info("Social callbacks configured")
@@ -305,6 +334,10 @@ final class SocialState {
         do {
             try await networkClient?.addThingILike(item)
             logger.info("Added like: \(item)")
+
+            // Auto-refresh recommendations after adding an interest
+            try await networkClient?.getRecommendations()
+            try await networkClient?.getSimilarUsers()
         } catch {
             logger.error("Failed to add like on server: \(error.localizedDescription)")
         }
@@ -350,6 +383,10 @@ final class SocialState {
         do {
             try await networkClient?.addThingIHate(item)
             logger.info("Added hate: \(item)")
+
+            // Auto-refresh recommendations after adding an interest
+            try await networkClient?.getRecommendations()
+            try await networkClient?.getSimilarUsers()
         } catch {
             logger.error("Failed to add hate on server: \(error.localizedDescription)")
         }
@@ -395,7 +432,8 @@ final class SocialState {
 
         do {
             try await networkClient?.getRecommendations()
-            logger.info("Requested recommendations")
+            try await networkClient?.getGlobalRecommendations()
+            logger.info("Requested recommendations and global recommendations")
         } catch {
             logger.error("Failed to get recommendations: \(error.localizedDescription)")
             isLoadingRecommendations = false

@@ -193,6 +193,7 @@ final class NetworkClient {
 
     // User interests & recommendations callbacks
     var onRecommendations: (([(item: String, score: Int32)], [(item: String, score: Int32)]) -> Void)?  // (recommendations, unrecommendations)
+    var onGlobalRecommendations: (([(item: String, score: Int32)], [(item: String, score: Int32)]) -> Void)?  // (recommendations, unrecommendations)
     var onUserInterests: ((String, [String], [String]) -> Void)?  // (username, likes, hates)
     var onSimilarUsers: (([(username: String, rating: UInt32)]) -> Void)?
     var onItemRecommendations: ((String, [(item: String, score: Int32)]) -> Void)?  // (item, recommendations)
@@ -809,6 +810,14 @@ final class NetworkClient {
         let message = MessageBuilder.getRecommendations()
         try await serverConnection?.send(message)
         logger.info("Requested recommendations")
+    }
+
+    /// Get global (network-wide) recommendations - popular interests across all users
+    func getGlobalRecommendations() async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.getGlobalRecommendations()
+        try await serverConnection?.send(message)
+        logger.info("Requested global recommendations")
     }
 
     /// Get a user's interests
