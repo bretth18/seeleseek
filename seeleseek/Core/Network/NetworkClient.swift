@@ -199,6 +199,7 @@ final class NetworkClient {
     var onItemSimilarUsers: ((String, [String]) -> Void)?  // (item, users)
 
     // User stats & privileges callbacks
+    var onUserStatus: ((String, UserStatus, Bool) -> Void)?  // (username, status, privileged)
     var onUserStats: ((String, UInt32, UInt64, UInt32, UInt32) -> Void)?  // (username, avgSpeed, uploadNum, files, dirs)
     var onPrivilegesChecked: ((UInt32) -> Void)?  // timeLeft in seconds
     var onUserPrivileges: ((String, Bool) -> Void)?  // (username, privileged)
@@ -840,6 +841,32 @@ final class NetworkClient {
         let message = MessageBuilder.getItemSimilarUsers(item)
         try await serverConnection?.send(message)
         logger.info("Requested similar users for item: \(item)")
+    }
+
+    // MARK: - User Watching (Buddy List)
+
+    /// Watch a user (receive status updates)
+    func watchUser(_ username: String) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.watchUserMessage(username: username)
+        try await serverConnection?.send(message)
+        logger.info("Watching user: \(username)")
+    }
+
+    /// Stop watching a user
+    func unwatchUser(_ username: String) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.unwatchUserMessage(username: username)
+        try await serverConnection?.send(message)
+        logger.info("Unwatched user: \(username)")
+    }
+
+    /// Get a user's current status
+    func getUserStatus(_ username: String) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.getUserStatusMessage(username: username)
+        try await serverConnection?.send(message)
+        logger.info("Requested status for: \(username)")
     }
 
     // MARK: - User Stats & Privileges

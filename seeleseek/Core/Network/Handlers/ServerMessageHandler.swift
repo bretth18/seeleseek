@@ -335,10 +335,20 @@ final class ServerMessageHandler {
         guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
         offset += bytesConsumed
 
-        guard let status = data.readUInt32(at: offset) else { return }
+        guard let statusRaw = data.readUInt32(at: offset) else { return }
+        offset += 4
 
-        // Could dispatch to a callback if needed
-        print("User \(username) status: \(status)")
+        // Read privileged flag if present
+        let privileged = data.readUInt8(at: offset).map { $0 != 0 } ?? false
+
+        let status = UserStatus(rawValue: statusRaw) ?? .offline
+
+        print("User \(username) status: \(status.description), privileged: \(privileged)")
+
+        // Dispatch to callback
+        Task { @MainActor in
+            self.client?.onUserStatus?(username, status, privileged)
+        }
     }
 
     // Track pending connections to avoid duplicates

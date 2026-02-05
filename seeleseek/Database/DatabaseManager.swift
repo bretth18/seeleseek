@@ -154,6 +154,30 @@ actor DatabaseManager {
             try db.create(index: "idx_transfer_history_timestamp", on: "transfer_history", columns: ["timestamp"])
         }
 
+        // v2: Social features (buddies, interests, profile)
+        migrator.registerMigration("v2") { db in
+            // buddies: Persistent buddy list
+            try db.create(table: "buddies") { t in
+                t.column("username", .text).primaryKey()
+                t.column("notes", .text)
+                t.column("dateAdded", .double).notNull()
+                t.column("lastSeen", .double)
+            }
+
+            // my_interests: User's likes and hates
+            try db.create(table: "my_interests") { t in
+                t.column("item", .text).primaryKey()
+                t.column("type", .text).notNull()  // "like" or "hate"
+                t.column("addedAt", .double).notNull()
+            }
+
+            // my_profile: User profile settings
+            try db.create(table: "my_profile") { t in
+                t.column("key", .text).primaryKey()
+                t.column("value", .text).notNull()
+            }
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")

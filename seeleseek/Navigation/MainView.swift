@@ -83,6 +83,8 @@ struct MainView: View {
                 ChatView()
             case .browse:
                 BrowseView()
+            case .social:
+                SocialView()
             case .user:
                 BrowseView()
             case .room:

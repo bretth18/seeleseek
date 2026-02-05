@@ -1,0 +1,419 @@
+import SwiftUI
+import os
+
+@Observable
+@MainActor
+final class SocialState {
+    // MARK: - Buddy List
+    var buddies: [Buddy] = []
+    var selectedBuddy: String?
+    var buddySearchQuery: String = ""
+    var showAddBuddySheet = false
+
+    // MARK: - Profiles
+    var viewingProfile: UserProfile?
+    var showProfileSheet = false
+    var isLoadingProfile = false
+
+    // MARK: - My Profile
+    var myDescription: String = ""
+    var myPicture: Data?
+
+    // MARK: - Interests
+    var myLikes: [String] = []
+    var myHates: [String] = []
+    var newInterest: String = ""
+
+    // MARK: - Discovery
+    var similarUsers: [(username: String, rating: UInt32)] = []
+    var recommendations: [(item: String, score: Int32)] = []
+    var unrecommendations: [(item: String, score: Int32)] = []
+    var isLoadingSimilar = false
+    var isLoadingRecommendations = false
+
+    // MARK: - Network
+    weak var networkClient: NetworkClient?
+
+    private let logger = Logger(subsystem: "com.seeleseek", category: "SocialState")
+
+    // MARK: - Computed Properties
+
+    var filteredBuddies: [Buddy] {
+        let sorted = buddies.sorted { $0.status > $1.status }
+        guard !buddySearchQuery.isEmpty else { return sorted }
+        return sorted.filter { $0.username.localizedCaseInsensitiveContains(buddySearchQuery) }
+    }
+
+    var onlineBuddies: [Buddy] {
+        buddies.filter { $0.status != .offline }
+    }
+
+    var offlineBuddies: [Buddy] {
+        buddies.filter { $0.status == .offline }
+    }
+
+    // MARK: - Setup
+
+    func setupCallbacks(client: NetworkClient) {
+        self.networkClient = client
+        logger.info("Setting up social callbacks with NetworkClient...")
+
+        // User status updates (for watched users / buddies)
+        client.onUserStatus = { [weak self] username, status, privileged in
+            guard let self else { return }
+            self.updateBuddyStatus(username: username, status: status, privileged: privileged)
+        }
+
+        // User stats updates
+        client.onUserStats = { [weak self] username, avgSpeed, _, files, dirs in
+            guard let self else { return }
+            self.updateBuddyStats(username: username, speed: avgSpeed, files: files, dirs: dirs)
+        }
+
+        // User interests response
+        client.onUserInterests = { [weak self] username, likes, hates in
+            guard let self else { return }
+            self.handleUserInterests(username: username, likes: likes, hates: hates)
+        }
+
+        // Similar users response
+        client.onSimilarUsers = { [weak self] users in
+            guard let self else { return }
+            self.similarUsers = users
+            self.isLoadingSimilar = false
+            self.logger.info("Received \(users.count) similar users")
+        }
+
+        // Recommendations response
+        client.onRecommendations = { [weak self] recs, unrecs in
+            guard let self else { return }
+            self.recommendations = recs
+            self.unrecommendations = unrecs
+            self.isLoadingRecommendations = false
+            self.logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
+        }
+
+        logger.info("Social callbacks configured")
+
+        // Load persisted data
+        Task {
+            await loadPersistedData()
+        }
+    }
+
+    // MARK: - Persistence
+
+    private func loadPersistedData() async {
+        do {
+            // Load buddies from database
+            buddies = try await SocialRepository.fetchBuddies()
+            logger.info("Loaded \(self.buddies.count) buddies from database")
+
+            // Load interests
+            let interests = try await SocialRepository.fetchInterests()
+            myLikes = interests.likes
+            myHates = interests.hates
+            logger.info("Loaded \(self.myLikes.count) likes and \(self.myHates.count) hates")
+
+            // Load my profile settings
+            if let desc = try await SocialRepository.getProfileSetting("description") {
+                myDescription = desc
+            }
+
+            // Request status updates for all buddies after a short delay to ensure connection is ready
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                await rewatchAllBuddies()
+            }
+        } catch {
+            logger.error("Failed to load persisted social data: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Buddy Actions
+
+    func addBuddy(_ username: String) async {
+        guard !username.isEmpty else { return }
+        guard !buddies.contains(where: { $0.username.lowercased() == username.lowercased() }) else {
+            logger.warning("User \(username) is already a buddy")
+            return
+        }
+
+        let buddy = Buddy(username: username)
+        buddies.append(buddy)
+
+        // Persist to database
+        Task {
+            do {
+                try await SocialRepository.saveBuddy(buddy)
+                logger.info("Saved buddy \(username) to database")
+            } catch {
+                logger.error("Failed to save buddy: \(error.localizedDescription)")
+            }
+        }
+
+        // Watch user on server (get status updates)
+        do {
+            try await networkClient?.watchUser(username)
+            logger.info("Watching user \(username)")
+
+            // Request initial status
+            await refreshBuddyStatus(username)
+        } catch {
+            logger.error("Failed to watch user: \(error.localizedDescription)")
+        }
+    }
+
+    func removeBuddy(_ username: String) async {
+        buddies.removeAll { $0.username == username }
+
+        // Remove from database
+        Task {
+            do {
+                try await SocialRepository.deleteBuddy(username)
+                logger.info("Removed buddy \(username) from database")
+            } catch {
+                logger.error("Failed to remove buddy: \(error.localizedDescription)")
+            }
+        }
+
+        // Unwatch user on server
+        do {
+            try await networkClient?.unwatchUser(username)
+            logger.info("Unwatched user \(username)")
+        } catch {
+            logger.error("Failed to unwatch user: \(error.localizedDescription)")
+        }
+    }
+
+    func refreshBuddyStatus(_ username: String) async {
+        do {
+            // Request user status
+            try await networkClient?.getUserStatus(username)
+
+            // Request user stats
+            try await networkClient?.getUserStats(username)
+
+            logger.debug("Requested status/stats for \(username)")
+        } catch {
+            logger.error("Failed to refresh buddy status: \(error.localizedDescription)")
+        }
+    }
+
+    func updateBuddyStatus(username: String, status: UserStatus, privileged: Bool) {
+        guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
+
+        buddies[index].status = BuddyStatus(from: status)
+        buddies[index].isPrivileged = privileged
+
+        if status != .offline {
+            buddies[index].lastSeen = Date()
+        }
+
+        // Update in database
+        Task {
+            do {
+                try await SocialRepository.saveBuddy(buddies[index])
+            } catch {
+                logger.error("Failed to update buddy status in database: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func updateBuddyStats(username: String, speed: UInt32, files: UInt32, dirs: UInt32) {
+        guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
+
+        buddies[index].averageSpeed = speed
+        buddies[index].fileCount = files
+        buddies[index].folderCount = dirs
+    }
+
+    func updateBuddyNotes(_ username: String, notes: String) {
+        guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
+
+        buddies[index].notes = notes.isEmpty ? nil : notes
+
+        Task {
+            do {
+                try await SocialRepository.saveBuddy(buddies[index])
+            } catch {
+                logger.error("Failed to save buddy notes: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Profile Actions
+
+    func loadProfile(for username: String) async {
+        isLoadingProfile = true
+        viewingProfile = UserProfile(username: username)
+
+        do {
+            // Request user interests
+            try await networkClient?.getUserInterests(username)
+
+            // Request user stats
+            try await networkClient?.getUserStats(username)
+
+            // Request user privileges
+            try await networkClient?.getUserPrivileges(username)
+
+            logger.info("Requested profile data for \(username)")
+        } catch {
+            logger.error("Failed to load profile: \(error.localizedDescription)")
+        }
+
+        isLoadingProfile = false
+        showProfileSheet = true
+    }
+
+    private func handleUserInterests(username: String, likes: [String], hates: [String]) {
+        // Update viewing profile if this is the user we're looking at
+        if viewingProfile?.username == username {
+            viewingProfile?.likedInterests = likes
+            viewingProfile?.hatedInterests = hates
+        }
+    }
+
+    func saveMyProfile() async {
+        do {
+            try await SocialRepository.setProfileSetting("description", value: myDescription)
+            logger.info("Saved profile description")
+        } catch {
+            logger.error("Failed to save profile: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Interest Actions
+
+    func addLike(_ item: String) async {
+        guard !item.isEmpty else { return }
+        guard !myLikes.contains(where: { $0.lowercased() == item.lowercased() }) else { return }
+
+        myLikes.append(item)
+
+        // Save to database
+        Task {
+            do {
+                try await SocialRepository.saveInterest(item, type: .like)
+            } catch {
+                logger.error("Failed to save like: \(error.localizedDescription)")
+            }
+        }
+
+        // Send to server
+        do {
+            try await networkClient?.addThingILike(item)
+            logger.info("Added like: \(item)")
+        } catch {
+            logger.error("Failed to add like on server: \(error.localizedDescription)")
+        }
+    }
+
+    func removeLike(_ item: String) async {
+        myLikes.removeAll { $0 == item }
+
+        // Remove from database
+        Task {
+            do {
+                try await SocialRepository.deleteInterest(item)
+            } catch {
+                logger.error("Failed to remove like from database: \(error.localizedDescription)")
+            }
+        }
+
+        // Remove from server
+        do {
+            try await networkClient?.removeThingILike(item)
+            logger.info("Removed like: \(item)")
+        } catch {
+            logger.error("Failed to remove like on server: \(error.localizedDescription)")
+        }
+    }
+
+    func addHate(_ item: String) async {
+        guard !item.isEmpty else { return }
+        guard !myHates.contains(where: { $0.lowercased() == item.lowercased() }) else { return }
+
+        myHates.append(item)
+
+        // Save to database
+        Task {
+            do {
+                try await SocialRepository.saveInterest(item, type: .hate)
+            } catch {
+                logger.error("Failed to save hate: \(error.localizedDescription)")
+            }
+        }
+
+        // Send to server
+        do {
+            try await networkClient?.addThingIHate(item)
+            logger.info("Added hate: \(item)")
+        } catch {
+            logger.error("Failed to add hate on server: \(error.localizedDescription)")
+        }
+    }
+
+    func removeHate(_ item: String) async {
+        myHates.removeAll { $0 == item }
+
+        // Remove from database
+        Task {
+            do {
+                try await SocialRepository.deleteInterest(item)
+            } catch {
+                logger.error("Failed to remove hate from database: \(error.localizedDescription)")
+            }
+        }
+
+        // Remove from server
+        do {
+            try await networkClient?.removeThingIHate(item)
+            logger.info("Removed hate: \(item)")
+        } catch {
+            logger.error("Failed to remove hate on server: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Discovery Actions
+
+    func loadSimilarUsers() async {
+        isLoadingSimilar = true
+
+        do {
+            try await networkClient?.getSimilarUsers()
+            logger.info("Requested similar users")
+        } catch {
+            logger.error("Failed to get similar users: \(error.localizedDescription)")
+            isLoadingSimilar = false
+        }
+    }
+
+    func loadRecommendations() async {
+        isLoadingRecommendations = true
+
+        do {
+            try await networkClient?.getRecommendations()
+            logger.info("Requested recommendations")
+        } catch {
+            logger.error("Failed to get recommendations: \(error.localizedDescription)")
+            isLoadingRecommendations = false
+        }
+    }
+
+    // MARK: - Re-watch All Buddies (after reconnection)
+
+    func rewatchAllBuddies() async {
+        for buddy in buddies {
+            do {
+                try await networkClient?.watchUser(buddy.username)
+                try await networkClient?.getUserStatus(buddy.username)
+            } catch {
+                logger.error("Failed to rewatch \(buddy.username): \(error.localizedDescription)")
+            }
+        }
+
+        logger.info("Re-watched \(self.buddies.count) buddies")
+    }
+}

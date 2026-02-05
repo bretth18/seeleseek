@@ -13,6 +13,7 @@ final class AppState {
     var statisticsState = StatisticsState()
     var browseState = BrowseState()
     var metadataState = MetadataState()
+    var socialState = SocialState()
 
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
@@ -31,6 +32,7 @@ final class AppState {
             searchState.setupCallbacks(client: _networkClient!)
             chatState.setupCallbacks(client: _networkClient!)
             browseState.configure(networkClient: _networkClient!)
+            socialState.setupCallbacks(client: _networkClient!)
             downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
         }
@@ -164,6 +166,7 @@ enum SidebarItem: Hashable, Identifiable {
     case transfers
     case chat
     case browse
+    case social
     case user(String)
     case room(String)
     case statistics
@@ -176,6 +179,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .transfers: "transfers"
         case .chat: "chat"
         case .browse: "browse"
+        case .social: "social"
         case .user(let name): "user-\(name)"
         case .room(let name): "room-\(name)"
         case .statistics: "statistics"
@@ -190,6 +194,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .transfers: "Transfers"
         case .chat: "Chat"
         case .browse: "Browse"
+        case .social: "Friends"
         case .user(let name): name
         case .room(let name): name
         case .statistics: "Statistics"
@@ -204,6 +209,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .transfers: "arrow.up.arrow.down"
         case .chat: "bubble.left.and.bubble.right"
         case .browse: "folder"
+        case .social: "person.2"
         case .user: "person"
         case .room: "person.3"
         case .statistics: "chart.bar"

@@ -17,9 +17,9 @@ struct Sidebar: View {
                 SidebarRow(item: .browse)
             }
 
-            Section("Chat") {
+            Section("Social") {
+                SidebarRow(item: .social)
                 SidebarRow(item: .chat)
-                // Dynamic rooms would go here
             }
 
             Section("Monitor") {
