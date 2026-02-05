@@ -12,6 +12,8 @@ final class SettingsState {
     private let uploadSpeedLimitKey = "settings.uploadSpeedLimit"
     private let downloadSpeedLimitKey = "settings.downloadSpeedLimit"
     private let maxSearchResultsKey = "settings.maxSearchResults"
+    private let downloadLocationKey = "settings.downloadLocation"
+    private let incompleteLocationKey = "settings.incompleteLocation"
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -19,8 +21,18 @@ final class SettingsState {
     private var isLoading = false
 
     // MARK: - General Settings
-    var downloadLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-    var incompleteLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("Incomplete")
+    var downloadLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first! {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var incompleteLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("Incomplete") {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
     var launchAtLogin: Bool = false
     var showInMenuBar: Bool = true
 
@@ -143,6 +155,8 @@ final class SettingsState {
         UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
         UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
         UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
+        UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
+        UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
 
         // Save to database asynchronously
         Task {
@@ -196,6 +210,12 @@ final class SettingsState {
         }
         if UserDefaults.standard.object(forKey: maxSearchResultsKey) != nil {
             maxSearchResults = UserDefaults.standard.integer(forKey: maxSearchResultsKey)
+        }
+        if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
+            downloadLocation = URL(fileURLWithPath: downloadPath)
+        }
+        if let incompletePath = UserDefaults.standard.string(forKey: incompleteLocationKey) {
+            incompleteLocation = URL(fileURLWithPath: incompletePath)
         }
     }
 

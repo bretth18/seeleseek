@@ -151,33 +151,6 @@ actor ServerConnection {
         }
     }
 
-    func login(username: String, password: String) async throws -> LoginResult {
-        let message = MessageBuilder.loginMessage(username: username, password: password)
-        try await send(message)
-
-        // Wait for login response
-        return try await withCheckedThrowingContinuation { continuation in
-            Task {
-                // Set up a temporary handler to catch the login response
-                let originalHandler = self.messageHandler
-                await self.setMessageHandler { code, payload in
-                    if code == ServerMessageCode.login.rawValue {
-                        if let result = MessageParser.parseLoginResponse(payload) {
-                            continuation.resume(returning: result)
-                        } else {
-                            continuation.resume(throwing: ConnectionError.invalidResponse)
-                        }
-                        // Restore original handler
-                        await self.setMessageHandler(originalHandler ?? { _, _ in })
-                    }
-                }
-
-                // Start receiving if not already
-                await self.startReceiving()
-            }
-        }
-    }
-
     func sendPing() async throws {
         try await send(MessageBuilder.pingMessage())
     }
@@ -265,9 +238,22 @@ actor ServerConnection {
         }
     }
 
+    // MARK: - Security Constants
+    /// Maximum receive buffer size to prevent memory exhaustion
+    /// Server messages are typically small, but room lists can be large
+    private static let maxReceiveBufferSize = 50 * 1024 * 1024  // 50MB
+
     private func handleReceivedData(_ data: Data) async {
         receiveBuffer.append(data)
         logger.debug("Received \(data.count) bytes, buffer now \(self.receiveBuffer.count) bytes")
+
+        // SECURITY: Check buffer size to prevent memory exhaustion
+        guard receiveBuffer.count <= Self.maxReceiveBufferSize else {
+            logger.error("Receive buffer exceeded limit, disconnecting")
+            receiveBuffer.removeAll()
+            disconnect()
+            return
+        }
 
         // Process complete messages
         while let (frame, consumed) = MessageParser.parseFrame(from: receiveBuffer) {

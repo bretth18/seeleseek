@@ -33,6 +33,11 @@ final class NetworkClient {
     private var serverConnection: ServerConnection?
     private var messageHandler: ServerMessageHandler?
     private var receiveTask: Task<Void, Never>?
+    private var pingTask: Task<Void, Never>?
+
+    // MARK: - Keepalive Configuration
+    /// Interval between ping messages (5 minutes)
+    private static let pingInterval: TimeInterval = 300
 
     // Services
     private let listenerService = ListenerService()
@@ -48,7 +53,8 @@ final class NetworkClient {
     let userInfoCache = UserInfoCache()
 
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
-    private var pendingPeerAddressRequests: [String: CheckedContinuation<(ip: String, port: Int), Error>] = [:]
+    // Uses (continuation, requestID) to prevent double-resume when same user is requested multiple times
+    private var pendingPeerAddressRequests: [String: (continuation: CheckedContinuation<(ip: String, port: Int), Error>, requestID: UUID)] = [:]
 
     // MARK: - Pending Status Requests (for checking if user is online before browse/download)
     private var pendingStatusRequests: [String: CheckedContinuation<(status: UserStatus, privileged: Bool), Never>] = [:]
@@ -333,6 +339,9 @@ final class NetworkClient {
                 onConnectionStatusChanged?(.connected)
                 logger.info("Login successful!")
 
+                // Start keepalive ping timer
+                startPingTimer()
+
                 // Run NAT mapping in background (don't block connection)
                 Task {
                     await self.setupNATInBackground()
@@ -362,6 +371,9 @@ final class NetworkClient {
         receiveTask?.cancel()
         receiveTask = nil
 
+        pingTask?.cancel()
+        pingTask = nil
+
         Task {
             await serverConnection?.disconnect()
             serverConnection = nil
@@ -378,6 +390,32 @@ final class NetworkClient {
         onConnectionStatusChanged?(.disconnected)
 
         logger.info("Disconnected")
+    }
+
+    // MARK: - Keepalive
+
+    /// Start periodic ping timer to keep connection alive
+    private func startPingTimer() {
+        pingTask?.cancel()
+        pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(Self.pingInterval))
+                    guard let self = self, self.isConnected, let connection = self.serverConnection else {
+                        return
+                    }
+                    let pingMessage = MessageBuilder.pingMessage()
+                    try await connection.send(pingMessage)
+                    self.logger.debug("Sent keepalive ping")
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self?.logger.warning("Keepalive ping failed: \(error.localizedDescription)")
+                    // Continue trying - connection may recover
+                }
+            }
+        }
+        logger.info("Keepalive ping timer started (interval: \(Self.pingInterval)s)")
     }
 
     // MARK: - NAT Setup (Background)
@@ -615,9 +653,9 @@ final class NetworkClient {
         print("🔔 handlePeerAddressResponse: \(username) @ \(ip):\(port)")
 
         // Check for pending internal request (browse/folder)
-        if let continuation = pendingPeerAddressRequests.removeValue(forKey: username) {
-            print("  → Resuming pending getPeerAddress continuation")
-            continuation.resume(returning: (ip, port))
+        if let pending = pendingPeerAddressRequests.removeValue(forKey: username) {
+            print("  → Resuming pending getPeerAddress continuation (requestID: \(pending.requestID))")
+            pending.continuation.resume(returning: (ip, port))
         }
 
         // Call all registered handlers (multi-listener pattern)
@@ -646,23 +684,28 @@ final class NetworkClient {
         if pendingPeerAddressRequests[username] != nil {
             // Another request is in flight - wait a bit and try to get existing connection
             try await Task.sleep(for: .milliseconds(500))
-            if let existingConnection = peerConnectionPool.getConnectionForUser(username) {
+            if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
                 let info = existingConnection.peerInfo
                 return (info.ip, info.port)
             }
         }
 
+        // Generate unique request ID to prevent double-resume when same user is requested multiple times
+        let requestID = UUID()
+
         return try await withCheckedThrowingContinuation { continuation in
-            // Register pending request
-            pendingPeerAddressRequests[username] = continuation
+            // Register pending request with unique ID
+            pendingPeerAddressRequests[username] = (continuation: continuation, requestID: requestID)
 
             // Request the peer address
             Task {
                 do {
                     try await self.getUserAddress(username)
                 } catch {
-                    // Remove and resume with error if request fails
-                    if self.pendingPeerAddressRequests.removeValue(forKey: username) != nil {
+                    // Remove and resume with error if request fails AND this is still our request
+                    if let pending = self.pendingPeerAddressRequests[username],
+                       pending.requestID == requestID {
+                        self.pendingPeerAddressRequests.removeValue(forKey: username)
                         continuation.resume(throwing: error)
                     }
                 }
@@ -671,8 +714,11 @@ final class NetworkClient {
             // Timeout
             Task {
                 try? await Task.sleep(for: timeout)
-                // Remove and resume with timeout if still pending
-                if self.pendingPeerAddressRequests.removeValue(forKey: username) != nil {
+                // Remove and resume with timeout if still pending AND this is still our request
+                // This check prevents double-resume when a new request replaced our continuation
+                if let pending = self.pendingPeerAddressRequests[username],
+                   pending.requestID == requestID {
+                    self.pendingPeerAddressRequests.removeValue(forKey: username)
                     continuation.resume(throwing: NetworkError.timeout)
                 }
             }
@@ -697,7 +743,7 @@ final class NetworkClient {
 
         // Step 0: Check if we already have an active connection to this user
         // This is common - the peer may have connected to us for search results
-        if let existingConnection = peerConnectionPool.getConnectionForUser(username) {
+        if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
             print("📂 Browse: Found existing connection to \(username), reusing it!")
             connection = existingConnection
         } else {
@@ -1366,7 +1412,7 @@ final class NetworkClient {
         let token = UInt32.random(in: 0...UInt32.max)
 
         // Check if we have an existing connection to this user
-        if let existingConnection = peerConnectionPool.getConnectionForUser(username) {
+        if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
             try await existingConnection.requestFolderContents(token: token, folder: folder)
             return
         }

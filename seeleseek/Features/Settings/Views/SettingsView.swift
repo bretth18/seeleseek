@@ -885,13 +885,26 @@ private func folderPicker(_ title: String, url: Binding<URL>) -> some View {
 
             Spacer()
 
-            Text(url.wrappedValue.lastPathComponent)
+            Text(url.wrappedValue.path)
                 .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textSecondary)
                 .lineLimit(1)
+                .truncationMode(.middle)
 
             Button("Choose...") {
-                // Show folder picker
+                #if os(macOS)
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = false
+                panel.canChooseDirectories = true
+                panel.allowsMultipleSelection = false
+                panel.message = "Select \(title.lowercased()) folder"
+                panel.prompt = "Select"
+                panel.directoryURL = url.wrappedValue
+
+                if panel.runModal() == .OK, let selectedURL = panel.url {
+                    url.wrappedValue = selectedURL
+                }
+                #endif
             }
             .font(SeeleTypography.caption)
             .foregroundStyle(SeeleColors.accent)

@@ -60,6 +60,17 @@ actor PeerConnection {
     private var receiveBuffer = Data()
     private(set) var state: State = .disconnected
 
+    /// Check if the connection is currently connected and usable
+    var isConnected: Bool {
+        guard connection != nil else { return false }
+        switch state {
+        case .connected, .handshaking:
+            return true
+        default:
+            return false
+        }
+    }
+
     // For incoming connections, we delay starting the receive loop until callbacks are configured
     private var autoStartReceiving = true
 
@@ -368,7 +379,30 @@ actor PeerConnection {
     func disconnect() {
         connection?.cancel()
         connection = nil
+        clearCallbacks()
         updateState(.disconnected)
+    }
+
+    /// Clear all callbacks to prevent memory leaks from closures holding strong references
+    private func clearCallbacks() {
+        _onStateChanged = nil
+        _onMessage = nil
+        _onSharesReceived = nil
+        _onSearchReply = nil
+        _onTransferRequest = nil
+        _tokenTransferRequestHandlers.removeAll()
+        _onUsernameDiscovered = nil
+        _onFileTransferConnection = nil
+        _onPierceFirewall = nil
+        _onUploadDenied = nil
+        _onUploadFailed = nil
+        _onQueueUpload = nil
+        _onTransferResponse = nil
+        _onFolderContentsRequest = nil
+        _onFolderContentsResponse = nil
+        _onPlaceInQueueRequest = nil
+        _onSharesRequest = nil
+        _onUserInfoRequest = nil
     }
 
     /// Start the receive loop - call this after callbacks are configured for incoming connections
@@ -973,10 +1007,24 @@ actor PeerConnection {
         peerHandshakeReceived
     }
 
+    // MARK: - Security Constants
+    /// Maximum receive buffer size to prevent memory exhaustion from malicious peers
+    /// Must be larger than max message size (100MB) to allow buffering of large share lists
+    private static let maxReceiveBufferSize = 150 * 1024 * 1024  // 150MB
+
     private func handleReceivedData(_ data: Data) async {
         receiveBuffer.append(data)
         bytesReceived += UInt64(data.count)
         lastActivityAt = Date()
+
+        // SECURITY: Check buffer size to prevent memory exhaustion
+        guard receiveBuffer.count <= Self.maxReceiveBufferSize else {
+            logger.error("Receive buffer exceeded limit (\(Self.maxReceiveBufferSize) bytes), disconnecting malicious peer")
+            print("⚠️ SECURITY: [\(peerInfo.username)] Buffer overflow protection triggered, disconnecting")
+            receiveBuffer.removeAll()
+            disconnect()
+            return
+        }
 
         let preview = data.prefix(40).map { String(format: "%02x", $0) }.joined(separator: " ")
         print("📥 [\(peerInfo.username)] Received \(data.count) bytes, buffer=\(receiveBuffer.count) bytes")

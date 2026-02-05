@@ -610,17 +610,34 @@ final class PeerConnectionPool {
     /// Get an active connection by username (first match)
     /// Checks both outgoing connections (keyed by "username-token") and
     /// incoming connections (keyed by "incoming-*" but with username in connection info)
-    func getConnectionForUser(_ username: String) -> PeerConnection? {
+    func getConnectionForUser(_ username: String) async -> PeerConnection? {
         // First check outgoing connections (direct key match)
-        if let key = activeConnections_.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-            return activeConnections_[key]
+        if let key = activeConnections_.keys.first(where: { $0.hasPrefix("\(username)-") }),
+           let connection = activeConnections_[key] {
+            // CRITICAL: Verify the connection is actually still connected
+            let isConnected = await connection.isConnected
+            if isConnected {
+                return connection
+            } else {
+                print("⚠️ Found stale connection for \(username) (key: \(key)), removing")
+                activeConnections_.removeValue(forKey: key)
+                connections.removeValue(forKey: key)
+            }
         }
 
         // Then check incoming connections by looking at the username in connection info
         for (key, info) in connections {
             if info.username == username, let connection = activeConnections_[key] {
-                print("♻️ Found existing INCOMING connection for \(username) (key: \(key))")
-                return connection
+                // CRITICAL: Verify the connection is actually still connected
+                let isConnected = await connection.isConnected
+                if isConnected {
+                    print("♻️ Found existing INCOMING connection for \(username) (key: \(key))")
+                    return connection
+                } else {
+                    print("⚠️ Found stale incoming connection for \(username) (key: \(key)), removing")
+                    activeConnections_.removeValue(forKey: key)
+                    connections.removeValue(forKey: key)
+                }
             }
         }
 

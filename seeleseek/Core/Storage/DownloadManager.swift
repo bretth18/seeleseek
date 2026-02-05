@@ -373,7 +373,7 @@ final class DownloadManager {
         pendingDownloads[token]?.peerPort = port
 
         // First, check if we already have a connection to this user (from incoming connections)
-        if let existingConnection = networkClient.peerConnectionPool.getConnectionForUser(username) {
+        if let existingConnection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
             print("✅ Reusing existing connection to \(username)")
             logger.info("Reusing existing connection to \(username)")
 
@@ -1195,21 +1195,31 @@ final class DownloadManager {
     private func isPathSafe(_ url: URL, within baseDir: URL) -> Bool {
         let fileManager = FileManager.default
 
-        // Resolve the actual path (following symlinks)
-        let resolvedPath = url.resolvingSymlinksInPath().path
-        let resolvedBasePath = baseDir.resolvingSymlinksInPath().path
+        // Standardize paths (remove . and ..) without following symlinks
+        // This is important because app container paths may resolve differently
+        let standardizedPath = url.standardized.path
+        let standardizedBasePath = baseDir.standardized.path
 
-        // Ensure the resolved path is still within the base directory
-        guard resolvedPath.hasPrefix(resolvedBasePath) else {
-            print("⚠️ SECURITY: Path \(url.path) resolves outside base directory")
+        // First check: Ensure the standardized path is within the base directory
+        // This catches directory traversal attacks (../) without symlink resolution issues
+        guard standardizedPath.hasPrefix(standardizedBasePath) else {
+            print("⚠️ SECURITY: Path \(url.path) is outside base directory")
             return false
         }
 
-        // Check each existing component of the path for symlinks
-        var currentPath = baseDir
-        let pathComponents = url.pathComponents.dropFirst(baseDir.pathComponents.count)
+        // Second check: Ensure no path component is ".." (extra safety)
+        let relativeComponents = url.pathComponents.dropFirst(baseDir.pathComponents.count)
+        for component in relativeComponents {
+            if component == ".." {
+                print("⚠️ SECURITY: Directory traversal attempt detected in \(url.path)")
+                return false
+            }
+        }
 
-        for component in pathComponents {
+        // Third check: Look for symlinks in the USER-CREATED portions of the path only
+        // (Don't check base directory itself - it's system-controlled)
+        var currentPath = baseDir
+        for component in relativeComponents {
             currentPath = currentPath.appendingPathComponent(component)
 
             // Only check if the path exists
