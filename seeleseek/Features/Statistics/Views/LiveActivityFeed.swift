@@ -56,7 +56,7 @@ struct LiveActivityFeed: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 

@@ -91,9 +91,9 @@ struct SettingsView: View {
                     ? SeeleColors.selectionBackground
                     : Color.clear
             )
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(selectedTab == tab ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
         }
@@ -796,9 +796,9 @@ private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content:
         VStack(spacing: 0) {
             content()
         }
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .stroke(SeeleColors.border, lineWidth: 1)
         )
     }

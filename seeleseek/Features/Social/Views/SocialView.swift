@@ -93,10 +93,10 @@ struct SocialView: View {
             .padding(.vertical, SeeleSpacing.sm)
             .background(
                 isSelected ? SeeleColors.selectionBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
         }

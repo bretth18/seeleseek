@@ -144,7 +144,7 @@ struct UserProfileSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.sm)
-        .background(SeeleColors.surfaceSecondary.opacity(0.5), in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surfaceSecondary.opacity(0.5), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private var interestsSection: some View {

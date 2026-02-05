@@ -147,7 +147,7 @@ struct SimilarUsersView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func noResultsView(_ message: String) -> some View {
@@ -156,7 +156,7 @@ struct SimilarUsersView: View {
             .foregroundStyle(SeeleColors.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func similarUserRow(username: String, rating: UInt32) -> some View {
@@ -222,7 +222,7 @@ struct SimilarUsersView: View {
             .foregroundStyle(SeeleColors.accent)
         }
         .padding(SeeleSpacing.md)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func recommendationTag(item: String, score: Int32) -> some View {

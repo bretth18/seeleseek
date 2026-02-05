@@ -65,7 +65,7 @@ struct LeechSettingsView: View {
             }
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private var thresholdsSection: some View {
@@ -113,7 +113,7 @@ struct LeechSettingsView: View {
                 .foregroundStyle(SeeleColors.textTertiary)
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .opacity(socialState.leechSettings.enabled ? 1 : 0.5)
         .disabled(!socialState.leechSettings.enabled)
     }
@@ -129,7 +129,7 @@ struct LeechSettingsView: View {
             }
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .opacity(socialState.leechSettings.enabled ? 1 : 0.5)
         .disabled(!socialState.leechSettings.enabled)
     }
@@ -157,7 +157,7 @@ struct LeechSettingsView: View {
             }
             .padding(SeeleSpacing.sm)
             .background(socialState.leechSettings.action == action ? SeeleColors.accent.opacity(0.1) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
         }
         .buttonStyle(.plain)
     }
@@ -174,7 +174,7 @@ struct LeechSettingsView: View {
                 .scrollContentBackground(.hidden)
                 .padding(SeeleSpacing.sm)
                 .background(SeeleColors.surfaceSecondary)
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
                 .frame(height: 80)
                 .onChange(of: socialState.leechSettings.customMessage) { _, _ in
                     Task { await socialState.saveLeechSettings() }
@@ -209,7 +209,7 @@ struct LeechSettingsView: View {
             }
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .opacity(socialState.leechSettings.enabled && socialState.leechSettings.action == .message ? 1 : 0.5)
         .disabled(!socialState.leechSettings.enabled || socialState.leechSettings.action != .message)
     }
@@ -245,11 +245,11 @@ struct LeechSettingsView: View {
                         leechRow(username)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .opacity(socialState.leechSettings.enabled ? 1 : 0.5)
     }
 

@@ -142,9 +142,9 @@ struct ProgressIndicator: View {
         HStack(spacing: SeeleSpacing.sm) {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(SeeleColors.surfaceSecondary)
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(SeeleColors.accent)
                         .frame(width: geometry.size.width * min(max(progress, 0), 1))
                 }

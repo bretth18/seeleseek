@@ -157,7 +157,7 @@ struct MetadataEditorSheet: View {
                     .padding(.horizontal, SeeleSpacing.xs)
                     .padding(.vertical, SeeleSpacing.xxs)
                     .background(scoreColor(recording.score).opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
                 if state.selectedRecording?.id == recording.id {
                     Image(systemName: "checkmark.circle.fill")
@@ -166,7 +166,7 @@ struct MetadataEditorSheet: View {
             }
             .padding(SeeleSpacing.sm)
             .background(state.selectedRecording?.id == recording.id ? SeeleColors.accent.opacity(0.1) : Color.clear)
-            .cornerRadius(SeeleSpacing.cornerRadius)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -228,7 +228,7 @@ struct MetadataEditorSheet: View {
             // Cover art display
             ZStack {
                 if state.isLoadingCoverArt {
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusMedium)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                         .fill(SeeleColors.surfaceSecondary)
                         .frame(width: 150, height: 150)
                         .overlay {
@@ -241,7 +241,7 @@ struct MetadataEditorSheet: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 150, height: 150)
-                            .cornerRadius(SeeleSpacing.cornerRadiusMedium)
+                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                             .shadow(radius: 4)
                     }
                     #else
@@ -250,12 +250,12 @@ struct MetadataEditorSheet: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 150, height: 150)
-                            .cornerRadius(SeeleSpacing.cornerRadiusMedium)
+                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                             .shadow(radius: 4)
                     }
                     #endif
                 } else {
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusMedium)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                         .fill(SeeleColors.surfaceSecondary)
                         .frame(width: 150, height: 150)
                         .overlay {

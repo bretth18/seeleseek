@@ -78,7 +78,7 @@ extension View {
             }
         }
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
     .padding()
     .background(SeeleColors.background)

@@ -119,7 +119,7 @@ struct StatisticsView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Speed Chart
@@ -156,7 +156,7 @@ struct StatisticsView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Connection Metrics
@@ -190,7 +190,7 @@ struct StatisticsView: View {
         .padding(SeeleSpacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Transfer Metrics
@@ -219,7 +219,7 @@ struct StatisticsView: View {
         .padding(SeeleSpacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Network Topology
@@ -246,7 +246,7 @@ struct StatisticsView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Peer Activity
@@ -265,7 +265,7 @@ struct StatisticsView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     // MARK: - Transfer History
@@ -292,7 +292,7 @@ struct StatisticsView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private var combinedHistory: [StatisticsState.TransferHistoryEntry] {
@@ -551,12 +551,12 @@ struct PeerActivityHeatmap: View {
 
                 VStack(spacing: SeeleSpacing.xxs) {
                     // Download bar
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(SeeleColors.success.opacity(0.3 + intensity * 0.7))
                         .frame(height: CGFloat(data.downloads) / CGFloat(max(maxActivity, 1)) * 40)
 
                     // Upload bar
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(SeeleColors.accent.opacity(0.3 + intensity * 0.7))
                         .frame(height: CGFloat(data.uploads) / CGFloat(max(maxActivity, 1)) * 40)
                 }

@@ -82,7 +82,7 @@ private struct TabButton: View {
                 .padding(.horizontal, SeeleSpacing.lg)
                 .padding(.vertical, SeeleSpacing.sm)
                 .background(isSelected ? SeeleColors.surfaceSecondary : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
         }
         .buttonStyle(.plain)
     }
@@ -230,7 +230,7 @@ private struct MetricCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
@@ -324,7 +324,7 @@ private struct BandwidthChartCard: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
@@ -401,7 +401,7 @@ private struct ConnectionHealthCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
@@ -463,7 +463,7 @@ private struct QuickPeersCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
@@ -541,7 +541,7 @@ private struct TransfersTab: View {
             }
             .padding(SeeleSpacing.lg)
             .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .padding(SeeleSpacing.lg)
     }

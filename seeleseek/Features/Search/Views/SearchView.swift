@@ -50,7 +50,7 @@ struct SearchView: View {
             }
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
             Button {
                 performSearch()
@@ -61,7 +61,7 @@ struct SearchView: View {
                     .padding(.horizontal, SeeleSpacing.lg)
                     .padding(.vertical, SeeleSpacing.md)
                     .background(searchState.canSearch ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!searchState.canSearch)
@@ -116,9 +116,9 @@ struct SearchView: View {
         .padding(.vertical, SeeleSpacing.xs)
         .background(isSelected ? SeeleColors.accent.opacity(0.2) : SeeleColors.surface)
         .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
         .overlay(
-            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius / 2)
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
                 .stroke(isSelected ? SeeleColors.accent : Color.clear, lineWidth: 1)
         )
         .onTapGesture {

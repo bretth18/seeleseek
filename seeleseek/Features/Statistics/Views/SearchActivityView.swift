@@ -80,7 +80,7 @@ struct SearchActivityView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
@@ -121,7 +121,7 @@ struct SearchTimelineView: View {
                     let count = groupedByMinute[minute] ?? 0
                     let height = CGFloat(count) / CGFloat(maxCount) * geometry.size.height
 
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusXS)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(count > 0 ? SeeleColors.info : SeeleColors.surfaceSecondary)
                         .frame(width: max((geometry.size.width - 60) / 30, SeeleSpacing.xs), height: max(height, SeeleSpacing.xxs))
                 }

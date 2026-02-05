@@ -75,7 +75,7 @@ struct BlocklistView: View {
                 .foregroundStyle(SeeleColors.textTertiary)
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private var blockedUsersSection: some View {
@@ -110,7 +110,7 @@ struct BlocklistView: View {
                         blockedUserRow(blocked)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
         }
     }

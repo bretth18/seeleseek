@@ -38,7 +38,7 @@ struct PrimaryButton: View {
             .padding(.vertical, SeeleSpacing.md)
             .background(SeeleColors.accent)
             .foregroundStyle(.white)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isLoading)
@@ -76,9 +76,9 @@ struct SecondaryButton: View {
             .padding(.vertical, SeeleSpacing.md)
             .background(SeeleColors.surfaceSecondary)
             .foregroundStyle(SeeleColors.textPrimary)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
             )
         }

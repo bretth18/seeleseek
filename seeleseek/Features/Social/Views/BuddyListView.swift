@@ -21,7 +21,7 @@ struct BuddyListView: View {
                         .textFieldStyle(.plain)
                 }
                 .padding(SeeleSpacing.sm)
-                .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
                 Spacer()
 

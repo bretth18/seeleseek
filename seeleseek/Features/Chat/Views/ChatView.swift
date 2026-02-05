@@ -324,7 +324,7 @@ struct MessageBubble: View {
                         message.isOwn ? SeeleColors.accent.opacity(0.2) :
                         message.isSystem ? .clear : SeeleColors.surface
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
                 Text(message.formattedTime)
                     .font(SeeleTypography.caption2)
@@ -406,7 +406,7 @@ struct RoomListSheet: View {
             }
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surfaceSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .padding(.horizontal, SeeleSpacing.lg)
 
             Divider()

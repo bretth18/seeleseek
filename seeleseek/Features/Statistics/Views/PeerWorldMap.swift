@@ -29,7 +29,7 @@ struct PeerWorldMap: View {
             ZStack {
                 if peerLocations.isEmpty {
                     // Empty state
-                    RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                         .fill(SeeleColors.surfaceSecondary)
                         .overlay {
                             VStack(spacing: SeeleSpacing.md) {
@@ -47,7 +47,7 @@ struct PeerWorldMap: View {
                 }
             }
             .frame(height: 250)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
             // Stats row
             HStack(spacing: SeeleSpacing.xl) {
@@ -58,7 +58,7 @@ struct PeerWorldMap: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
@@ -179,7 +179,7 @@ struct StatPill: View {
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.xs)
         .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 

@@ -141,7 +141,7 @@ struct SearchResultRow: View {
 
     private var fileIcon: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .fill(iconColor.opacity(0.15))
                 .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
 
@@ -195,7 +195,7 @@ struct SearchResultRow: View {
             .padding(.horizontal, SeeleSpacing.xs)
             .padding(.vertical, SeeleSpacing.xxs)
             .background(color.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func downloadFile() {

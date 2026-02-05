@@ -273,7 +273,7 @@ struct PeerDetailPopover: View {
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .shadow(color: .black.opacity(0.3), radius: 10)
     }
 

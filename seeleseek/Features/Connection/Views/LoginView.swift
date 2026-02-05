@@ -66,7 +66,7 @@ struct LoginView: View {
                         .padding(SeeleSpacing.md)
                         .frame(maxWidth: .infinity)
                         .background(SeeleColors.error.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     }
 
                     PrimaryButton(
@@ -161,9 +161,9 @@ struct SeeleTextFieldStyle: TextFieldStyle {
             .padding(.vertical, SeeleSpacing.sm + 2)
             .background(SeeleColors.surfaceSecondary)
             .foregroundStyle(SeeleColors.textPrimary)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(SeeleColors.border, lineWidth: 1)
             )
     }
@@ -226,9 +226,9 @@ struct SeeleFormSection<Content: View>: View {
                 content
             }
             .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius)
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(SeeleColors.border, lineWidth: 1)
             )
         }

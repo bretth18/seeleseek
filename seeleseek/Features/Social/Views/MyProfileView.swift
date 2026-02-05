@@ -46,7 +46,7 @@ struct MyProfileView: View {
                     .scrollContentBackground(.hidden)
                     .padding(SeeleSpacing.sm)
                     .frame(height: 120)
-                    .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     .onChange(of: editingDescription) { _, newValue in
                         hasChanges = newValue != socialState.myDescription
                     }
@@ -116,7 +116,7 @@ struct MyProfileView: View {
             }
         }
         .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .onAppear {
             editingDescription = socialState.myDescription
         }

@@ -50,7 +50,7 @@ struct InterestsView: View {
             }
             .padding(.horizontal, SeeleSpacing.sm)
             .padding(.vertical, SeeleSpacing.rowVertical)
-            .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+            .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
             // Type picker
             Picker("Type", selection: $interestType) {
@@ -98,7 +98,7 @@ struct InterestsView: View {
                     .padding(.horizontal, SeeleSpacing.rowHorizontal)
                     .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             } else {
                 FlowLayout(spacing: SeeleSpacing.tagSpacing) {
                     ForEach(socialState.myLikes, id: \.self) { interest in
@@ -137,7 +137,7 @@ struct InterestsView: View {
                     .padding(.horizontal, SeeleSpacing.rowHorizontal)
                     .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+                    .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             } else {
                 FlowLayout(spacing: SeeleSpacing.tagSpacing) {
                     ForEach(socialState.myHates, id: \.self) { interest in

@@ -75,7 +75,7 @@ struct BrowseView: View {
             }
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
             Button {
                 browseUser()
@@ -86,7 +86,7 @@ struct BrowseView: View {
                     .padding(.horizontal, SeeleSpacing.lg)
                     .padding(.vertical, SeeleSpacing.md)
                     .background(browseState.canBrowse ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!browseState.canBrowse)
@@ -372,9 +372,9 @@ struct BrowseTabButton: View {
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)
         .background(isSelected ? SeeleColors.surface : SeeleColors.surface.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .stroke(isSelected ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1)
         )
         .onTapGesture {
@@ -693,7 +693,7 @@ struct SharesVisualizationPanel: View {
                 files: Array(allFiles.prefix(50))
             )
             .frame(height: 200)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
     }
 }
@@ -730,7 +730,7 @@ struct StatCard: View {
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
