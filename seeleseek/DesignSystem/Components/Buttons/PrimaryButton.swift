@@ -37,7 +37,7 @@ struct PrimaryButton: View {
             .padding(.horizontal, SeeleSpacing.xl)
             .padding(.vertical, SeeleSpacing.md)
             .background(SeeleColors.accent)
-            .foregroundStyle(.white)
+            .foregroundStyle(SeeleColors.textOnAccent)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)

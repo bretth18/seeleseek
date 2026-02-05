@@ -82,7 +82,7 @@ struct BrowseView: View {
             } label: {
                 Text("Browse")
                     .font(SeeleTypography.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SeeleColors.textOnAccent)
                     .padding(.horizontal, SeeleSpacing.lg)
                     .padding(.vertical, SeeleSpacing.md)
                     .background(browseState.canBrowse ? SeeleColors.accent : SeeleColors.textTertiary)
@@ -157,20 +157,11 @@ struct BrowseView: View {
     }
 
     private var emptySharesView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "folder.badge.questionmark")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("No shared files")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("\(browseState.currentBrowse?.username ?? "User") has no files shared")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(
+            icon: "folder.badge.questionmark",
+            title: "No shared files",
+            subtitle: "\(browseState.currentBrowse?.username ?? "User") has no files shared"
+        )
     }
 
     private var emptyStateView: some View {

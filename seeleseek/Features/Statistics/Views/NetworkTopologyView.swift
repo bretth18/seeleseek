@@ -134,7 +134,7 @@ struct CenterNode: View {
                 // Icon
                 Image(systemName: "person.fill")
                     .font(.system(size: SeeleSpacing.iconSizeMedium, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SeeleColors.textOnAccent)
             }
 
             Text(username)
@@ -184,7 +184,7 @@ struct PeerNode: View {
                 // Connection type indicator
                 Text(connectionTypeIcon)
                     .font(.system(size: nodeSize * 0.4))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SeeleColors.textOnAccent)
             }
 
             Text(info.username.isEmpty || info.username == "unknown" ? info.ip : info.username)

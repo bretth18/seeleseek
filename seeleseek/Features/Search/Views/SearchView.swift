@@ -57,7 +57,7 @@ struct SearchView: View {
             } label: {
                 Text("Search")
                     .font(SeeleTypography.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(SeeleColors.textOnAccent)
                     .padding(.horizontal, SeeleSpacing.lg)
                     .padding(.vertical, SeeleSpacing.md)
                     .background(searchState.canSearch ? SeeleColors.accent : SeeleColors.textTertiary)
@@ -160,37 +160,19 @@ struct SearchView: View {
     }
 
     private var noResultsView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("No results found")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Try different search terms")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(
+            icon: "magnifyingglass",
+            title: "No results found",
+            subtitle: "Try different search terms"
+        )
     }
 
     private var emptyStateView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "music.note.list")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("Search for Music")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Enter an artist, album, or song name above")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(
+            icon: "music.note.list",
+            title: "Search for Music",
+            subtitle: "Enter an artist, album, or song name above"
+        )
     }
 
     private var resultsListView: some View {

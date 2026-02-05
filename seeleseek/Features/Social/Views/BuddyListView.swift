@@ -14,14 +14,10 @@ struct BuddyListView: View {
             // Toolbar
             HStack(spacing: SeeleSpacing.md) {
                 // Search field
-                HStack(spacing: SeeleSpacing.sm) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(SeeleColors.textTertiary)
-                    TextField("Search buddies...", text: $state.socialState.buddySearchQuery)
-                        .textFieldStyle(.plain)
-                }
-                .padding(SeeleSpacing.sm)
-                .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                StandardSearchField(
+                    text: $state.socialState.buddySearchQuery,
+                    placeholder: "Search buddies..."
+                )
 
                 Spacer()
 
@@ -56,28 +52,14 @@ struct BuddyListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "person.2.slash")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("No buddies yet")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Add friends to see when they're online and quickly browse their files.")
-                .font(SeeleTypography.body)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 300)
-
-            Button("Add Buddy") {
-                socialState.showAddBuddySheet = true
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(SeeleColors.accent)
+        StandardEmptyState(
+            icon: "person.2.slash",
+            title: "No buddies yet",
+            subtitle: "Add friends to see when they're online and quickly browse their files.",
+            actionTitle: "Add Buddy"
+        ) {
+            socialState.showAddBuddySheet = true
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var buddyList: some View {

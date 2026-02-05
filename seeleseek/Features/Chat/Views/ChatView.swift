@@ -158,8 +158,9 @@ struct ChatView: View {
             Button("Join a Room") {
                 showRoomList = true
             }
-            .font(SeeleTypography.caption)
-            .foregroundStyle(SeeleColors.accent)
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(SeeleColors.accent)
         }
         .padding(SeeleSpacing.xl)
     }
@@ -176,20 +177,11 @@ struct ChatView: View {
     }
 
     private var noChatSelectedView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("Select a chat")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Choose a room or start a private conversation")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(
+            icon: "bubble.left.and.bubble.right",
+            title: "Select a chat",
+            subtitle: "Choose a room or start a private conversation"
+        )
     }
 }
 
@@ -396,17 +388,10 @@ struct RoomListSheet: View {
             .padding(SeeleSpacing.lg)
 
             // Search
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(SeeleColors.textTertiary)
-
-                TextField("Search rooms...", text: $chatState.roomSearchQuery)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-            }
-            .padding(SeeleSpacing.md)
-            .background(SeeleColors.surfaceSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            StandardSearchField(
+                text: $chatState.roomSearchQuery,
+                placeholder: "Search rooms..."
+            )
             .padding(.horizontal, SeeleSpacing.lg)
 
             Divider()

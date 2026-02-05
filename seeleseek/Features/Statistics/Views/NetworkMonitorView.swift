@@ -17,15 +17,25 @@ struct NetworkMonitorView: View {
         case peers = "Peers"
         case search = "Search"
         case transfers = "Transfers"
+
+        var icon: String {
+            switch self {
+            case .overview: "gauge.with.dots.needle.bottom.50percent"
+            case .peers: "person.2"
+            case .search: "magnifyingglass"
+            case .transfers: "arrow.up.arrow.down"
+            }
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             // Tab bar
-            HStack(spacing: 0) {
+            HStack(spacing: SeeleSpacing.sm) {
                 ForEach(MonitorTab.allCases, id: \.self) { tab in
                     TabButton(
                         title: tab.rawValue,
+                        icon: tab.icon,
                         isSelected: selectedTab == tab,
                         action: { selectedTab = tab }
                     )
@@ -39,7 +49,7 @@ struct NetworkMonitorView: View {
                     peerCount: peerPool.activeConnections
                 )
             }
-            .padding(.horizontal, SeeleSpacing.lg)
+            .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
             .background(SeeleColors.surface)
 
@@ -71,18 +81,31 @@ struct NetworkMonitorView: View {
 
 private struct TabButton: View {
     let title: String
+    let icon: String
     let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textTertiary)
-                .padding(.horizontal, SeeleSpacing.lg)
-                .padding(.vertical, SeeleSpacing.sm)
-                .background(isSelected ? SeeleColors.surfaceSecondary : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
+            HStack(spacing: SeeleSpacing.xs) {
+                Image(systemName: icon)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
+
+                Text(title)
+                    .font(SeeleTypography.body)
+                    .fontWeight(isSelected ? .medium : .regular)
+            }
+            .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
+            .padding(.horizontal, SeeleSpacing.md)
+            .padding(.vertical, SeeleSpacing.sm)
+            .background(
+                isSelected ? SeeleColors.selectionBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }

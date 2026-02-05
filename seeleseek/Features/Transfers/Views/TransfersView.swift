@@ -11,6 +11,14 @@ struct TransfersView: View {
         case downloads = "Downloads"
         case uploads = "Uploads"
         case history = "History"
+
+        var icon: String {
+            switch self {
+            case .downloads: "arrow.down.circle"
+            case .uploads: "arrow.up.circle"
+            case .history: "clock.arrow.circlepath"
+            }
+        }
     }
 
     var body: some View {
@@ -79,12 +87,13 @@ struct TransfersView: View {
             .padding(.top, SeeleSpacing.md)
 
             // Tab picker
-            HStack(spacing: 0) {
+            HStack(spacing: SeeleSpacing.sm) {
                 ForEach(TransferTab.allCases, id: \.self) { tab in
                     tabButton(tab)
                 }
+                Spacer()
             }
-            .padding(.horizontal, SeeleSpacing.lg)
+            .padding(.horizontal, SeeleSpacing.md)
         }
         .padding(.bottom, SeeleSpacing.sm)
         .background(SeeleColors.surface.opacity(0.5))
@@ -122,31 +131,35 @@ struct TransfersView: View {
             }
         } label: {
             HStack(spacing: SeeleSpacing.xs) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
+
                 Text(tab.rawValue)
                     .font(SeeleTypography.body)
-                    .fontWeight(isSelected ? .semibold : .regular)
+                    .fontWeight(isSelected ? .medium : .regular)
 
                 if count > 0 {
                     Text("\(count)")
                         .font(SeeleTypography.badgeText)
-                        .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textTertiary)
-                        .padding(.horizontal, SeeleSpacing.rowVertical)
+                        .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
+                        .padding(.horizontal, SeeleSpacing.xs)
                         .padding(.vertical, SeeleSpacing.xxs)
                         .background(isSelected ? SeeleColors.accent : SeeleColors.surfaceElevated, in: Capsule())
                 }
             }
             .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-            .padding(.horizontal, SeeleSpacing.lg)
+            .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
+            .background(
+                isSelected ? SeeleColors.selectionBackground : Color.clear,
+                in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) {
-            if isSelected {
-                Rectangle()
-                    .fill(SeeleColors.accent)
-                    .frame(height: SeeleSpacing.xxs)
-            }
-        }
     }
 
     @ViewBuilder
@@ -243,20 +256,7 @@ struct TransfersView: View {
     }
 
     private func emptyState(icon: String, title: String, subtitle: String) -> some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: icon)
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text(title)
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text(subtitle)
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(icon: icon, title: title, subtitle: subtitle)
     }
 
     private func transferList(transfers: [Transfer]) -> some View {

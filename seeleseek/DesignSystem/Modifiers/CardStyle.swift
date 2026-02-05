@@ -6,7 +6,7 @@ struct CardStyle: ViewModifier {
 
     init(
         padding: EdgeInsets = .seeleCard,
-        cornerRadius: CGFloat = SeeleSpacing.cornerRadius
+        cornerRadius: CGFloat = SeeleSpacing.radiusLG
     ) {
         self.padding = padding
         self.cornerRadius = cornerRadius
@@ -16,7 +16,7 @@ struct CardStyle: ViewModifier {
         content
             .padding(padding)
             .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .cardShadow()
     }
 }
@@ -38,7 +38,7 @@ struct HoverStyle: ViewModifier {
 extension View {
     func cardStyle(
         padding: EdgeInsets = .seeleCard,
-        cornerRadius: CGFloat = SeeleSpacing.cornerRadius
+        cornerRadius: CGFloat = SeeleSpacing.radiusLG
     ) -> some View {
         modifier(CardStyle(padding: padding, cornerRadius: cornerRadius))
     }
