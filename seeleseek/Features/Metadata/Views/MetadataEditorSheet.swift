@@ -1,4 +1,8 @@
 import SwiftUI
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 /// Sheet for editing file metadata with MusicBrainz integration
 struct MetadataEditorSheet: View {
@@ -20,9 +24,9 @@ struct MetadataEditorSheet: View {
 
                 Divider()
 
-                // Right: Selected metadata and cover art
-                selectedMetadataSection
-                    .frame(minWidth: 250, maxWidth: 300)
+                // Right: Editable metadata and cover art
+                editableMetadataSection
+                    .frame(minWidth: 280, maxWidth: 320)
             }
             .padding(SeeleSpacing.lg)
 
@@ -31,7 +35,7 @@ struct MetadataEditorSheet: View {
             // Footer
             footer
         }
-        .frame(minWidth: 700, minHeight: 500)
+        .frame(minWidth: 750, minHeight: 550)
         .background(SeeleColors.background)
     }
 
@@ -179,105 +183,175 @@ struct MetadataEditorSheet: View {
         }
     }
 
-    // MARK: - Selected Metadata Section
+    // MARK: - Editable Metadata Section
 
-    private var selectedMetadataSection: some View {
+    private var editableMetadataSection: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Selected Metadata")
+            Text("Metadata")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
-            if let recording = state.selectedRecording {
-                // Cover art
-                coverArtView
+            // Cover art with edit options
+            coverArtEditView
 
-                // Metadata fields
+            // Editable metadata fields
+            ScrollView {
                 VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    metadataRow("Title", value: recording.title)
-                    metadataRow("Artist", value: recording.artist)
+                    editableField("Title", text: $state.editTitle)
+                    editableField("Artist", text: $state.editArtist)
+                    editableField("Album", text: $state.editAlbum)
 
-                    if let release = state.selectedRelease {
-                        metadataRow("Album", value: release.title)
-                        if let date = release.date {
-                            metadataRow("Year", value: String(date.prefix(4)))
+                    HStack(spacing: SeeleSpacing.sm) {
+                        editableField("Year", text: $state.editYear)
+                            .frame(width: 80)
+                        editableField("Track #", text: $state.editTrackNumber)
+                            .frame(width: 80)
+                        Spacer()
+                    }
+
+                    editableField("Genre", text: $state.editGenre)
+                }
+            }
+
+            if let error = state.applyError {
+                Text(error)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.error)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var coverArtEditView: some View {
+        VStack(spacing: SeeleSpacing.sm) {
+            // Cover art display
+            ZStack {
+                if state.isLoadingCoverArt {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(SeeleColors.surfaceSecondary)
+                        .frame(width: 150, height: 150)
+                        .overlay {
+                            ProgressView()
                         }
-                        metadataRow("Tracks", value: "\(release.trackCount)")
-                    } else if let releaseTitle = recording.releaseTitle {
-                        metadataRow("Album", value: releaseTitle)
+                } else if let data = state.coverArtData {
+                    #if os(macOS)
+                    if let nsImage = NSImage(data: data) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 150, height: 150)
+                            .cornerRadius(8)
+                            .shadow(radius: 4)
                     }
-
-                    if let duration = recording.durationSeconds {
-                        let mins = duration / 60
-                        let secs = duration % 60
-                        metadataRow("Duration", value: String(format: "%d:%02d", mins, secs))
+                    #else
+                    if let uiImage = UIImage(data: data) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 150, height: 150)
+                            .cornerRadius(8)
+                            .shadow(radius: 4)
                     }
+                    #endif
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(SeeleColors.surfaceSecondary)
+                        .frame(width: 150, height: 150)
+                        .overlay {
+                            VStack(spacing: SeeleSpacing.xs) {
+                                Image(systemName: "photo.badge.plus")
+                                    .font(.system(size: 32))
+                                    .foregroundStyle(SeeleColors.textTertiary)
+                                Text("Drop image here")
+                                    .font(SeeleTypography.caption)
+                                    .foregroundStyle(SeeleColors.textTertiary)
+                            }
+                        }
                 }
-
-                Spacer()
-            } else {
-                ContentUnavailableView {
-                    Label("No Selection", systemImage: "music.note.list")
-                } description: {
-                    Text("Select a result to view metadata")
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-    }
+            .frame(maxWidth: .infinity)
+            .onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
+                handleImageDrop(providers)
+            }
 
-    private var coverArtView: some View {
-        Group {
-            if state.isLoadingCoverArt {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(SeeleColors.surfaceSecondary)
-                    .frame(width: 150, height: 150)
-                    .overlay {
-                        ProgressView()
-                    }
-            } else if let data = state.coverArtData {
+            // Cover art action buttons
+            HStack(spacing: SeeleSpacing.sm) {
                 #if os(macOS)
-                if let nsImage = NSImage(data: data) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 150, height: 150)
-                        .cornerRadius(8)
-                        .shadow(radius: 4)
+                Button("Choose...") {
+                    state.selectCoverArtFile()
                 }
-                #else
-                if let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 150, height: 150)
-                        .cornerRadius(8)
-                        .shadow(radius: 4)
-                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 #endif
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(SeeleColors.surfaceSecondary)
-                    .frame(width: 150, height: 150)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 40))
-                            .foregroundStyle(SeeleColors.textTertiary)
+
+                if state.coverArtData != nil {
+                    Button("Clear") {
+                        state.clearCoverArt()
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .foregroundStyle(SeeleColors.error)
+                }
+            }
+
+            // Source indicator
+            if state.coverArtData != nil {
+                Text(coverArtSourceText)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
-    private func metadataRow(_ label: String, value: String) -> some View {
+    private var coverArtSourceText: String {
+        switch state.coverArtSource {
+        case .none: return ""
+        case .musicBrainz: return "From MusicBrainz"
+        case .manual: return "Custom image"
+        }
+    }
+
+    private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        // Try to load as file URL first
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, error in
+                if let data = item as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    DispatchQueue.main.async {
+                        state.loadCoverArtFromFile(url)
+                    }
+                }
+            }
+            return true
+        }
+
+        // Try to load as image data
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, error in
+                if let data = data {
+                    DispatchQueue.main.async {
+                        state.setCoverArt(data)
+                    }
+                }
+            }
+            return true
+        }
+
+        return false
+    }
+
+    private func editableField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
 
-            Text(value)
+            TextField("", text: text)
+                .textFieldStyle(.roundedBorder)
                 .font(SeeleTypography.body)
-                .foregroundStyle(SeeleColors.textPrimary)
-                .lineLimit(2)
         }
     }
 
@@ -285,14 +359,29 @@ struct MetadataEditorSheet: View {
 
     private var footer: some View {
         HStack {
-            if state.selectedRecording != nil {
-                Text("Selected: \(state.selectedRecording?.title ?? "") by \(state.selectedRecording?.artist ?? "")")
+            // Show what will be applied
+            if !state.editTitle.isEmpty || !state.editArtist.isEmpty {
+                HStack(spacing: SeeleSpacing.xs) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(SeeleColors.textTertiary)
+                    Text("Will apply: \(state.editTitle.isEmpty ? "(no title)" : state.editTitle) by \(state.editArtist.isEmpty ? "(no artist)" : state.editArtist)")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("Enter metadata or search MusicBrainz to get started")
                     .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-                    .lineLimit(1)
+                    .foregroundStyle(SeeleColors.textTertiary)
             }
 
             Spacer()
+
+            if state.isApplying {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.trailing, SeeleSpacing.sm)
+            }
 
             Button("Apply Metadata") {
                 Task {
@@ -303,7 +392,7 @@ struct MetadataEditorSheet: View {
                 }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(state.selectedRecording == nil || state.isApplying)
+            .disabled(state.isApplying || (state.editTitle.isEmpty && state.editArtist.isEmpty))
         }
         .padding(SeeleSpacing.lg)
     }
