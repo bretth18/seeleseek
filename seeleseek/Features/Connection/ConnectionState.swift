@@ -25,6 +25,10 @@ final class ConnectionState {
     func setConnecting() {
         connectionStatus = .connecting
         errorMessage = nil
+        // Clear any previous connection state
+        username = nil
+        serverIP = nil
+        serverGreeting = nil
     }
 
     func setConnected(username: String, ip: String, greeting: String?) {
