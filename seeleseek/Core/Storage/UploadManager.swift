@@ -526,12 +526,18 @@ final class UploadManager {
             // We registered pendingTransfers[token] before GetPeerAddress, so we're ready.
             // NOTE: Do NOT send CantConnectToPeer - that's what the PEER sends if THEY can't connect to US
 
-            logger.info("Waiting for peer \(pending.username) to connect via PierceFirewall (token=\(token))")
-            print("⏳ Waiting for PierceFirewall from \(pending.username) with token=\(token)")
+            // Only update status if this upload is still pending
+            // (PierceFirewall may have already arrived and completed the upload while we were waiting)
+            if pendingTransfers[token] != nil {
+                logger.info("Waiting for peer \(pending.username) to connect via PierceFirewall (token=\(token))")
+                print("⏳ Waiting for PierceFirewall from \(pending.username) with token=\(token)")
 
-            transferState?.updateTransfer(id: pending.transferId) { t in
-                t.status = .connecting
-                t.error = "Waiting for peer to connect (firewall)"
+                transferState?.updateTransfer(id: pending.transferId) { t in
+                    t.status = .connecting
+                    t.error = "Waiting for peer to connect (firewall)"
+                }
+            } else {
+                print("✅ Upload already completed via PierceFirewall for token=\(token)")
             }
 
             // Wait for PierceFirewall - the peer will connect to us with this token
@@ -841,6 +847,9 @@ final class UploadManager {
         // Update the connection's username (PierceFirewall doesn't include PeerInit with username)
         await connection.setPeerUsername(pending.username)
 
+        // Also update the pool's connection info so Network Monitor shows the correct username
+        await networkClient?.peerConnectionPool.updateConnectionUsername(connection: connection, username: pending.username)
+
         // Update transfer status
         transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .connecting
@@ -1031,6 +1040,7 @@ final class UploadManager {
         transferState?.updateTransfer(id: transferId) { t in
             t.status = .completed
             t.bytesTransferred = bytesSent
+            t.error = nil  // Clear any error from "Waiting for peer" state
         }
 
         activeUploads.removeValue(forKey: transferId)

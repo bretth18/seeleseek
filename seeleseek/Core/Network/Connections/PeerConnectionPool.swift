@@ -509,6 +509,33 @@ final class PeerConnectionPool {
         activeConnections = connections.count
     }
 
+    /// Update the username for a connection (used when matching PierceFirewall to pending uploads)
+    func updateConnectionUsername(connection: PeerConnection, username: String) async {
+        // Find the connection by checking which key maps to this PeerConnection
+        for (key, conn) in activeConnections_ {
+            if conn === connection {
+                // Found the connection, update its info
+                if var info = connections[key] {
+                    let newInfo = PeerConnectionInfo(
+                        id: info.id,
+                        username: username,
+                        ip: info.ip,
+                        port: info.port,
+                        state: info.state,
+                        connectionType: info.connectionType,
+                        bytesReceived: info.bytesReceived,
+                        bytesSent: info.bytesSent,
+                        connectedAt: info.connectedAt,
+                        lastActivity: info.lastActivity
+                    )
+                    connections[key] = newInfo
+                    print("📝 Updated connection \(key) username to \(username)")
+                }
+                break
+            }
+        }
+    }
+
     func disconnectAll() async {
         for (_, conn) in activeConnections_ {
             await conn.disconnect()
