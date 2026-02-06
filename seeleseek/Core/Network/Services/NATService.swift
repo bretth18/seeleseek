@@ -27,6 +27,7 @@ actor NATService {
             mappedPorts.append((internalPort, mapped, proto))
             print("✅ NAT: UPnP mapped port \(internalPort) -> \(mapped)")
             logger.info("UPnP mapped port \(internalPort) -> \(mapped)")
+            Task { @MainActor in ActivityLog.shared.logNATMapping(port: mapped, success: true) }
             return mapped
         } catch {
             print("⚠️ NAT: UPnP failed: \(error)")
@@ -46,6 +47,7 @@ actor NATService {
         // If both fail, assume we're not behind NAT or port is already open
         print("❌ NAT: All mapping methods failed for port \(internalPort)")
         logger.warning("NAT mapping failed for port \(internalPort), assuming direct connection")
+        Task { @MainActor in ActivityLog.shared.logNATMapping(port: internalPort, success: false) }
         throw NATError.mappingFailed
     }
 

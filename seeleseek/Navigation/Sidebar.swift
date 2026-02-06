@@ -5,39 +5,41 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Logo and connection header
+            // Logo and connection header — pinned at top
             connectionHeader
                 .padding(.horizontal, SeeleSpacing.md)
                 .padding(.top, SeeleSpacing.md)
                 .padding(.bottom, SeeleSpacing.sm)
 
-//            Divider()
-//                .background(SeeleColors.divider)
+            // Navigation sections — flexible, scrollable if needed
+            ScrollView {
+                VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                    sidebarSection("Navigation") {
+                        SidebarRow(item: .search)
+                        SidebarRow(item: .transfers)
+                        SidebarRow(item: .browse)
+                    }
 
-            // Navigation sections
-            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-                sidebarSection("Navigation") {
-                    SidebarRow(item: .search)
-                    SidebarRow(item: .transfers)
-                    SidebarRow(item: .browse)
+                    sidebarSection("Social") {
+                        SidebarRow(item: .social)
+                        SidebarRow(item: .chat)
+                    }
+
+                    sidebarSection("Monitor") {
+                        SidebarRow(item: .statistics)
+                        SidebarRow(item: .networkMonitor)
+                    }
+
+                    sidebarSection("System") {
+                        SidebarRow(item: .settings)
+                    }
                 }
-
-                sidebarSection("Social") {
-                    SidebarRow(item: .social)
-                    SidebarRow(item: .chat)
-                }
-
-                sidebarSection("Monitor") {
-                    SidebarRow(item: .statistics)
-                    SidebarRow(item: .networkMonitor)
-                }
-
-                Spacer()
-
-                SidebarRow(item: .settings)
-                    .padding(.horizontal, SeeleSpacing.sm)
+                .padding(.vertical, SeeleSpacing.sm)
             }
-            .padding(.vertical, SeeleSpacing.sm)
+
+            SidebarConsoleView()
+                .layoutPriority(1)
+
         }
         .background(SeeleColors.surface)
         #if os(macOS)

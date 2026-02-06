@@ -270,6 +270,44 @@ final class ActivityLog {
     func logInfo(_ message: String, detail: String? = nil) {
         log(.info, title: message, detail: detail)
     }
+
+    // MARK: - Connection & Server Events
+
+    func logConnectionSuccess(username: String, server: String) {
+        log(.info, title: "Connected as \(username)", detail: server)
+    }
+
+    func logConnectionFailed(reason: String) {
+        log(.error, title: "Login failed", detail: reason)
+    }
+
+    func logDisconnected(reason: String? = nil) {
+        log(.info, title: "Disconnected", detail: reason)
+    }
+
+    func logRelogged() {
+        log(.error, title: "Kicked: another client logged in")
+    }
+
+    func logRoomJoined(room: String, userCount: Int) {
+        log(.chatMessage, title: "Joined \(room)", detail: "\(userCount) users")
+    }
+
+    func logRoomLeft(room: String) {
+        log(.chatMessage, title: "Left \(room)")
+    }
+
+    func logNATMapping(port: UInt16, success: Bool) {
+        if success {
+            log(.info, title: "NAT mapped port \(port)")
+        } else {
+            log(.error, title: "NAT mapping failed", detail: "Port \(port)")
+        }
+    }
+
+    func logDistributedSearch(query: String, matchCount: Int) {
+        log(.searchResult, title: "\(matchCount) shared for \"\(query)\"")
+    }
 }
 
 #Preview {

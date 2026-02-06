@@ -18,6 +18,8 @@ struct SearchView: View {
                 searchTabs
             }
 
+            SearchFilterBar(searchState: searchState)
+
             Divider().background(SeeleColors.surfaceSecondary)
             resultsArea
         }

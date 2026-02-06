@@ -414,6 +414,7 @@ final class NetworkClient {
 
     func disconnect() {
         logger.info("Disconnecting...")
+        ActivityLog.shared.logDisconnected()
 
         // Cancel any pending login wait
         if let continuation = loginContinuation {

@@ -170,14 +170,17 @@ final class ServerMessageHandler {
             }
 
             client?.setLoggedIn(true, message: greeting)
+            ActivityLog.shared.logConnectionSuccess(username: client?.username ?? "unknown", server: "server.slsknet.org")
         } else {
             // Login failed - read reason
             if let (reason, _) = data.readString(at: offset) {
                 logger.error("Login failed: \(reason)")
                 client?.setLoggedIn(false, message: reason)
+                ActivityLog.shared.logConnectionFailed(reason: reason)
             } else {
                 logger.error("Login failed: Unknown error")
                 client?.setLoggedIn(false, message: "Unknown error")
+                ActivityLog.shared.logConnectionFailed(reason: "Unknown error")
             }
         }
     }
@@ -240,11 +243,13 @@ final class ServerMessageHandler {
         }
 
         client?.onRoomJoined?(roomName, users)
+        ActivityLog.shared.logRoomJoined(room: roomName, userCount: users.count)
     }
 
     private func handleLeaveRoom(_ data: Data) {
         guard let (roomName, _) = data.readString(at: 0) else { return }
         client?.onRoomLeft?(roomName)
+        ActivityLog.shared.logRoomLeft(room: roomName)
     }
 
     private func handleSayInRoom(_ data: Data) {
@@ -723,6 +728,7 @@ final class ServerMessageHandler {
         }
 
         logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
+        ActivityLog.shared.logDistributedSearch(query: query, matchCount: matchingFiles.count)
 
         // Send search results back to the searching user
         Task {
@@ -1266,6 +1272,7 @@ final class ServerMessageHandler {
     private func handleRelogged() {
         logger.warning("Relogged: another client logged in with the same credentials")
         logger.warning("Relogged: kicked from server because another client logged in with the same credentials")
+        ActivityLog.shared.logRelogged()
         client?.disconnect()
     }
 

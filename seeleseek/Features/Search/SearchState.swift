@@ -117,6 +117,69 @@ final class SearchState {
     var filterFreeSlotOnly: Bool = false
     var sortOrder: SortOrder = .relevance
     var resultGrouping: ResultGrouping = .flat
+    var showFilters: Bool = false
+
+    var hasActiveFilters: Bool {
+        filterMinBitrate != nil ||
+        filterMinSize != nil ||
+        filterMaxSize != nil ||
+        !filterExtensions.isEmpty ||
+        filterFreeSlotOnly
+    }
+
+    var activeFilterCount: Int {
+        var count = 0
+        if filterMinBitrate != nil { count += 1 }
+        if !filterExtensions.isEmpty { count += 1 }
+        if filterFreeSlotOnly { count += 1 }
+        if filterMinSize != nil { count += 1 }
+        if filterMaxSize != nil { count += 1 }
+        return count
+    }
+
+    enum FilterPreset {
+        case mp3_320
+        case flac
+        case lossless
+
+        var extensions: Set<String> {
+            switch self {
+            case .mp3_320: return ["mp3"]
+            case .flac: return ["flac"]
+            case .lossless: return ["flac", "wav", "aiff", "alac", "ape"]
+            }
+        }
+
+        var minBitrate: Int? {
+            switch self {
+            case .mp3_320: return 320
+            case .flac, .lossless: return nil
+            }
+        }
+    }
+
+    func applyPreset(_ preset: FilterPreset) {
+        if filterExtensions == preset.extensions && filterMinBitrate == preset.minBitrate {
+            // Toggle off if already active
+            filterExtensions = []
+            filterMinBitrate = nil
+        } else {
+            filterExtensions = preset.extensions
+            filterMinBitrate = preset.minBitrate
+        }
+    }
+
+    func isPresetActive(_ preset: FilterPreset) -> Bool {
+        filterExtensions == preset.extensions && filterMinBitrate == preset.minBitrate
+    }
+
+    func toggleExtension(_ ext: String) {
+        if filterExtensions.contains(ext) {
+            filterExtensions.remove(ext)
+        } else {
+            filterExtensions.insert(ext)
+        }
+    }
 
     enum SortOrder: String, CaseIterable {
         case relevance = "Relevance"
