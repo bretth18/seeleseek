@@ -48,7 +48,11 @@ struct ChatRoom: Identifiable, Hashable, Sendable {
     var messages: [ChatMessage]
     var unreadCount: Int
     var isJoined: Bool
-    var ticker: String?
+    var isPrivate: Bool
+    var owner: String?
+    var operators: Set<String>
+    var members: [String]
+    var tickers: [String: String]
 
     init(
         name: String,
@@ -56,7 +60,11 @@ struct ChatRoom: Identifiable, Hashable, Sendable {
         messages: [ChatMessage] = [],
         unreadCount: Int = 0,
         isJoined: Bool = false,
-        ticker: String? = nil
+        isPrivate: Bool = false,
+        owner: String? = nil,
+        operators: Set<String> = [],
+        members: [String] = [],
+        tickers: [String: String] = [:]
     ) {
         self.id = name
         self.name = name
@@ -64,7 +72,11 @@ struct ChatRoom: Identifiable, Hashable, Sendable {
         self.messages = messages
         self.unreadCount = unreadCount
         self.isJoined = isJoined
-        self.ticker = ticker
+        self.isPrivate = isPrivate
+        self.owner = owner
+        self.operators = operators
+        self.members = members
+        self.tickers = tickers
     }
 
     var userCount: Int {

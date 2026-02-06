@@ -130,6 +130,8 @@ final class ServerMessageHandler {
             handleNewPassword(payload)
         case .globalRoomMessage:
             handleGlobalRoomMessage(payload)
+        case .cantCreateRoom:
+            handleCantCreateRoom(payload)
         default:
             // Log unhandled message with more detail
             logger.info("Unhandled server message: \(code.description) (code=\(codeValue)) payload=\(payload.count) bytes")
@@ -187,13 +189,42 @@ final class ServerMessageHandler {
 
     private func handleRoomList(_ data: Data) {
         var offset = 0
-        var rooms: [ChatRoom] = []
 
-        // Number of rooms
-        guard let roomCount = data.readUInt32(at: offset) else { return }
+        // Parse public rooms: names then counts
+        let publicRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
+
+        // Parse owned private rooms: names then counts
+        let ownedPrivateRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
+            .map { ChatRoom(name: $0.name, users: $0.users, isPrivate: true) }
+
+        // Parse member-of private rooms: names then counts
+        let memberPrivateRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
+            .map { ChatRoom(name: $0.name, users: $0.users, isPrivate: true) }
+
+        // Parse operated private room names (just names, no counts)
+        var operatedNames: [String] = []
+        if let opCount = data.readUInt32(at: offset) {
+            offset += 4
+            for _ in 0..<opCount {
+                guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
+                operatedNames.append(name)
+                offset += bytesConsumed
+            }
+        }
+
+        // Send full room list if handler exists, otherwise fall back to legacy
+        if let fullHandler = client?.onRoomListFull {
+            fullHandler(publicRooms, ownedPrivateRooms, memberPrivateRooms, operatedNames)
+        } else {
+            client?.onRoomList?(publicRooms)
+        }
+    }
+
+    /// Parse a sequence of room names followed by their user counts
+    private func parseRoomNamesAndCounts(data: Data, offset: inout Int) -> [ChatRoom] {
+        guard let roomCount = data.readUInt32(at: offset) else { return [] }
         offset += 4
 
-        // Room names
         var roomNames: [String] = []
         for _ in 0..<roomCount {
             guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
@@ -201,8 +232,7 @@ final class ServerMessageHandler {
             offset += bytesConsumed
         }
 
-        // User counts
-        guard let countCount = data.readUInt32(at: offset) else { return }
+        guard let countCount = data.readUInt32(at: offset) else { return roomNames.map { ChatRoom(name: $0) } }
         offset += 4
 
         var userCounts: [UInt32] = []
@@ -212,15 +242,11 @@ final class ServerMessageHandler {
             offset += 4
         }
 
-        // Build room list
-        for (index, name) in roomNames.enumerated() {
+        return roomNames.enumerated().map { (index, name) in
             let userCount = index < userCounts.count ? Int(userCounts[index]) : 0
-            // Create placeholder users for the count since we don't have the actual names yet
             let placeholderUsers = Array(repeating: "", count: userCount)
-            rooms.append(ChatRoom(name: name, users: placeholderUsers))
+            return ChatRoom(name: name, users: placeholderUsers)
         }
-
-        client?.onRoomList?(rooms)
     }
 
     private func handleJoinRoom(_ data: Data) {
@@ -242,7 +268,55 @@ final class ServerMessageHandler {
             offset += userBytesConsumed
         }
 
-        client?.onRoomJoined?(roomName, users)
+        // Skip statuses (uint32 per user)
+        if let statusCount = data.readUInt32(at: offset) {
+            offset += 4
+            offset += Int(statusCount) * 4
+        }
+
+        // Skip user stats (avgspeed uint32, uploadnum uint64, files uint32, dirs uint32 = 20 bytes per user)
+        if let statsCount = data.readUInt32(at: offset) {
+            offset += 4
+            offset += Int(statsCount) * 20
+        }
+
+        // Skip slotsfull (uint32 per user)
+        if let slotsCount = data.readUInt32(at: offset) {
+            offset += 4
+            offset += Int(slotsCount) * 4
+        }
+
+        // Skip countries (string per user)
+        if let countryCount = data.readUInt32(at: offset) {
+            offset += 4
+            for _ in 0..<countryCount {
+                guard let (_, countryLen) = data.readString(at: offset) else { break }
+                offset += countryLen
+            }
+        }
+
+        // Private room data (if present at end)
+        var owner: String? = nil
+        var operators: [String] = []
+
+        if offset < data.count {
+            if let (ownerName, ownerLen) = data.readString(at: offset) {
+                owner = ownerName.isEmpty ? nil : ownerName
+                offset += ownerLen
+
+                // Operator count + names
+                if let opCount = data.readUInt32(at: offset) {
+                    offset += 4
+                    for _ in 0..<opCount {
+                        guard let (opName, opLen) = data.readString(at: offset) else { break }
+                        operators.append(opName)
+                        offset += opLen
+                    }
+                }
+            }
+        }
+
+        client?.onRoomJoined?(roomName, users, owner, operators)
         ActivityLog.shared.logRoomJoined(room: roomName, userCount: users.count)
     }
 
@@ -1274,6 +1348,14 @@ final class ServerMessageHandler {
         logger.warning("Relogged: kicked from server because another client logged in with the same credentials")
         ActivityLog.shared.logRelogged()
         client?.disconnect()
+    }
+
+    // MARK: - Can't Create Room
+
+    private func handleCantCreateRoom(_ data: Data) {
+        guard let (roomName, _) = data.readString(at: 0) else { return }
+        logger.warning("Can't create room: \(roomName)")
+        client?.onCantCreateRoom?(roomName)
     }
 
     // MARK: - Helpers

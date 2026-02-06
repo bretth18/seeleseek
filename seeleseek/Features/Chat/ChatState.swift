@@ -1,6 +1,12 @@
 import SwiftUI
 import os
 
+enum RoomListTab: String, CaseIterable {
+    case all = "All"
+    case `private` = "Private"
+    case owned = "Owned"
+}
+
 @Observable
 @MainActor
 final class ChatState {
@@ -10,6 +16,11 @@ final class ChatState {
     var joinedRooms: [ChatRoom] = []
     var selectedRoom: String?
 
+    // MARK: - Private Room Categories
+    var ownedPrivateRooms: [ChatRoom] = []
+    var memberPrivateRooms: [ChatRoom] = []
+    var operatedRoomNames: Set<String> = []
+
     // MARK: - Private Chats
     var privateChats: [PrivateChat] = []
     var selectedPrivateChat: String?
@@ -17,6 +28,21 @@ final class ChatState {
     // MARK: - Input
     var messageInput: String = ""
     var roomSearchQuery: String = ""
+
+    // MARK: - Room Browser State
+    var roomListTab: RoomListTab = .all
+    var showCreateRoom: Bool = false
+    var createRoomName: String = ""
+    var createRoomIsPrivate: Bool = false
+    var createRoomError: String? = nil
+
+    // MARK: - Room User List Panel
+    var showUserListPanel: Bool = false
+    var userListSearchQuery: String = ""
+
+    // MARK: - Room Management
+    var showRoomManagement: Bool = false
+    var tickersCollapsed: Bool = false
 
     // MARK: - Loading State
     var isLoadingRooms: Bool = false
@@ -37,8 +63,17 @@ final class ChatState {
             self?.setAvailableRooms(rooms)
         }
 
-        client.onRoomJoined = { [weak self] roomName, users in
-            self?.handleRoomJoined(roomName, users: users)
+        client.onRoomListFull = { [weak self] publicRooms, ownedPrivate, memberPrivate, operated in
+            self?.handleRoomListFull(
+                publicRooms: publicRooms,
+                ownedPrivate: ownedPrivate,
+                memberPrivate: memberPrivate,
+                operated: operated
+            )
+        }
+
+        client.onRoomJoined = { [weak self] roomName, users, owner, operators in
+            self?.handleRoomJoined(roomName, users: users, owner: owner, operators: operators)
         }
 
         client.onRoomLeft = { [weak self] roomName in
@@ -46,6 +81,8 @@ final class ChatState {
         }
 
         client.onRoomMessage = { [weak self] roomName, message in
+            // Skip server echo of our own messages (already added optimistically in sendMessage)
+            guard !message.isOwn else { return }
             self?.addRoomMessage(roomName, message: message)
         }
 
@@ -61,10 +98,97 @@ final class ChatState {
             self?.handleUserLeftRoom(roomName, username: username)
         }
 
+        client.onCantCreateRoom = { [weak self] roomName in
+            self?.createRoomError = "Cannot create room '\(roomName)'"
+        }
+
+        // Private room callbacks
+        client.onPrivateRoomMembers = { [weak self] room, members in
+            self?.updateRoomMembers(room, members: members)
+        }
+
+        client.onPrivateRoomMemberAdded = { [weak self] room, username in
+            self?.addRoomMember(room, username: username)
+        }
+
+        client.onPrivateRoomMemberRemoved = { [weak self] room, username in
+            self?.removeRoomMember(room, username: username)
+        }
+
+        client.onPrivateRoomOperators = { [weak self] room, operators in
+            self?.updateRoomOperators(room, operators: operators)
+        }
+
+        client.onPrivateRoomOperatorGranted = { [weak self] room in
+            self?.operatedRoomNames.insert(room)
+        }
+
+        client.onPrivateRoomOperatorRevoked = { [weak self] room in
+            self?.operatedRoomNames.remove(room)
+        }
+
+        client.onRoomMembershipGranted = { [weak self] room in
+            guard let self else { return }
+            let msg = ChatMessage(username: "", content: "You were invited to private room '\(room)'", isSystem: true)
+            // Add as a system notification to current room if any
+            if let current = self.selectedRoom, let idx = self.joinedRooms.firstIndex(where: { $0.name == current }) {
+                self.joinedRooms[idx].messages.append(msg)
+            }
+        }
+
+        client.onRoomMembershipRevoked = { [weak self] room in
+            guard let self else { return }
+            // Remove from joined if present
+            self.joinedRooms.removeAll { $0.name == room }
+            self.memberPrivateRooms.removeAll { $0.name == room }
+            if self.selectedRoom == room {
+                self.selectedRoom = self.joinedRooms.first?.name
+            }
+        }
+
+        // Ticker callbacks
+        client.onRoomTickerState = { [weak self] room, tickers in
+            guard let self else { return }
+            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
+                var dict: [String: String] = [:]
+                for t in tickers { dict[t.username] = t.ticker }
+                self.joinedRooms[idx].tickers = dict
+            }
+        }
+
+        client.onRoomTickerAdd = { [weak self] room, username, ticker in
+            guard let self else { return }
+            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
+                self.joinedRooms[idx].tickers[username] = ticker
+            }
+        }
+
+        client.onRoomTickerRemove = { [weak self] room, username in
+            guard let self else { return }
+            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
+                self.joinedRooms[idx].tickers.removeValue(forKey: username)
+            }
+        }
+
         // Listen for user status updates to update private chat online status
         client.addUserStatusHandler { [weak self] username, status, _ in
             self?.updateUserOnlineStatus(username: username, status: status)
         }
+    }
+
+    // MARK: - Room List Handling
+
+    private func handleRoomListFull(
+        publicRooms: [ChatRoom],
+        ownedPrivate: [ChatRoom],
+        memberPrivate: [ChatRoom],
+        operated: [String]
+    ) {
+        availableRooms = publicRooms
+        ownedPrivateRooms = ownedPrivate
+        memberPrivateRooms = memberPrivate
+        operatedRoomNames = Set(operated)
+        isLoadingRooms = false
     }
 
     // MARK: - User Status Updates
@@ -75,9 +199,23 @@ final class ChatState {
         }
     }
 
-    private func handleRoomJoined(_ roomName: String, users: [String]) {
-        if !joinedRooms.contains(where: { $0.name == roomName }) {
-            let room = ChatRoom(name: roomName, users: users, isJoined: true)
+    private func handleRoomJoined(_ roomName: String, users: [String], owner: String?, operators: [String]) {
+        if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
+            // Update existing room
+            joinedRooms[index].users = users
+            if let owner { joinedRooms[index].owner = owner }
+            if !operators.isEmpty { joinedRooms[index].operators = Set(operators) }
+            if owner != nil { joinedRooms[index].isPrivate = true }
+        } else {
+            let isPrivate = owner != nil
+            let room = ChatRoom(
+                name: roomName,
+                users: users,
+                isJoined: true,
+                isPrivate: isPrivate,
+                owner: owner,
+                operators: Set(operators)
+            )
             joinedRooms.append(room)
         }
         selectedRoom = roomName
@@ -95,7 +233,6 @@ final class ChatState {
             if !joinedRooms[index].users.contains(username) {
                 joinedRooms[index].users.append(username)
             }
-            // Add system message
             let message = ChatMessage(username: "", content: "\(username) joined the room", isSystem: true)
             joinedRooms[index].messages.append(message)
         }
@@ -104,9 +241,36 @@ final class ChatState {
     private func handleUserLeftRoom(_ roomName: String, username: String) {
         if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
             joinedRooms[index].users.removeAll { $0 == username }
-            // Add system message
             let message = ChatMessage(username: "", content: "\(username) left the room", isSystem: true)
             joinedRooms[index].messages.append(message)
+        }
+    }
+
+    // MARK: - Private Room Member/Operator Updates
+
+    private func updateRoomMembers(_ room: String, members: [String]) {
+        if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            joinedRooms[idx].members = members
+        }
+    }
+
+    private func addRoomMember(_ room: String, username: String) {
+        if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            if !joinedRooms[idx].members.contains(username) {
+                joinedRooms[idx].members.append(username)
+            }
+        }
+    }
+
+    private func removeRoomMember(_ room: String, username: String) {
+        if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            joinedRooms[idx].members.removeAll { $0 == username }
+        }
+    }
+
+    private func updateRoomOperators(_ room: String, operators: [String]) {
+        if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            joinedRooms[idx].operators = Set(operators)
         }
     }
 
@@ -122,12 +286,23 @@ final class ChatState {
     }
 
     var filteredRooms: [ChatRoom] {
-        if roomSearchQuery.isEmpty {
-            return availableRooms.sorted { $0.userCount > $1.userCount }
+        let source: [ChatRoom]
+        switch roomListTab {
+        case .all:
+            source = availableRooms
+        case .private:
+            source = memberPrivateRooms
+        case .owned:
+            source = ownedPrivateRooms
         }
-        return availableRooms.filter {
+
+        let sorted = source.sorted { $0.userCount > $1.userCount }
+        if roomSearchQuery.isEmpty {
+            return sorted
+        }
+        return sorted.filter {
             $0.name.localizedCaseInsensitiveContains(roomSearchQuery)
-        }.sorted { $0.userCount > $1.userCount }
+        }
     }
 
     var totalUnreadCount: Int {
@@ -143,10 +318,22 @@ final class ChatState {
         return !trimmed.isEmpty && trimmed.count <= Self.maxMessageLength
     }
 
+    // MARK: - Room Role Queries
+
+    func isOwner(of roomName: String) -> Bool {
+        guard let room = joinedRooms.first(where: { $0.name == roomName }) else { return false }
+        return room.owner == networkClient?.username
+    }
+
+    func isOperator(of roomName: String) -> Bool {
+        guard let room = joinedRooms.first(where: { $0.name == roomName }) else { return false }
+        return room.operators.contains(networkClient?.username ?? "")
+    }
+
     // MARK: - Room Actions
-    func joinRoom(_ name: String) {
+    func joinRoom(_ name: String, isPrivate: Bool = false) {
         Task {
-            try? await networkClient?.joinRoom(name)
+            try? await networkClient?.joinRoom(name, isPrivate: isPrivate)
         }
     }
 
@@ -186,6 +373,59 @@ final class ChatState {
         if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
             joinedRooms[index].users = users
         }
+    }
+
+    // MARK: - Room Creation & Management
+
+    func createRoom() {
+        let name = createRoomName.trimmingCharacters(in: .whitespaces)
+        createRoomError = nil
+
+        guard !name.isEmpty else {
+            createRoomError = "Room name cannot be empty"
+            return
+        }
+        guard name.count <= 24 else {
+            createRoomError = "Room name must be 24 characters or less"
+            return
+        }
+        guard name.allSatisfy({ $0.isASCII && $0 != " " }) else {
+            createRoomError = "Room name must be ASCII with no spaces"
+            return
+        }
+
+        joinRoom(name, isPrivate: createRoomIsPrivate)
+        createRoomName = ""
+        createRoomIsPrivate = false
+        showCreateRoom = false
+    }
+
+    func addMember(room: String, username: String) {
+        Task { try? await networkClient?.addPrivateRoomMember(room: room, username: username) }
+    }
+
+    func removeMember(room: String, username: String) {
+        Task { try? await networkClient?.removePrivateRoomMember(room: room, username: username) }
+    }
+
+    func addOperator(room: String, username: String) {
+        Task { try? await networkClient?.addPrivateRoomOperator(room: room, username: username) }
+    }
+
+    func removeOperator(room: String, username: String) {
+        Task { try? await networkClient?.removePrivateRoomOperator(room: room, username: username) }
+    }
+
+    func setTicker(room: String, text: String) {
+        Task { try? await networkClient?.setRoomTicker(room: room, ticker: text) }
+    }
+
+    func clearTicker(room: String) {
+        Task { try? await networkClient?.setRoomTicker(room: room, ticker: "") }
+    }
+
+    func giveUpOwnership(room: String) {
+        Task { try? await networkClient?.giveUpPrivateRoomOwnership(room) }
     }
 
     // MARK: - Private Chat Actions

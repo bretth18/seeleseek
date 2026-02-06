@@ -178,9 +178,10 @@ final class NetworkClient {
     var onConnectionStatusChanged: ((ConnectionStatus) -> Void)?
     var onSearchResults: ((UInt32, [SearchResult]) -> Void)?  // (token, results)
     var onRoomList: (([ChatRoom]) -> Void)?
+    var onRoomListFull: ((_ publicRooms: [ChatRoom], _ ownedPrivate: [ChatRoom], _ memberPrivate: [ChatRoom], _ operated: [String]) -> Void)?
     var onRoomMessage: ((String, ChatMessage) -> Void)?
     var onPrivateMessage: ((String, ChatMessage) -> Void)?
-    var onRoomJoined: ((String, [String]) -> Void)?
+    var onRoomJoined: ((String, [String], String?, [String]) -> Void)?  // (room, users, owner?, operators)
     var onRoomLeft: ((String) -> Void)?
     var onUserJoinedRoom: ((String, String) -> Void)?
     var onUserLeftRoom: ((String, String) -> Void)?
@@ -259,6 +260,9 @@ final class NetworkClient {
     var onRoomMembershipRevoked: ((String) -> Void)?  // room name
     var onRoomInvitationsEnabled: ((Bool) -> Void)?  // enabled
     var onPasswordChanged: ((String) -> Void)?  // confirmed password
+
+    // Can't create room callback
+    var onCantCreateRoom: ((String) -> Void)?  // room name
 
     // Global room callback
     var onGlobalRoomMessage: ((String, String, String) -> Void)?  // (room, username, message)
@@ -584,12 +588,12 @@ final class NetworkClient {
         try await connection.send(message)
     }
 
-    func joinRoom(_ name: String) async throws {
+    func joinRoom(_ name: String, isPrivate: Bool = false) async throws {
         guard isConnected, let connection = serverConnection else {
             throw NetworkError.notConnected
         }
 
-        let message = MessageBuilder.joinRoomMessage(roomName: name)
+        let message = MessageBuilder.joinRoomMessage(roomName: name, isPrivate: isPrivate)
         try await connection.send(message)
     }
 

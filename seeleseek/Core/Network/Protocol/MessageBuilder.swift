@@ -65,10 +65,11 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    nonisolated static func joinRoomMessage(roomName: String) -> Data {
+    nonisolated static func joinRoomMessage(roomName: String, isPrivate: Bool = false) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.joinRoom.rawValue)
         payload.appendString(roomName)
+        payload.appendUInt32(isPrivate ? 1 : 0)
         return wrapMessage(payload)
     }
 
