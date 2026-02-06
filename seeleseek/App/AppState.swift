@@ -53,6 +53,18 @@ final class AppState {
                     self.logger.info("Received admin message: \(message)")
                 }
             }
+
+            // Wire search response filter from settings
+            _networkClient!.searchResponseFilter = { [weak self] in
+                guard let settings = self?.settings else {
+                    return (enabled: true, minQueryLength: 3, maxResults: 50)
+                }
+                return (
+                    enabled: settings.respondToSearches,
+                    minQueryLength: settings.minSearchQueryLength,
+                    maxResults: settings.maxSearchResponseResults
+                )
+            }
         }
         return _networkClient!
     }

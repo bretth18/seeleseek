@@ -84,6 +84,29 @@ final class SettingsState {
         }
     }
 
+    // MARK: - Search Response Settings (how we respond to other users' searches)
+    /// Whether to respond to distributed search requests from other users
+    var respondToSearches: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    /// Minimum search query length to respond to (filters out short/broad queries)
+    var minSearchQueryLength: Int = 3 {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    /// Maximum number of results to send per search response (0 = unlimited)
+    var maxSearchResponseResults: Int = 50 {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
     // MARK: - Shares Settings
     var sharedFolders: [URL] = []
     var rescanOnStartup: Bool = true
@@ -128,6 +151,9 @@ final class SettingsState {
         uploadSpeedLimit = 0
         downloadSpeedLimit = 0
         maxSearchResults = 500
+        respondToSearches = true
+        minSearchQueryLength = 3
+        maxSearchResponseResults = 50
         rescanOnStartup = true
         shareHiddenFiles = false
         autoFetchMetadata = true
@@ -174,6 +200,9 @@ final class SettingsState {
             try await SettingsRepository.set("uploadSpeedLimit", value: uploadSpeedLimit)
             try await SettingsRepository.set("downloadSpeedLimit", value: downloadSpeedLimit)
             try await SettingsRepository.set("maxSearchResults", value: maxSearchResults)
+            try await SettingsRepository.set("respondToSearches", value: respondToSearches)
+            try await SettingsRepository.set("minSearchQueryLength", value: minSearchQueryLength)
+            try await SettingsRepository.set("maxSearchResponseResults", value: maxSearchResponseResults)
             logger.debug("Settings saved to database")
         } catch {
             logger.error("Failed to save settings to database: \(error.localizedDescription)")
@@ -234,6 +263,9 @@ final class SettingsState {
             uploadSpeedLimit = try await SettingsRepository.get("uploadSpeedLimit", default: uploadSpeedLimit)
             downloadSpeedLimit = try await SettingsRepository.get("downloadSpeedLimit", default: downloadSpeedLimit)
             maxSearchResults = try await SettingsRepository.get("maxSearchResults", default: maxSearchResults)
+            respondToSearches = try await SettingsRepository.get("respondToSearches", default: respondToSearches)
+            minSearchQueryLength = try await SettingsRepository.get("minSearchQueryLength", default: minSearchQueryLength)
+            maxSearchResponseResults = try await SettingsRepository.get("maxSearchResponseResults", default: maxSearchResponseResults)
 
             logger.info("Settings loaded from database")
         } catch {

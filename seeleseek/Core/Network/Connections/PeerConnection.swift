@@ -1623,10 +1623,11 @@ actor PeerConnection {
 
     private func handleQueueDownload(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
-        let username = self.peerUsername.isEmpty ? "unknown" : self.peerUsername
-        logger.info("Queue upload request from \(username): \(filename)")
-        logger.info("QueueUpload received from \(self.peerUsername): \(filename)")
-        await _onQueueUpload?(self.peerUsername, filename)
+        // Use peerInfo.username as fallback - peerUsername is only set when receiving PeerInit,
+        // but on outgoing connections the peer may send messages before their PeerInit
+        let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
+        logger.info("QueueUpload received from \(username): \(filename)")
+        await _onQueueUpload?(username, filename)
     }
 
     private func handlePlaceInQueue(_ data: Data) async {
@@ -1638,19 +1639,8 @@ actor PeerConnection {
 
     private func handleUploadFailed(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
-        logger.warning("Upload failed for: \(filename)")
-        logger.warning("UploadFailed from \(self.peerUsername): \(filename)")
-        // Write to debug log file
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let logLine = "[\(timestamp)] ❌ UploadFailed from \(peerUsername): \(filename)\n"
-        if let logPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("seeleseek_debug.log"),
-           let data = logLine.data(using: .utf8) {
-            if let handle = try? FileHandle(forWritingTo: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            }
-        }
+        let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
+        logger.warning("UploadFailed from \(username): \(filename)")
         await _onUploadFailed?(filename)
     }
 
@@ -1677,9 +1667,9 @@ actor PeerConnection {
 
     private func handlePlaceInQueueRequest(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
-        logger.info("Place in queue request for: \(filename)")
-        logger.info("PlaceInQueueRequest for: \(filename) from \(self.peerUsername)")
-        await _onPlaceInQueueRequest?(self.peerUsername, filename)
+        let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
+        logger.info("PlaceInQueueRequest for: \(filename) from \(username)")
+        await _onPlaceInQueueRequest?(username, filename)
     }
 
     private func handleFolderContentsReply(_ data: Data) async {

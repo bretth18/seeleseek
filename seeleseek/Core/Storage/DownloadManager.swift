@@ -789,6 +789,7 @@ final class DownloadManager {
                 t.status = .completed
                 t.bytesTransferred = request.size
                 t.localPath = destPath
+                t.error = nil
             }
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")
@@ -919,6 +920,7 @@ final class DownloadManager {
                 t.status = .completed
                 t.bytesTransferred = fileSize
                 t.localPath = destPath
+                t.error = nil
             }
 
             logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
@@ -1506,6 +1508,7 @@ final class DownloadManager {
                 t.status = .completed
                 t.bytesTransferred = pending.size
                 t.localPath = destPath
+                t.error = nil
             }
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")

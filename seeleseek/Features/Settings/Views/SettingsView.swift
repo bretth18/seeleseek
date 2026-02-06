@@ -391,6 +391,12 @@ struct PrivacySettingsSection: View {
                 settingsToggle("Show online status", isOn: $settings.showOnlineStatus)
                 settingsToggle("Allow users to browse my files", isOn: $settings.allowBrowsing)
             }
+
+            settingsGroup("Search Responses") {
+                settingsToggle("Respond to search requests", isOn: $settings.respondToSearches)
+                settingsNumberField("Min query length", value: $settings.minSearchQueryLength, range: 1...20)
+                settingsNumberField("Max results per response", value: $settings.maxSearchResponseResults, range: 0...500, placeholder: "0 = unlimited")
+            }
         }
     }
 }

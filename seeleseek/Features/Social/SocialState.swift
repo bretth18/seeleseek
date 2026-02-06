@@ -147,6 +147,13 @@ final class SocialState {
             }
         }
 
+        // Provide profile data for UserInfoResponse
+        client.profileDataProvider = { [weak self] in
+            let desc = self?.myDescription ?? ""
+            let description = desc.isEmpty ? "SeeleSeek - Soulseek client for macOS" : desc
+            return (description: description, picture: self?.myPicture)
+        }
+
         logger.info("Social callbacks configured")
 
         // Load persisted data
@@ -184,10 +191,11 @@ final class SocialState {
                 leechSettings = try JSONDecoder().decode(LeechSettings.self, from: data)
             }
 
-            // Request status updates for all buddies after a short delay to ensure connection is ready
+            // Request status updates for all buddies and re-register interests after a short delay
             Task {
                 try? await Task.sleep(for: .seconds(2))
                 await rewatchAllBuddies()
+                await reregisterInterests()
             }
         } catch {
             logger.error("Failed to load persisted social data: \(error.localizedDescription)")
@@ -505,6 +513,34 @@ final class SocialState {
         }
 
         logger.info("Re-watched \(self.buddies.count) buddies")
+    }
+
+    // MARK: - Re-register Interests (server forgets on disconnect)
+
+    /// Send all stored interests to the server after login
+    /// The SoulSeek server does not persist interests across sessions
+    private func reregisterInterests() async {
+        guard let networkClient else { return }
+
+        var registered = 0
+        for like in myLikes {
+            do {
+                try await networkClient.addThingILike(like)
+                registered += 1
+            } catch {
+                logger.error("Failed to re-register like '\(like)': \(error.localizedDescription)")
+            }
+        }
+        for hate in myHates {
+            do {
+                try await networkClient.addThingIHate(hate)
+                registered += 1
+            } catch {
+                logger.error("Failed to re-register hate '\(hate)': \(error.localizedDescription)")
+            }
+        }
+
+        logger.info("Re-registered \(registered) interests with server (\(self.myLikes.count) likes, \(self.myHates.count) hates)")
     }
 
     // MARK: - Blocklist Actions

@@ -215,6 +215,12 @@ final class NetworkClient {
     var onItemRecommendations: ((String, [(item: String, score: Int32)]) -> Void)?  // (item, recommendations)
     var onItemSimilarUsers: ((String, [String]) -> Void)?  // (item, users)
 
+    // Profile data provider - returns (description, picture) for UserInfoResponse
+    var profileDataProvider: (() -> (description: String, picture: Data?))?
+
+    // Search response filter - returns (respondToSearches, minQueryLength, maxResults)
+    var searchResponseFilter: (() -> (enabled: Bool, minQueryLength: Int, maxResults: Int))?
+
     // User stats & privileges callbacks
     private var userStatusHandlers: [(String, UserStatus, Bool) -> Void] = []
     /// Register a handler for user status updates. Multiple handlers supported.
@@ -1523,30 +1529,26 @@ final class NetworkClient {
 
     /// Handle incoming user info request - respond with our profile info
     private func handleUserInfoRequest(username: String, connection: PeerConnection) async {
-        logger.info("User info request from \(username)")
-        logger.info("Handling UserInfoRequest from \(username)")
+        logger.info("UserInfoRequest from \(username)")
 
-        // Get upload stats
-        let totalUploads = UInt32(shareManager.totalFiles)  // Could track actual upload count
-        let queueSize = UInt32(0)  // Could get from upload manager
-        let hasFreeSlots = true  // Could check upload manager
+        let totalUploads = UInt32(shareManager.totalFiles)
+        let queueSize = UInt32(0)
+        let hasFreeSlots = true
 
-        // User description - could be configurable
-        let description = "SeeleSeek - Soulseek client for macOS"
+        // Get profile data from SocialState (or fall back to default)
+        let profileData = profileDataProvider?() ?? (description: "SeeleSeek - Soulseek client for macOS", picture: nil)
 
         do {
             try await connection.sendUserInfo(
-                description: description,
-                picture: nil,  // No picture support yet
+                description: profileData.description,
+                picture: profileData.picture,
                 totalUploads: totalUploads,
                 queueSize: queueSize,
                 hasFreeSlots: hasFreeSlots
             )
             logger.info("Sent user info to \(username)")
-            logger.info("Sent user info to \(username)")
         } catch {
             logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
-            logger.error("Failed to send user info: \(error)")
         }
     }
 

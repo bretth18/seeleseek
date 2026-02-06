@@ -693,16 +693,33 @@ final class ServerMessageHandler {
         // Don't respond to our own searches
         guard username != client?.username else { return }
 
+        // Apply search response filters
+        let filter = client?.searchResponseFilter?() ?? (enabled: true, minQueryLength: 3, maxResults: 50)
+
+        guard filter.enabled else {
+            return
+        }
+
+        // Filter short queries (they match too broadly and waste bandwidth)
+        let trimmedQuery = query.trimmingCharacters(in: .whitespaces)
+        guard trimmedQuery.count >= filter.minQueryLength else {
+            return
+        }
+
         // Search our shared files
         guard let shareManager = client?.shareManager else {
             logger.debug("No share manager available for distributed search")
             return
         }
 
-        let matchingFiles = shareManager.search(query: query)
+        var matchingFiles = shareManager.search(query: query)
         guard !matchingFiles.isEmpty else {
-            logger.debug("No matches for distributed search: '\(query)'")
             return
+        }
+
+        // Cap results to limit bandwidth
+        if filter.maxResults > 0 && matchingFiles.count > filter.maxResults {
+            matchingFiles = Array(matchingFiles.prefix(filter.maxResults))
         }
 
         logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
