@@ -1,8 +1,10 @@
 import SwiftUI
+import os
 
 @Observable
 @MainActor
 final class ChatState {
+    private let logger = Logger(subsystem: "com.seeleseek", category: "ChatState")
     // MARK: - Rooms
     var availableRooms: [ChatRoom] = []
     var joinedRooms: [ChatRoom] = []
@@ -25,6 +27,11 @@ final class ChatState {
     // MARK: - Setup
     func setupCallbacks(client: NetworkClient) {
         self.networkClient = client
+
+        // Load persisted DMs
+        Task {
+            await loadPersistedDMs()
+        }
 
         client.onRoomList = { [weak self] rooms in
             self?.setAvailableRooms(rooms)
@@ -227,6 +234,17 @@ final class ChatState {
                 try? await networkClient?.getUserStatus(username)
             }
         }
+
+        // Persist to database (skip system messages like join/leave)
+        if !message.isSystem {
+            Task {
+                do {
+                    try await ChatRepository.saveMessage(message, peerUsername: username)
+                } catch {
+                    logger.error("Failed to persist DM: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     func closePrivateChat(_ username: String) {
@@ -278,5 +296,48 @@ final class ChatState {
     func setAvailableRooms(_ rooms: [ChatRoom]) {
         availableRooms = rooms
         isLoadingRooms = false
+    }
+
+    // MARK: - DM Persistence
+
+    /// Load persisted DM conversations from database
+    private func loadPersistedDMs() async {
+        do {
+            let peerUsernames = try await ChatRepository.fetchConversations()
+            for peer in peerUsernames {
+                let messages = try await ChatRepository.fetchMessages(for: peer)
+                guard !messages.isEmpty else { continue }
+
+                if let index = privateChats.firstIndex(where: { $0.username == peer }) {
+                    // Merge: only add messages not already present
+                    let existingIds = Set(privateChats[index].messages.map(\.id))
+                    let newMessages = messages.filter { !existingIds.contains($0.id) }
+                    privateChats[index].messages.insert(contentsOf: newMessages, at: 0)
+                } else {
+                    let chat = PrivateChat(username: peer, messages: messages)
+                    privateChats.append(chat)
+                }
+            }
+            if !peerUsernames.isEmpty {
+                logger.info("Loaded DM history for \(peerUsernames.count) conversations")
+            }
+
+            // Prune old messages
+            try await ChatRepository.pruneOldMessages()
+        } catch {
+            logger.error("Failed to load DM history: \(error.localizedDescription)")
+        }
+    }
+
+    /// Delete conversation history from database
+    func deleteConversationHistory(_ username: String) {
+        Task {
+            do {
+                try await ChatRepository.deleteConversation(username)
+                logger.info("Deleted DM history for \(username)")
+            } catch {
+                logger.error("Failed to delete DM history: \(error.localizedDescription)")
+            }
+        }
     }
 }

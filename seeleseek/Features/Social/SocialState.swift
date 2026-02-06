@@ -184,6 +184,9 @@ final class SocialState {
             if let desc = try await SocialRepository.getProfileSetting("description") {
                 myDescription = desc
             }
+            if let picBase64 = try await SocialRepository.getProfileSetting("picture") {
+                myPicture = Data(base64Encoded: picBase64)
+            }
 
             // Load leech settings
             if let leechJson = try await SocialRepository.getProfileSetting("leechSettings"),
@@ -367,7 +370,12 @@ final class SocialState {
     func saveMyProfile() async {
         do {
             try await SocialRepository.setProfileSetting("description", value: myDescription)
-            logger.info("Saved profile description")
+            if let pictureData = myPicture {
+                try await SocialRepository.setProfileSetting("picture", value: pictureData.base64EncodedString())
+            } else {
+                try await SocialRepository.deleteProfileSetting("picture")
+            }
+            logger.info("Saved profile")
         } catch {
             logger.error("Failed to save profile: \(error.localizedDescription)")
         }

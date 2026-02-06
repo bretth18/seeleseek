@@ -1,4 +1,8 @@
 import SwiftUI
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct MyProfileView: View {
     @Environment(\.appState) private var appState
@@ -34,6 +38,53 @@ struct MyProfileView: View {
             Text("This information is shared when other users view your profile.")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+
+            // Profile Picture
+            VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                Text("Profile Picture")
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textSecondary)
+
+                HStack(spacing: SeeleSpacing.md) {
+                    if let pictureData = socialState.myPicture,
+                       let nsImage = NSImage(data: pictureData) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    } else {
+                        RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                            .fill(SeeleColors.surfaceSecondary)
+                            .frame(width: 80, height: 80)
+                            .overlay {
+                                Image(systemName: "person.crop.square")
+                                    .font(.system(size: 32))
+                                    .foregroundStyle(SeeleColors.textTertiary)
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
+                        Button("Choose Image...") {
+                            choosePicture()
+                        }
+
+                        if socialState.myPicture != nil {
+                            Button("Remove") {
+                                socialState.myPicture = nil
+                                hasChanges = true
+                            }
+                            .foregroundStyle(SeeleColors.error)
+                        }
+
+                        Text("JPEG or PNG, max 256 KB")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                }
+            }
+
+            Divider().background(SeeleColors.surfaceSecondary)
 
             // Description editor
             VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
@@ -127,6 +178,47 @@ struct MyProfileView: View {
         Task {
             await socialState.saveMyProfile()
             hasChanges = false
+        }
+    }
+
+    private func choosePicture() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.jpeg, .png]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose a profile picture (max 256 KB)"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            var data = try Data(contentsOf: url)
+
+            // Resize if too large (SoulSeek protocol limit is typically ~256KB for pictures)
+            let maxSize = 256 * 1024
+            if data.count > maxSize {
+                // Try to compress as JPEG
+                if let nsImage = NSImage(data: data),
+                   let tiffData = nsImage.tiffRepresentation,
+                   let bitmap = NSBitmapImageRep(data: tiffData) {
+                    // Try progressively lower quality until under size limit
+                    for quality in stride(from: 0.8, through: 0.1, by: -0.1) {
+                        if let compressed = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]),
+                           compressed.count <= maxSize {
+                            data = compressed
+                            break
+                        }
+                    }
+                }
+
+                if data.count > maxSize {
+                    return // Still too large, give up
+                }
+            }
+
+            socialState.myPicture = data
+            hasChanges = true
+        } catch {
+            // Failed to read file
         }
     }
 }

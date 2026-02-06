@@ -227,6 +227,15 @@ struct BrowseView: View {
                     Spacer()
 
                     Button {
+                        browseState.refreshCurrentBrowse()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundStyle(SeeleColors.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Refresh (bypass cache)")
+
+                    Button {
                         withAnimation {
                             showVisualizations.toggle()
                         }

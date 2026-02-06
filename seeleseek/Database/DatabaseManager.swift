@@ -188,6 +188,21 @@ actor DatabaseManager {
             }
         }
 
+        // v4: Private message history
+        migrator.registerMigration("v4") { db in
+            try db.create(table: "private_messages") { t in
+                t.column("id", .text).primaryKey()
+                t.column("peerUsername", .text).notNull().indexed()
+                t.column("senderUsername", .text).notNull()
+                t.column("content", .text).notNull()
+                t.column("isOwn", .integer).notNull()
+                t.column("isSystem", .integer).notNull().defaults(to: 0)
+                t.column("messageId", .integer)  // server message ID for ack
+                t.column("timestamp", .double).notNull()
+            }
+            try db.create(index: "idx_private_messages_peer_time", on: "private_messages", columns: ["peerUsername", "timestamp"])
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")

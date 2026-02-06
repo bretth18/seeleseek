@@ -35,24 +35,33 @@ struct InterestsView: View {
     }
 
     private var addInterestSection: some View {
-        HStack(spacing: SeeleSpacing.sm) {
+        HStack(spacing: SeeleSpacing.md) {
             // Interest input
-            HStack(spacing: SeeleSpacing.xs) {
+            HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: interestType == .like ? "heart" : "heart.slash")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
-//                    .padding(Seele)
 
                 TextField("Add an interest...", text: $newInterest)
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textPrimary)
                     .onSubmit {
                         addInterest()
                     }
+
+                if !newInterest.isEmpty {
+                    Button {
+                        newInterest = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .padding(.horizontal, SeeleSpacing.sm)
-            .padding(.vertical, SeeleSpacing.rowVertical)
-            .background(SeeleColors.surfaceSecondary, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            .padding(SeeleSpacing.md)
+            .background(SeeleColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
             // Type picker
             Picker("Type", selection: $interestType) {
@@ -65,16 +74,22 @@ struct InterestsView: View {
             .frame(width: 180)
 
             // Add button
-            Button("Add") {
+            Button {
                 addInterest()
+            } label: {
+                Text("Add")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textOnAccent)
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.md)
+                    .background(!newInterest.trimmingCharacters(in: .whitespaces).isEmpty ? SeeleColors.accent : SeeleColors.textTertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .disabled(newInterest.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(.horizontal, SeeleSpacing.sm)
-        .padding(.vertical, SeeleSpacing.rowVertical)
-        .background(SeeleColors.surface)
+        .padding(SeeleSpacing.lg)
+        .background(SeeleColors.surface.opacity(0.5))
     }
 
     private var likesSection: some View {
