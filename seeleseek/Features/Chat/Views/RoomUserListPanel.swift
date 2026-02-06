@@ -90,6 +90,12 @@ struct RoomUserListPanel: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button {
+                Task { await appState.socialState.loadProfile(for: username) }
+            } label: {
+                Label("View Profile", systemImage: "person.crop.circle")
+            }
+
+            Button {
                 chatState.selectPrivateChat(username)
             } label: {
                 Label("Send Message", systemImage: "envelope")

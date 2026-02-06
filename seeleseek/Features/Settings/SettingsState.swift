@@ -1,6 +1,31 @@
 import SwiftUI
 import os
 
+enum DownloadFolderFormat: String, CaseIterable {
+    case usernameAndPath = "usernameAndPath"
+    case pathOnly = "pathOnly"
+    case flat = "flat"
+    case custom = "custom"
+
+    var displayName: String {
+        switch self {
+        case .usernameAndPath: "Username / Full Path"
+        case .pathOnly: "Full Path"
+        case .flat: "Filename Only"
+        case .custom: "Custom"
+        }
+    }
+
+    var template: String {
+        switch self {
+        case .usernameAndPath: "{username}/{folders}/{filename}"
+        case .pathOnly: "{folders}/{filename}"
+        case .flat: "{filename}"
+        case .custom: ""
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class SettingsState {
@@ -14,6 +39,8 @@ final class SettingsState {
     private let maxSearchResultsKey = "settings.maxSearchResults"
     private let downloadLocationKey = "settings.downloadLocation"
     private let incompleteLocationKey = "settings.incompleteLocation"
+    private let downloadFolderFormatKey = "settings.downloadFolderFormat"
+    private let downloadFolderTemplateKey = "settings.downloadFolderTemplate"
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -28,6 +55,18 @@ final class SettingsState {
         }
     }
     var incompleteLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("Incomplete") {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var downloadFolderFormat: DownloadFolderFormat = .usernameAndPath {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var downloadFolderTemplate: String = "{username}/{folders}/{filename}" {
         didSet {
             guard !isLoading else { return }
             save()
@@ -142,6 +181,8 @@ final class SettingsState {
     func resetToDefaults() {
         downloadLocation = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
         incompleteLocation = downloadLocation.appendingPathComponent("Incomplete")
+        downloadFolderFormat = .usernameAndPath
+        downloadFolderTemplate = "{username}/{folders}/{filename}"
         launchAtLogin = false
         showInMenuBar = true
         listenPort = 2234
@@ -183,6 +224,8 @@ final class SettingsState {
         UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
         UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
+        UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
+        UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
 
         // Save to database asynchronously
         Task {
@@ -203,6 +246,8 @@ final class SettingsState {
             try await SettingsRepository.set("respondToSearches", value: respondToSearches)
             try await SettingsRepository.set("minSearchQueryLength", value: minSearchQueryLength)
             try await SettingsRepository.set("maxSearchResponseResults", value: maxSearchResponseResults)
+            try await SettingsRepository.set("downloadFolderFormat", value: downloadFolderFormat.rawValue)
+            try await SettingsRepository.set("downloadFolderTemplate", value: downloadFolderTemplate)
             logger.debug("Settings saved to database")
         } catch {
             logger.error("Failed to save settings to database: \(error.localizedDescription)")
@@ -246,6 +291,13 @@ final class SettingsState {
         if let incompletePath = UserDefaults.standard.string(forKey: incompleteLocationKey) {
             incompleteLocation = URL(fileURLWithPath: incompletePath)
         }
+        if let formatRaw = UserDefaults.standard.string(forKey: downloadFolderFormatKey),
+           let format = DownloadFolderFormat(rawValue: formatRaw) {
+            downloadFolderFormat = format
+        }
+        if let template = UserDefaults.standard.string(forKey: downloadFolderTemplateKey) {
+            downloadFolderTemplate = template
+        }
     }
 
     /// Load settings from database (called after DB initialization)
@@ -267,11 +319,28 @@ final class SettingsState {
             minSearchQueryLength = try await SettingsRepository.get("minSearchQueryLength", default: minSearchQueryLength)
             maxSearchResponseResults = try await SettingsRepository.get("maxSearchResponseResults", default: maxSearchResponseResults)
 
+            let formatRaw: String = try await SettingsRepository.get("downloadFolderFormat", default: downloadFolderFormat.rawValue)
+            if let format = DownloadFolderFormat(rawValue: formatRaw) {
+                downloadFolderFormat = format
+            }
+            downloadFolderTemplate = try await SettingsRepository.get("downloadFolderTemplate", default: downloadFolderTemplate)
+
             logger.info("Settings loaded from database")
         } catch {
             logger.error("Failed to load settings from database: \(error.localizedDescription)")
             // Keep using values loaded from UserDefaults
         }
+    }
+}
+
+// MARK: - Download Folder Template
+extension SettingsState {
+    /// Returns the active template string based on the current format setting
+    var activeDownloadTemplate: String {
+        if downloadFolderFormat == .custom {
+            return downloadFolderTemplate
+        }
+        return downloadFolderFormat.template
     }
 }
 

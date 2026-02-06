@@ -14,6 +14,7 @@ final class DownloadManager {
     private weak var transferState: TransferState?
     private weak var statisticsState: StatisticsState?
     private weak var uploadManager: UploadManager?
+    private weak var settings: SettingsState?
 
     // MARK: - Pending Downloads
     // Maps token to pending download info
@@ -46,10 +47,8 @@ final class DownloadManager {
     // MARK: - Pending Indirect Connection State (for racing direct vs PierceFirewall)
     private struct PendingIndirectState {
         let username: String
-        var continuation: CheckedContinuation<PeerConnection, Error>?
         var receivedConnection: PeerConnection?
-        var timeoutTask: Task<Void, Never>?
-        var timedOut = false
+        var failed = false  // Set by CantConnectToPeer
     }
     private var pendingIndirectStates: [UInt32: PendingIndirectState] = [:]
 
@@ -92,11 +91,12 @@ final class DownloadManager {
 
     // MARK: - Initialization
 
-    func configure(networkClient: NetworkClient, transferState: TransferState, statisticsState: StatisticsState, uploadManager: UploadManager) {
+    func configure(networkClient: NetworkClient, transferState: TransferState, statisticsState: StatisticsState, uploadManager: UploadManager, settings: SettingsState) {
         self.networkClient = networkClient
         self.transferState = transferState
         self.statisticsState = statisticsState
         self.uploadManager = uploadManager
+        self.settings = settings
 
         // Set up callbacks for peer address responses using multi-listener pattern
         logger.info("Adding peer address handler")
@@ -470,73 +470,39 @@ final class DownloadManager {
 
     /// Register a pending indirect download BEFORE sending ConnectToPeer (to avoid race condition)
     private func registerPendingIndirect(token: UInt32, username: String, timeout: TimeInterval) {
-        var state = PendingIndirectState(username: username)
-
-        state.timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
-            guard let self else { return }
-
-            if var pending = self.pendingIndirectStates[token] {
-                if pending.receivedConnection == nil {
-                    self.logger.warning("Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
-                    pending.timedOut = true
-                    self.pendingIndirectStates[token] = pending
-
-                    if let continuation = pending.continuation {
-                        pending.continuation = nil
-                        self.pendingIndirectStates[token] = pending
-                        continuation.resume(throwing: NetworkError.timeout)
-                    }
-                }
-            }
-        }
-
-        pendingIndirectStates[token] = state
+        pendingIndirectStates[token] = PendingIndirectState(username: username)
     }
 
-    /// Wait for PierceFirewall to arrive for a previously registered token
-    private func waitForPendingIndirect(token: UInt32) async throws -> PeerConnection {
-        // Check if connection already arrived
-        if let state = pendingIndirectStates[token] {
-            if let connection = state.receivedConnection {
-                logger.debug("PierceFirewall already received for token=\(token)")
-                pendingIndirectStates.removeValue(forKey: token)
-                return connection
-            }
-            if state.timedOut {
-                pendingIndirectStates.removeValue(forKey: token)
-                throw NetworkError.timeout
-            }
-        }
+    /// Wait for PierceFirewall to arrive for a previously registered token (polling-based, no continuation leak)
+    private func waitForPendingIndirect(token: UInt32, timeout: TimeInterval = 30) async throws -> PeerConnection {
+        let deadline = Date().addingTimeInterval(timeout)
 
-        // Wait for connection via continuation
-        return try await withCheckedThrowingContinuation { continuation in
-            if var state = pendingIndirectStates[token] {
+        while Date() < deadline {
+            if let state = pendingIndirectStates[token] {
                 if let connection = state.receivedConnection {
                     pendingIndirectStates.removeValue(forKey: token)
-                    continuation.resume(returning: connection)
-                    return
+                    return connection
                 }
-                if state.timedOut {
+                if state.failed {
                     pendingIndirectStates.removeValue(forKey: token)
-                    continuation.resume(throwing: NetworkError.timeout)
-                    return
+                    throw NetworkError.connectionFailed("Peer unreachable")
                 }
-                state.continuation = continuation
-                pendingIndirectStates[token] = state
             } else {
-                continuation.resume(throwing: NetworkError.timeout)
+                // State was removed (cancelled)
+                throw NetworkError.timeout
             }
+
+            try await Task.sleep(for: .milliseconds(100))
         }
+
+        // Timed out
+        pendingIndirectStates.removeValue(forKey: token)
+        throw NetworkError.timeout
     }
 
     /// Cancel a pending indirect download (used when direct connection succeeds)
     private func cancelPendingIndirect(token: UInt32) {
-        if let state = pendingIndirectStates.removeValue(forKey: token) {
-            state.timeoutTask?.cancel()
-            // Resume any waiting continuation to prevent leak
-            state.continuation?.resume(throwing: CancellationError())
-        }
+        pendingIndirectStates.removeValue(forKey: token)
     }
 
     /// Called when PierceFirewall arrives - check if it matches a racing download
@@ -548,21 +514,12 @@ final class DownloadManager {
 
         logger.info("PierceFirewall token=\(token) matched racing download for \(state.username)")
 
-        // Set username on connection (PierceFirewall doesn't include PeerInit)
         Task {
             await connection.setPeerUsername(state.username)
         }
 
         state.receivedConnection = connection
-        state.timeoutTask?.cancel()
-
-        if let continuation = state.continuation {
-            pendingIndirectStates.removeValue(forKey: token)
-            continuation.resume(returning: connection)
-        } else {
-            // No one waiting yet - store for later
-            pendingIndirectStates[token] = state
-        }
+        pendingIndirectStates[token] = state
         return true
     }
 
@@ -1168,14 +1125,31 @@ final class DownloadManager {
             return downloadDir.appendingPathComponent(fallbackName.isEmpty ? "unknown" : fallbackName)
         }
 
-        // Build path: username/Artist/Album/Song.mp3
-        // Include username to avoid conflicts between different users' files
-        // SECURITY: Sanitize username to prevent directory traversal attacks
-        var destURL = downloadDir.appendingPathComponent(sanitizeFilename(username))
-        for component in pathComponents {
-            // Sanitize each component (remove invalid filesystem characters)
-            let sanitized = sanitizeFilename(component)
-            destURL = destURL.appendingPathComponent(sanitized)
+        // Extract filename (last component) and folders (everything else)
+        let filename = pathComponents.last!
+        let folders = pathComponents.dropLast().joined(separator: "/")
+
+        // Get the active template
+        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
+
+        // Substitute tokens
+        var result = template
+            .replacingOccurrences(of: "{username}", with: username)
+            .replacingOccurrences(of: "{folders}", with: folders)
+            .replacingOccurrences(of: "{filename}", with: filename)
+
+        // Clean up double slashes from empty tokens (e.g. empty folders)
+        while result.contains("//") {
+            result = result.replacingOccurrences(of: "//", with: "/")
+        }
+        // Trim leading/trailing slashes
+        result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        // Split into components, sanitize each, and build the URL
+        let resultComponents = result.split(separator: "/").map(String.init)
+        var destURL = downloadDir
+        for component in resultComponents {
+            destURL = destURL.appendingPathComponent(sanitizeFilename(component))
         }
 
         return destURL
@@ -1873,15 +1847,8 @@ final class DownloadManager {
         // Check if this matches a racing download waiting for indirect connection
         if var state = pendingIndirectStates[token] {
             logger.warning("CantConnectToPeer for download token \(token) — failing indirect wait")
-            state.timeoutTask?.cancel()
-            if let continuation = state.continuation {
-                pendingIndirectStates.removeValue(forKey: token)
-                continuation.resume(throwing: NetworkError.connectionFailed("Peer unreachable"))
-            } else {
-                // Mark as timed out so waitForPendingIndirect returns immediately
-                state.timedOut = true
-                pendingIndirectStates[token] = state
-            }
+            state.failed = true
+            pendingIndirectStates[token] = state
             return
         }
 

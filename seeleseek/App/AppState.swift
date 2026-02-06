@@ -39,7 +39,7 @@ final class AppState {
             chatState.setupCallbacks(client: _networkClient!)
             browseState.configure(networkClient: _networkClient!)
             socialState.setupCallbacks(client: _networkClient!)
-            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager)
+            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
 
             // Set up admin message callback

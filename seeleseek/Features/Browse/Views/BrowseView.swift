@@ -157,11 +157,25 @@ struct BrowseView: View {
     }
 
     private var emptySharesView: some View {
-        StandardEmptyState(
-            icon: "folder.badge.questionmark",
-            title: "No shared files",
-            subtitle: "\(browseState.currentBrowse?.username ?? "User") has no files shared"
-        )
+        VStack(spacing: SeeleSpacing.lg) {
+            Image(systemName: "folder.badge.questionmark")
+                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
+                .foregroundStyle(SeeleColors.textTertiary)
+
+            Text("No shared files")
+                .font(SeeleTypography.title2)
+                .foregroundStyle(SeeleColors.textSecondary)
+
+            Text("Try refreshing — this may be a stale cache")
+                .font(SeeleTypography.subheadline)
+                .foregroundStyle(SeeleColors.textTertiary)
+
+            SecondaryButton("Refresh", icon: "arrow.clockwise") {
+                browseState.refreshCurrentBrowse()
+            }
+            .frame(width: 150)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateView: some View {

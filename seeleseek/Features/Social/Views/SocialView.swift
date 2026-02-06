@@ -58,14 +58,7 @@ struct SocialView: View {
         )) {
             AddBuddySheet()
         }
-        .sheet(isPresented: Binding(
-            get: { socialState.showProfileSheet },
-            set: { socialState.showProfileSheet = $0 }
-        )) {
-            if let profile = socialState.viewingProfile {
-                UserProfileSheet(profile: profile)
-            }
-        }
+        // Profile sheet is now on MainView for global access
     }
 
     private func tabButton(for tab: SocialTab) -> some View {

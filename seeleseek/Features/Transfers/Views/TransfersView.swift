@@ -410,6 +410,25 @@ struct TransferRow: View {
                 isHovered = hovering
             }
         }
+        .contextMenu {
+            Button {
+                Task { await appState.socialState.loadProfile(for: transfer.username) }
+            } label: {
+                Label("View Profile", systemImage: "person.crop.circle")
+            }
+
+            Button {
+                appState.browseState.browseUser(transfer.username)
+            } label: {
+                Label("Browse Files", systemImage: "folder")
+            }
+
+            Button {
+                appState.chatState.selectPrivateChat(transfer.username)
+            } label: {
+                Label("Send Message", systemImage: "envelope")
+            }
+        }
         .onDisappear {
             audioPlayer?.stop()
         }
@@ -464,6 +483,7 @@ struct TransferRow: View {
 }
 
 struct HistoryRow: View {
+    @Environment(\.appState) private var appState
     let item: TransferHistoryItem
     @State private var isHovered = false
 
@@ -523,6 +543,25 @@ struct HistoryRow: View {
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {
                 isHovered = hovering
+            }
+        }
+        .contextMenu {
+            Button {
+                Task { await appState.socialState.loadProfile(for: item.username) }
+            } label: {
+                Label("View Profile", systemImage: "person.crop.circle")
+            }
+
+            Button {
+                appState.browseState.browseUser(item.username)
+            } label: {
+                Label("Browse Files", systemImage: "folder")
+            }
+
+            Button {
+                appState.chatState.selectPrivateChat(item.username)
+            } label: {
+                Label("Send Message", systemImage: "envelope")
             }
         }
     }

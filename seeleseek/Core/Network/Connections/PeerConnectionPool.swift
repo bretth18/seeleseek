@@ -78,7 +78,7 @@ final class PeerConnectionPool {
 
     let maxConnections = 50
     let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
-    let connectionTimeout: TimeInterval = 30
+    let connectionTimeout: TimeInterval = 60
 
     // SECURITY: Rate limiting configuration
     private let rateLimitWindow: TimeInterval = 60  // 1 minute window

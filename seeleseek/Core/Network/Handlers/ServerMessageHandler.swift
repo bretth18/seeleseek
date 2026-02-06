@@ -452,9 +452,9 @@ final class ServerMessageHandler {
     private var connectToPeerCount = 0
     private var hasWarnedAboutListener = false
 
-    // Rate limiting for outbound connections to avoid triggering IDS/IPS
+    // Rate limiting for outbound connections
     private var lastConnectionAttempt = Date.distantPast
-    private let connectionRateLimit: TimeInterval = 0.25  // Max 4 connections per second
+    private let connectionRateLimit: TimeInterval = 0.05  // Max 20 connections per second
     private var connectionQueue: [(username: String, type: String, ip: String, port: UInt32, token: UInt32)] = []
     private var isProcessingQueue = false
 
@@ -507,9 +507,9 @@ final class ServerMessageHandler {
             return
         }
 
-        // Limit queue size to reduce IDS triggers and memory usage
-        if connectionQueue.count >= 15 {
-            return // Silently drop - queue is full
+        // Limit queue size to prevent unbounded memory growth
+        if connectionQueue.count >= 100 {
+            return // Queue is full
         }
 
         let connectionKey = "\(username)-\(token)"
@@ -821,36 +821,34 @@ final class ServerMessageHandler {
     ) async {
         guard let client else { return }
 
-        do {
-            // Get peer address using concurrent-safe method
-            logger.debug("Getting address for \(username) to send search results...")
-            let address = try await client.getPeerAddress(for: username)
-
-            logger.debug("Connecting to \(username) at \(address.ip):\(address.port) to send search results...")
-
-            // Connect to peer
-            let connectionToken = UInt32.random(in: 0...UInt32.max)
-            let connection = try await client.peerConnectionPool.connect(
-                to: username,
-                ip: address.ip,
-                port: address.port,
-                token: connectionToken
+        // Build results once (shared by direct and indirect paths)
+        let results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = files.map { file in
+            var attributes: [(UInt32, UInt32)] = []
+            if let bitrate = file.bitrate {
+                attributes.append((0, bitrate))
+            }
+            if let duration = file.duration {
+                attributes.append((1, duration))
+            }
+            return (
+                filename: file.sharedPath,
+                size: file.size,
+                extension_: file.fileExtension,
+                attributes: attributes
             )
+        }
 
-            // Build and send search reply
-            let results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = files.map { file in
-                var attributes: [(UInt32, UInt32)] = []
-                if let bitrate = file.bitrate {
-                    attributes.append((0, bitrate))  // 0 = bitrate
-                }
-                if let duration = file.duration {
-                    attributes.append((1, duration))  // 1 = duration
-                }
-                return (
-                    filename: file.sharedPath,
-                    size: file.size,
-                    extension_: file.fileExtension,
-                    attributes: attributes
+        // Try direct connection first
+        do {
+            let address = try await client.getPeerAddress(for: username)
+            let connectionToken = UInt32.random(in: 0...UInt32.max)
+
+            let connection = try await withTimeout(seconds: 10) {
+                try await client.peerConnectionPool.connect(
+                    to: username,
+                    ip: address.ip,
+                    port: address.port,
+                    token: connectionToken
                 )
             }
 
@@ -859,11 +857,34 @@ final class ServerMessageHandler {
                 token: token,
                 results: results
             )
-
             logger.info("Sent \(files.count) search results to \(username) for token \(token)")
-
+            return
         } catch {
-            logger.error("Failed to send search results to \(username): \(error.localizedDescription)")
+            logger.debug("Direct search result delivery to \(username) failed: \(error.localizedDescription)")
+        }
+
+        // Fallback: indirect via ConnectToPeer/PierceFirewall
+        do {
+            let indirectToken = UInt32.random(in: 0...UInt32.max)
+
+            // Register pending browse state to catch the PierceFirewall
+            client.registerPendingBrowse(token: indirectToken, username: username, timeout: 15)
+            await client.sendConnectToPeer(token: indirectToken, username: username, connectionType: "P")
+
+            let connection = try await client.waitForPendingBrowse(token: indirectToken)
+            await connection.resumeReceivingForPeerConnection()
+
+            // Send PeerInit so peer knows who we are
+            try await connection.sendPeerInit(username: client.username)
+
+            try await connection.sendSearchReply(
+                username: client.username,
+                token: token,
+                results: results
+            )
+            logger.info("Sent \(files.count) search results to \(username) via indirect for token \(token)")
+        } catch {
+            logger.debug("Indirect search result delivery to \(username) also failed")
         }
     }
 

@@ -46,6 +46,14 @@ struct MainView: View {
             detailView
         }
         .frame(minWidth: 900, minHeight: 600)
+        .sheet(isPresented: Binding(
+            get: { appState.socialState.showProfileSheet },
+            set: { appState.socialState.showProfileSheet = $0 }
+        )) {
+            if let profile = appState.socialState.viewingProfile {
+                UserProfileSheet(profile: profile)
+            }
+        }
     }
     #endif
 

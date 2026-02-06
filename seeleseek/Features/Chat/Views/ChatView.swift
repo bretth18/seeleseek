@@ -208,7 +208,12 @@ struct ChatView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button {
-                // Browse files triggers AppState browse
+                Task { await appState.socialState.loadProfile(for: chat.username) }
+            } label: {
+                Label("View Profile", systemImage: "person.crop.circle")
+            }
+
+            Button {
                 appState.browseState.browseUser(chat.username)
             } label: {
                 Label("Browse Files", systemImage: "folder")
@@ -541,6 +546,12 @@ struct MessageBubble: View {
                                 }
 
                                 Divider()
+
+                                Button {
+                                    Task { await appState.socialState.loadProfile(for: message.username) }
+                                } label: {
+                                    Label("View Profile", systemImage: "person.crop.circle")
+                                }
 
                                 Button {
                                     chatState.selectPrivateChat(message.username)

@@ -156,6 +156,12 @@ struct SearchResultRow: View {
                 Label("Browse folder", systemImage: "folder.badge.questionmark")
             }
 
+            Button {
+                Task { await appState.socialState.loadProfile(for: result.username) }
+            } label: {
+                Label("View Profile", systemImage: "person.crop.circle")
+            }
+
             Divider()
 
             Button {

@@ -932,7 +932,7 @@ final class NetworkClient {
     private var pendingBrowseStates: [UInt32: PendingBrowseState] = [:]
 
     /// Register a pending browse BEFORE sending ConnectToPeer (to avoid race condition)
-    private func registerPendingBrowse(token: UInt32, username: String, timeout: TimeInterval) {
+    func registerPendingBrowse(token: UInt32, username: String, timeout: TimeInterval) {
         var state = PendingBrowseState(username: username)
 
         // Set up timeout
@@ -961,7 +961,7 @@ final class NetworkClient {
     }
 
     /// Wait for a previously registered pending browse to receive PierceFirewall
-    private func waitForPendingBrowse(token: UInt32) async throws -> PeerConnection {
+    func waitForPendingBrowse(token: UInt32) async throws -> PeerConnection {
         // Check if connection already arrived
         if let state = pendingBrowseStates[token] {
             if let connection = state.receivedConnection {
