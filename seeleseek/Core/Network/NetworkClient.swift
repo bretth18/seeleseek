@@ -800,70 +800,71 @@ final class NetworkClient {
         }
 
         var connection: PeerConnection
+        var isIndirectConnection = false
 
-        // Always create a fresh connection for browse - reusing existing connections
-        // causes races with search callback auto-disconnect timers
+        // Always create a fresh connection for browse
         do {
             let token = UInt32.random(in: 0...UInt32.max)
-            logger.debug("Browse: No existing connection, using token \(token) for \(username)")
+            logger.debug("Browse: Using token \(token) for \(username)")
 
             // CRITICAL: Register pending browse BEFORE sending ConnectToPeer to avoid race condition
             // PierceFirewall can arrive immediately after ConnectToPeer is sent!
-            registerPendingBrowse(token: token, username: username, timeout: 20)
-            logger.debug("Browse: Registered pending browse for token=\(token) BEFORE ConnectToPeer")
+            registerPendingBrowse(token: token, username: username, timeout: 30)
 
-            // Step 1: Send ConnectToPeer to server
-            // This tells the server to forward a connection request to the peer
-            // The peer will then try to connect to us with PierceFirewall
+            // Step 1: Send ConnectToPeer to server - peer will try to connect to us via PierceFirewall
             await sendConnectToPeer(token: token, username: username, connectionType: "P")
             logger.debug("Browse: Sent ConnectToPeer to server")
 
-            // Step 2: Get peer address
+            // Step 2: Get peer address for direct connection attempt
             logger.debug("Browse: Getting peer address for \(username)...")
             let (ip, port) = try await getPeerAddress(for: username)
+            logger.debug("Browse: Got address \(ip):\(port)")
 
-            logger.info("Got peer address for \(username): \(ip):\(port)")
-            logger.debug("Browse: Got address \(ip):\(port), attempting direct connection...")
-
-            // Step 3: Try direct connection first (race with indirect)
+            // Step 3: Race direct connection + handshake (10s timeout) vs indirect (PierceFirewall)
+            // Direct TCP connect blocks for ~60s on timeout, way too long. PierceFirewall
+            // typically arrives in ~1-3s. Also, even when direct TCP connects, the peer may
+            // not respond with PeerInit (they already connected to us via PierceFirewall).
             do {
-                connection = try await peerConnectionPool.connect(
-                    to: username,
-                    ip: ip,
-                    port: port,
-                    token: token
-                )
-                logger.debug("Browse: Direct connection to \(username) successful!")
-
-                // Cancel the pending indirect connection since direct succeeded
+                connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
+                    group.addTask {
+                        let conn = try await self.peerConnectionPool.connect(
+                            to: username, ip: ip, port: port, token: token
+                        )
+                        // Must also complete handshake - peer may not respond if they
+                        // already connected to us via PierceFirewall
+                        try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                        return conn
+                    }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(10))
+                        throw NetworkError.timeout
+                    }
+                    let result = try await group.next()!
+                    group.cancelAll()
+                    return result
+                }
                 cancelPendingBrowse(token: token)
-                logger.debug("Browse: Cancelled indirect connection wait (direct succeeded")
+                logger.debug("Browse: Direct connection + handshake to \(username) successful!")
             } catch {
-                // Direct connection failed - wait for indirect connection
-                // The server already told the peer to connect to us (step 1)
-                // The peer will send PierceFirewall with the same token
-                logger.debug("Browse: Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
-                logger.info("Direct connection to \(username) failed, waiting for PierceFirewall")
-
-                // Wait for the already-registered indirect connection
+                // Direct timed out or failed - use indirect (PierceFirewall) connection
+                logger.debug("Browse: Direct failed (\(error.localizedDescription)), waiting for indirect...")
                 connection = try await waitForPendingBrowse(token: token)
-                logger.debug("Browse: Indirect connection from \(username) received via PierceFirewall!")
-
-                // CRITICAL: Resume receive loop for P connections (browse)
-                // PierceFirewall stops the receive loop assuming file transfer mode,
-                // but P connections need to continue receiving peer messages (SharesReply, etc.)
-                await connection.resumeReceivingForPeerConnection()
-                logger.debug("Browse: Resumed receive loop for P connection")
+                isIndirectConnection = true
+                logger.debug("Browse: Got indirect connection from \(username)")
             }
         }
 
-        logger.debug("Browse: Connected to \(username), waiting for peer handshake...")
+        if isIndirectConnection {
+            // Resume receive loop - PierceFirewall stops it assuming file transfer mode,
+            // but P connections need to continue receiving peer messages (SharesReply, etc.)
+            await connection.resumeReceivingForPeerConnection()
+            logger.debug("Browse: Resumed receive loop for indirect P connection")
+        }
 
-        // Wait for peer's PeerInit before sending any requests
-        // Per SoulSeek protocol: after establishing P connection, we send PeerInit
-        // and MUST wait for peer's PeerInit before sending SharesRequest
-        try await connection.waitForPeerHandshake(timeout: .seconds(10))
-        logger.debug("Browse: Peer handshake complete, setting up callback...")
+        // For indirect connections, PierceFirewall sets peerHandshakeReceived=true
+        // so this returns immediately. For direct, handshake was already done in the race.
+        try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        logger.debug("Browse: Handshake verified, setting up callback...")
 
         // Set up callback BEFORE requesting shares
         let sharesResumed = Mutex(false)

@@ -22,6 +22,8 @@ enum SeeleTypography {
     // MARK: - Monospace (for file paths, speeds, etc.)
     static let mono = Font.system(size: 11, weight: .regular, design: .monospaced)
     static let monoSmall = Font.system(size: 10, weight: .regular, design: .monospaced)
+    static let monoXSmall = Font.system(size: 8, weight: .regular, design: .monospaced)
+    static let monoXXSmall = Font.system(size: 6, weight: .regular, design: .monospaced)
 
     // MARK: - Fixed sizes for specific UI elements
     static let badgeText = Font.system(size: 10, weight: .medium)

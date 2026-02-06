@@ -68,6 +68,16 @@ final class DownloadManager {
     // Track partial downloads for resume
     private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
 
+    // MARK: - Pending Indirect Connection State (for racing direct vs PierceFirewall)
+    private struct PendingIndirectState {
+        let username: String
+        var continuation: CheckedContinuation<PeerConnection, Error>?
+        var receivedConnection: PeerConnection?
+        var timeoutTask: Task<Void, Never>?
+        var timedOut = false
+    }
+    private var pendingIndirectStates: [UInt32: PendingIndirectState] = [:]
+
     struct PendingFileTransfer {
         let transferId: UUID
         let username: String
@@ -341,32 +351,18 @@ final class DownloadManager {
     }
 
     private func handlePeerAddress(username: String, ip: String, port: Int) async {
-        print("")
-        print("▶▶▶ PEER ADDRESS RECEIVED: \(username) @ \(ip):\(port)")
-        print("")
-
         guard let networkClient, let transferState else {
-            print("❌ handlePeerAddress: NetworkClient or TransferState is nil!")
+            logger.error("handlePeerAddress: NetworkClient or TransferState is nil")
             return
         }
 
         // Find pending download for this user
         guard let (token, pending) = pendingDownloads.first(where: { $0.value.username == username }) else {
-            print("⚠️ No pending download for \(username)")
             logger.debug("No pending download for \(username)")
             return
         }
 
-        print("📍 Found pending download for \(username), token=\(token)")
-
-        // Check if peer has same external IP as us (hairpin NAT issue)
-        if let ourExternalIP = networkClient.externalIP, ourExternalIP == ip {
-            print("⚠️ WARNING: Peer \(username) has same external IP as us (\(ip))")
-            print("   This usually means you're on the same network/NAT.")
-            print("   If connection fails, check that the peer's client is running and port forwarding is configured.")
-            logger.warning("Peer \(username) has same external IP - may need manual network config")
-        }
-        logger.info("Got peer address for \(username): \(ip):\(port)")
+        logger.info("Peer address for \(username): \(ip):\(port), token=\(token)")
 
         // Store peer address for potential outgoing F connection
         pendingDownloads[token]?.peerIP = ip
@@ -374,23 +370,16 @@ final class DownloadManager {
 
         // First, check if we already have a connection to this user (from incoming connections)
         if let existingConnection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
-            print("✅ Reusing existing connection to \(username)")
             logger.info("Reusing existing connection to \(username)")
-
             pendingDownloads[token]?.peerConnection = existingConnection
 
             do {
-                // Set up callback BEFORE sending QueueDownload to avoid race condition
                 await setupTransferRequestCallback(token: token, connection: existingConnection)
-
                 try await existingConnection.queueDownload(filename: pending.filename)
-                print("📤 Sent QueueDownload for \(pending.filename)")
                 logger.info("Sent QueueDownload for \(pending.filename)")
-
                 await waitForTransferResponse(token: token)
             } catch {
-                print("❌ Failed to queue download on existing connection: \(error)")
-                logger.error("Failed to queue download: \(error.localizedDescription)")
+                logger.error("Failed to queue download on existing connection: \(error.localizedDescription)")
                 transferState.updateTransfer(id: pending.transferId) { t in
                     t.status = .failed
                     t.error = error.localizedDescription
@@ -400,127 +389,206 @@ final class DownloadManager {
             return
         }
 
-        print("📍 No existing connection, trying direct connection to \(ip):\(port) (10s timeout)...")
+        // CRITICAL: Register pending indirect BEFORE sending ConnectToPeer to avoid race condition
+        // PierceFirewall can arrive immediately after ConnectToPeer is sent!
+        registerPendingIndirect(token: token, username: username, timeout: 30)
 
-        // Try to connect to peer with a timeout
+        // Send ConnectToPeer to server - starts indirect path in parallel
+        // Server will tell the peer to connect to us via PierceFirewall
+        await networkClient.sendConnectToPeer(token: token, username: username, connectionType: "P")
+        logger.info("Sent ConnectToPeer for \(username), racing direct vs indirect...")
+
+        // Race: direct connection + handshake (10s) vs indirect (PierceFirewall)
+        var connection: PeerConnection
+        var isIndirect = false
+
         do {
-            // Use a simpler timeout approach
-            let connectTask = Task {
-                try await networkClient.peerConnectionPool.connect(
-                    to: username,
-                    ip: ip,
-                    port: port,
-                    token: token
-                )
+            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
+                group.addTask {
+                    let conn = try await networkClient.peerConnectionPool.connect(
+                        to: username, ip: ip, port: port, token: token
+                    )
+                    // Must also complete handshake - peer may not respond if they
+                    // already connected to us via PierceFirewall
+                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                    return conn
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(10))
+                    throw NetworkError.timeout
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
             }
-
-            let timeoutTask = Task {
-                try await Task.sleep(for: .seconds(10))
-                connectTask.cancel()
-                print("⏰ TIMEOUT: Direct connection to \(username) timed out after 10s")
-            }
-
-            let connection: PeerConnection
-            do {
-                connection = try await connectTask.value
-                timeoutTask.cancel()
-                print("✅ Direct connection established to \(username)")
-            } catch {
-                timeoutTask.cancel()
-                throw error
-            }
-
-            // Connected! Send queue download request
-            pendingDownloads[token]?.peerConnection = connection
-
-            // Set up callback BEFORE sending QueueDownload to avoid race condition
-            await setupTransferRequestCallback(token: token, connection: connection)
-
-            try await connection.queueDownload(filename: pending.filename)
-            print("📤 Sent QueueDownload for \(pending.filename)")
-            logger.info("Sent QueueDownload for \(pending.filename)")
-
-            // Wait for transfer response
-            await waitForTransferResponse(token: token)
-
+            cancelPendingIndirect(token: token)
+            logger.info("Direct connection + handshake to \(username) succeeded")
         } catch {
-            print("❌ Direct connection failed: \(error.localizedDescription)")
-            logger.warning("Direct connection failed: \(error.localizedDescription)")
-
-            // Update transfer status
+            // Direct timed out or failed - wait for indirect (PierceFirewall) connection
+            logger.info("Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .connecting
                 t.error = "Trying indirect connection..."
             }
 
-            // Send CantConnectToPeer to request indirect connection
-            print("📤 Sending CantConnectToPeer for \(username) token=\(token)")
-            print("   ℹ️ Our listen port: \(networkClient.listenPort)")
-            print("   ℹ️ If peer can't connect to us, ensure port \(networkClient.listenPort) is open in your firewall")
-            await networkClient.sendCantConnectToPeer(token: token, username: username)
+            do {
+                connection = try await waitForPendingIndirect(token: token)
+                isIndirect = true
+                logger.info("Got indirect connection from \(username)")
+            } catch {
+                // Both paths failed
+                logger.error("Both direct and indirect connections to \(username) failed")
+                let isSameNetwork = networkClient.externalIP == ip
+                let errorMsg = isSameNetwork
+                    ? "Same network - hairpin NAT limitation"
+                    : "Connection timeout - peer unreachable"
 
-            // Register pending connection so incoming PierceFirewall can be matched
-            networkClient.peerConnectionPool.addPendingConnection(username: username, token: token)
+                let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
+                transferState.updateTransfer(id: pending.transferId) { t in
+                    t.status = .failed
+                    t.error = errorMsg
+                }
+                pendingDownloads.removeValue(forKey: token)
 
-            // Wait for indirect connection via PierceFirewall
-            // The server should tell the peer to connect to us
-            logger.info("Waiting for indirect connection to \(username)")
-            print("⏳ Waiting for indirect connection to \(username) (token=\(token))...")
-            print("   The peer should connect to us with PierceFirewall message...")
-            print("   If this fails, both parties may be behind restrictive NAT.")
+                if !isSameNetwork && currentRetryCount < maxRetries {
+                    scheduleRetry(
+                        transferId: pending.transferId,
+                        username: pending.username,
+                        filename: pending.filename,
+                        size: pending.size,
+                        retryCount: currentRetryCount
+                    )
+                }
+                return
+            }
+        }
 
-            // Capture peer IP for error detection
-            let peerIP = ip
-            let isSameNetwork = networkClient.externalIP == peerIP
+        if isIndirect {
+            // Resume receive loop - PierceFirewall stops it assuming file transfer mode,
+            // but P connections need to continue receiving peer messages
+            await connection.resumeReceivingForPeerConnection()
+        }
 
-            // Set a dedicated timeout for indirect connection
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(15))
+        // Got a connection - send QueueDownload
+        pendingDownloads[token]?.peerConnection = connection
 
-                guard let self else { return }
+        do {
+            if isIndirect {
+                // For indirect connections, identify ourselves to the peer
+                try await connection.sendPeerInit(username: networkClient.username)
+                logger.debug("Sent PeerInit via indirect connection")
+            }
 
-                // Check if still pending after 15 seconds
-                if self.pendingDownloads[token] != nil && self.pendingDownloads[token]?.peerConnection == nil {
-                    print("⏰ TIMEOUT: Indirect connection to \(username) timed out after 15s")
-                    print("❌ Could not establish connection - both direct and indirect failed")
+            await setupTransferRequestCallback(token: token, connection: connection)
+            try await connection.queueDownload(filename: pending.filename)
+            logger.info("Sent QueueDownload for \(pending.filename)")
+            await waitForTransferResponse(token: token)
+        } catch {
+            logger.error("Failed to queue download: \(error.localizedDescription)")
+            transferState.updateTransfer(id: pending.transferId) { t in
+                t.status = .failed
+                t.error = error.localizedDescription
+            }
+            pendingDownloads.removeValue(forKey: token)
+        }
+    }
 
-                    let errorMsg: String
-                    if isSameNetwork {
-                        print("   ⚠️ SAME NETWORK DETECTED: You and \(username) have the same external IP")
-                        print("   This is a hairpin NAT limitation - your router can't route traffic to itself.")
-                        print("   Solutions: Use local file sharing, or configure port forwarding with internal IPs.")
-                        errorMsg = "Same network - hairpin NAT limitation"
-                    } else {
-                        print("   Possible causes:")
-                        print("   - Both you and the peer are behind NAT/firewall")
-                        print("   - Try downloading from a different user")
-                        print("   - Configure port forwarding for port \(networkClient.listenPort)")
-                        errorMsg = "Connection timeout - peer unreachable"
-                    }
+    // MARK: - Pending Indirect Connection Helpers
 
-                    let currentRetryCount = self.transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+    /// Register a pending indirect download BEFORE sending ConnectToPeer (to avoid race condition)
+    private func registerPendingIndirect(token: UInt32, username: String, timeout: TimeInterval) {
+        var state = PendingIndirectState(username: username)
 
-                    self.transferState?.updateTransfer(id: pending.transferId) { t in
-                        t.status = .failed
-                        t.error = errorMsg
-                    }
-                    self.pendingDownloads.removeValue(forKey: token)
+        state.timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard let self else { return }
 
-                    // Auto-retry for connection timeouts (only if not same network - that won't help)
-                    if !isSameNetwork && currentRetryCount < self.maxRetries {
-                        self.scheduleRetry(
-                            transferId: pending.transferId,
-                            username: pending.username,
-                            filename: pending.filename,
-                            size: pending.size,
-                            retryCount: currentRetryCount
-                        )
-                    } else if isSameNetwork {
-                        print("   ⚠️ Not retrying - same network issue won't resolve with retry")
+            if var pending = self.pendingIndirectStates[token] {
+                if pending.receivedConnection == nil {
+                    self.logger.warning("Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
+                    pending.timedOut = true
+                    self.pendingIndirectStates[token] = pending
+
+                    if let continuation = pending.continuation {
+                        pending.continuation = nil
+                        self.pendingIndirectStates[token] = pending
+                        continuation.resume(throwing: NetworkError.timeout)
                     }
                 }
             }
         }
+
+        pendingIndirectStates[token] = state
+    }
+
+    /// Wait for PierceFirewall to arrive for a previously registered token
+    private func waitForPendingIndirect(token: UInt32) async throws -> PeerConnection {
+        // Check if connection already arrived
+        if let state = pendingIndirectStates[token] {
+            if let connection = state.receivedConnection {
+                logger.debug("PierceFirewall already received for token=\(token)")
+                pendingIndirectStates.removeValue(forKey: token)
+                return connection
+            }
+            if state.timedOut {
+                pendingIndirectStates.removeValue(forKey: token)
+                throw NetworkError.timeout
+            }
+        }
+
+        // Wait for connection via continuation
+        return try await withCheckedThrowingContinuation { continuation in
+            if var state = pendingIndirectStates[token] {
+                if let connection = state.receivedConnection {
+                    pendingIndirectStates.removeValue(forKey: token)
+                    continuation.resume(returning: connection)
+                    return
+                }
+                if state.timedOut {
+                    pendingIndirectStates.removeValue(forKey: token)
+                    continuation.resume(throwing: NetworkError.timeout)
+                    return
+                }
+                state.continuation = continuation
+                pendingIndirectStates[token] = state
+            } else {
+                continuation.resume(throwing: NetworkError.timeout)
+            }
+        }
+    }
+
+    /// Cancel a pending indirect download (used when direct connection succeeds)
+    private func cancelPendingIndirect(token: UInt32) {
+        if let state = pendingIndirectStates.removeValue(forKey: token) {
+            state.timeoutTask?.cancel()
+        }
+    }
+
+    /// Called when PierceFirewall arrives - check if it matches a racing download
+    /// Returns true if it was handled
+    private func handlePierceFirewallForRace(token: UInt32, connection: PeerConnection) -> Bool {
+        guard var state = pendingIndirectStates[token] else {
+            return false
+        }
+
+        logger.info("PierceFirewall token=\(token) matched racing download for \(state.username)")
+
+        // Set username on connection (PierceFirewall doesn't include PeerInit)
+        Task {
+            await connection.setPeerUsername(state.username)
+        }
+
+        state.receivedConnection = connection
+        state.timeoutTask?.cancel()
+
+        if let continuation = state.continuation {
+            pendingIndirectStates.removeValue(forKey: token)
+            continuation.resume(returning: connection)
+        } else {
+            // No one waiting yet - store for later
+            pendingIndirectStates[token] = state
+        }
+        return true
     }
 
     /// Set up callback for TransferRequest - must be called BEFORE sending QueueDownload
@@ -1749,59 +1817,24 @@ final class DownloadManager {
 
     // MARK: - PierceFirewall Handling (Indirect Connections)
 
-    /// Called when a peer sends PierceFirewall - they're connecting to us after we sent CantConnectToPeer
+    /// Called when a peer sends PierceFirewall - indirect connection established
     func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
-        print("🔓 handlePierceFirewall: token=\(token)")
+        logger.debug("handlePierceFirewall: token=\(token)")
 
-        // Find pending download by token
-        guard let pending = pendingDownloads[token] else {
-            // Check if this is for a pending upload instead
-            if let uploadManager, uploadManager.hasPendingUpload(token: token) {
-                print("🔓 PierceFirewall token \(token) is for pending upload, delegating to UploadManager")
-                await uploadManager.handlePierceFirewall(token: token, connection: connection)
-                return
-            }
-
-            print("⚠️ No pending download for PierceFirewall token \(token)")
-            logger.debug("No pending download for PierceFirewall token \(token)")
+        // Check if this matches a racing download (handlePeerAddress is waiting for this)
+        if handlePierceFirewallForRace(token: token, connection: connection) {
+            logger.debug("PierceFirewall handled by download race")
             return
         }
 
-        guard let networkClient else {
-            print("❌ NetworkClient is nil in handlePierceFirewall")
+        // Check if this is for a pending upload
+        if let uploadManager, uploadManager.hasPendingUpload(token: token) {
+            logger.debug("PierceFirewall token \(token) delegated to UploadManager")
+            await uploadManager.handlePierceFirewall(token: token, connection: connection)
             return
         }
 
-        logger.info("PierceFirewall matched to pending download: \(pending.filename)")
-        print("✅ PierceFirewall matched: \(pending.filename) from \(pending.username)")
-
-        // Store the connection
-        pendingDownloads[token]?.peerConnection = connection
-
-        // Now send PeerInit + QueueDownload and wait for transfer
-        // Per protocol: After indirect connection established, we still need to send PeerInit to identify ourselves
-        do {
-            // Send PeerInit FIRST - identifies us to the peer (token=0 for P connections)
-            try await connection.sendPeerInit(username: networkClient.username)
-            print("📤 Sent PeerInit via PierceFirewall connection")
-
-            // Set up callback BEFORE sending QueueDownload to avoid race condition
-            await setupTransferRequestCallback(token: token, connection: connection)
-
-            try await connection.queueDownload(filename: pending.filename)
-            print("📤 Sent QueueDownload via PierceFirewall connection for \(pending.filename)")
-            logger.info("Sent QueueDownload via PierceFirewall connection")
-
-            await waitForTransferResponse(token: token)
-        } catch {
-            logger.error("Failed to queue download via PierceFirewall: \(error.localizedDescription)")
-            print("❌ Failed to queue download via PierceFirewall: \(error)")
-            transferState?.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
-            }
-            pendingDownloads.removeValue(forKey: token)
-        }
+        logger.debug("No pending download/upload for PierceFirewall token \(token)")
     }
 
     // MARK: - Upload Denied/Failed Handling

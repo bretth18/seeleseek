@@ -55,6 +55,10 @@ struct SearchResultRow: View {
 
             // Metadata badges
             HStack(spacing: SeeleSpacing.sm) {
+               
+                StandardMetadataBadge(result.fileExtension, color: iconColor)
+                
+                
                 if let bitrate = result.formattedBitrate {
                     StandardMetadataBadge(bitrate, color: bitrateColor)
                 }
@@ -173,10 +177,18 @@ struct SearchResultRow: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .fill(iconColor.opacity(0.15))
                 .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
+            
 
             Image(systemName: iconName)
                 .font(.system(size: SeeleSpacing.iconSize))
                 .foregroundStyle(iconColor)
+                .offset(x: -6, y: -6)
+            
+            Text(result.fileExtension)
+                .font(SeeleTypography.monoXSmall)
+                .foregroundStyle(iconColor)
+                .offset(x: 6, y: 6)
+
         }
     }
 

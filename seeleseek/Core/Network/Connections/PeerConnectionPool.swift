@@ -449,11 +449,19 @@ final class PeerConnectionPool {
             }
 
             // Set up PierceFirewall callback for indirect connections
-            await connection.setOnPierceFirewall { [weak self] token in
+            await connection.setOnPierceFirewall { [weak self, connectionId, capturedIP] token in
                 guard let self else { return }
                 self.logger.debug("PierceFirewall from incoming connection, token=\(token)")
                 self.logger.info("PierceFirewall received: token=\(token)")
-                await MainActor.run { self.incrementPierceFirewallCount() }
+                // Remove from pool tracking - caller takes ownership of this connection
+                // This prevents the cleanup timer from killing it while it's in use
+                await MainActor.run {
+                    self.incrementPierceFirewallCount()
+                    self.decrementIPCounter(for: capturedIP)
+                    self.connections.removeValue(forKey: connectionId)
+                    self.activeConnections_.removeValue(forKey: connectionId)
+                    self.activeConnections = self.connections.count
+                }
                 await self.onPierceFirewall?(token, connection)
             }
 
