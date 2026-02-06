@@ -19,7 +19,7 @@ final class UploadManager {
     private var uploadQueue: [QueuedUpload] = []
     private var activeUploads: [UUID: ActiveUpload] = [:]
     private var pendingTransfers: [UInt32: PendingUpload] = [:]  // token -> pending
-    private var pendingAddressLookups: [String: (PendingUpload, UInt32)] = [:]  // username -> (pending, token)
+    private var pendingAddressLookups: [String: [(PendingUpload, UInt32)]] = [:]  // username -> [(pending, token)]
 
     // Configuration
     var maxConcurrentUploads = 3
@@ -122,15 +122,13 @@ final class UploadManager {
         // Set up callback for peer address using multi-listener pattern
         // This replaces the fragile callback chaining approach that could break if
         // DownloadManager was configured after UploadManager
-        print("🔧 UploadManager: Adding peer address handler")
         networkClient.addPeerAddressHandler { [weak self] username, ip, port in
-            print("📞 UploadManager.peerAddressHandler called: \(username) @ \(ip):\(port)")
+            self?.logger.debug("Peer address handler called: \(username) @ \(ip):\(port)")
             guard let self else { return }
             Task { @MainActor in
                 await self.handlePeerAddressForUpload(username: username, ip: ip, port: port)
             }
         }
-        print("✅ UploadManager: peer address handler added")
 
         logger.info("UploadManager configured")
     }
@@ -150,7 +148,6 @@ final class UploadManager {
     /// Handle PlaceInQueueRequest - peer wants to know their queue position
     private func handlePlaceInQueueRequest(username: String, filename: String, connection: PeerConnection) async {
         logger.info("PlaceInQueueRequest from \(username) for: \(filename)")
-        print("📊 handlePlaceInQueueRequest: \(filename) from \(username)")
 
         let position = getQueuePosition(for: filename, username: username)
 
@@ -174,7 +171,6 @@ final class UploadManager {
         do {
             try await connection.sendPlaceInQueue(filename: filename, place: position)
             logger.info("Sent queue position \(position) for \(filename) to \(username)")
-            print("📊 Sent queue position \(position) for \(filename) to \(username)")
         } catch {
             logger.error("Failed to send PlaceInQueue: \(error.localizedDescription)")
         }
@@ -182,14 +178,34 @@ final class UploadManager {
 
     /// Process the upload queue - start uploads if slots available
     private func processQueue() async {
-        guard activeUploads.count < maxConcurrentUploads else { return }
+        let inFlightCount = activeUploads.count + pendingTransfers.count
+        guard inFlightCount < maxConcurrentUploads else {
+            // Still broadcast updated positions to queued peers
+            await broadcastQueuePositions()
+            return
+        }
         guard !uploadQueue.isEmpty else { return }
 
-        let availableSlots = maxConcurrentUploads - activeUploads.count
+        let availableSlots = maxConcurrentUploads - inFlightCount
         let uploadsToStart = uploadQueue.prefix(availableSlots)
 
         for upload in uploadsToStart {
             await startUpload(upload)
+        }
+
+        // Broadcast updated positions to remaining queued peers
+        await broadcastQueuePositions()
+    }
+
+    /// Tell all queued peers their updated queue position
+    private func broadcastQueuePositions() async {
+        for (index, upload) in uploadQueue.enumerated() {
+            let position = UInt32(index + 1)
+            do {
+                try await upload.connection.sendPlaceInQueue(filename: upload.filename, place: position)
+            } catch {
+                logger.debug("Failed to send queue position to \(upload.username): \(error.localizedDescription)")
+            }
         }
     }
 
@@ -198,7 +214,6 @@ final class UploadManager {
     /// Handle incoming QueueUpload request from a peer
     private func handleQueueUpload(username: String, filename: String, connection: PeerConnection) async {
         logger.info("QueueUpload from \(username): \(filename)")
-        print("📥 handleQueueUpload: \(filename) from \(username)")
 
         guard let shareManager else {
             logger.error("ShareManager not configured")
@@ -214,7 +229,6 @@ final class UploadManager {
         // The filename from SoulSeek uses backslashes as path separators
         guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("File not found in shares: \(filename)")
-            print("🚫 File not found: \(filename)")
             do {
                 try await connection.sendUploadDenied(filename: filename, reason: "File not shared")
             } catch {
@@ -269,11 +283,11 @@ final class UploadManager {
         )
         uploadQueue.append(queued)
 
-        logger.info("Added to upload queue: \(filename) for \(username)")
-        print("📋 Added to upload queue: \(filename) for \(username), position: \(uploadQueue.count)")
+        logger.info("Added to upload queue: \(filename) for \(username), position: \(self.uploadQueue.count)")
 
         // If we have free slots, start immediately, otherwise send queue position
-        if activeUploads.count < maxConcurrentUploads {
+        let inFlightCount = activeUploads.count + pendingTransfers.count
+        if inFlightCount < maxConcurrentUploads {
             await startUpload(queued)
         } else {
             // Send queue position
@@ -317,7 +331,6 @@ final class UploadManager {
         pendingTransfers[token] = pending
 
         logger.info("Starting upload: \(upload.filename) to \(upload.username), token=\(token)")
-        print("📤 Starting upload: \(upload.filename) to \(upload.username), token=\(token)")
 
         // Send TransferRequest (direction=1=upload, meaning we're ready to upload to them)
         do {
@@ -328,7 +341,6 @@ final class UploadManager {
                 size: upload.size
             )
             logger.info("Sent TransferRequest for \(upload.filename)")
-            print("📤 Sent TransferRequest: token=\(token) filename=\(upload.filename) size=\(upload.size)")
 
             // Wait for response (timeout after 60 seconds)
             Task {
@@ -363,7 +375,6 @@ final class UploadManager {
 
         if !allowed {
             logger.warning("Peer rejected upload for \(pending.filename)")
-            print("🚫 Peer rejected upload: \(pending.filename)")
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
                 t.error = "Peer rejected transfer"
@@ -372,7 +383,6 @@ final class UploadManager {
         }
 
         logger.info("Peer accepted upload for \(pending.filename), opening F connection")
-        print("✅ Peer accepted upload: \(pending.filename), opening F connection")
 
         // Peer accepted - now we need to open an F (file) connection to their listen port
         // First, we need to get their address
@@ -406,22 +416,21 @@ final class UploadManager {
         // Step 1: Send ConnectToPeer to server
         // Use type "F" since this is for a file transfer connection
         await networkClient.sendConnectToPeer(token: token, username: pending.username, connectionType: "F")
-        print("📤 Sent ConnectToPeer to server for upload to \(pending.username)")
+        logger.debug("Sent ConnectToPeer to server for upload to \(pending.username)")
 
         // Register pending transfer BEFORE getting address, so PierceFirewall can find it
         pendingTransfers[token] = pending
-        print("📝 Registered pending upload token=\(token) for PierceFirewall")
+        logger.debug("Registered pending upload token=\(token) for PierceFirewall")
 
         // Step 2: Request peer address for direct F connection attempt
         // IMPORTANT: Always use getUserAddress to get the peer's actual LISTEN port,
         // not the ephemeral source port from the existing P connection
         do {
             logger.info("Requesting peer address for F connection to \(pending.username)")
-            print("📞 Requesting peer address for upload to \(pending.username)")
-            pendingAddressLookups[pending.username] = (pending, token)
-            print("📝 Stored pending address lookup: \(pending.username) -> token=\(token)")
+            pendingAddressLookups[pending.username, default: []].append((pending, token))
+            logger.info("Stored pending address lookup: \(pending.username) -> token=\(token)")
             try await networkClient.getUserAddress(pending.username)
-            print("📤 GetPeerAddress request sent for \(pending.username)")
+            logger.debug("GetPeerAddress request sent for \(pending.username)")
             // The actual F connection will be triggered by handlePeerAddressForUpload callback
 
         } catch {
@@ -436,17 +445,23 @@ final class UploadManager {
 
     /// Handle peer address callback for pending uploads
     private func handlePeerAddressForUpload(username: String, ip: String, port: Int) async {
-        print("📬 handlePeerAddressForUpload called: \(username) -> \(ip):\(port)")
-        print("📝 Current pending lookups: \(Array(pendingAddressLookups.keys))")
-
-        guard let (pending, token) = pendingAddressLookups.removeValue(forKey: username) else {
-            // No pending upload for this username
-            print("⚠️ No pending upload lookup for \(username)")
+        guard var entries = pendingAddressLookups[username], !entries.isEmpty else {
             return
         }
 
+        // Pop the first pending upload for this user
+        let (pending, token) = entries.removeFirst()
+        if entries.isEmpty {
+            pendingAddressLookups.removeValue(forKey: username)
+        } else {
+            pendingAddressLookups[username] = entries
+            // Re-request address for remaining entries (server only sends one response per request)
+            Task {
+                try? await networkClient?.getUserAddress(username)
+            }
+        }
+
         logger.info("Received peer address for upload to \(username): \(ip):\(port)")
-        print("✅ Found pending upload for \(username), opening F connection to \(ip):\(port)")
 
         guard port > 0 else {
             logger.warning("Invalid port for \(username)")
@@ -465,7 +480,6 @@ final class UploadManager {
     /// Open an F (file) connection to peer and send file data
     private func openFileConnection(to ip: String, port: Int, pending: PendingUpload, token: UInt32) async {
         logger.info("Opening F connection to \(ip):\(port) for \(pending.filename)")
-        print("📂 Opening F connection to \(ip):\(port) for \(pending.filename)")
 
         guard let networkClient else { return }
 
@@ -528,7 +542,6 @@ final class UploadManager {
 
         guard connected else {
             logger.error("Failed direct F connection to peer \(pending.username)")
-            print("❌ Direct F connection failed, waiting for peer to connect to us")
 
             // Direct connection failed (likely NAT/firewall)
             // We already sent ConnectToPeer to the server before GetPeerAddress,
@@ -541,23 +554,34 @@ final class UploadManager {
             // (PierceFirewall may have already arrived and completed the upload while we were waiting)
             if pendingTransfers[token] != nil {
                 logger.info("Waiting for peer \(pending.username) to connect via PierceFirewall (token=\(token))")
-                print("⏳ Waiting for PierceFirewall from \(pending.username) with token=\(token)")
 
                 transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .connecting
                     t.error = "Waiting for peer to connect (firewall)"
                 }
+
+                // Timeout: fail the upload if PierceFirewall doesn't arrive within 30s
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(30))
+                    guard let self else { return }
+                    if let stale = self.pendingTransfers.removeValue(forKey: token) {
+                        self.logger.warning("PierceFirewall timeout for upload \(stale.filename) to \(stale.username)")
+                        self.transferState?.updateTransfer(id: stale.transferId) { t in
+                            t.status = .failed
+                            t.error = "Peer connection timeout (firewall)"
+                        }
+                        self.activeUploads.removeValue(forKey: stale.transferId)
+                        await self.processQueue()
+                    }
+                }
             } else {
-                print("✅ Upload already completed via PierceFirewall for token=\(token)")
+                logger.debug("Upload already completed via PierceFirewall for token=\(token)")
             }
 
-            // Wait for PierceFirewall - the peer will connect to us with this token
-            // handlePierceFirewall will be called when the connection arrives
             return
         }
 
         logger.info("F connection established to \(ip):\(port)")
-        print("✅ F connection established to \(ip):\(port)")
 
         // Send PeerInit with type "F" and token 0 (always 0 for F connections per protocol)
         // PeerInit format: [length][code=1][username][type="F"][token=0]
@@ -575,7 +599,6 @@ final class UploadManager {
         do {
             try await sendData(connection: connection, data: initMessage)
             logger.info("Sent PeerInit for F connection")
-            print("📤 Sent PeerInit (F connection) as '\(username)'")
         } catch {
             logger.error("Failed to send PeerInit: \(error.localizedDescription)")
             connection.cancel()
@@ -598,12 +621,12 @@ final class UploadManager {
             // Step 2: Send FileTransferInit (token - 4 bytes)
             var tokenData = Data()
             tokenData.appendUInt32(token)
-            print("📤 Sending FileTransferInit: token=\(token)")
+            logger.debug("Sending FileTransferInit: token=\(token)")
             try await sendData(connection: connection, data: tokenData)
             logger.info("Sent FileTransferInit: token=\(token)")
 
             // Step 3: Receive FileOffset from downloader (offset - 8 bytes)
-            print("📥 Waiting for FileOffset from downloader...")
+            logger.debug("Waiting for FileOffset from downloader")
             let offsetData = try await receiveExact(connection: connection, length: 8)
             guard offsetData.count == 8 else {
                 throw UploadError.connectionFailed
@@ -611,7 +634,6 @@ final class UploadManager {
 
             let offset = offsetData.readUInt64(at: 0) ?? 0
             logger.info("Received FileOffset: offset=\(offset)")
-            print("📥 Received FileOffset: offset=\(offset)")
 
             // Step 4: Send file data starting from offset
             await sendFileData(
@@ -624,7 +646,6 @@ final class UploadManager {
 
         } catch {
             logger.error("Failed during F connection handshake: \(error.localizedDescription)")
-            print("❌ F connection handshake failed: \(error)")
             connection.cancel()
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
@@ -677,7 +698,6 @@ final class UploadManager {
         let chunkSize = 65536  // 64KB chunks
 
         logger.info("Sending file data: \(filePath) from offset \(offset)")
-        print("📤 Sending file data from offset \(offset), total size: \(totalSize)")
 
         do {
             while bytesSent < totalSize {
@@ -727,7 +747,6 @@ final class UploadManager {
             // Complete
             let duration = Date().timeIntervalSince(startTime)
             logger.info("Upload complete: \(bytesSent) bytes sent in \(String(format: "%.1f", duration))s")
-            print("✅ Upload complete: \(bytesSent) bytes sent")
 
             let filename = (filePath as NSString).lastPathComponent
             let uploadUsername = activeUploads[transferId]?.username ?? "unknown"
@@ -756,7 +775,6 @@ final class UploadManager {
 
         } catch {
             logger.error("Upload failed: \(error.localizedDescription)")
-            print("❌ Upload failed: \(error)")
 
             await MainActor.run { [transferState] in
                 transferState?.updateTransfer(id: transferId) { t in
@@ -846,16 +864,26 @@ final class UploadManager {
         return pendingTransfers[token] != nil
     }
 
+    /// Handle CantConnectToPeer — server tells us the peer couldn't reach us, fail the upload
+    func handleCantConnectToPeer(token: UInt32) {
+        guard let pending = pendingTransfers.removeValue(forKey: token) else { return }
+        logger.warning("CantConnectToPeer for upload \(pending.filename) — peer unreachable")
+        transferState?.updateTransfer(id: pending.transferId) { t in
+            t.status = .failed
+            t.error = "Peer unreachable (firewall)"
+        }
+        activeUploads.removeValue(forKey: pending.transferId)
+        Task { await processQueue() }
+    }
+
     /// Handle PierceFirewall for upload (indirect connection from peer)
     func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.warning("No pending upload for PierceFirewall token \(token)")
-            print("⚠️ UploadManager: No pending upload for token \(token)")
             return
         }
 
         logger.info("PierceFirewall matched to pending upload: \(pending.filename)")
-        print("✅ Upload PierceFirewall matched: \(pending.filename) for \(pending.username), token=\(token)")
 
         // Update the connection's username (PierceFirewall doesn't include PeerInit with username)
         await connection.setPeerUsername(pending.username)
@@ -876,7 +904,7 @@ final class UploadManager {
     /// Continue upload after indirect connection established via PierceFirewall
     private func continueUploadWithConnection(pending: PendingUpload, connection: PeerConnection) async {
         guard networkClient != nil else {
-            print("❌ NetworkClient is nil in continueUploadWithConnection")
+            logger.error("NetworkClient is nil in continueUploadWithConnection")
             return
         }
 
@@ -907,28 +935,22 @@ final class UploadManager {
             // 2. Downloader sends FileOffset (just uint64 offset, NO length prefix)
             // 3. Uploader sends raw file data
 
-            print("📤 [UPLOAD] About to send FileTransferInit for token=\(pending.token)")
+            logger.debug("Sending FileTransferInit for token=\(pending.token)")
             let connState = await connection.getState()
-            print("📤 [UPLOAD] Connection state: \(connState)")
+            logger.debug("Connection state: \(String(describing: connState))")
 
             // Send FileTransferInit - just the token, no length prefix
             var tokenData = Data()
             tokenData.appendUInt32(pending.token)
-            let tokenHex = tokenData.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("📤 [UPLOAD] FileTransferInit bytes: \(tokenHex) (4 bytes)")
 
             try await connection.sendRaw(tokenData)
-            print("📤 [UPLOAD] FileTransferInit sent successfully for token=\(pending.token)")
+            logger.debug("FileTransferInit sent for token=\(pending.token)")
 
             // Receive FileOffset from downloader (8 bytes, no length prefix)
-            print("📥 [UPLOAD] Waiting for FileOffset from downloader (8 bytes, 30s timeout)...")
-            let preReceiveState = await connection.getState()
-            print("📥 [UPLOAD] Connection state before receive: \(preReceiveState)")
+            logger.debug("Waiting for FileOffset from downloader (8 bytes, 30s timeout)")
             let offsetData = try await connection.receiveRawBytes(count: 8, timeout: 30)
-            let offsetHex = offsetData.map { String(format: "%02x", $0) }.joined(separator: " ")
-            print("📥 [UPLOAD] FileOffset raw bytes: \(offsetHex)")
             let offset = offsetData.readUInt64(at: 0) ?? 0
-            print("📥 [UPLOAD] Received FileOffset: offset=\(offset)")
+            logger.debug("Received FileOffset: offset=\(offset)")
 
             // Send file data starting from offset
             await sendFileDataViaPeerConnection(
@@ -940,10 +962,8 @@ final class UploadManager {
             )
         } catch {
             logger.error("Failed to continue upload via PierceFirewall: \(error.localizedDescription)")
-            print("❌ [UPLOAD] Failed upload via PierceFirewall: \(error)")
             let failState = await connection.getState()
-            print("❌ [UPLOAD] Connection state at failure: \(failState)")
-            print("❌ [UPLOAD] Error type: \(type(of: error))")
+            logger.debug("Connection state at failure: \(String(describing: failState))")
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
                 t.error = error.localizedDescription
@@ -961,7 +981,6 @@ final class UploadManager {
         totalSize: UInt64
     ) async {
         logger.info("Starting file transfer via PeerConnection: \(filePath) offset=\(offset)")
-        print("📤 Starting file send via PeerConnection: \(filePath) from offset \(offset)")
 
         guard FileManager.default.fileExists(atPath: filePath) else {
             logger.error("File not found: \(filePath)")
@@ -999,27 +1018,20 @@ final class UploadManager {
             return
         }
 
-        let chunkSize = 16384  // 16KB chunks
+        let chunkSize = 65536  // 64KB chunks (match direct upload path)
         var bytesSent: UInt64 = offset
         let startTime = Date()
         var lastProgressUpdate = Date()
 
-        while bytesSent < totalSize {
-            autoreleasepool {
+        do {
+            while bytesSent < totalSize {
                 // Read chunk from file
-                guard let chunk = try? fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
-                    return
+                guard let chunk = try fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                    break
                 }
 
-                // Send chunk
-                Task {
-                    do {
-                        try await connection.send(chunk)
-                    } catch {
-                        logger.error("Failed to send chunk: \(error)")
-                    }
-                }
-
+                // Send chunk - AWAIT the send to ensure ordering and catch errors
+                try await connection.sendRaw(chunk)
                 bytesSent += UInt64(chunk.count)
 
                 // Update progress periodically
@@ -1029,49 +1041,53 @@ final class UploadManager {
                     let bytesTransferred = bytesSent - offset
                     let speed = elapsed > 0 ? Int64(Double(bytesTransferred) / elapsed) : 0
 
-                    Task { @MainActor in
-                        self.transferState?.updateTransfer(id: transferId) { t in
-                            t.bytesTransferred = bytesSent
-                            t.speed = speed
-                        }
+                    transferState?.updateTransfer(id: transferId) { t in
+                        t.bytesTransferred = bytesSent
+                        t.speed = speed
                     }
                 }
             }
 
-            // Small delay to prevent overwhelming the connection
-            try? await Task.sleep(for: .milliseconds(1))
-        }
+            // Complete
+            let elapsed = Date().timeIntervalSince(startTime)
+            let bytesTransferred = bytesSent - offset
+            let avgSpeed = elapsed > 0 ? Double(bytesTransferred) / elapsed : 0
 
-        // Complete
-        let elapsed = Date().timeIntervalSince(startTime)
-        let bytesTransferred = bytesSent - offset
-        let avgSpeed = elapsed > 0 ? Double(bytesTransferred) / elapsed : 0
+            logger.info("Upload complete: \(filePath) (\(bytesTransferred) bytes in \(String(format: "%.1f", elapsed))s, \(Int64(avgSpeed)) B/s)")
 
-        logger.info("Upload complete: \(filePath) (\(bytesTransferred) bytes in \(String(format: "%.1f", elapsed))s, \(Int64(avgSpeed)) B/s)")
-        print("✅ Upload complete: \(ByteFormatter.format(Int64(bytesTransferred))) in \(String(format: "%.1f", elapsed))s")
-
-        transferState?.updateTransfer(id: transferId) { t in
-            t.status = .completed
-            t.bytesTransferred = bytesSent
-            t.error = nil  // Clear any error from "Waiting for peer" state
-        }
-
-        activeUploads.removeValue(forKey: transferId)
-
-        // Record statistics
-        if let transfer = transferState?.getTransfer(id: transferId) {
-            statisticsState?.recordTransfer(
-                filename: transfer.filename,
-                username: transfer.username,
-                size: UInt64(bytesTransferred),
-                duration: elapsed,
-                isDownload: false
-            )
-
-            // Record to history database
-            Task {
-                try? await TransferRepository.recordCompletion(transfer)
+            transferState?.updateTransfer(id: transferId) { t in
+                t.status = .completed
+                t.bytesTransferred = bytesSent
+                t.error = nil
             }
+
+            activeUploads.removeValue(forKey: transferId)
+            ActivityLog.shared.logUploadCompleted(filename: (filePath as NSString).lastPathComponent)
+
+            // Record statistics
+            if let transfer = transferState?.getTransfer(id: transferId) {
+                statisticsState?.recordTransfer(
+                    filename: transfer.filename,
+                    username: transfer.username,
+                    size: UInt64(bytesTransferred),
+                    duration: elapsed,
+                    isDownload: false
+                )
+            }
+
+            // Process queue for next upload
+            await processQueue()
+
+        } catch {
+            logger.error("Upload failed via PeerConnection: \(error.localizedDescription)")
+
+            transferState?.updateTransfer(id: transferId) { t in
+                t.status = .failed
+                t.error = error.localizedDescription
+            }
+
+            activeUploads.removeValue(forKey: transferId)
+            await processQueue()
         }
     }
 }

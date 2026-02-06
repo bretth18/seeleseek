@@ -457,6 +457,14 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// Send place in queue request (code 51) - ask uploader for our queue position
+    nonisolated static func placeInQueueRequestMessage(filename: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(UInt32(PeerMessageCode.placeInQueueRequest.rawValue))
+        payload.appendString(filename)
+        return wrapMessage(payload)
+    }
+
     /// Send upload denied response (code 50)
     nonisolated static func uploadDeniedMessage(filename: String, reason: String) -> Data {
         var payload = Data()

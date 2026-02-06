@@ -1320,10 +1320,8 @@ final class ServerMessageHandler {
             return
         }
 
-        logger.warning("Peer couldn't reach our listen port (CantConnectToPeer token=\(token)). Possible causes: NAT/firewall blocking, wrong listen port reported.")
-
-        // TODO: Could notify the upload/download manager to mark the transfer as failed
-        // For now, just log it for debugging
+        logger.warning("CantConnectToPeer token=\(token) — peer couldn't reach our listen port")
+        client?.onCantConnectToPeer?(token)
     }
 
     private func handleAdminMessage(_ data: Data) {

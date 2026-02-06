@@ -2,32 +2,6 @@ import Foundation
 import Network
 import os
 
-// MARK: - Debug File Logger
-/// Writes debug logs to a file for diagnosing transfer issues
-private func debugLog(_ message: String, file: String = #file, function: String = #function, line: Int = #line) {
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let filename = (file as NSString).lastPathComponent
-    let logLine = "[\(timestamp)] [\(filename):\(line)] \(message)\n"
-
-    // Also print to console
-    print(logLine, terminator: "")
-
-    // Write to file
-    let logPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("seeleseek_debug.log")
-
-    if let data = logLine.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logPath.path) {
-            if let handle = try? FileHandle(forWritingTo: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            }
-        } else {
-            try? data.write(to: logPath)
-        }
-    }
-}
 
 /// Manages the download queue and file transfers
 @Observable
@@ -46,13 +20,14 @@ final class DownloadManager {
     private var pendingDownloads: [UInt32: PendingDownload] = [:]
 
     // Maps username to pending file transfers (waiting for F connection)
-    // We use username because PeerInit on F connections always has token=0
-    private var pendingFileTransfersByUser: [String: PendingFileTransfer] = [:]
+    // Array-based to support multiple concurrent downloads from same user
+    private var pendingFileTransfersByUser: [String: [PendingFileTransfer]] = [:]
 
     // MARK: - Retry Configuration (nicotine+ style)
     private let maxRetries = 3
     private let baseRetryDelay: TimeInterval = 5  // Start with 5 seconds
     private var pendingRetries: [UUID: Task<Void, Never>] = [:]  // Track retry tasks
+    private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer
 
     struct PendingDownload {
         let transferId: UUID
@@ -124,14 +99,13 @@ final class DownloadManager {
         self.uploadManager = uploadManager
 
         // Set up callbacks for peer address responses using multi-listener pattern
-        print("🔧 DownloadManager: Adding peer address handler")
+        logger.info("Adding peer address handler")
         networkClient.addPeerAddressHandler { [weak self] username, ip, port in
-            print("📞 DownloadManager.peerAddressHandler called: \(username) @ \(ip):\(port)")
+            self?.logger.debug("Peer address handler called: \(username) @ \(ip):\(port)")
             Task { @MainActor in
                 await self?.handlePeerAddress(username: username, ip: ip, port: port)
             }
         }
-        print("✅ DownloadManager: peer address handler added")
 
         // Set up callback for incoming connections that match pending downloads
         networkClient.onIncomingConnectionMatched = { [weak self] username, token, connection in
@@ -142,18 +116,15 @@ final class DownloadManager {
         }
 
         // Set up callback for incoming file transfer connections
-        print("🔧 DownloadManager: Setting up onFileTransferConnection callback")
         networkClient.onFileTransferConnection = { [weak self] username, token, connection in
-            print("📁 DownloadManager callback invoked - username='\(username)' token=\(token)")
+            self?.logger.debug("File transfer connection callback invoked: username='\(username)' token=\(token)")
             guard let self else {
-                print("❌ DownloadManager: self is nil in callback!")
                 return
             }
             Task { @MainActor in
                 await self.handleFileTransferConnection(username: username, token: token, connection: connection)
             }
         }
-        print("✅ DownloadManager: onFileTransferConnection callback configured")
 
         // Set up callback for PierceFirewall (indirect connections)
         networkClient.onPierceFirewall = { [weak self] token, connection in
@@ -176,6 +147,23 @@ final class DownloadManager {
                 self?.handleUploadFailed(filename: filename)
             }
         }
+
+        // Set up callback for PlaceInQueueReply (peer tells us our queue position)
+        networkClient.onPlaceInQueueReply = { [weak self] username, filename, position in
+            Task { @MainActor in
+                self?.handlePlaceInQueueReply(username: username, filename: filename, position: position)
+            }
+        }
+
+        // Set up callback for CantConnectToPeer (fast-fail instead of waiting for timeout)
+        networkClient.onCantConnectToPeer = { [weak self] token in
+            Task { @MainActor in
+                self?.handleCantConnectToPeer(token: token)
+            }
+        }
+
+        // Start periodic re-queue timer (like nicotine+ - re-sends QueueDownload every 60s)
+        startReQueueTimer()
     }
 
     // MARK: - Download API
@@ -197,7 +185,6 @@ final class DownloadManager {
         }
 
         logger.info("Resuming \(queuedDownloads.count) queued downloads")
-        print("🔄 Resuming \(queuedDownloads.count) queued downloads from previous session")
 
         for transfer in queuedDownloads {
             Task {
@@ -211,30 +198,17 @@ final class DownloadManager {
         // Skip macOS resource fork files (._xxx in __MACOSX folders)
         // These are metadata files that usually don't exist as real files
         if isMacOSResourceFork(result.filename) {
-            print("⚠️ Skipping macOS resource fork file: \(result.filename)")
             logger.info("Skipping macOS resource fork file: \(result.filename)")
             return
         }
 
-        print("")
-        print("╔════════════════════════════════════════════════════════════╗")
-        print("║  DOWNLOAD STARTED                                          ║")
-        print("╠════════════════════════════════════════════════════════════╣")
-        print("║  File: \(result.displayFilename)")
-        print("║  From: \(result.username)")
-        print("║  Size: \(result.formattedSize)")
-        print("╚════════════════════════════════════════════════════════════╝")
-        print("")
 
         guard let transferState else {
-            print("❌ DownloadManager: TransferState not configured!")
             logger.error("TransferState not configured")
             return
         }
 
         guard networkClient != nil else {
-            print("❌ DownloadManager: NetworkClient not configured!")
-            logger.error("NetworkClient not configured")
             return
         }
 
@@ -247,7 +221,6 @@ final class DownloadManager {
         )
 
         transferState.addDownload(transfer)
-        print("✅ Download queued: \(result.filename)")
         logger.info("Queued download: \(result.filename) from \(result.username)")
 
         // Start the download process
@@ -261,17 +234,17 @@ final class DownloadManager {
     /// Start download with existing transfer ID (used for retries after UploadFailed)
     private func startDownload(transferId: UUID, username: String, filename: String, size: UInt64) async {
         guard let transfer = transferState?.getTransfer(id: transferId) else {
-            print("❌ startDownload: Transfer not found for ID \(transferId)")
+            logger.error("Transfer not found for ID \(transferId)")
             return
         }
         await startDownload(transfer: transfer)
     }
 
     private func startDownload(transfer: Transfer) async {
-        print("📥 startDownload: \(transfer.filename) from \(transfer.username)")
+        logger.info("Starting download: \(transfer.filename) from \(transfer.username)")
 
         guard let networkClient, let transferState else {
-            print("❌ startDownload: NetworkClient or TransferState is nil!")
+            logger.error("NetworkClient or TransferState is nil")
             return
         }
 
@@ -292,14 +265,12 @@ final class DownloadManager {
             peerPort: nil
         )
 
-        print("📥 Starting download from \(transfer.username), token=\(token)")
         logger.info("Starting download from \(transfer.username), token=\(token)")
 
         do {
             // Step 1: Get peer address
-            print("📥 Requesting peer address for \(transfer.username)...")
+            logger.debug("Requesting peer address for \(transfer.username)")
             try await networkClient.getUserAddress(transfer.username)
-            print("📥 Peer address request sent, waiting for callback...")
 
             // Wait for peer address callback (handled in handlePeerAddress)
             // Set a timeout
@@ -376,6 +347,7 @@ final class DownloadManager {
             do {
                 await setupTransferRequestCallback(token: token, connection: existingConnection)
                 try await existingConnection.queueDownload(filename: pending.filename)
+                try? await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
                 logger.info("Sent QueueDownload for \(pending.filename)")
                 await waitForTransferResponse(token: token)
             } catch {
@@ -481,6 +453,7 @@ final class DownloadManager {
 
             await setupTransferRequestCallback(token: token, connection: connection)
             try await connection.queueDownload(filename: pending.filename)
+            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
             logger.info("Sent QueueDownload for \(pending.filename)")
             await waitForTransferResponse(token: token)
         } catch {
@@ -561,6 +534,8 @@ final class DownloadManager {
     private func cancelPendingIndirect(token: UInt32) {
         if let state = pendingIndirectStates.removeValue(forKey: token) {
             state.timeoutTask?.cancel()
+            // Resume any waiting continuation to prevent leak
+            state.continuation?.resume(throwing: CancellationError())
         }
     }
 
@@ -601,7 +576,7 @@ final class DownloadManager {
             // Find pending download by filename match
             await self.handleTransferRequestByFilename(request: request, fallbackToken: token)
         }
-        print("📝 TransferRequest callback set up (filename-based matching, fallback token=\(token))")
+        logger.debug("TransferRequest callback set up (filename-based matching, fallback token=\(token))")
     }
 
     /// Handle TransferRequest by matching filename to pending downloads
@@ -613,11 +588,11 @@ final class DownloadManager {
         }
 
         if let (token, _) = matchingEntry {
-            print("📨 Matched TransferRequest to pending download by filename: \(request.filename)")
+            logger.debug("Matched TransferRequest to pending download by filename: \(request.filename)")
             await handleTransferRequest(token: token, request: request)
         } else {
             // Fall back to the original token if no filename match
-            print("📨 No filename match for TransferRequest, using fallback token=\(fallbackToken)")
+            logger.debug("No filename match for TransferRequest, using fallback token=\(fallbackToken)")
             await handleTransferRequest(token: fallbackToken, request: request)
         }
     }
@@ -682,7 +657,7 @@ final class DownloadManager {
                    let existingSize = attrs[.size] as? UInt64,
                    existingSize > 0 && existingSize < request.size {
                     resumeOffset = existingSize
-                    debugLog("🔄 RESUME: Found partial file \(destPath.lastPathComponent), \(existingSize)/\(request.size) bytes, resuming from offset \(resumeOffset)")
+                    logger.info("Found partial file \(destPath.lastPathComponent), \(existingSize)/\(request.size) bytes, resuming from offset \(resumeOffset)")
                 }
             }
 
@@ -695,10 +670,8 @@ final class DownloadManager {
                 transferToken: request.token,  // This is sent on F connection handshake
                 offset: resumeOffset           // Resume from partial file if exists
             )
-            pendingFileTransfersByUser[pending.username] = pendingTransfer
+            pendingFileTransfersByUser[pending.username, default: []].append(pendingTransfer)
             logger.info("Registered pending file transfer for \(pending.username): transferToken=\(request.token)")
-            print("✅ Registered pendingFileTransfersByUser[\(pending.username)] - transferToken=\(request.token) size=\(request.size)")
-            print("📋 Current pendingFileTransfersByUser keys: \(Array(pendingFileTransfersByUser.keys))")
 
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
@@ -718,8 +691,7 @@ final class DownloadManager {
                 try? await Task.sleep(for: .seconds(5))
 
                 // If still pending, try connecting to them instead (NAT traversal fallback)
-                if pendingFileTransfersByUser[peerUsername] != nil {
-                    print("⏰ No incoming F connection after 5s, trying outgoing F connection to \(peerUsername)")
+                if self.hasPendingFileTransfer(username: peerUsername, transferToken: transferToken) {
                     await self.initiateOutgoingFileConnection(
                         username: peerUsername,
                         ip: peerIP,
@@ -734,8 +706,7 @@ final class DownloadManager {
                 try? await Task.sleep(for: .seconds(55))
 
                 // If still pending after total 60 seconds, mark as failed
-                if pendingFileTransfersByUser[peerUsername] != nil {
-                    pendingFileTransfersByUser.removeValue(forKey: peerUsername)
+                if self.removePendingFileTransfer(username: peerUsername, transferToken: transferToken) != nil {
                     pendingDownloads.removeValue(forKey: token)
                     await MainActor.run {
                         transferState.updateTransfer(id: pending.transferId) { t in
@@ -818,7 +789,6 @@ final class DownloadManager {
         downloadToken: UInt32
     ) async {
         guard let ip, let port, port > 0 else {
-            print("❌ Cannot initiate outgoing F connection: missing peer address")
             logger.warning("Cannot initiate outgoing F connection to \(username): missing address")
             return
         }
@@ -826,12 +796,14 @@ final class DownloadManager {
         guard let transferState else { return }
 
         // Check if still pending
-        guard let pending = pendingFileTransfersByUser[username] else {
-            print("ℹ️ Outgoing F connection not needed - transfer no longer pending")
+        guard hasPendingFileTransfer(username: username, transferToken: transferToken) else {
+            logger.debug("Outgoing F connection not needed - transfer no longer pending")
+            return
+        }
+        guard let pending = removePendingFileTransfer(username: username, transferToken: transferToken) else {
             return
         }
 
-        print("🔌 Initiating outgoing F connection to \(username) at \(ip):\(port)")
         logger.info("Initiating outgoing F connection to \(username) at \(ip):\(port)")
 
         do {
@@ -865,20 +837,16 @@ final class DownloadManager {
                 connection.start(queue: .global(qos: .userInitiated))
             }
 
-            print("✅ Outgoing F connection established to \(username)")
             logger.info("Outgoing F connection established to \(username)")
 
             // Send PierceFirewall with the transfer token
             // This tells the uploader which pending upload this connection is for
             let pierceMessage = MessageBuilder.pierceFirewallMessage(token: transferToken)
             try await sendData(connection: connection, data: pierceMessage)
-            print("📤 Sent PierceFirewall token=\(transferToken) to \(username)")
+            logger.debug("Sent PierceFirewall token=\(transferToken) to \(username)")
 
-            // Capture offset before removing from pending
+            // Capture offset (pending already removed above)
             let resumeOffset = pending.offset
-
-            // Remove from pending (we're handling it now)
-            pendingFileTransfersByUser.removeValue(forKey: username)
 
             // Per SoulSeek/nicotine+ protocol on F connections:
             // 1. UPLOADER sends FileTransferInit (token - 4 bytes)
@@ -886,18 +854,18 @@ final class DownloadManager {
             // But when WE (downloader) initiate the connection, we need to wait for uploader's token first
 
             // Wait for FileTransferInit from uploader (token - 4 bytes)
-            print("📥 Waiting for FileTransferInit from uploader...")
+            logger.debug("Waiting for FileTransferInit from uploader")
             let tokenData = try await receiveData(connection: connection, length: 4)
             let receivedToken = tokenData.readUInt32(at: 0) ?? 0
-            print("📥 Received FileTransferInit: token=\(receivedToken) (expected=\(transferToken))")
+            logger.debug("Received FileTransferInit: token=\(receivedToken) (expected=\(transferToken))")
 
             // Send FileOffset (offset - 8 bytes)
             var offsetData = Data()
             offsetData.appendUInt64(resumeOffset)
-            print("📤 Sending FileOffset: offset=\(resumeOffset)")
+            logger.debug("Sending FileOffset: offset=\(resumeOffset)")
             try await sendData(connection: connection, data: offsetData)
 
-            print("✅ Handshake complete, receiving file data...")
+            logger.debug("Handshake complete, receiving file data")
 
             // Compute destination path preserving folder structure
             let destPath = computeDestPath(for: pending.filename, username: username)
@@ -939,7 +907,6 @@ final class DownloadManager {
             pendingDownloads.removeValue(forKey: downloadToken)
 
         } catch {
-            print("❌ Outgoing F connection failed: \(error)")
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
             // Don't mark as failed yet - the timeout will handle that
         }
@@ -1045,7 +1012,6 @@ final class DownloadManager {
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
         } catch {
             logger.error("Failed to create parent directory \(parentDir.path): \(error)")
-            print("❌ Failed to create directory: \(parentDir.path) - \(error)")
             throw DownloadError.cannotCreateFile
         }
 
@@ -1059,18 +1025,15 @@ final class DownloadManager {
             }
             try handle.seekToEnd()
             fileHandle = handle
-            debugLog("🔄 RESUME MODE (NW): Appending to \(destPath.lastPathComponent) from offset \(resumeOffset)")
         } else {
             // Create file for writing
             let created = FileManager.default.createFile(atPath: destPath.path, contents: nil)
             if !created {
                 logger.error("Failed to create file at \(destPath.path)")
-                print("❌ FileManager.createFile failed at: \(destPath.path)")
             }
 
             guard let handle = try? FileHandle(forWritingTo: destPath) else {
                 logger.error("Failed to open file handle for \(destPath.path)")
-                print("❌ Cannot open file handle for: \(destPath.path)")
                 throw DownloadError.cannotCreateFile
             }
             fileHandle = handle
@@ -1121,37 +1084,28 @@ final class DownloadManager {
         let attrs = try FileManager.default.attributesOfItem(atPath: destPath.path)
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
-        print("📏 File verification (NW):")
-        print("   Expected size (from TransferRequest): \(expectedSize) bytes")
-        print("   Bytes received in transfer loop: \(bytesReceived) bytes")
-        print("   Actual file size on disk: \(actualSize) bytes")
-
+        logger.info("File verification: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize)")
         // If expected size is 0, something went wrong with TransferRequest parsing
         if expectedSize == 0 {
             logger.error("Expected size is 0 - TransferRequest parsing likely failed")
-            print("❌ Expected size is 0! This indicates TransferRequest size was not parsed correctly.")
         }
 
         // Allow small discrepancy (up to 0.1% or 1KB, whichever is larger)
         let tolerance = max(1024, expectedSize / 1000)
         let sizeDiff = actualSize > expectedSize ? actualSize - expectedSize : expectedSize - actualSize
 
-        print("   Size difference: \(sizeDiff) bytes, tolerance: \(tolerance) bytes")
 
         if expectedSize > 0 && sizeDiff > tolerance {
             logger.error("File size mismatch: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff))")
-            print("❌ File size mismatch exceeds tolerance: \(sizeDiff) > \(tolerance)")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
         }
 
         if actualSize != expectedSize && expectedSize > 0 {
             logger.warning("Minor size discrepancy: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff) bytes) - accepting")
-            print("⚠️ Minor size discrepancy (\(sizeDiff) bytes) - within tolerance, accepting file")
         }
 
         connection.cancel()
         logger.info("File transfer complete and verified: \(actualSize) bytes received")
-        print("✅ File transfer COMPLETE (NW): \(destPath.lastPathComponent) (\(actualSize) bytes)")
     }
 
     private func receiveChunkWithStatus(connection: NWConnection) async throws -> (Data, Bool) {
@@ -1180,14 +1134,14 @@ final class DownloadManager {
         // Create directory if it doesn't exist
         do {
             try FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
-            print("📁 Download directory: \(downloadsDir.path)")
+            logger.debug("Download directory: \(downloadsDir.path)")
         } catch {
-            print("❌ Failed to create download directory: \(downloadsDir.path) - \(error)")
+            logger.error("Failed to create download directory: \(downloadsDir.path) - \(error)")
             // Fall back to app's document directory
             if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
                 let fallbackDir = appSupport.appendingPathComponent("SeeleSeek/Downloads")
                 try? FileManager.default.createDirectory(at: fallbackDir, withIntermediateDirectories: true)
-                print("📁 Using fallback directory: \(fallbackDir.path)")
+                logger.info("Using fallback directory: \(fallbackDir.path)")
                 return fallbackDir
             }
         }
@@ -1273,7 +1227,7 @@ final class DownloadManager {
         // First check: Ensure the standardized path is within the base directory
         // This catches directory traversal attacks (../) without symlink resolution issues
         guard standardizedPath.hasPrefix(standardizedBasePath) else {
-            print("⚠️ SECURITY: Path \(url.path) is outside base directory")
+            logger.warning("SECURITY: Path \(url.path) is outside base directory")
             return false
         }
 
@@ -1281,7 +1235,7 @@ final class DownloadManager {
         let relativeComponents = url.pathComponents.dropFirst(baseDir.pathComponents.count)
         for component in relativeComponents {
             if component == ".." {
-                print("⚠️ SECURITY: Directory traversal attempt detected in \(url.path)")
+                logger.warning("SECURITY: Directory traversal attempt detected in \(url.path)")
                 return false
             }
         }
@@ -1299,7 +1253,7 @@ final class DownloadManager {
                 if let attributes = try? fileManager.attributesOfItem(atPath: currentPath.path),
                    let fileType = attributes[.type] as? FileAttributeType,
                    fileType == .typeSymbolicLink {
-                    print("⚠️ SECURITY: Symlink detected at \(currentPath.path)")
+                    logger.warning("SECURITY: Symlink detected at \(currentPath.path)")
                     return false
                 }
             }
@@ -1342,7 +1296,7 @@ final class DownloadManager {
         }
 
         guard let networkClient else {
-            print("❌ NetworkClient is nil in handleIncomingConnection")
+            logger.error("NetworkClient is nil in handleIncomingConnection")
             return
         }
 
@@ -1355,12 +1309,13 @@ final class DownloadManager {
         do {
             // Send PeerInit FIRST - identifies us to the peer (token=0 for P connections)
             try await connection.sendPeerInit(username: networkClient.username)
-            print("📤 Sent PeerInit via indirect connection")
+            logger.debug("Sent PeerInit via indirect connection")
 
             // Set up callback BEFORE sending QueueDownload to avoid race condition
             await setupTransferRequestCallback(token: token, connection: connection)
 
             try await connection.queueDownload(filename: pending.filename)
+            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
             logger.info("Sent QueueDownload via indirect connection")
 
             await waitForTransferResponse(token: token)
@@ -1370,58 +1325,142 @@ final class DownloadManager {
     }
 
     /// Called when a peer opens a file transfer connection to us (type "F")
-    /// Per SoulSeek protocol: After PeerInit, downloader sends token (4 bytes) + offset (8 bytes), then receives file data
+    /// Per SoulSeek protocol: After PeerInit, uploader sends FileTransferInit token (4 bytes)
     func handleFileTransferConnection(username: String, token: UInt32, connection: PeerConnection) async {
-        print("🎯 handleFileTransferConnection CALLED - username='\(username)' token=\(token)")
-        print("📋 Looking for pendingFileTransfersByUser keys: \(Array(pendingFileTransfersByUser.keys))")
-
         guard transferState != nil else {
             logger.error("TransferState not configured")
-            print("❌ TransferState not configured!")
             return
         }
 
-        // Look up the pending file transfer by USERNAME (not token, because PeerInit token is always 0 for F connections)
-        // Try exact match first, then case-insensitive match
-        var pending: PendingFileTransfer?
-        var matchedKey: String?
+        // Find pending entries for this user (try exact then case-insensitive)
+        let entries = findPendingFileTransfers(for: username)
+        guard !entries.isEmpty else {
+            logger.warning("No pending file transfer for username \(username)")
+            return
+        }
 
-        if let exactMatch = pendingFileTransfersByUser[username] {
-            pending = exactMatch
-            matchedKey = username
+        if entries.count == 1 {
+            // Single entry - use it directly (most common case)
+            let pending = entries[0]
+            _ = removePendingFileTransfer(username: username, transferToken: pending.transferToken)
+            await handleFileTransferWithPending(pending, connection: connection)
         } else {
-            // Try case-insensitive lookup
-            let lowercaseUsername = username.lowercased()
-            for (key, value) in pendingFileTransfersByUser {
-                if key.lowercased() == lowercaseUsername {
-                    pending = value
-                    matchedKey = key
-                    print("📋 Case-insensitive match: '\(username)' -> '\(key)'")
-                    break
+            // Multiple entries for same user - receive FileTransferInit token first to match
+            await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
+        }
+    }
+
+    // MARK: - Pending File Transfer Helpers (array-based)
+
+    /// Check if a pending file transfer exists for a given username and token
+    private func hasPendingFileTransfer(username: String, transferToken: UInt32) -> Bool {
+        let entries = findPendingFileTransfers(for: username)
+        return entries.contains { $0.transferToken == transferToken }
+    }
+
+    /// Find all pending file transfers for a username (exact or case-insensitive)
+    private func findPendingFileTransfers(for username: String) -> [PendingFileTransfer] {
+        if let entries = pendingFileTransfersByUser[username], !entries.isEmpty {
+            return entries
+        }
+        // Case-insensitive fallback
+        let lower = username.lowercased()
+        for (key, entries) in pendingFileTransfersByUser {
+            if key.lowercased() == lower, !entries.isEmpty {
+                return entries
+            }
+        }
+        return []
+    }
+
+    /// Remove and return a specific pending file transfer by username and token
+    @discardableResult
+    private func removePendingFileTransfer(username: String, transferToken: UInt32) -> PendingFileTransfer? {
+        // Try exact match first
+        let key = pendingFileTransfersByUser[username] != nil ? username
+            : pendingFileTransfersByUser.keys.first { $0.lowercased() == username.lowercased() }
+        guard let key else { return nil }
+
+        guard var entries = pendingFileTransfersByUser[key] else { return nil }
+        guard let idx = entries.firstIndex(where: { $0.transferToken == transferToken }) else { return nil }
+        let removed = entries.remove(at: idx)
+        if entries.isEmpty {
+            pendingFileTransfersByUser.removeValue(forKey: key)
+        } else {
+            pendingFileTransfersByUser[key] = entries
+        }
+        return removed
+    }
+
+    /// Handle F connection when multiple transfers are pending for same user.
+    /// Receives FileTransferInit token first to match the right pending entry.
+    private func handleFileTransferWithTokenMatch(entries: [PendingFileTransfer], username: String, connection: PeerConnection) async {
+        do {
+            await connection.stopReceiving()
+            try await Task.sleep(for: .milliseconds(50))
+
+            // Receive FileTransferInit token to identify which transfer this is for
+            var tokenData: Data
+            let bufferedData = await connection.getFileTransferBuffer()
+            if bufferedData.count >= 4 {
+                tokenData = Data(bufferedData.prefix(4))
+                if bufferedData.count > 4 {
+                    await connection.prependToFileTransferBuffer(Data(bufferedData.dropFirst(4)))
+                }
+            } else if bufferedData.count > 0 {
+                let remaining = try await connection.receiveRawBytes(count: 4 - bufferedData.count, timeout: 30)
+                tokenData = bufferedData + remaining
+            } else {
+                tokenData = try await connection.receiveRawBytes(count: 4, timeout: 30)
+            }
+
+            let receivedToken = tokenData.readUInt32(at: 0) ?? 0
+            logger.info("F connection: received FileTransferInit token=\(receivedToken), matching against \(entries.count) pending entries")
+
+            // Match by token
+            if let pending = removePendingFileTransfer(username: username, transferToken: receivedToken) {
+                // Send FileOffset and proceed
+                var offsetData = Data()
+                offsetData.appendUInt64(pending.offset)
+                try await connection.sendRaw(offsetData)
+
+                let destPath = computeDestPath(for: pending.filename, username: pending.username)
+                try await receiveFileDataFromPeer(
+                    connection: connection,
+                    destPath: destPath,
+                    expectedSize: pending.size,
+                    transferId: pending.transferId,
+                    resumeOffset: pending.offset
+                )
+
+                let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
+                transferState?.updateTransfer(id: pending.transferId) { t in
+                    t.status = .completed
+                    t.bytesTransferred = pending.size
+                    t.localPath = destPath
+                    t.error = nil
+                }
+                ActivityLog.shared.logDownloadCompleted(filename: destPath.lastPathComponent)
+                statisticsState?.recordTransfer(
+                    filename: destPath.lastPathComponent,
+                    username: pending.username,
+                    size: pending.size,
+                    duration: duration,
+                    isDownload: true
+                )
+            } else {
+                // Token didn't match any pending - try first entry as fallback
+                logger.warning("Token \(receivedToken) didn't match any pending transfer for \(username)")
+                if let fallback = entries.first {
+                    _ = removePendingFileTransfer(username: username, transferToken: fallback.transferToken)
+                    // Put token back into buffer so handleFileTransferWithPending can read it
+                    await connection.prependToFileTransferBuffer(tokenData)
+                    await handleFileTransferWithPending(fallback, connection: connection)
                 }
             }
+        } catch {
+            logger.error("Failed token-match F connection: \(error.localizedDescription)")
         }
-
-        guard let pending = pending, let matchedKey = matchedKey else {
-            // If only one pending transfer, use it (common case)
-            if pendingFileTransfersByUser.count == 1, let (onlyKey, onlyValue) = pendingFileTransfersByUser.first {
-                print("📋 Using only pending transfer: '\(onlyKey)' (received username was '\(username)')")
-                pendingFileTransfersByUser.removeValue(forKey: onlyKey)
-                await handleFileTransferWithPending(onlyValue, connection: connection)
-                return
-            }
-
-            logger.warning("No pending file transfer for username \(username)")
-            print("⚠️ No pending file transfer for '\(username)' - available keys: \(Array(pendingFileTransfersByUser.keys))")
-            return
-        }
-
-        pendingFileTransfersByUser.removeValue(forKey: matchedKey)
-
-        print("✅ Found pending file transfer for '\(username)': \(pending.filename)")
-
-        // Call the common handler to actually do the transfer
-        await handleFileTransferWithPending(pending, connection: connection)
     }
 
     /// Common handler for file transfer with a pending transfer record
@@ -1432,7 +1471,6 @@ final class DownloadManager {
         }
 
         logger.info("File transfer connection, sending transferToken=\(pending.transferToken) offset=\(pending.offset)")
-        print("📁 F connection: transferToken=\(pending.transferToken) offset=\(pending.offset)")
 
         // Compute destination path preserving folder structure
         let destPath = computeDestPath(for: pending.filename, username: pending.username)
@@ -1459,14 +1497,14 @@ final class DownloadManager {
             var tokenData: Data
             let bufferedData = await connection.getFileTransferBuffer()
             if bufferedData.count >= 4 {
-                print("📥 Using \(bufferedData.count) bytes from file transfer buffer")
+                logger.debug("Using \(bufferedData.count) bytes from file transfer buffer")
                 tokenData = bufferedData.prefix(4)
                 // Put remaining data back (if any) for file data
                 if bufferedData.count > 4 {
                     await connection.prependToFileTransferBuffer(Data(bufferedData.dropFirst(4)))
                 }
             } else {
-                print("📥 Waiting for FileTransferInit from uploader...")
+                logger.debug("Waiting for FileTransferInit from uploader")
                 if bufferedData.count > 0 {
                     // Have partial data, need more
                     let remaining = try await connection.receiveRawBytes(count: 4 - bufferedData.count, timeout: 30)
@@ -1477,19 +1515,19 @@ final class DownloadManager {
             }
 
             let receivedToken = tokenData.readUInt32(at: 0) ?? 0
-            print("📥 Received FileTransferInit: token=\(receivedToken) (expected=\(pending.transferToken))")
+            logger.debug("Received FileTransferInit: token=\(receivedToken) (expected=\(pending.transferToken))")
 
             if receivedToken != pending.transferToken {
-                print("⚠️ Token mismatch: received \(receivedToken) but expected \(pending.transferToken)")
+                logger.warning("Token mismatch: received \(receivedToken) but expected \(pending.transferToken)")
             }
 
             // Step 2: Send FileOffset (offset - 8 bytes)
             var offsetData = Data()
             offsetData.appendUInt64(pending.offset)
-            print("📤 Sending FileOffset: offset=\(pending.offset)")
+            logger.debug("Sending FileOffset: offset=\(pending.offset)")
             try await connection.sendRaw(offsetData)
 
-            print("✅ Handshake complete, now receiving file data...")
+            logger.debug("Handshake complete, receiving file data")
 
             // Receive file data using the PeerConnection
             try await receiveFileDataFromPeer(
@@ -1514,8 +1552,7 @@ final class DownloadManager {
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
 
-            // Record in statistics
-            print("📊 Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
+            logger.debug("Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
             if let stats = statisticsState {
                 stats.recordTransfer(
                     filename: filename,
@@ -1524,9 +1561,9 @@ final class DownloadManager {
                     duration: duration,
                     isDownload: true
                 )
-                print("📊 Stats recorded! Downloads: \(stats.filesDownloaded), Total: \(stats.totalDownloaded)")
+                logger.debug("Stats recorded: downloads=\(stats.filesDownloaded), total=\(stats.totalDownloaded)")
             } else {
-                print("❌ statisticsState is nil!")
+                logger.warning("statisticsState is nil")
             }
 
             // Clean up the original download tracking
@@ -1534,7 +1571,6 @@ final class DownloadManager {
 
         } catch {
             logger.error("File transfer failed: \(error.localizedDescription)")
-            print("❌ File transfer failed: \(error)")
 
             let errorMsg = error.localizedDescription
             let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
@@ -1579,7 +1615,6 @@ final class DownloadManager {
             try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
         } catch {
             logger.error("Failed to create parent directory \(parentDir.path): \(error)")
-            debugLog("❌ Failed to create directory: \(parentDir.path) - \(error)")
             throw DownloadError.cannotCreateFile
         }
 
@@ -1589,23 +1624,20 @@ final class DownloadManager {
             // Resume mode - open existing file and seek to end
             guard let handle = try? FileHandle(forWritingTo: destPath) else {
                 logger.error("Failed to open existing file for resume: \(destPath.path)")
-                debugLog("❌ Failed to open file for resume: \(destPath.path)")
                 throw DownloadError.cannotCreateFile
             }
             try handle.seekToEnd()
             fileHandle = handle
-            debugLog("🔄 RESUME MODE: Appending to \(destPath.lastPathComponent) from offset \(resumeOffset)")
+            logger.info("Resume mode: Appending to \(destPath.lastPathComponent) from offset \(resumeOffset)")
         } else {
             // Normal mode - create new file
             let created = FileManager.default.createFile(atPath: destPath.path, contents: nil)
             if !created && !FileManager.default.fileExists(atPath: destPath.path) {
                 logger.error("Failed to create file at \(destPath.path)")
-                debugLog("❌ FileManager.createFile failed at: \(destPath.path)")
             }
 
             guard let handle = try? FileHandle(forWritingTo: destPath) else {
                 logger.error("Failed to open file handle for \(destPath.path)")
-                debugLog("❌ Cannot open file handle for: \(destPath.path)")
                 throw DownloadError.cannotCreateFile
             }
             fileHandle = handle
@@ -1615,12 +1647,12 @@ final class DownloadManager {
         let startTime = Date()
 
         logger.info("Receiving file data from peer, expected size: \(expectedSize) bytes")
-        debugLog("📥 START RECEIVE [BUILD=v3-drain]: \(destPath.lastPathComponent), expected=\(expectedSize) bytes")
+        logger.info("Start receive: \(destPath.lastPathComponent), expected=\(expectedSize) bytes")
 
         // First, drain any data that was buffered by the receive loop before it stopped
         let bufferedFileData = await connection.getFileTransferBuffer()
         if !bufferedFileData.isEmpty {
-            debugLog("📥 Writing \(bufferedFileData.count) bytes from file transfer buffer")
+            logger.debug("Writing \(bufferedFileData.count) bytes from file transfer buffer")
             try fileHandle.write(contentsOf: bufferedFileData)
             bytesReceived += UInt64(bufferedFileData.count)
 
@@ -1661,7 +1693,7 @@ final class DownloadManager {
             } catch is DownloadError {
                 // Timeout - but try to drain any remaining buffered data first
                 let timeSinceLastData = Date().timeIntervalSince(lastDataTime)
-                debugLog("⏱️ TIMEOUT after \(timeSinceLastData)s - attempting final buffer drain...")
+                logger.debug("Timeout after \(timeSinceLastData)s, attempting final buffer drain")
 
                 // Try to drain remaining data from connection buffer
                 var drainAttempts = 0
@@ -1670,25 +1702,25 @@ final class DownloadManager {
                     if !remainingBuffer.isEmpty {
                         try fileHandle.write(contentsOf: remainingBuffer)
                         bytesReceived += UInt64(remainingBuffer.count)
-                        debugLog("📁 DRAIN: +\(remainingBuffer.count) bytes, total=\(bytesReceived)")
+                        logger.debug("Drain: +\(remainingBuffer.count) bytes, total=\(bytesReceived)")
                         drainAttempts += 1
                     } else {
                         break
                     }
                 }
 
-                debugLog("⏱️ TIMEOUT FINAL: \(bytesReceived)/\(expectedSize) bytes")
+                logger.debug("Timeout final: \(bytesReceived)/\(expectedSize) bytes")
 
                 // If we have all the data now, consider it complete
                 if bytesReceived >= expectedSize {
-                    debugLog("✅ Got all bytes after drain")
+                    logger.debug("Got all bytes after drain")
                     break receiveLoop
                 }
                 // Otherwise, this is an incomplete transfer
                 break receiveLoop
             } catch {
                 logger.error("Receive error: \(error.localizedDescription)")
-                debugLog("❌ RECEIVE ERROR: \(error.localizedDescription) at \(bytesReceived)/\(expectedSize)")
+                logger.error("Receive error: \(error.localizedDescription) at \(bytesReceived)/\(expectedSize)")
                 break receiveLoop
             }
 
@@ -1713,21 +1745,20 @@ final class DownloadManager {
                     // Log progress every 1MB
                     if bytesReceived % (1024 * 1024) < UInt64(chunk.count) {
                         let pct = expectedSize > 0 ? Double(bytesReceived) / Double(expectedSize) * 100 : 0
-                        print("📥 Progress: \(bytesReceived)/\(expectedSize) (\(String(format: "%.1f", pct))%) @ \(speed/1024)KB/s")
+                        logger.debug("Progress: \(bytesReceived)/\(expectedSize) (\(String(format: "%.1f", pct))%) @ \(speed/1024)KB/s")
                     }
                 }
 
                 // CRITICAL: Like nicotine+, we're done when bytesReceived >= expectedSize
                 if expectedSize > 0 && bytesReceived >= expectedSize {
                     logger.info("Received all expected bytes: \(bytesReceived)/\(expectedSize)")
-                    print("✅ All bytes received: \(bytesReceived) >= \(expectedSize)")
                     break receiveLoop
                 }
 
                 // If this was the final chunk with completion signal, fall through to drain logic
                 if case .dataWithCompletion = chunkResult {
                     logger.info("Connection signaled complete with data, bytesReceived=\(bytesReceived)")
-                    debugLog("📡 DATA+COMPLETE SIGNAL: \(bytesReceived)/\(expectedSize) - falling through to drain")
+                    logger.debug("Data+complete signal: \(bytesReceived)/\(expectedSize), falling through to drain")
                     // Fall through to connectionComplete drain logic below
                 } else {
                     continue receiveLoop
@@ -1737,14 +1768,14 @@ final class DownloadManager {
             case .connectionComplete:
                 // Connection closed - but there might still be buffered data!
                 // Try multiple reads to drain everything
-                debugLog("📡 CONNECTION SIGNALED COMPLETE at \(bytesReceived)/\(expectedSize) - attempting to drain remaining data...")
+                logger.debug("Connection signaled complete at \(bytesReceived)/\(expectedSize), draining remaining data")
 
                 // First drain our local buffer
                 let remainingBuffer = await connection.getFileTransferBuffer()
                 if !remainingBuffer.isEmpty {
                     try fileHandle.write(contentsOf: remainingBuffer)
                     bytesReceived += UInt64(remainingBuffer.count)
-                    debugLog("📁 BUFFER DRAIN: +\(remainingBuffer.count) bytes, now at \(bytesReceived)")
+                    logger.debug("Buffer drain: +\(remainingBuffer.count) bytes, now at \(bytesReceived)")
                 }
 
                 // Try to read more from the connection even after completion signal
@@ -1758,17 +1789,17 @@ final class DownloadManager {
                     let extraChunk = await connection.drainAvailableData(maxLength: 65536, timeout: 0.3)
 
                     if extraChunk.isEmpty {
-                        debugLog("📡 No more data available after \(additionalReads) drain attempts")
+                        logger.debug("No more data available after \(additionalReads) drain attempts")
                         break
                     }
 
                     try fileHandle.write(contentsOf: extraChunk)
                     bytesReceived += UInt64(extraChunk.count)
-                    debugLog("📁 DRAIN \(additionalReads): +\(extraChunk.count) bytes, now at \(bytesReceived)/\(expectedSize)")
+                    logger.debug("Drain \(additionalReads): +\(extraChunk.count) bytes, now at \(bytesReceived)/\(expectedSize)")
                 }
 
                 logger.info("Connection closed by peer, final bytesReceived=\(bytesReceived)")
-                debugLog("📡 CONNECTION CLOSED: \(bytesReceived)/\(expectedSize) (\(Double(bytesReceived)/Double(expectedSize)*100)%)")
+                logger.debug("Connection closed: \(bytesReceived)/\(expectedSize)")
                 break receiveLoop
             }
         }
@@ -1789,33 +1820,28 @@ final class DownloadManager {
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
         let percentComplete = expectedSize > 0 ? Double(actualSize) / Double(expectedSize) * 100 : 100
-        debugLog("📏 VERIFY: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize) (\(String(format: "%.1f", percentComplete))%)")
+        logger.info("Verify: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize) (\(String(format: "%.1f", percentComplete))%)")
 
         // Like nicotine+: require actualSize >= expectedSize
         if expectedSize > 0 && actualSize >= expectedSize {
             logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
-            debugLog("✅ COMPLETE: \(destPath.lastPathComponent) - \(actualSize) >= \(expectedSize) bytes")
         } else if expectedSize == 0 && actualSize > 0 {
             // Expected size was 0 (parsing issue) but we got data - accept it
             logger.warning("Expected size was 0 but received \(actualSize) bytes - accepting")
-            debugLog("⚠️ ACCEPT (size was 0): \(destPath.lastPathComponent) - \(actualSize) bytes")
         } else if actualSize < expectedSize && expectedSize > 0 {
             // Check if we're very close (99%+) - might be a metadata size mismatch
             if percentComplete >= 99.0 {
                 // Accept files that are 99%+ complete - likely a slight size mismatch in peer's metadata
                 logger.warning("Near-complete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.2f", percentComplete))%) - accepting")
-                debugLog("⚠️ NEAR-COMPLETE ACCEPTED: \(destPath.lastPathComponent) - \(actualSize)/\(expectedSize) (\(String(format: "%.2f", percentComplete))%)")
             } else {
                 // Incomplete transfer - nicotine+ would fail this too
                 logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
-                debugLog("❌ INCOMPLETE: \(destPath.lastPathComponent) - \(actualSize)/\(expectedSize) (\(String(format: "%.1f", percentComplete))%)")
                 throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
             }
         }
 
         await connection.disconnect()
         logger.info("File transfer complete and verified: \(actualSize) bytes received")
-        debugLog("✅ TRANSFER DONE: \(destPath.lastPathComponent)")
     }
 
     // MARK: - PierceFirewall Handling (Indirect Connections)
@@ -1840,11 +1866,99 @@ final class DownloadManager {
         logger.debug("No pending download/upload for PierceFirewall token \(token)")
     }
 
+    // MARK: - CantConnectToPeer Handling
+
+    /// Server tells us the peer couldn't connect to us — fail-fast instead of waiting for timeout
+    private func handleCantConnectToPeer(token: UInt32) {
+        // Check if this matches a racing download waiting for indirect connection
+        if var state = pendingIndirectStates[token] {
+            logger.warning("CantConnectToPeer for download token \(token) — failing indirect wait")
+            state.timeoutTask?.cancel()
+            if let continuation = state.continuation {
+                pendingIndirectStates.removeValue(forKey: token)
+                continuation.resume(throwing: NetworkError.connectionFailed("Peer unreachable"))
+            } else {
+                // Mark as timed out so waitForPendingIndirect returns immediately
+                state.timedOut = true
+                pendingIndirectStates[token] = state
+            }
+            return
+        }
+
+        // Check if this is for a pending upload
+        if let uploadManager, uploadManager.hasPendingUpload(token: token) {
+            logger.warning("CantConnectToPeer for upload token \(token) — failing upload")
+            uploadManager.handleCantConnectToPeer(token: token)
+            return
+        }
+
+        logger.debug("CantConnectToPeer token \(token) — no matching pending transfer")
+    }
+
+    // MARK: - Periodic Re-Queue (nicotine+ style)
+
+    /// Periodically re-send QueueDownload for waiting/queued downloads to keep queue position alive
+    private func startReQueueTimer() {
+        reQueueTimer?.cancel()
+        reQueueTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self, !Task.isCancelled else { return }
+                await self.reQueueWaitingDownloads()
+            }
+        }
+    }
+
+    /// Re-send QueueDownload and PlaceInQueueRequest for waiting/queued downloads
+    private func reQueueWaitingDownloads() async {
+        guard let transferState, let networkClient else { return }
+
+        let waitingDownloads = transferState.downloads.filter {
+            $0.status == .queued || $0.status == .waiting
+        }
+        guard !waitingDownloads.isEmpty else { return }
+
+        logger.info("Re-queuing \(waitingDownloads.count) waiting downloads")
+
+        for transfer in waitingDownloads {
+            // Try to find an existing connection to this user
+            if let connection = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
+                do {
+                    // Re-send QueueDownload to keep our spot in the remote queue
+                    try await connection.queueDownload(filename: transfer.filename)
+                    // Ask for our queue position so the UI shows it
+                    try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
+                    logger.debug("Re-queued + requested position: \(transfer.filename)")
+                } catch {
+                    logger.debug("Failed to re-queue \(transfer.filename): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Queue Position Updates
+
+    /// Called when peer tells us our queue position for a file
+    private func handlePlaceInQueueReply(username: String, filename: String, position: UInt32) {
+        guard let transferState else { return }
+
+        // Find matching download by username + filename
+        if let transfer = transferState.downloads.first(where: {
+            $0.username == username && $0.filename == filename &&
+            ($0.status == .queued || $0.status == .waiting || $0.status == .connecting)
+        }) {
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.queuePosition = Int(position)
+            }
+            logger.info("Updated queue position for \(filename) from \(username): \(position)")
+        }
+    }
+
     // MARK: - Upload Denied/Failed Handling
 
     /// Called when peer denies our download request
     func handleUploadDenied(filename: String, reason: String) {
-        print("🚫 handleUploadDenied: \(filename) - \(reason)")
+        logger.info("Upload denied: \(filename) - \(reason)")
 
         // Find pending download by filename
         guard let (token, pending) = pendingDownloads.first(where: { $0.value.filename == filename }) else {
@@ -1864,7 +1978,7 @@ final class DownloadManager {
 
     /// Called when peer's upload to us fails
     func handleUploadFailed(filename: String) {
-        print("❌ handleUploadFailed: \(filename)")
+        logger.info("Upload failed: \(filename)")
 
         // Find pending download by filename
         guard let (token, pending) = pendingDownloads.first(where: { $0.value.filename == filename }) else {
@@ -1881,7 +1995,6 @@ final class DownloadManager {
                 // We had a partial file - the peer might not support resume
                 // Delete partial and retry from scratch
                 logger.warning("Upload failed after resume attempt - deleting partial file and retrying from scratch")
-                print("🔄 Upload failed after resume attempt - deleting partial file \(destPath.lastPathComponent)")
                 try? FileManager.default.removeItem(at: destPath)
 
                 // Mark for retry with status .queued
@@ -1901,7 +2014,7 @@ final class DownloadManager {
 
                 Task {
                     try? await Task.sleep(for: .seconds(2))
-                    print("🔄 Retrying download from scratch: \(filenameCopy)")
+                    self.logger.info("Retrying download from scratch: \(filenameCopy)")
                     await self.startDownload(transferId: transferId, username: username, filename: filenameCopy, size: size)
                 }
                 return
@@ -1963,14 +2076,12 @@ final class DownloadManager {
     private func scheduleRetry(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         guard retryCount < self.maxRetries else {
             logger.info("Max retries (\(self.maxRetries)) reached for \(filename)")
-            print("⚠️ Max retries reached for \(filename)")
             return
         }
 
         // Exponential backoff: 5s, 15s, 45s
         let delay = baseRetryDelay * pow(3.0, Double(retryCount))
         logger.info("Scheduling retry #\(retryCount + 1) for \(filename) in \(delay)s")
-        print("🔄 Retry #\(retryCount + 1) scheduled for \(filename) in \(Int(delay))s")
 
         // Update status to show pending retry
         transferState?.updateTransfer(id: transferId) { t in
@@ -1994,7 +2105,6 @@ final class DownloadManager {
     /// Actually retry a download
     private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
-        print("🔄 Retrying: \(filename) (attempt \(retryCount)/\(maxRetries))")
 
         // Update the existing transfer record
         transferState?.updateTransfer(id: transferId) { t in

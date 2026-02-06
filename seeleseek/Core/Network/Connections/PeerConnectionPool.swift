@@ -70,13 +70,14 @@ final class PeerConnectionPool {
     var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection)
     var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
     var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
+    var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
     var onSharesRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants to browse our shares
     var onUserInfoRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants our user info
 
     // MARK: - Configuration
 
     let maxConnections = 50
-    let maxConnectionsPerIP = 5  // Prevent single IP from exhausting connections
+    let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
     let connectionTimeout: TimeInterval = 30
 
     // SECURITY: Rate limiting configuration
@@ -517,6 +518,12 @@ final class PeerConnectionPool {
                 await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
             }
 
+            await connection.setOnPlaceInQueueReply { [weak self] filename, position in
+                guard let self else { return }
+                let peerUsername = connection.peerInfo.username
+                await self.onPlaceInQueueReply?(peerUsername, filename, position)
+            }
+
             // Set up SharesRequest callback for incoming connections (peer wants to browse us)
             await connection.setOnSharesRequest { [weak self] conn in
                 guard let self else { return }
@@ -876,6 +883,12 @@ final class PeerConnectionPool {
             guard let self else { return }
             self.logger.debug("PlaceInQueueRequest from \(peerUsername): \(filename)")
             await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
+        }
+
+        await connection.setOnPlaceInQueueReply { [weak self] filename, position in
+            guard let self else { return }
+            let peerUsername = connection.peerInfo.username
+            await self.onPlaceInQueueReply?(peerUsername, filename, position)
         }
 
         // Set up SharesRequest callback (peer wants to browse us)

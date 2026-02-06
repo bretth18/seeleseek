@@ -95,6 +95,7 @@ actor PeerConnection {
     private var _onFolderContentsRequest: ((UInt32, String) async -> Void)?  // (token, folder)
     private var _onFolderContentsResponse: ((UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
     private var _onPlaceInQueueRequest: ((String, String) async -> Void)?  // (username, filename) - peer asks for queue position
+    private var _onPlaceInQueueReply: ((String, UInt32) async -> Void)?  // (filename, position)
     private var _onSharesRequest: ((PeerConnection) async -> Void)?  // Peer wants to browse our shares
     private var _onUserInfoRequest: ((PeerConnection) async -> Void)?  // Peer wants our user info
 
@@ -170,6 +171,10 @@ actor PeerConnection {
 
     func setOnPlaceInQueueRequest(_ handler: @escaping (String, String) async -> Void) {
         _onPlaceInQueueRequest = handler
+    }
+
+    func setOnPlaceInQueueReply(_ handler: @escaping (String, UInt32) async -> Void) {
+        _onPlaceInQueueReply = handler
     }
 
     func setOnSharesRequest(_ handler: @escaping (PeerConnection) async -> Void) {
@@ -408,6 +413,7 @@ actor PeerConnection {
         _onFolderContentsRequest = nil
         _onFolderContentsResponse = nil
         _onPlaceInQueueRequest = nil
+        _onPlaceInQueueReply = nil
         _onSharesRequest = nil
         _onUserInfoRequest = nil
     }
@@ -535,6 +541,12 @@ actor PeerConnection {
         let message = MessageBuilder.placeInQueueResponseMessage(filename: filename, place: place)
         try await send(message)
         logger.info("Sent place in queue: \(filename) position=\(place)")
+    }
+
+    func sendPlaceInQueueRequest(filename: String) async throws {
+        let message = MessageBuilder.placeInQueueRequestMessage(filename: filename)
+        try await send(message)
+        logger.debug("Sent PlaceInQueueRequest: \(filename)")
     }
 
     func sendUploadDenied(filename: String, reason: String) async throws {
@@ -1634,7 +1646,7 @@ actor PeerConnection {
         guard let (filename, len) = data.readString(at: 0) else { return }
         guard let place = data.readUInt32(at: len) else { return }
         logger.info("Queue position for \(filename): \(place)")
-        logger.info("Queue position for \(filename): \(place)")
+        await _onPlaceInQueueReply?(filename, place)
     }
 
     private func handleUploadFailed(_ data: Data) async {

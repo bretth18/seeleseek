@@ -149,6 +149,12 @@ final class NetworkClient {
             await self?.onPlaceInQueueRequest?(username, filename, connection)
         }
 
+        // Wire up PlaceInQueueReply for download queue position updates
+        peerConnectionPool.onPlaceInQueueReply = { [weak self] username, filename, position in
+            self?.logger.debug("NetworkClient: PlaceInQueueReply from \(username): \(filename) pos=\(position)")
+            await self?.onPlaceInQueueReply?(username, filename, position)
+        }
+
         // Wire up SharesRequest for when peers want to browse our shared files
         peerConnectionPool.onSharesRequest = { [weak self] username, connection in
             self?.logger.info("NetworkClient: SharesRequest from \(username) - sending our shares")
@@ -207,6 +213,7 @@ final class NetworkClient {
     var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
     var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
+    var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
 
     // User interests & recommendations callbacks
     var onRecommendations: (([(item: String, score: Int32)], [(item: String, score: Int32)]) -> Void)?  // (recommendations, unrecommendations)
@@ -263,6 +270,9 @@ final class NetworkClient {
 
     // Can't create room callback
     var onCantCreateRoom: ((String) -> Void)?  // room name
+
+    // Can't connect to peer callback (server tells us indirect connection failed)
+    var onCantConnectToPeer: ((UInt32) -> Void)?  // token
 
     // Global room callback
     var onGlobalRoomMessage: ((String, String, String) -> Void)?  // (room, username, message)
