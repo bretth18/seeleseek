@@ -108,9 +108,18 @@ final class TransferState {
     /// Load persisted transfers from database
     func loadPersisted() async {
         do {
-            let resumable = try await TransferRepository.fetchResumable()
-            downloads = resumable.filter { $0.direction == .download }
-            uploads = resumable.filter { $0.direction == .upload }
+            var persisted = try await TransferRepository.fetchPersisted()
+
+            // Reset stale active statuses — these were mid-transfer when the app quit
+            for i in persisted.indices {
+                if persisted[i].status == .connecting || persisted[i].status == .transferring {
+                    persisted[i].status = .queued
+                    persisted[i].speed = 0
+                }
+            }
+
+            downloads = persisted.filter { $0.direction == .download }
+            uploads = persisted.filter { $0.direction == .upload }
             logger.info("Loaded \(self.downloads.count) downloads and \(self.uploads.count) uploads from database")
 
             // Also load history

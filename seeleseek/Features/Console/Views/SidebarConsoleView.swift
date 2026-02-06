@@ -100,7 +100,7 @@ struct SidebarConsoleView: View {
                     .font(.system(size: 8))
                     .foregroundStyle(SeeleColors.textTertiary)
             }
-            .padding(.horizontal, SeeleSpacing.sm)
+            .padding(.horizontal, SeeleSpacing.lg)
             .padding(.vertical, SeeleSpacing.sm)
         }
         .buttonStyle(.plain)
@@ -125,7 +125,7 @@ struct SidebarConsoleView: View {
                 .font(SeeleTypography.monoXSmall)
                 .foregroundStyle(SeeleColors.textTertiary.opacity(0.6))
         }
-        .padding(.horizontal, SeeleSpacing.sm)
+        .padding(.horizontal, SeeleSpacing.lg)
         .padding(.bottom, SeeleSpacing.sm)
         .opacity(0.7)
     }
@@ -147,7 +147,7 @@ struct SidebarConsoleView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .padding(.horizontal, SeeleSpacing.sm)
+        .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, 1)
     }
 

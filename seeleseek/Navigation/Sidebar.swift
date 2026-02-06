@@ -7,7 +7,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             // Logo and connection header — pinned at top
             connectionHeader
-                .padding(.horizontal, SeeleSpacing.md)
+                .padding(.horizontal, SeeleSpacing.lg)
                 .padding(.top, SeeleSpacing.md)
                 .padding(.bottom, SeeleSpacing.sm)
 
@@ -52,7 +52,7 @@ struct Sidebar: View {
             Text(title)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
-                .padding(.horizontal, SeeleSpacing.md)
+                .padding(.horizontal, SeeleSpacing.lg)
 
             VStack(spacing: SeeleSpacing.xxs) {
                 content()

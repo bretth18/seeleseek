@@ -3,11 +3,11 @@ import GRDB
 
 /// Repository for Transfer database operations
 struct TransferRepository {
-    /// Fetch all resumable transfers (not completed, cancelled, or failed)
-    static func fetchResumable() async throws -> [Transfer] {
+    /// Fetch all persisted transfers (everything except completed)
+    static func fetchPersisted() async throws -> [Transfer] {
         try await DatabaseManager.shared.read { db in
             let records = try TransferRecord
-                .filter(["queued", "connecting", "transferring", "waiting"].contains(Column("status")))
+                .filter(Column("status") != "completed")
                 .order(Column("createdAt").desc)
                 .fetchAll(db)
             return records.map { $0.toTransfer() }

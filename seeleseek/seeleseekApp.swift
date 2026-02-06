@@ -28,6 +28,51 @@ struct SeeleSeekApp: App {
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(appState.connection.connectionStatus != .connected)
             }
+            CommandMenu("Navigate") {
+                Button("Search") {
+                    appState.sidebarSelection = .search
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("Transfers") {
+                    appState.sidebarSelection = .transfers
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button("Browse") {
+                    appState.sidebarSelection = .browse
+                }
+                .keyboardShortcut("3", modifiers: .command)
+
+                Button("Social") {
+                    appState.sidebarSelection = .social
+                }
+                .keyboardShortcut("4", modifiers: .command)
+
+                Button("Chat") {
+                    appState.sidebarSelection = .chat
+                }
+                .keyboardShortcut("5", modifiers: .command)
+
+                Divider()
+
+                Button("Statistics") {
+                    appState.sidebarSelection = .statistics
+                }
+                .keyboardShortcut("6", modifiers: .command)
+
+                Button("Network Monitor") {
+                    appState.sidebarSelection = .networkMonitor
+                }
+                .keyboardShortcut("7", modifiers: .command)
+
+                Divider()
+
+                Button("Settings") {
+                    appState.sidebarSelection = .settings
+                }
+                .keyboardShortcut("8", modifiers: .command)
+            }
         }
         #endif
 
