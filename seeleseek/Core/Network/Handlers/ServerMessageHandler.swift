@@ -120,6 +120,16 @@ final class ServerMessageHandler {
             handleRelogged()
         case .excludedSearchPhrases:
             handleExcludedSearchPhrases(payload)
+        case .roomMembershipGranted:
+            handleRoomMembershipGranted(payload)
+        case .roomMembershipRevoked:
+            handleRoomMembershipRevoked(payload)
+        case .enableRoomInvitations:
+            handleEnableRoomInvitations(payload)
+        case .newPassword:
+            handleNewPassword(payload)
+        case .globalRoomMessage:
+            handleGlobalRoomMessage(payload)
         default:
             // Log unhandled message with more detail
             logger.info("Unhandled server message: \(code.description) (code=\(codeValue)) payload=\(payload.count) bytes")
@@ -804,6 +814,49 @@ final class ServerMessageHandler {
 
         logger.info("Received \(phrases.count) excluded search phrases")
         client?.onExcludedSearchPhrases?(phrases)
+    }
+
+    // MARK: - Room Membership & Invitations
+
+    private func handleRoomMembershipGranted(_ data: Data) {
+        guard let (room, _) = data.readString(at: 0) else { return }
+        logger.info("Room membership granted: \(room)")
+        client?.onRoomMembershipGranted?(room)
+    }
+
+    private func handleRoomMembershipRevoked(_ data: Data) {
+        guard let (room, _) = data.readString(at: 0) else { return }
+        logger.info("Room membership revoked: \(room)")
+        client?.onRoomMembershipRevoked?(room)
+    }
+
+    private func handleEnableRoomInvitations(_ data: Data) {
+        guard let enabled = data.readBool(at: 0) else { return }
+        logger.info("Room invitations enabled: \(enabled)")
+        client?.onRoomInvitationsEnabled?(enabled)
+    }
+
+    private func handleNewPassword(_ data: Data) {
+        guard let (password, _) = data.readString(at: 0) else { return }
+        logger.info("Password changed confirmation received")
+        client?.onPasswordChanged?(password)
+    }
+
+    // MARK: - Global Room Messages
+
+    private func handleGlobalRoomMessage(_ data: Data) {
+        var offset = 0
+
+        guard let (room, roomLen) = data.readString(at: offset) else { return }
+        offset += roomLen
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        guard let (message, _) = data.readString(at: offset) else { return }
+
+        logger.info("Global room message in \(room) from \(username): \(message)")
+        client?.onGlobalRoomMessage?(room, username, message)
     }
 
     // MARK: - User Interests & Recommendations

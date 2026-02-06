@@ -25,6 +25,7 @@ enum ServerMessageCode: UInt32 {
     case sharedFoldersFiles = 35
     case getUserStats = 36
     case relogged = 41
+    case userSearch = 42
     case addThingILike = 51
     case removeThingILike = 52
     case recommendations = 54
@@ -65,6 +66,7 @@ enum ServerMessageCode: UInt32 {
     case roomSearch = 120
     case sendUploadSpeedRequest = 121
     case userPrivileges = 122
+    case givePrivileges = 123
 
     // Distributed network - branch info from client
     case childDepth = 125  // Tell server our child depth
@@ -86,6 +88,18 @@ enum ServerMessageCode: UInt32 {
     case privateRoomOperatorGranted = 145
     case privateRoomOperatorRevoked = 146
     case privateRoomOperators = 148
+    case messageUsers = 149
+    case joinGlobalRoom = 150
+    case leaveGlobalRoom = 151
+
+    // Room membership & invitations
+    case roomMembershipGranted = 139
+    case roomMembershipRevoked = 140
+    case enableRoomInvitations = 141
+    case newPassword = 142
+
+    // Global room messages
+    case globalRoomMessage = 152
 
     // Search
     case excludedSearchPhrases = 160
@@ -116,6 +130,7 @@ enum ServerMessageCode: UInt32 {
         case .sharedFoldersFiles: "SharedFoldersFiles"
         case .getUserStats: "GetUserStats"
         case .relogged: "Relogged"
+        case .userSearch: "UserSearch"
         case .cantConnectToPeer: "CantConnectToPeer"
         case .cantCreateRoom: "CantCreateRoom"
         case .haveNoParent: "HaveNoParent"
@@ -127,6 +142,15 @@ enum ServerMessageCode: UInt32 {
         case .acceptChildren: "AcceptChildren"
         case .roomList: "RoomList"
         case .excludedSearchPhrases: "ExcludedSearchPhrases"
+        case .roomMembershipGranted: "RoomMembershipGranted"
+        case .roomMembershipRevoked: "RoomMembershipRevoked"
+        case .enableRoomInvitations: "EnableRoomInvitations"
+        case .newPassword: "NewPassword"
+        case .givePrivileges: "GivePrivileges"
+        case .messageUsers: "MessageUsers"
+        case .joinGlobalRoom: "JoinGlobalRoom"
+        case .leaveGlobalRoom: "LeaveGlobalRoom"
+        case .globalRoomMessage: "GlobalRoomMessage"
         default: "Code(\(rawValue))"
         }
     }

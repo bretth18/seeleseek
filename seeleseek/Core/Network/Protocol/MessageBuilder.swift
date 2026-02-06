@@ -722,6 +722,77 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    // MARK: - User Search
+
+    /// Search a specific user's files (code 42)
+    nonisolated static func userSearchMessage(username: String, token: UInt32, query: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.userSearch.rawValue)
+        payload.appendString(username)
+        payload.appendUInt32(token)
+        payload.appendString(query)
+        return wrapMessage(payload)
+    }
+
+    // MARK: - Upload Speed & Privileges
+
+    /// Report upload speed to server (code 121)
+    nonisolated static func sendUploadSpeedMessage(speed: UInt32) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.sendUploadSpeedRequest.rawValue)
+        payload.appendUInt32(speed)
+        return wrapMessage(payload)
+    }
+
+    /// Give privileges to another user (code 123)
+    nonisolated static func givePrivilegesMessage(username: String, days: UInt32) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.givePrivileges.rawValue)
+        payload.appendString(username)
+        payload.appendUInt32(days)
+        return wrapMessage(payload)
+    }
+
+    // MARK: - Room Invitations
+
+    /// Enable or disable room invitations (code 141)
+    nonisolated static func enableRoomInvitationsMessage(enable: Bool) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.enableRoomInvitations.rawValue)
+        payload.appendBool(enable)
+        return wrapMessage(payload)
+    }
+
+    // MARK: - Bulk Messaging
+
+    /// Send a message to multiple users at once (code 149)
+    nonisolated static func messageUsersMessage(usernames: [String], message: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.messageUsers.rawValue)
+        payload.appendUInt32(UInt32(usernames.count))
+        for username in usernames {
+            payload.appendString(username)
+        }
+        payload.appendString(message)
+        return wrapMessage(payload)
+    }
+
+    // MARK: - Global Room
+
+    /// Join the global room (code 150)
+    nonisolated static func joinGlobalRoomMessage() -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.joinGlobalRoom.rawValue)
+        return wrapMessage(payload)
+    }
+
+    /// Leave the global room (code 151)
+    nonisolated static func leaveGlobalRoomMessage() -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.leaveGlobalRoom.rawValue)
+        return wrapMessage(payload)
+    }
+
     // MARK: - Utilities
 
     nonisolated private static func wrapMessage(_ payload: Data) -> Data {

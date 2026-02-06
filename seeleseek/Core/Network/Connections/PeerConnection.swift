@@ -1296,17 +1296,16 @@ actor PeerConnection {
         let dataPreview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
         logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
 
-        // Shares are zlib compressed
+        // Shares are zlib compressed per protocol spec
         let decompressed: Data
         do {
             decompressed = try decompressZlib(data)
             logger.debug("[\(self.peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
         } catch {
-            logger.warning("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
-            logger.error("Failed to decompress shares: \(error)")
-            // Try parsing raw data as fallback
-            logger.debug("[\(self.peerInfo.username)] Trying raw data as fallback...")
-            decompressed = data
+            logger.error("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
+            // SharesReply is always zlib compressed per protocol - raw data cannot be parsed
+            await _onSharesReceived?([])
+            return
         }
 
         var offset = 0

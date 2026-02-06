@@ -55,7 +55,7 @@ final class ChatState {
         }
 
         // Listen for user status updates to update private chat online status
-        client.onUserStatus = { [weak self] username, status, _ in
+        client.addUserStatusHandler { [weak self] username, status, _ in
             self?.updateUserOnlineStatus(username: username, status: status)
         }
     }

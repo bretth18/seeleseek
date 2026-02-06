@@ -161,6 +161,11 @@ final class NetworkClient {
             await self?.handleUserInfoRequest(username: username, connection: connection)
         }
 
+        // Wire up shares received through pool (for unsolicited shares or pool-routed browse)
+        peerConnectionPool.onSharesReceived = { [weak self] username, files in
+            self?.logger.info("NetworkClient: Received \(files.count) shared files from \(username) via pool")
+        }
+
         // Wire up user IP discovery for country flags
         peerConnectionPool.onUserIPDiscovered = { [weak self] username, ip in
             self?.userInfoCache.registerIP(ip, for: username)
@@ -211,7 +216,11 @@ final class NetworkClient {
     var onItemSimilarUsers: ((String, [String]) -> Void)?  // (item, users)
 
     // User stats & privileges callbacks
-    var onUserStatus: ((String, UserStatus, Bool) -> Void)?  // (username, status, privileged)
+    private var userStatusHandlers: [(String, UserStatus, Bool) -> Void] = []
+    /// Register a handler for user status updates. Multiple handlers supported.
+    func addUserStatusHandler(_ handler: @escaping (String, UserStatus, Bool) -> Void) {
+        userStatusHandlers.append(handler)
+    }
     var onUserStats: ((String, UInt32, UInt64, UInt32, UInt32) -> Void)?  // (username, avgSpeed, uploadNum, files, dirs)
     var onPrivilegesChecked: ((UInt32) -> Void)?  // timeLeft in seconds
     var onUserPrivileges: ((String, Bool) -> Void)?  // (username, privileged)
@@ -238,6 +247,15 @@ final class NetworkClient {
 
     // Excluded search phrases callback
     var onExcludedSearchPhrases: (([String]) -> Void)?  // Phrases excluded from search by server
+
+    // Room membership callbacks
+    var onRoomMembershipGranted: ((String) -> Void)?  // room name
+    var onRoomMembershipRevoked: ((String) -> Void)?  // room name
+    var onRoomInvitationsEnabled: ((Bool) -> Void)?  // enabled
+    var onPasswordChanged: ((String) -> Void)?  // confirmed password
+
+    // Global room callback
+    var onGlobalRoomMessage: ((String, String, String) -> Void)?  // (room, username, message)
 
     // MARK: - Connection
 
@@ -783,13 +801,9 @@ final class NetworkClient {
 
         var connection: PeerConnection
 
-        // Step 0: Check if we already have an active connection to this user
-        // This is common - the peer may have connected to us for search results
-        if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
-            logger.debug("Browse: Found existing connection to \(username), reusing it!")
-            connection = existingConnection
-        } else {
-            // No existing connection - need to establish one
+        // Always create a fresh connection for browse - reusing existing connections
+        // causes races with search callback auto-disconnect timers
+        do {
             let token = UInt32.random(in: 0...UInt32.max)
             logger.debug("Browse: No existing connection, using token \(token) for \(username)")
 
@@ -1145,8 +1159,10 @@ final class NetworkClient {
             continuation.resume(returning: (status: status, privileged: privileged))
         }
 
-        // Also call the regular callback for SocialState etc.
-        onUserStatus?(username, status, privileged)
+        // Notify all registered status handlers
+        for handler in userStatusHandlers {
+            handler(username, status, privileged)
+        }
     }
 
     // MARK: - User Stats & Privileges
@@ -1251,6 +1267,58 @@ final class NetworkClient {
         let message = MessageBuilder.privateRoomRemoveOperator(room: room, username: username)
         try await serverConnection?.send(message)
         logger.info("Removing \(username) as operator from \(room)")
+    }
+
+    // MARK: - User Search
+
+    /// Search a specific user's files
+    func userSearch(username: String, token: UInt32, query: String) async throws {
+        let message = MessageBuilder.userSearchMessage(username: username, token: token, query: query)
+        try await serverConnection?.send(message)
+    }
+
+    // MARK: - Upload Speed & Privileges
+
+    /// Report upload speed to server
+    func reportUploadSpeed(_ speed: UInt32) async throws {
+        let message = MessageBuilder.sendUploadSpeedMessage(speed: speed)
+        try await serverConnection?.send(message)
+    }
+
+    /// Give privileges to another user
+    func givePrivileges(to username: String, days: UInt32) async throws {
+        let message = MessageBuilder.givePrivilegesMessage(username: username, days: days)
+        try await serverConnection?.send(message)
+    }
+
+    // MARK: - Room Invitations
+
+    /// Enable or disable room invitations
+    func enableRoomInvitations(_ enable: Bool) async throws {
+        let message = MessageBuilder.enableRoomInvitationsMessage(enable: enable)
+        try await serverConnection?.send(message)
+    }
+
+    // MARK: - Bulk Messaging
+
+    /// Send a message to multiple users at once
+    func messageUsers(_ usernames: [String], message: String) async throws {
+        let msg = MessageBuilder.messageUsersMessage(usernames: usernames, message: message)
+        try await serverConnection?.send(msg)
+    }
+
+    // MARK: - Global Room
+
+    /// Join the global room
+    func joinGlobalRoom() async throws {
+        let message = MessageBuilder.joinGlobalRoomMessage()
+        try await serverConnection?.send(message)
+    }
+
+    /// Leave the global room
+    func leaveGlobalRoom() async throws {
+        let message = MessageBuilder.leaveGlobalRoomMessage()
+        try await serverConnection?.send(message)
     }
 
     // MARK: - Distributed Network

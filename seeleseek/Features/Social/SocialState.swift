@@ -83,7 +83,7 @@ final class SocialState {
         logger.info("Setting up social callbacks with NetworkClient...")
 
         // User status updates (for watched users / buddies)
-        client.onUserStatus = { [weak self] username, status, privileged in
+        client.addUserStatusHandler { [weak self] username, status, privileged in
             guard let self else { return }
             self.updateBuddyStatus(username: username, status: status, privileged: privileged)
             // Also update viewing profile if this is the user we're looking at

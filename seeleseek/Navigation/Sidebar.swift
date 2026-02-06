@@ -61,9 +61,19 @@ struct Sidebar: View {
 
     private var connectionHeader: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-            Text("seeleseek")
-                .font(SeeleTypography.logo)
-                .foregroundStyle(SeeleColors.textPrimary)
+            
+            HStack(spacing:
+                    SeeleSpacing.xs) {
+                Image(nsImage: .gsgaag2)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 24)
+                    .foregroundStyle(SeeleColors.accent)
+                Text("seeleseek")
+                    .font(SeeleTypography.logo)
+                    .foregroundStyle(SeeleColors.textPrimary)
+            }
 
             HStack(spacing: SeeleSpacing.xs) {
                 Circle()
