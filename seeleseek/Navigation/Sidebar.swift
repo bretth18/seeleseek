@@ -16,6 +16,7 @@ struct Sidebar: View {
                 VStack(alignment: .leading, spacing: SeeleSpacing.md) {
                     sidebarSection("Navigation") {
                         SidebarRow(item: .search)
+                        SidebarRow(item: .wishlists)
                         SidebarRow(item: .transfers)
                         SidebarRow(item: .browse)
                     }
@@ -111,6 +112,8 @@ struct SidebarRow: View {
             return appState.chatState.totalUnreadCount
         case .social:
             return appState.socialState.onlineBuddies.count
+        case .wishlists:
+            return appState.wishlistState.items.count
         default:
             return 0
         }

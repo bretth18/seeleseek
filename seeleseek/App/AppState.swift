@@ -14,6 +14,7 @@ final class AppState {
     var browseState = BrowseState()
     var metadataState = MetadataState()
     var socialState = SocialState()
+    var wishlistState = WishlistState()
 
     // MARK: - Admin Messages
     var adminMessages: [AdminMessage] = []
@@ -39,6 +40,19 @@ final class AppState {
             chatState.setupCallbacks(client: _networkClient!)
             browseState.configure(networkClient: _networkClient!)
             socialState.setupCallbacks(client: _networkClient!)
+            wishlistState.setupCallbacks(client: _networkClient!)
+
+            // Override search results callback to route wishlist tokens
+            let originalSearchCallback = _networkClient!.onSearchResults
+            _networkClient!.onSearchResults = { [weak self] token, results in
+                guard let self else { return }
+                if self.wishlistState.isWishlistToken(token) {
+                    self.wishlistState.handleSearchResults(token: token, results: results)
+                } else {
+                    originalSearchCallback?(token, results)
+                }
+            }
+
             downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
 
@@ -155,6 +169,9 @@ final class AppState {
         // Load resumable transfers
         await transferState.loadPersisted()
 
+        // Load wishlist items
+        await wishlistState.loadFromDatabase()
+
         logger.info("Persisted state loaded")
     }
 }
@@ -193,6 +210,7 @@ enum NavigationTab: String, CaseIterable, Identifiable {
 
 enum SidebarItem: Hashable, Identifiable {
     case search
+    case wishlists
     case transfers
     case chat
     case browse
@@ -206,6 +224,7 @@ enum SidebarItem: Hashable, Identifiable {
     var id: String {
         switch self {
         case .search: "search"
+        case .wishlists: "wishlists"
         case .transfers: "transfers"
         case .chat: "chat"
         case .browse: "browse"
@@ -221,6 +240,7 @@ enum SidebarItem: Hashable, Identifiable {
     var title: String {
         switch self {
         case .search: "Search"
+        case .wishlists: "Wishlists"
         case .transfers: "Transfers"
         case .chat: "Chat"
         case .browse: "Browse"
@@ -236,6 +256,7 @@ enum SidebarItem: Hashable, Identifiable {
     var icon: String {
         switch self {
         case .search: "magnifyingglass"
+        case .wishlists: "star"
         case .transfers: "arrow.up.arrow.down"
         case .chat: "bubble.left.and.bubble.right"
         case .browse: "folder"

@@ -97,6 +97,8 @@ struct MainView: View {
             switch appState.sidebarSelection {
             case .search:
                 SearchView()
+            case .wishlists:
+                WishlistView()
             case .transfers:
                 TransfersView()
             case .chat:

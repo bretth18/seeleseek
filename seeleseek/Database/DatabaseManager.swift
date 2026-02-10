@@ -203,6 +203,18 @@ actor DatabaseManager {
             try db.create(index: "idx_private_messages_peer_time", on: "private_messages", columns: ["peerUsername", "timestamp"])
         }
 
+        // v5: Wishlists
+        migrator.registerMigration("v5") { db in
+            try db.create(table: "wishlists") { t in
+                t.column("id", .text).primaryKey()
+                t.column("query", .text).notNull()
+                t.column("createdAt", .double).notNull()
+                t.column("enabled", .integer).notNull().defaults(to: 1)
+                t.column("lastSearchedAt", .double)
+                t.column("resultCount", .integer).notNull().defaults(to: 0)
+            }
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")
