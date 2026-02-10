@@ -41,10 +41,11 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
     var duration: Double
     var averageSpeed: Double
     var isDownload: Bool
+    var localPath: String?
 
     // Custom coding for Bool<->Int conversion
     enum CodingKeys: String, CodingKey {
-        case id, timestamp, filename, username, size, duration, averageSpeed, isDownload
+        case id, timestamp, filename, username, size, duration, averageSpeed, isDownload, localPath
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +58,7 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
         duration = try container.decode(Double.self, forKey: .duration)
         averageSpeed = try container.decode(Double.self, forKey: .averageSpeed)
         isDownload = (try container.decode(Int.self, forKey: .isDownload)) != 0
+        localPath = try container.decodeIfPresent(String.self, forKey: .localPath)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -69,6 +71,7 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
         try container.encode(duration, forKey: .duration)
         try container.encode(averageSpeed, forKey: .averageSpeed)
         try container.encode(isDownload ? 1 : 0, forKey: .isDownload)
+        try container.encodeIfPresent(localPath, forKey: .localPath)
     }
 
     init(
@@ -79,7 +82,8 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
         size: Int64,
         duration: Double,
         averageSpeed: Double,
-        isDownload: Bool
+        isDownload: Bool,
+        localPath: String? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -89,6 +93,7 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
         self.duration = duration
         self.averageSpeed = averageSpeed
         self.isDownload = isDownload
+        self.localPath = localPath
     }
 
     /// Create from completed transfer
@@ -100,7 +105,8 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
             size: Int64(transfer.size),
             duration: duration,
             averageSpeed: avgSpeed,
-            isDownload: transfer.direction == .download
+            isDownload: transfer.direction == .download,
+            localPath: transfer.localPath?.path
         )
     }
 }

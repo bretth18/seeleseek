@@ -12,6 +12,50 @@ struct TransferHistoryItem: Identifiable, Sendable {
     let duration: TimeInterval
     let averageSpeed: Double
     let isDownload: Bool
+    let localPath: URL?
+
+    /// Resolved local path - uses stored path, or tries the default download location
+    var resolvedLocalPath: URL? {
+        if let localPath, FileManager.default.fileExists(atPath: localPath.path) {
+            return localPath
+        }
+        // Try default download directory: ~/Downloads/SeeleSeek/{username}/{folders}/{filename}
+        return Self.inferDownloadPath(filename: filename, username: username)
+    }
+
+    var fileExists: Bool {
+        resolvedLocalPath != nil
+    }
+
+    var isAudioFile: Bool {
+        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
+        let ext = (displayFilename as NSString).pathExtension.lowercased()
+        return audioExtensions.contains(ext)
+    }
+
+    /// Reconstruct the likely download path from the soulseek filename
+    private static func inferDownloadPath(filename: String, username: String) -> URL? {
+        let paths = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
+        let baseDir = paths[0].appendingPathComponent("SeeleSeek")
+
+        var components = filename.split(separator: "\\").map(String.init)
+        // Strip @@ root share marker
+        if !components.isEmpty && components[0].hasPrefix("@@") {
+            components.removeFirst()
+        }
+        guard !components.isEmpty else { return nil }
+
+        // Default template: {username}/{folders}/{filename}
+        var url = baseDir.appendingPathComponent(username)
+        for component in components {
+            url = url.appendingPathComponent(component)
+        }
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
+        return nil
+    }
 
     var displayFilename: String {
         if let lastComponent = filename.split(separator: "\\").last {
@@ -142,7 +186,8 @@ final class TransferState {
                     size: record.size,
                     duration: record.duration,
                     averageSpeed: record.averageSpeed,
-                    isDownload: record.isDownload
+                    isDownload: record.isDownload,
+                    localPath: record.localPath.map { URL(fileURLWithPath: $0) }
                 )
             }
             logger.info("Loaded \(self.history.count) history entries from database")

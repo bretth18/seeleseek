@@ -111,6 +111,8 @@ final class SearchState {
 
     // MARK: - Filters
     var filterMinBitrate: Int? = nil
+    var filterMinSampleRate: Int? = nil
+    var filterMinBitDepth: Int? = nil
     var filterMinSize: Int64? = nil
     var filterMaxSize: Int64? = nil
     var filterExtensions: Set<String> = []
@@ -121,6 +123,8 @@ final class SearchState {
 
     var hasActiveFilters: Bool {
         filterMinBitrate != nil ||
+        filterMinSampleRate != nil ||
+        filterMinBitDepth != nil ||
         filterMinSize != nil ||
         filterMaxSize != nil ||
         !filterExtensions.isEmpty ||
@@ -130,6 +134,8 @@ final class SearchState {
     var activeFilterCount: Int {
         var count = 0
         if filterMinBitrate != nil { count += 1 }
+        if filterMinSampleRate != nil { count += 1 }
+        if filterMinBitDepth != nil { count += 1 }
         if !filterExtensions.isEmpty { count += 1 }
         if filterFreeSlotOnly { count += 1 }
         if filterMinSize != nil { count += 1 }
@@ -141,36 +147,59 @@ final class SearchState {
         case mp3_320
         case flac
         case lossless
+        case hiRes
 
         var extensions: Set<String> {
             switch self {
             case .mp3_320: return ["mp3"]
             case .flac: return ["flac"]
             case .lossless: return ["flac", "wav", "aiff", "alac", "ape"]
+            case .hiRes: return ["flac", "wav", "aiff", "alac"]
             }
         }
 
         var minBitrate: Int? {
             switch self {
             case .mp3_320: return 320
-            case .flac, .lossless: return nil
+            case .flac, .lossless, .hiRes: return nil
+            }
+        }
+
+        var minSampleRate: Int? {
+            switch self {
+            case .hiRes: return 96000
+            default: return nil
+            }
+        }
+
+        var minBitDepth: Int? {
+            switch self {
+            case .hiRes: return 24
+            default: return nil
             }
         }
     }
 
     func applyPreset(_ preset: FilterPreset) {
-        if filterExtensions == preset.extensions && filterMinBitrate == preset.minBitrate {
+        if isPresetActive(preset) {
             // Toggle off if already active
             filterExtensions = []
             filterMinBitrate = nil
+            filterMinSampleRate = nil
+            filterMinBitDepth = nil
         } else {
             filterExtensions = preset.extensions
             filterMinBitrate = preset.minBitrate
+            filterMinSampleRate = preset.minSampleRate
+            filterMinBitDepth = preset.minBitDepth
         }
     }
 
     func isPresetActive(_ preset: FilterPreset) -> Bool {
-        filterExtensions == preset.extensions && filterMinBitrate == preset.minBitrate
+        filterExtensions == preset.extensions &&
+        filterMinBitrate == preset.minBitrate &&
+        filterMinSampleRate == preset.minSampleRate &&
+        filterMinBitDepth == preset.minBitDepth
     }
 
     func toggleExtension(_ ext: String) {
@@ -184,6 +213,7 @@ final class SearchState {
     enum SortOrder: String, CaseIterable {
         case relevance = "Relevance"
         case bitrate = "Bitrate"
+        case sampleRate = "Sample Rate"
         case size = "Size"
         case speed = "Speed"
         case queue = "Queue"
@@ -205,6 +235,14 @@ final class SearchState {
         // Apply filters
         if let minBitrate = filterMinBitrate {
             results = results.filter { ($0.bitrate ?? 0) >= UInt32(minBitrate) }
+        }
+
+        if let minSampleRate = filterMinSampleRate {
+            results = results.filter { ($0.sampleRate ?? 0) >= UInt32(minSampleRate) }
+        }
+
+        if let minBitDepth = filterMinBitDepth {
+            results = results.filter { ($0.bitDepth ?? 0) >= UInt32(minBitDepth) }
         }
 
         if let minSize = filterMinSize {
@@ -229,6 +267,8 @@ final class SearchState {
             break // Keep original order
         case .bitrate:
             results.sort { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
+        case .sampleRate:
+            results.sort { ($0.sampleRate ?? 0) > ($1.sampleRate ?? 0) }
         case .size:
             results.sort { $0.size > $1.size }
         case .speed:
@@ -425,6 +465,8 @@ final class SearchState {
 
     func clearFilters() {
         filterMinBitrate = nil
+        filterMinSampleRate = nil
+        filterMinBitDepth = nil
         filterMinSize = nil
         filterMaxSize = nil
         filterExtensions = []

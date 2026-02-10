@@ -23,7 +23,7 @@ actor CoverArtArchive {
         let release: String
 
         struct CoverArtImage: Decodable {
-            let id: String
+            let id: Int64
             let image: String  // Full size URL
             let thumbnails: Thumbnails
             let front: Bool

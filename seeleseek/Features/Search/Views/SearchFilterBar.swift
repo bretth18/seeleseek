@@ -38,6 +38,9 @@ struct SearchFilterBar: View {
                 filterChip("Lossless", isActive: searchState.isPresetActive(.lossless)) {
                     searchState.applyPreset(.lossless)
                 }
+                filterChip("Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
+                    searchState.applyPreset(.hiRes)
+                }
 
                 Spacer()
 
@@ -81,6 +84,30 @@ struct SearchFilterBar: View {
                         ForEach(presets, id: \.0) { label, value in
                             filterChip(label, isActive: searchState.filterMinBitrate == value) {
                                 searchState.filterMinBitrate = value
+                            }
+                        }
+                    }
+
+                    // Sample rate row
+                    filterRow("Sample") {
+                        let presets: [(String, Int?)] = [
+                            ("Any", nil), ("44.1k+", 44100), ("48k+", 48000), ("96k+", 96000)
+                        ]
+                        ForEach(presets, id: \.0) { label, value in
+                            filterChip(label, isActive: searchState.filterMinSampleRate == value) {
+                                searchState.filterMinSampleRate = value
+                            }
+                        }
+                    }
+
+                    // Bit depth row
+                    filterRow("Depth") {
+                        let presets: [(String, Int?)] = [
+                            ("Any", nil), ("16+", 16), ("24+", 24), ("32+", 32)
+                        ]
+                        ForEach(presets, id: \.0) { label, value in
+                            filterChip(label, isActive: searchState.filterMinBitDepth == value) {
+                                searchState.filterMinBitDepth = value
                             }
                         }
                     }

@@ -63,6 +63,14 @@ struct SearchResultRow: View {
                     StandardMetadataBadge(bitrate, color: bitrateColor)
                 }
 
+                if let sampleRate = result.formattedSampleRate {
+                    StandardMetadataBadge(sampleRate, color: sampleRateColor)
+                }
+
+                if let bitDepth = result.formattedBitDepth {
+                    StandardMetadataBadge(bitDepth, color: SeeleColors.textTertiary)
+                }
+
                 if let duration = result.formattedDuration {
                     StandardMetadataBadge(duration, color: SeeleColors.textTertiary)
                 }
@@ -226,6 +234,17 @@ struct SearchResultRow: View {
             return SeeleColors.info
         } else if bitrate >= 192 {
             return SeeleColors.warning
+        } else {
+            return SeeleColors.textTertiary
+        }
+    }
+
+    private var sampleRateColor: Color {
+        guard let sampleRate = result.sampleRate else { return SeeleColors.textTertiary }
+        if sampleRate >= 96000 {
+            return SeeleColors.success
+        } else if sampleRate >= 48000 {
+            return SeeleColors.info
         } else {
             return SeeleColors.textTertiary
         }

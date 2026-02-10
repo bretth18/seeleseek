@@ -215,6 +215,13 @@ actor DatabaseManager {
             }
         }
 
+        // v6: Sample rate, bit depth for search results; localPath for transfer history
+        migrator.registerMigration("v6") { db in
+            try db.execute(sql: "ALTER TABLE search_results ADD COLUMN sampleRate INTEGER")
+            try db.execute(sql: "ALTER TABLE search_results ADD COLUMN bitDepth INTEGER")
+            try db.execute(sql: "ALTER TABLE transfer_history ADD COLUMN localPath TEXT")
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")

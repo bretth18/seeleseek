@@ -205,6 +205,11 @@ final class MetadataState {
             return
         }
 
+        // Clear previous MusicBrainz cover art before fetching new one
+        coverArtData = nil
+        coverArtURL = nil
+        coverArtSource = .none
+
         // Fetch cover art from Cover Art Archive
         isLoadingCoverArt = true
         do {

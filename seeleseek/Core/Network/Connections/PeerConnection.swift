@@ -1521,6 +1521,8 @@ actor PeerConnection {
                 size: file.size,
                 bitrate: file.attributes.first { $0.type == 0 }?.value,
                 duration: file.attributes.first { $0.type == 1 }?.value,
+                sampleRate: file.attributes.first { $0.type == 4 }?.value,
+                bitDepth: file.attributes.first { $0.type == 5 }?.value,
                 freeSlots: parsed.freeSlots,
                 uploadSpeed: parsed.uploadSpeed,
                 queueLength: parsed.queueLength,

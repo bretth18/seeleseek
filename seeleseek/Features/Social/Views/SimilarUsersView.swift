@@ -195,6 +195,15 @@ struct SimilarUsersView: View {
             HStack(spacing: SeeleSpacing.sm) {
                 Button {
                     Task {
+                        await socialState.loadProfile(for: username)
+                    }
+                } label: {
+                    Image(systemName: "person.crop.circle")
+                }
+                .help("View Profile")
+                
+                Button {
+                    Task {
                         await socialState.addBuddy(username)
                     }
                 } label: {

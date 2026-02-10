@@ -7,6 +7,8 @@ struct SearchResult: Identifiable, Hashable, Sendable {
     let size: UInt64
     let bitrate: UInt32?
     let duration: UInt32?
+    let sampleRate: UInt32?
+    let bitDepth: UInt32?
     let isVBR: Bool
     let freeSlots: Bool
     let uploadSpeed: UInt32
@@ -20,6 +22,8 @@ struct SearchResult: Identifiable, Hashable, Sendable {
         size: UInt64,
         bitrate: UInt32? = nil,
         duration: UInt32? = nil,
+        sampleRate: UInt32? = nil,
+        bitDepth: UInt32? = nil,
         isVBR: Bool = false,
         freeSlots: Bool = true,
         uploadSpeed: UInt32 = 0,
@@ -32,6 +36,8 @@ struct SearchResult: Identifiable, Hashable, Sendable {
         self.size = size
         self.bitrate = bitrate
         self.duration = duration
+        self.sampleRate = sampleRate
+        self.bitDepth = bitDepth
         self.isVBR = isVBR
         self.freeSlots = freeSlots
         self.uploadSpeed = uploadSpeed
@@ -77,6 +83,24 @@ struct SearchResult: Identifiable, Hashable, Sendable {
 
     var formattedSpeed: String {
         ByteFormatter.formatSpeed(Int64(uploadSpeed))
+    }
+
+    var formattedSampleRate: String? {
+        guard let sampleRate, sampleRate > 0 else { return nil }
+        if sampleRate % 1000 == 0 {
+            return "\(sampleRate / 1000) kHz"
+        }
+        let khz = Double(sampleRate) / 1000.0
+        // Format like 44.1 kHz, 88.2 kHz
+        if khz == khz.rounded(.toNearestOrEven) {
+            return "\(Int(khz)) kHz"
+        }
+        return String(format: "%.1f kHz", khz)
+    }
+
+    var formattedBitDepth: String? {
+        guard let bitDepth, bitDepth > 0 else { return nil }
+        return "\(bitDepth)-bit"
     }
 
     var fileExtension: String {

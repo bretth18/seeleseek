@@ -12,6 +12,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
     var size: Int64
     var bitrate: Int?
     var duration: Int?
+    var sampleRate: Int?
+    var bitDepth: Int?
     var isVBR: Bool
     var freeSlots: Bool
     var uploadSpeed: Int
@@ -19,7 +21,7 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
 
     // Custom coding keys to handle Bool<->Int conversion
     enum CodingKeys: String, CodingKey {
-        case id, queryId, username, filename, size, bitrate, duration
+        case id, queryId, username, filename, size, bitrate, duration, sampleRate, bitDepth
         case isVBR, freeSlots, uploadSpeed, queueLength
     }
 
@@ -32,6 +34,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
         size = try container.decode(Int64.self, forKey: .size)
         bitrate = try container.decodeIfPresent(Int.self, forKey: .bitrate)
         duration = try container.decodeIfPresent(Int.self, forKey: .duration)
+        sampleRate = try container.decodeIfPresent(Int.self, forKey: .sampleRate)
+        bitDepth = try container.decodeIfPresent(Int.self, forKey: .bitDepth)
         // Decode integers as bools
         isVBR = (try container.decode(Int.self, forKey: .isVBR)) != 0
         freeSlots = (try container.decode(Int.self, forKey: .freeSlots)) != 0
@@ -48,6 +52,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
         try container.encode(size, forKey: .size)
         try container.encodeIfPresent(bitrate, forKey: .bitrate)
         try container.encodeIfPresent(duration, forKey: .duration)
+        try container.encodeIfPresent(sampleRate, forKey: .sampleRate)
+        try container.encodeIfPresent(bitDepth, forKey: .bitDepth)
         // Encode bools as integers
         try container.encode(isVBR ? 1 : 0, forKey: .isVBR)
         try container.encode(freeSlots ? 1 : 0, forKey: .freeSlots)
@@ -63,6 +69,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
         size: Int64,
         bitrate: Int?,
         duration: Int?,
+        sampleRate: Int? = nil,
+        bitDepth: Int? = nil,
         isVBR: Bool,
         freeSlots: Bool,
         uploadSpeed: Int,
@@ -75,6 +83,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
         self.size = size
         self.bitrate = bitrate
         self.duration = duration
+        self.sampleRate = sampleRate
+        self.bitDepth = bitDepth
         self.isVBR = isVBR
         self.freeSlots = freeSlots
         self.uploadSpeed = uploadSpeed
@@ -90,6 +100,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
             size: UInt64(size),
             bitrate: bitrate.map { UInt32($0) },
             duration: duration.map { UInt32($0) },
+            sampleRate: sampleRate.map { UInt32($0) },
+            bitDepth: bitDepth.map { UInt32($0) },
             isVBR: isVBR,
             freeSlots: freeSlots,
             uploadSpeed: UInt32(uploadSpeed),
@@ -107,6 +119,8 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
             size: Int64(result.size),
             bitrate: result.bitrate.map { Int($0) },
             duration: result.duration.map { Int($0) },
+            sampleRate: result.sampleRate.map { Int($0) },
+            bitDepth: result.bitDepth.map { Int($0) },
             isVBR: result.isVBR,
             freeSlots: result.freeSlots,
             uploadSpeed: Int(result.uploadSpeed),
