@@ -118,23 +118,7 @@ struct HistoryRow: View {
                 Divider()
             }
 
-            Button {
-                Task { await appState.socialState.loadProfile(for: item.username) }
-            } label: {
-                Label("View Profile", systemImage: "person.crop.circle")
-            }
-
-            Button {
-                appState.browseState.browseUser(item.username)
-            } label: {
-                Label("Browse Files", systemImage: "folder")
-            }
-
-            Button {
-                appState.chatState.selectPrivateChat(item.username)
-            } label: {
-                Label("Send Message", systemImage: "envelope")
-            }
+            UserContextMenuItems(username: item.username)
         }
     }
 

@@ -9,9 +9,7 @@ struct BuddyRowView: View {
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
             // Status indicator
-            Circle()
-                .fill(statusColor)
-                .frame(width: SeeleSpacing.statusDotLarge, height: SeeleSpacing.statusDotLarge)
+            StandardStatusDot(status: buddy.status, size: SeeleSpacing.statusDotLarge)
 
             // Username and info
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -81,9 +79,7 @@ struct BuddyRowView: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .contextMenu {
-            Button("View Profile") { viewProfile() }
-            Button("Browse Files") { browseFiles() }
-            Button("Send Message") { startChat() }
+            UserContextMenuItems(username: buddy.username, navigateOnBrowse: true, navigateOnMessage: true)
             Divider()
             Button("Refresh Status") {
                 Task {
@@ -96,14 +92,6 @@ struct BuddyRowView: View {
                     await appState.socialState.removeBuddy(buddy.username)
                 }
             }
-        }
-    }
-
-    private var statusColor: Color {
-        switch buddy.status {
-        case .online: SeeleColors.success
-        case .away: SeeleColors.warning
-        case .offline: SeeleColors.textTertiary
         }
     }
 

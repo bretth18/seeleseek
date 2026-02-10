@@ -5,6 +5,17 @@ struct StandardStatusDot: View {
     let status: BuddyStatus
     var size: CGFloat = SeeleSpacing.statusDot
 
+    /// Convenience init for simple online/offline state
+    init(isOnline: Bool, size: CGFloat = SeeleSpacing.statusDot) {
+        self.status = isOnline ? .online : .offline
+        self.size = size
+    }
+
+    init(status: BuddyStatus, size: CGFloat = SeeleSpacing.statusDot) {
+        self.status = status
+        self.size = size
+    }
+
     private var statusColor: Color {
         switch status {
         case .online: SeeleColors.success

@@ -131,23 +131,7 @@ struct TransferRow: View {
             }
         }
         .contextMenu {
-            Button {
-                Task { await appState.socialState.loadProfile(for: transfer.username) }
-            } label: {
-                Label("View Profile", systemImage: "person.crop.circle")
-            }
-
-            Button {
-                appState.browseState.browseUser(transfer.username)
-            } label: {
-                Label("Browse Files", systemImage: "folder")
-            }
-
-            Button {
-                appState.chatState.selectPrivateChat(transfer.username)
-            } label: {
-                Label("Send Message", systemImage: "envelope")
-            }
+            UserContextMenuItems(username: transfer.username)
         }
         .onDisappear {
             audioPlayer?.stop()

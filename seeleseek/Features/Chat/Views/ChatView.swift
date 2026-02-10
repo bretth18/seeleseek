@@ -114,15 +114,7 @@ struct ChatView: View {
 
                 Spacer()
 
-                if room.unreadCount > 0 {
-                    Text("\(room.unreadCount)")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textOnAccent)
-                        .padding(.horizontal, SeeleSpacing.rowVertical)
-                        .padding(.vertical, SeeleSpacing.xxs)
-                        .background(SeeleColors.accent)
-                        .clipShape(Capsule())
-                }
+                UnreadCountBadge(count: room.unreadCount)
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
@@ -173,9 +165,7 @@ struct ChatView: View {
         } label: {
             HStack(spacing: SeeleSpacing.sm) {
                 // Online status dot
-                Circle()
-                    .fill(chat.isOnline ? SeeleColors.success : SeeleColors.textTertiary)
-                    .frame(width: SeeleSpacing.statusDotSmall, height: SeeleSpacing.statusDotSmall)
+                StandardStatusDot(isOnline: chat.isOnline, size: SeeleSpacing.statusDotSmall)
                     .frame(width: SeeleSpacing.xl)
 
                 VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -190,15 +180,7 @@ struct ChatView: View {
 
                 Spacer()
 
-                if chat.unreadCount > 0 {
-                    Text("\(chat.unreadCount)")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textOnAccent)
-                        .padding(.horizontal, SeeleSpacing.rowVertical)
-                        .padding(.vertical, SeeleSpacing.xxs)
-                        .background(SeeleColors.accent)
-                        .clipShape(Capsule())
-                }
+                UnreadCountBadge(count: chat.unreadCount)
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
@@ -206,17 +188,7 @@ struct ChatView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button {
-                Task { await appState.socialState.loadProfile(for: chat.username) }
-            } label: {
-                Label("View Profile", systemImage: "person.crop.circle")
-            }
-
-            Button {
-                appState.browseState.browseUser(chat.username)
-            } label: {
-                Label("Browse Files", systemImage: "folder")
-            }
+            UserContextMenuItems(username: chat.username)
 
             Divider()
 

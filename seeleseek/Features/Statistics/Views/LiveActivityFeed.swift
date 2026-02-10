@@ -104,9 +104,7 @@ struct ActivityEventRow: View {
     }
 
     private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        return formatter.string(from: date)
+        DateTimeFormatters.formatTime(date)
     }
 }
 

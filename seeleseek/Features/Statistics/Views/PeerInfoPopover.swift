@@ -47,12 +47,12 @@ struct PeerInfoPopover: View {
                 DetailRow(label: "Port", value: "\(peer.port)")
 
                 if let connectedAt = peer.connectedAt {
-                    DetailRow(label: "Connected", value: formatDate(connectedAt))
-                    DetailRow(label: "Duration", value: formatDuration(Date().timeIntervalSince(connectedAt)))
+                    DetailRow(label: "Connected", value: DateTimeFormatters.formatTime(connectedAt))
+                    DetailRow(label: "Duration", value: DateTimeFormatters.formatDurationSince(connectedAt))
                 }
 
                 if let lastActivity = peer.lastActivity {
-                    DetailRow(label: "Last Activity", value: formatDate(lastActivity))
+                    DetailRow(label: "Last Activity", value: DateTimeFormatters.formatTime(lastActivity))
                 }
             }
 
@@ -127,26 +127,6 @@ struct PeerInfoPopover: View {
         .background(SeeleColors.surface)
     }
 
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
-    }
-
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let secs = Int(seconds) % 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else if minutes > 0 {
-            return "\(minutes)m \(secs)s"
-        } else {
-            return "\(secs)s"
-        }
-    }
 }
 
 struct DetailRow: View {

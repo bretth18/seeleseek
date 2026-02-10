@@ -28,7 +28,7 @@ struct TransferHistoryItem: Identifiable, Sendable {
     }
 
     var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
+        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape", "aif"]
         let ext = (displayFilename as NSString).pathExtension.lowercased()
         return audioExtensions.contains(ext)
     }

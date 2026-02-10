@@ -69,9 +69,7 @@ struct RoomUserListPanel: View {
         let flag = appState.networkClient.userInfoCache.flag(for: username)
 
         return HStack(spacing: SeeleSpacing.sm) {
-            Circle()
-                .fill(SeeleColors.success)
-                .frame(width: SeeleSpacing.statusDotSmall, height: SeeleSpacing.statusDotSmall)
+            StandardStatusDot(isOnline: true, size: SeeleSpacing.statusDotSmall)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: SeeleSpacing.xs) {
@@ -110,29 +108,7 @@ struct RoomUserListPanel: View {
         .padding(.vertical, SeeleSpacing.xs)
         .contentShape(Rectangle())
         .contextMenu {
-            Button {
-                Task { await appState.socialState.loadProfile(for: username) }
-            } label: {
-                Label("View Profile", systemImage: "person.crop.circle")
-            }
-
-            Button {
-                chatState.selectPrivateChat(username)
-            } label: {
-                Label("Send Message", systemImage: "envelope")
-            }
-
-            Button {
-                appState.browseState.browseUser(username)
-            } label: {
-                Label("Browse Files", systemImage: "folder")
-            }
-
-            Button {
-                Task { await appState.socialState.addBuddy(username) }
-            } label: {
-                Label("Add Buddy", systemImage: "person.badge.plus")
-            }
+            UserContextMenuItems(username: username, showAddBuddy: true)
 
             // Owner/operator actions for private rooms
             if room.isPrivate && chatState.isOwner(of: room.name) {

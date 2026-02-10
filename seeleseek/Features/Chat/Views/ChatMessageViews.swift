@@ -11,9 +11,7 @@ struct PrivateChatContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Circle()
-                    .fill(chat.isOnline ? SeeleColors.success : SeeleColors.textTertiary)
-                    .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
+                StandardStatusDot(isOnline: chat.isOnline)
 
                 Text(chat.username)
                     .font(SeeleTypography.headline)
