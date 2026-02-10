@@ -5,14 +5,12 @@ import Charts
 struct SearchActivityView: View {
     @Environment(\.appState) private var appState
 
-    // Use shared activity tracker from SearchState
     private var searchActivity: SearchActivityState {
         SearchState.activityTracker
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
-            // Header
             HStack {
                 Text("Search Activity")
                     .font(SeeleTypography.headline)
@@ -20,7 +18,6 @@ struct SearchActivityView: View {
 
                 Spacer()
 
-                // Live indicator
                 HStack(spacing: SeeleSpacing.xs) {
                     Circle()
                         .fill(SeeleColors.info)
@@ -32,11 +29,9 @@ struct SearchActivityView: View {
                 }
             }
 
-            // Activity timeline
             SearchTimelineView(events: searchActivity.recentEvents)
                 .frame(height: 60)
 
-            // Recent searches list
             VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                 Text("Recent Queries")
                     .font(SeeleTypography.subheadline)
@@ -54,7 +49,6 @@ struct SearchActivityView: View {
                 }
             }
 
-            // Incoming search requests (people searching our shares)
             if !searchActivity.incomingSearches.isEmpty {
                 Divider()
                     .background(SeeleColors.surfaceSecondary)
@@ -93,7 +87,6 @@ struct SearchTimelineView: View {
         let calendar = Calendar.current
         var grouped: [Date: Int] = [:]
 
-        // Create buckets for last 30 minutes
         let now = Date()
         for i in 0..<30 {
             guard let minute = calendar.date(byAdding: .minute, value: -i, to: now),
@@ -103,7 +96,6 @@ struct SearchTimelineView: View {
             grouped[truncated] = 0
         }
 
-        // Count events
         for event in events {
             guard let truncated = calendar.date(from: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: event.timestamp)) else {
                 continue
@@ -142,19 +134,15 @@ struct SearchEventRow: View {
 
     private var icon: String {
         switch event.direction {
-        case .outgoing:
-            return "arrow.up.circle.fill"
-        case .incoming:
-            return "arrow.down.circle.fill"
+        case .outgoing: "arrow.up.circle.fill"
+        case .incoming: "arrow.down.circle.fill"
         }
     }
 
     private var color: Color {
         switch event.direction {
-        case .outgoing:
-            return SeeleColors.info
-        case .incoming:
-            return SeeleColors.accent
+        case .outgoing: SeeleColors.info
+        case .incoming: SeeleColors.accent
         }
     }
 
@@ -198,7 +186,6 @@ struct IncomingSearchRow: View {
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
-            // User avatar placeholder
             Circle()
                 .fill(SeeleColors.surfaceSecondary)
                 .frame(width: 24, height: 24)
@@ -238,103 +225,6 @@ struct IncomingSearchRow: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Search Activity State
-
-@Observable
-@MainActor
-class SearchActivityState {
-    var recentEvents: [SearchEvent] = []
-    var incomingSearches: [IncomingSearch] = []
-    var isActive: Bool = false
-
-    private var activityTimer: Timer?
-
-    struct SearchEvent: Identifiable {
-        let id = UUID()
-        let timestamp: Date
-        let query: String
-        let direction: Direction
-        var resultsCount: Int?
-
-        enum Direction {
-            case outgoing
-            case incoming
-        }
-    }
-
-    struct IncomingSearch: Identifiable {
-        let id = UUID()
-        let timestamp: Date
-        let username: String
-        let query: String
-        let matchCount: Int
-    }
-
-    func startMonitoring(client: NetworkClient) {
-        // Monitor outgoing searches from SearchState if available
-        // This would be wired up from the SearchView
-    }
-
-    func recordOutgoingSearch(query: String) {
-        let event = SearchEvent(
-            timestamp: Date(),
-            query: query,
-            direction: .outgoing
-        )
-        recentEvents.insert(event, at: 0)
-
-        // Keep last 100 events
-        if recentEvents.count > 100 {
-            recentEvents.removeLast()
-        }
-
-        triggerActivity()
-    }
-
-    func recordSearchResults(query: String, count: Int) {
-        if let index = recentEvents.firstIndex(where: { $0.query == query && $0.resultsCount == nil }) {
-            recentEvents[index].resultsCount = count
-        }
-    }
-
-    func recordIncomingSearch(username: String, query: String, matchCount: Int) {
-        let search = IncomingSearch(
-            timestamp: Date(),
-            username: username,
-            query: query,
-            matchCount: matchCount
-        )
-        incomingSearches.insert(search, at: 0)
-
-        // Keep last 50 incoming searches
-        if incomingSearches.count > 50 {
-            incomingSearches.removeLast()
-        }
-
-        // Also add to events timeline
-        let event = SearchEvent(
-            timestamp: Date(),
-            query: query,
-            direction: .incoming,
-            resultsCount: matchCount
-        )
-        recentEvents.insert(event, at: 0)
-
-        triggerActivity()
-    }
-
-    private func triggerActivity() {
-        isActive = true
-        activityTimer?.invalidate()
-        activityTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                self?.isActive = false
-            }
-        }
     }
 }
 

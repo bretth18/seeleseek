@@ -227,7 +227,7 @@ final class BrowseState {
             if components.count > 1 {
                 // Set folder path (excluding the filename)
                 currentFolderPath = components.dropLast().joined(separator: "\\")
-                print("📂 BrowseState: Set currentFolderPath to: \(currentFolderPath ?? "nil")")
+                logger.debug("Set currentFolderPath to: \(self.currentFolderPath ?? "nil")")
             }
         } else {
             currentFolderPath = nil
@@ -249,7 +249,7 @@ final class BrowseState {
 
                 if !hasTreeStructure && !folders.isEmpty {
                     // Rebuild tree from flat data
-                    print("📂 BrowseState: Rebuilding tree for existing tab (had flat data)")
+                    logger.debug("Rebuilding tree for existing tab (had flat data)")
                     let treeFiles = SharedFile.buildTree(from: folders)
                     browses[existingIndex].folders = treeFiles
                     expandToTargetPath(in: treeFiles)
@@ -280,14 +280,13 @@ final class BrowseState {
         selectedFile = nil
 
         logger.info("Created new tab for \(trimmedUsername) at index \(newIndex)")
-        print("📂 BrowseState: Created new tab for \(trimmedUsername) at index \(newIndex)")
 
         // Check cache first, then fetch if not cached
         Task {
-            print("📂 BrowseState: Checking cache for \(trimmedUsername)...")
+            logger.debug("Checking cache for \(trimmedUsername)")
             if let cached = await checkCache(for: trimmedUsername) {
                 // Use cached data
-                print("📂 BrowseState: Found cache for \(trimmedUsername) with \(cached.folders.count) folders")
+                logger.debug("Found cache for \(trimmedUsername) with \(cached.folders.count) folders")
                 if newIndex < browses.count && browses[newIndex].username.lowercased() == trimmedUsername.lowercased() {
                     browses[newIndex] = cached
                     logger.info("Using cached browse for \(trimmedUsername)")
@@ -299,7 +298,7 @@ final class BrowseState {
                 }
             } else {
                 // Fetch fresh data
-                print("📂 BrowseState: No cache for \(trimmedUsername), starting network request...")
+                logger.debug("No cache for \(trimmedUsername), starting network request")
                 startBrowseRequest(for: trimmedUsername, at: newIndex)
             }
         }
@@ -331,12 +330,11 @@ final class BrowseState {
             do {
                 // Step 1: Check if user is online BEFORE attempting connection
                 self?.logger.info("Checking if \(username) is online...")
-                print("📂 BrowseState: Checking if \(username) is online before browse...")
 
                 let (status, _) = try await networkClient.checkUserOnlineStatus(username, timeout: 5.0)
 
                 if status == .offline {
-                    print("📂 BrowseState: User \(username) is OFFLINE, aborting browse")
+                    self?.logger.info("User \(username) is offline, aborting browse")
                     await MainActor.run {
                         guard let self else { return }
                         if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
@@ -348,7 +346,7 @@ final class BrowseState {
                     return
                 }
 
-                print("📂 BrowseState: User \(username) is \(status == .online ? "online" : "away"), proceeding with browse...")
+                self?.logger.info("User \(username) is \(status == .online ? "online" : "away"), proceeding with browse")
 
                 // Step 2: User is online, proceed with the actual browse
                 let flatFiles = try await networkClient.browseUser(username)
@@ -368,7 +366,6 @@ final class BrowseState {
                     if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
                         self.browses[idx] = precomputedShares
                         self.logger.info("Got \(flatFiles.count) files -> \(treeFiles.count) root folders for \(username)")
-                        print("📂 BrowseState: Built tree with \(treeFiles.count) root folders from \(flatFiles.count) flat files")
 
                         // Cache the results
                         self.cacheUserShares(self.browses[idx])
@@ -504,26 +501,21 @@ final class BrowseState {
     private func expandToTargetPath(in folders: [SharedFile]) {
         guard let targetPath = targetPath else { return }
 
-        print("📂 BrowseState: Expanding to target path: \(targetPath)")
-        print("📂 BrowseState: Root folders count: \(folders.count)")
-        if folders.count <= 10 {
-            print("📂 BrowseState: Root folder names: \(folders.map { $0.displayName })")
-        } else {
-            print("📂 BrowseState: First 5 root folders: \(folders.prefix(5).map { $0.displayName })")
-        }
+        logger.debug("Expanding to target path: \(targetPath)")
+        logger.debug("Root folders count: \(folders.count)")
 
         // Parse the target path into components (e.g., "@@music\\Artist\\Album\\song.mp3")
         let pathComponents = targetPath.split(separator: "\\").map(String.init)
         guard !pathComponents.isEmpty else { return }
 
-        print("📂 BrowseState: Path components: \(pathComponents)")
+        logger.debug("Path components: \(pathComponents)")
 
         // Find and expand folders along the path
         var currentFiles = folders
         var expandedCount = 0
 
         for (index, component) in pathComponents.enumerated() {
-            print("📂 BrowseState: Looking for '\(component)' in \(currentFiles.count) items (isDirectory counts: \(currentFiles.filter { $0.isDirectory }.count))")
+            logger.debug("Looking for '\(component)' in \(currentFiles.count) items")
 
             // Find matching folder/file at this level
             if let match = currentFiles.first(where: { $0.displayName.lowercased() == component.lowercased() }) {
@@ -531,7 +523,7 @@ final class BrowseState {
                     // Expand this folder
                     expandedFolders.insert(match.id)
                     expandedCount += 1
-                    print("📂 BrowseState: Expanded folder: \(match.displayName)")
+                    logger.debug("Expanded folder: \(match.displayName)")
 
                     // Move to children for next iteration
                     if let children = match.children {
@@ -542,7 +534,7 @@ final class BrowseState {
                 } else {
                     // Found the target file - select it
                     selectedFile = match
-                    print("📂 BrowseState: Selected file: \(match.displayName)")
+                    logger.debug("Selected file: \(match.displayName)")
                     break
                 }
             } else {
@@ -554,7 +546,7 @@ final class BrowseState {
                     if match.isDirectory {
                         expandedFolders.insert(match.id)
                         expandedCount += 1
-                        print("📂 BrowseState: Expanded folder (by filename): \(match.displayName)")
+                        logger.debug("Expanded folder (by filename): \(match.displayName)")
 
                         if let children = match.children {
                             currentFiles = children
@@ -563,17 +555,16 @@ final class BrowseState {
                         }
                     } else if index == pathComponents.count - 1 {
                         selectedFile = match
-                        print("📂 BrowseState: Selected file (by filename): \(match.displayName)")
+                        logger.debug("Selected file (by filename): \(match.displayName)")
                     }
                 } else {
-                    print("📂 BrowseState: Could not find '\(component)' in current level")
-                    print("📂 BrowseState: Available names at this level: \(currentFiles.prefix(10).map { $0.displayName })")
+                    logger.debug("Could not find '\(component)' in current level")
                     break
                 }
             }
         }
 
-        print("📂 BrowseState: Auto-expanded \(expandedCount) folders")
+        logger.debug("Auto-expanded \(expandedCount) folders")
         self.targetPath = nil // Clear after processing
     }
 }

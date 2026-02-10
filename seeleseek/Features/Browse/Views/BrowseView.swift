@@ -11,7 +11,6 @@ struct BrowseView: View {
         @Bindable var browseBinding = appState.browseState
 
         VStack(spacing: 0) {
-            // Tab bar (if there are tabs)
             if !browseState.browses.isEmpty {
                 browseTabBar
             }
@@ -226,9 +225,7 @@ struct BrowseView: View {
 
     private func fileTreeView(shares: UserShares) -> some View {
         HSplitView {
-            // File tree
             VStack(spacing: 0) {
-                // Header
                 HStack {
                     Text("\(shares.username)'s files")
                         .font(SeeleTypography.headline)
@@ -263,10 +260,8 @@ struct BrowseView: View {
                 .padding(.vertical, SeeleSpacing.sm)
                 .background(SeeleColors.surface.opacity(0.3))
 
-                // Folder path breadcrumb (when viewing subfolder)
                 if let folderPath = browseState.currentFolderPath {
                     HStack(spacing: SeeleSpacing.xs) {
-                        // Go to root button
                         Button {
                             browseState.navigateToRoot()
                         } label: {
@@ -276,7 +271,6 @@ struct BrowseView: View {
                         }
                         .buttonStyle(.plain)
 
-                        // Go up button
                         Button {
                             browseState.navigateUp()
                         } label: {
@@ -286,7 +280,6 @@ struct BrowseView: View {
                         }
                         .buttonStyle(.plain)
 
-                        // Path display
                         Text(folderPath.replacingOccurrences(of: "\\", with: " / "))
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textSecondary)
@@ -300,7 +293,6 @@ struct BrowseView: View {
                     .background(SeeleColors.surfaceSecondary)
                 }
 
-                // File tree
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(browseState.displayedFolders) { folder in
@@ -315,7 +307,6 @@ struct BrowseView: View {
                 }
             }
 
-            // Visualizations panel
             if showVisualizations {
                 SharesVisualizationPanel(shares: shares)
                     .frame(minWidth: 300, maxWidth: 400)
@@ -327,534 +318,7 @@ struct BrowseView: View {
         guard browseState.canBrowse else { return }
         let username = browseState.currentUser
         print("📂 BrowseView: Starting browse for \(username)")
-
-        // Delegate to BrowseState - it manages the task lifecycle
         browseState.browseUser(username)
-    }
-}
-
-// MARK: - Browse Tab Button
-
-struct BrowseTabButton: View {
-    let browse: UserShares
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            // Status indicator
-            if browse.isLoading {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
-            } else if browse.error != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.error)
-            } else {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.warning)
-            }
-
-            Text(browse.username)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-                .lineLimit(1)
-
-            // File count badge
-            if !browse.isLoading && browse.error == nil && !browse.folders.isEmpty {
-                Text("\(browse.totalFiles)")
-                    .font(SeeleTypography.monoSmall)
-                    .foregroundStyle(SeeleColors.textTertiary)
-            }
-
-            // Close button
-            Button {
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: SeeleSpacing.iconSizeXS - 2, weight: .bold))
-                    .foregroundStyle(SeeleColors.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .opacity(isHovered ? 1 : 0.5)
-        }
-        .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.sm)
-        .background(isSelected ? SeeleColors.surface : SeeleColors.surface.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                .stroke(isSelected ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1)
-        )
-        .onTapGesture {
-            onSelect()
-        }
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}
-
-struct FileTreeRow: View {
-    @Environment(\.appState) private var appState
-    let file: SharedFile
-    let depth: Int
-    var browseState: BrowseState
-    let username: String
-    @State private var isHovered = false
-
-    private var isExpanded: Bool {
-        browseState.expandedFolders.contains(file.id)
-    }
-
-    /// Check download status for this file
-    private var downloadStatus: Transfer.TransferStatus? {
-        guard !file.isDirectory else { return nil }
-        return appState.transferState.downloadStatus(for: file.filename, from: username)
-    }
-
-    private var isQueued: Bool {
-        guard let status = downloadStatus else { return false }
-        return status != .completed && status != .cancelled && status != .failed
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: SeeleSpacing.sm) {
-                // Indentation
-                if depth > 0 {
-                    Spacer()
-                        .frame(width: CGFloat(depth) * 20)
-                }
-
-                // Expand/collapse for folders
-                if file.isDirectory {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                        .foregroundStyle(SeeleColors.textTertiary)
-                        .frame(width: SeeleSpacing.iconSize)
-                } else {
-                    Spacer().frame(width: SeeleSpacing.iconSize)
-                }
-
-                // Icon
-                Image(systemName: file.icon)
-                    .font(.system(size: SeeleSpacing.iconSize))
-                    .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
-
-                // Name
-                Text(file.displayName)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .lineLimit(1)
-
-                // Private/locked indicator (buddy-only)
-                if file.isPrivate {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeXS))
-                        .foregroundStyle(SeeleColors.warning)
-                        .help("Private file - only shared with buddies")
-                }
-
-                Spacer()
-
-                // Size (for files) or file count (for folders)
-                if file.isDirectory {
-                    if let children = file.children {
-                        let fileCount = countFiles(in: children)
-                        Text("\(fileCount) files")
-                            .font(SeeleTypography.monoSmall)
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-
-                    // Download folder button
-                    Button {
-                        downloadFolder()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: SeeleSpacing.iconSize))
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(isHovered ? 1 : 0)
-                    .help("Download folder")
-                } else {
-                    Text(file.formattedSize)
-                        .font(SeeleTypography.monoSmall)
-                        .foregroundStyle(SeeleColors.textTertiary)
-
-                    // Download button with status indicator
-                    Button {
-                        if !isQueued {
-                            downloadFile()
-                        }
-                    } label: {
-                        downloadButtonIcon
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(isHovered || isQueued ? 1 : 0)
-                    .disabled(isQueued)
-                    .help(downloadButtonHelp)
-                }
-            }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(isHovered ? SeeleColors.surfaceSecondary : .clear)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                browseState.selectFile(file)
-            }
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.1)) {
-                    isHovered = hovering
-                }
-            }
-
-            // Children (if expanded)
-            if file.isDirectory, isExpanded, let children = file.children {
-                ForEach(children) { child in
-                    FileTreeRow(
-                        file: child,
-                        depth: depth + 1,
-                        browseState: browseState,
-                        username: username
-                    )
-                }
-            }
-        }
-    }
-
-    private func downloadFile() {
-        print("📥 Browse download: \(file.filename) from \(username)")
-
-        // Create a SearchResult from the SharedFile to use with DownloadManager
-        let result = SearchResult(
-            username: username,
-            filename: file.filename,
-            size: file.size,
-            bitrate: file.bitrate,
-            duration: file.duration,
-            isVBR: false,
-            freeSlots: true,
-            uploadSpeed: 0,
-            queueLength: 0
-        )
-
-        appState.downloadManager.queueDownload(from: result)
-    }
-
-    private func downloadFolder() {
-        guard file.isDirectory, let children = file.children else { return }
-
-        let allFiles = collectAllFiles(in: children)
-        print("📁 Browse download folder: \(file.displayName) (\(allFiles.count) files)")
-
-        var queuedCount = 0
-        for childFile in allFiles {
-            // Skip if already queued
-            if !appState.transferState.isFileQueued(filename: childFile.filename, username: username) {
-                let result = SearchResult(
-                    username: username,
-                    filename: childFile.filename,
-                    size: childFile.size,
-                    bitrate: childFile.bitrate,
-                    duration: childFile.duration,
-                    isVBR: false,
-                    freeSlots: true,
-                    uploadSpeed: 0,
-                    queueLength: 0
-                )
-                appState.downloadManager.queueDownload(from: result)
-                queuedCount += 1
-            }
-        }
-
-        if queuedCount > 0 {
-            print("✅ Queued \(queuedCount) files from folder")
-        } else {
-            print("ℹ️ All files in folder already queued")
-        }
-    }
-
-    /// Recursively collect all files from a folder
-    private func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {
-        var result: [SharedFile] = []
-        for f in files {
-            if f.isDirectory {
-                if let children = f.children {
-                    result.append(contentsOf: collectAllFiles(in: children))
-                }
-            } else {
-                result.append(f)
-            }
-        }
-        return result
-    }
-
-    /// Count files recursively in a folder
-    private func countFiles(in files: [SharedFile]) -> Int {
-        var count = 0
-        for f in files {
-            if f.isDirectory {
-                if let children = f.children {
-                    count += countFiles(in: children)
-                }
-            } else {
-                count += 1
-            }
-        }
-        return count
-    }
-
-    private var downloadButtonIcon: some View {
-        DownloadStatusIcon(status: downloadStatus, size: SeeleSpacing.iconSize)
-    }
-
-    private var downloadButtonHelp: String {
-        DownloadStatusIcon(status: downloadStatus).helpText
-    }
-}
-
-// MARK: - Shares Visualization Panel
-
-struct SharesVisualizationPanel: View {
-    let shares: UserShares
-
-    // Cache computed data to avoid expensive recalculations
-    @State private var cachedAllFiles: [SharedFile]?
-    @State private var cachedAudioFiles: [SharedFile]?
-    @State private var cachedTopFiles: [(String, UInt64)]?
-    @State private var isComputing = false
-
-    private var allFiles: [SharedFile] {
-        cachedAllFiles ?? []
-    }
-
-    private var audioFiles: [SharedFile] {
-        cachedAudioFiles ?? []
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
-                // Quick stats (use cached totalFiles/totalSize from UserShares)
-                quickStatsSection
-
-                if isComputing {
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                        Text("Analyzing files...")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .padding()
-                } else if cachedAllFiles != nil {
-                    Divider().background(SeeleColors.surfaceSecondary)
-
-                    // File type distribution
-                    fileTypeSection
-
-                    Divider().background(SeeleColors.surfaceSecondary)
-
-                    // Bitrate distribution (for audio)
-                    if !audioFiles.isEmpty {
-                        bitrateSection
-                        Divider().background(SeeleColors.surfaceSecondary)
-                    }
-
-                    // Largest files
-                    largestFilesSection
-
-                    // Treemap visualization
-                    if !allFiles.isEmpty {
-                        treemapSection
-                    }
-                }
-            }
-            .padding(SeeleSpacing.lg)
-        }
-        .background(SeeleColors.surface)
-        .onAppear {
-            computeStatsIfNeeded()
-        }
-        .onChange(of: shares.id) { _, _ in
-            // Reset cache when shares change
-            cachedAllFiles = nil
-            cachedAudioFiles = nil
-            cachedTopFiles = nil
-            computeStatsIfNeeded()
-        }
-    }
-
-    private func computeStatsIfNeeded() {
-        guard cachedAllFiles == nil && !isComputing else { return }
-
-        isComputing = true
-        let folders = shares.folders
-
-        // Compute on background thread
-        Task.detached(priority: .userInitiated) {
-            let files = Self.collectFilesNonRecursive(from: folders)
-            let audio = files.filter { $0.isAudioFile }
-            let top = files
-                .sorted { $0.size > $1.size }
-                .prefix(5)
-                .map { ($0.displayFilename, $0.size) }
-
-            await MainActor.run {
-                cachedAllFiles = files
-                cachedAudioFiles = audio
-                cachedTopFiles = Array(top)
-                isComputing = false
-            }
-        }
-    }
-
-    /// Non-recursive file collection using a stack (avoids stack overflow for deep trees)
-    nonisolated private static func collectFilesNonRecursive(from folders: [SharedFile]) -> [SharedFile] {
-        var result: [SharedFile] = []
-        var stack = folders
-
-        while let current = stack.popLast() {
-            if current.isDirectory {
-                if let children = current.children {
-                    stack.append(contentsOf: children)
-                }
-            } else {
-                result.append(current)
-            }
-        }
-
-        return result
-    }
-
-    private var quickStatsSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Overview")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], spacing: SeeleSpacing.md) {
-                StatCard(
-                    title: "Files",
-                    value: "\(shares.totalFiles)",
-                    icon: "doc.fill",
-                    color: SeeleColors.accent
-                )
-
-                StatCard(
-                    title: "Folders",
-                    value: "\(shares.folders.count)",
-                    icon: "folder.fill",
-                    color: SeeleColors.warning
-                )
-
-                StatCard(
-                    title: "Total Size",
-                    value: ByteFormatter.format(Int64(shares.totalSize)),
-                    icon: "externaldrive.fill",
-                    color: SeeleColors.info
-                )
-
-                StatCard(
-                    title: "Avg Size",
-                    value: ByteFormatter.format(Int64(shares.totalSize / UInt64(max(shares.totalFiles, 1)))),
-                    icon: "chart.bar.fill",
-                    color: SeeleColors.success
-                )
-            }
-        }
-    }
-
-    private var fileTypeSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("File Types")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            FileTypeDistribution(files: allFiles)
-        }
-    }
-
-    private var bitrateSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Audio Quality")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            BitrateDistribution(files: audioFiles)
-        }
-    }
-
-    private var largestFilesSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Largest Files")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            SizeComparisonBars(
-                items: cachedTopFiles ?? []
-            )
-        }
-    }
-
-    private var treemapSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Size Distribution")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            FileTreemap(
-                files: Array(allFiles.prefix(50))
-            )
-            .frame(height: 200)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-        }
-    }
-}
-
-struct StatCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: SeeleSpacing.sm) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: SeeleSpacing.iconSize))
-                    .foregroundStyle(color)
-
-                Spacer()
-            }
-
-            HStack {
-                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                    Text(value)
-                        .font(SeeleTypography.headline)
-                        .foregroundStyle(SeeleColors.textPrimary)
-
-                    Text(title)
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-
-                Spacer()
-            }
-        }
-        .padding(SeeleSpacing.md)
-        .background(SeeleColors.surfaceSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
