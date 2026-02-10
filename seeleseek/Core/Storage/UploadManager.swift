@@ -26,6 +26,10 @@ final class UploadManager {
     var maxQueuedPerUser = 50  // Max files queued per user (nicotine+ default)
     var uploadSpeedLimit: Int64? = nil  // bytes per second, nil = unlimited
 
+    /// Called to check if an upload should be allowed (checks blocklist + leech status)
+    /// Set by AppState to delegate to SocialState
+    var uploadPermissionChecker: ((String) -> Bool)?
+
     // MARK: - Types
 
     struct QueuedUpload: Identifiable {
@@ -242,6 +246,17 @@ final class UploadManager {
             logger.warning("Local file missing: \(indexedFile.localPath)")
             do {
                 try await connection.sendUploadDenied(filename: filename, reason: "File not available")
+            } catch {
+                logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        // Check if upload is allowed (blocklist + leech detection)
+        if let checker = uploadPermissionChecker, !checker(username) {
+            logger.info("Upload denied for \(username): blocked or leech")
+            do {
+                try await connection.sendUploadDenied(filename: filename, reason: "Forbidden")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
             }

@@ -107,8 +107,6 @@ final class SocialState {
                 self.viewingProfile?.sharedFiles = files
                 self.viewingProfile?.sharedFolders = dirs
             }
-            // Check for leech
-            self.checkForLeech(username: username, files: files, folders: dirs)
         }
 
         // User interests response

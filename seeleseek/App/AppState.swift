@@ -56,6 +56,25 @@ final class AppState {
             downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
 
+            // Wire upload permission checker to SocialState (blocklist + leech detection)
+            uploadManager.uploadPermissionChecker = { [weak self] username in
+                guard let self else { return true }
+                // Request stats so leech detection runs on next QueueUpload
+                Task { try? await self.networkClient.getUserStats(username) }
+                return self.socialState.shouldAllowUpload(to: username)
+            }
+
+            // Leech detection: only check users who are trying to download from us
+            _networkClient!.addUserStatsHandler { [weak self] username, _, _, files, dirs in
+                guard let self else { return }
+                // Only check if this user has queued or active uploads
+                let hasQueuedUpload = self.uploadManager.queuedUploads.contains { $0.username == username }
+                    || self.uploadManager.activeUploadCount > 0
+                if hasQueuedUpload {
+                    self.socialState.checkForLeech(username: username, files: files, folders: dirs)
+                }
+            }
+
             // Set up admin message callback
             _networkClient!.onAdminMessage = { [weak self] message in
                 Task { @MainActor in

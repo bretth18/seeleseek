@@ -1237,6 +1237,7 @@ private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content:
         VStack(spacing: 0) {
             content()
         }
+        .background(SeeleColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
@@ -1313,13 +1314,16 @@ private func folderPicker(_ title: String, url: Binding<URL>) -> some View {
                 .foregroundStyle(SeeleColors.textPrimary)
 
             Spacer()
-
-            Text(url.wrappedValue.path)
-                .font(SeeleTypography.mono)
-                .foregroundStyle(SeeleColors.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
+            Button {
+                NSWorkspace.shared.open(url.wrappedValue)
+            } label: {
+                Text(url.wrappedValue.path)
+                    .font(SeeleTypography.mono)
+                    .foregroundStyle(SeeleColors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .buttonStyle(.plain)
             Button("Choose...") {
                 #if os(macOS)
                 let panel = NSOpenPanel()
