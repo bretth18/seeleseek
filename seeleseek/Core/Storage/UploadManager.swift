@@ -847,6 +847,12 @@ final class UploadManager {
     /// Get number of active uploads
     var activeUploadCount: Int { activeUploads.count }
 
+    /// Number of items waiting in queue
+    var queueDepth: Int { uploadQueue.count }
+
+    /// Summary string for upload slots (e.g. "2/3")
+    var slotsSummary: String { "\(activeUploads.count)/\(maxConcurrentUploads)" }
+
     /// Cancel a queued upload
     func cancelQueuedUpload(_ id: UUID) {
         uploadQueue.removeAll { $0.id == id }

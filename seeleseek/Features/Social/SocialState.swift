@@ -29,6 +29,9 @@ final class SocialState {
     var myDescription: String = ""
     var myPicture: Data?
 
+    // MARK: - Privileges
+    var privilegeTimeRemaining: UInt32 = 0
+
     // MARK: - Interests
     var myLikes: [String] = []
     var myHates: [String] = []
@@ -93,8 +96,8 @@ final class SocialState {
             }
         }
 
-        // User stats updates
-        client.onUserStats = { [weak self] username, avgSpeed, uploadNum, files, dirs in
+        // User stats updates (multi-handler pattern)
+        client.addUserStatsHandler { [weak self] username, avgSpeed, uploadNum, files, dirs in
             guard let self else { return }
             self.updateBuddyStats(username: username, speed: avgSpeed, files: files, dirs: dirs)
             // Also update viewing profile if this is the user we're looking at
@@ -145,6 +148,11 @@ final class SocialState {
             if self.viewingProfile?.username == username {
                 self.viewingProfile?.isPrivileged = privileged
             }
+        }
+
+        // Own privilege time remaining
+        client.onPrivilegesChecked = { [weak self] timeLeft in
+            self?.privilegeTimeRemaining = timeLeft
         }
 
         // Provide profile data for UserInfoResponse
@@ -478,6 +486,42 @@ final class SocialState {
             logger.info("Removed hate: \(item)")
         } catch {
             logger.error("Failed to remove hate on server: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Privilege Actions
+
+    func checkPrivileges() {
+        Task {
+            do {
+                try await networkClient?.checkPrivileges()
+            } catch {
+                logger.error("Failed to check privileges: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func givePrivileges(to username: String, days: UInt32) {
+        Task {
+            do {
+                try await networkClient?.givePrivileges(to: username, days: days)
+                logger.info("Gave \(days) days of privileges to \(username)")
+            } catch {
+                logger.error("Failed to give privileges: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Format privilege time remaining as human-readable string
+    var formattedPrivilegeTime: String {
+        guard privilegeTimeRemaining > 0 else { return "No privileges" }
+        let days = privilegeTimeRemaining / 86400
+        let hours = (privilegeTimeRemaining % 86400) / 3600
+        if days > 0 {
+            return "\(days) day\(days == 1 ? "" : "s"), \(hours) hour\(hours == 1 ? "" : "s")"
+        } else {
+            let minutes = (privilegeTimeRemaining % 3600) / 60
+            return "\(hours) hour\(hours == 1 ? "" : "s"), \(minutes) min"
         }
     }
 

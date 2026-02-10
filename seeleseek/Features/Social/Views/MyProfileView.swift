@@ -109,6 +109,44 @@ struct MyProfileView: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
+            // Privileges
+            VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                HStack {
+                    Text("Privileges")
+                        .font(SeeleTypography.body)
+                        .foregroundStyle(SeeleColors.textSecondary)
+
+                    Spacer()
+
+                    Button("Check Status") {
+                        socialState.checkPrivileges()
+                    }
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.accent)
+                }
+
+                HStack(spacing: SeeleSpacing.sm) {
+                    Image(systemName: socialState.privilegeTimeRemaining > 0 ? "star.fill" : "star")
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .foregroundStyle(socialState.privilegeTimeRemaining > 0 ? SeeleColors.warning : SeeleColors.textTertiary)
+
+                    Text(socialState.formattedPrivilegeTime)
+                        .font(SeeleTypography.body)
+                        .foregroundStyle(SeeleColors.textPrimary)
+
+                    Spacer()
+
+                    Link(destination: URL(string: "https://www.slsknet.org/donate")!) {
+                        Label("Get Privileges", systemImage: "arrow.up.right.square")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                    
+                }
+            }
+
+            Divider().background(SeeleColors.surfaceSecondary)
+
             // My Interests Summary
             VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                 HStack {
@@ -170,6 +208,7 @@ struct MyProfileView: View {
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         .onAppear {
             editingDescription = socialState.myDescription
+            socialState.checkPrivileges()
         }
     }
 

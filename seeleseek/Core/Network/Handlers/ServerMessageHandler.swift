@@ -1165,7 +1165,7 @@ final class ServerMessageHandler {
         guard let dirs = data.readUInt32(at: offset) else { return }
 
         logger.info("User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
-        client?.onUserStats?(username, avgSpeed, uploadNum, files, dirs)
+        client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: uploadNum, files: files, dirs: dirs)
     }
 
     private func handleCheckPrivileges(_ data: Data) {

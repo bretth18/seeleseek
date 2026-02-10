@@ -55,6 +55,9 @@ struct RoomUserListPanel: View {
                     }
                 }
             }
+            .onAppear {
+                chatState.requestUserStats(for: room.users)
+            }
         }
         .background(SeeleColors.surface)
     }
@@ -62,25 +65,43 @@ struct RoomUserListPanel: View {
     private func userRow(_ username: String) -> some View {
         let isOwner = room.owner == username
         let isOp = room.operators.contains(username)
+        let stats = chatState.userStatsCache[username]
+        let flag = appState.networkClient.userInfoCache.flag(for: username)
 
         return HStack(spacing: SeeleSpacing.sm) {
             Circle()
                 .fill(SeeleColors.success)
                 .frame(width: SeeleSpacing.statusDotSmall, height: SeeleSpacing.statusDotSmall)
 
-            Text(username)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textPrimary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: SeeleSpacing.xs) {
+                    if !flag.isEmpty {
+                        Text(flag)
+                            .font(.system(size: 9))
+                    }
 
-            if isOwner {
-                Image(systemName: "crown.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(SeeleColors.warning)
-            } else if isOp {
-                Image(systemName: "wrench.fill")
-                    .font(.system(size: 8))
-                    .foregroundStyle(SeeleColors.textTertiary)
+                    Text(username)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textPrimary)
+                        .lineLimit(1)
+
+                    if isOwner {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(SeeleColors.warning)
+                    } else if isOp {
+                        Image(systemName: "wrench.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                }
+
+                if let stats {
+                    Text("\(ByteFormatter.formatSpeed(stats.speed)) · \(NumberFormatters.format(stats.files)) files")
+                        .font(.system(size: 9))
+                        .foregroundStyle(SeeleColors.textTertiary)
+                        .lineLimit(1)
+                }
             }
 
             Spacer()

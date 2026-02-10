@@ -235,7 +235,17 @@ final class NetworkClient {
     func addUserStatusHandler(_ handler: @escaping (String, UserStatus, Bool) -> Void) {
         userStatusHandlers.append(handler)
     }
-    var onUserStats: ((String, UInt32, UInt64, UInt32, UInt32) -> Void)?  // (username, avgSpeed, uploadNum, files, dirs)
+    private var userStatsHandlers: [(String, UInt32, UInt64, UInt32, UInt32) -> Void] = []
+    /// Register a handler for user stats updates. Multiple handlers supported.
+    func addUserStatsHandler(_ handler: @escaping (String, UInt32, UInt64, UInt32, UInt32) -> Void) {
+        userStatsHandlers.append(handler)
+    }
+    /// Dispatch user stats to all registered handlers
+    func dispatchUserStats(username: String, avgSpeed: UInt32, uploadNum: UInt64, files: UInt32, dirs: UInt32) {
+        for handler in userStatsHandlers {
+            handler(username, avgSpeed, uploadNum, files, dirs)
+        }
+    }
     var onPrivilegesChecked: ((UInt32) -> Void)?  // timeLeft in seconds
     var onUserPrivileges: ((String, Bool) -> Void)?  // (username, privileged)
     var onPrivilegedUsers: (([String]) -> Void)?  // list of privileged usernames

@@ -6,6 +6,9 @@ struct UserProfileSheet: View {
 
     let profile: UserProfile
 
+    @State private var showGivePrivileges = false
+    @State private var selectedDays: UInt32 = 1
+
     var body: some View {
         ScrollView {
             VStack(spacing: SeeleSpacing.xl) {
@@ -193,29 +196,68 @@ struct UserProfileSheet: View {
     }
 
     private var actionsSection: some View {
-        HStack(spacing: SeeleSpacing.md) {
-            Button {
-                addAsBuddy()
-            } label: {
-                Label("Add Buddy", systemImage: "person.badge.plus")
-            }
-            .buttonStyle(.bordered)
-            .disabled(isBuddy)
+        VStack(spacing: SeeleSpacing.md) {
+            HStack(spacing: SeeleSpacing.md) {
+                Button {
+                    addAsBuddy()
+                } label: {
+                    Label("Add Buddy", systemImage: "person.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(isBuddy)
 
-            Button {
-                browseFiles()
-            } label: {
-                Label("Browse Files", systemImage: "folder")
-            }
-            .buttonStyle(.bordered)
+                Button {
+                    browseFiles()
+                } label: {
+                    Label("Browse Files", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
 
-            Button {
-                startChat()
-            } label: {
-                Label("Message", systemImage: "bubble.left")
+                Button {
+                    startChat()
+                } label: {
+                    Label("Message", systemImage: "bubble.left")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SeeleColors.accent)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(SeeleColors.accent)
+
+            HStack(spacing: SeeleSpacing.md) {
+                Button {
+                    showGivePrivileges.toggle()
+                } label: {
+                    Label("Give Privileges", systemImage: "star")
+                }
+                .buttonStyle(.bordered)
+                .popover(isPresented: $showGivePrivileges) {
+                    VStack(spacing: SeeleSpacing.md) {
+                        Text("Give Privileges")
+                            .font(SeeleTypography.headline)
+                            .foregroundStyle(SeeleColors.textPrimary)
+
+                        Text("Give days of privileges to \(profile.username)")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+
+                        Picker("Days", selection: $selectedDays) {
+                            Text("1 day").tag(UInt32(1))
+                            Text("5 days").tag(UInt32(5))
+                            Text("10 days").tag(UInt32(10))
+                            Text("30 days").tag(UInt32(30))
+                        }
+                        .pickerStyle(.segmented)
+
+                        Button("Give \(selectedDays) day\(selectedDays == 1 ? "" : "s")") {
+                            appState.socialState.givePrivileges(to: profile.username, days: selectedDays)
+                            showGivePrivileges = false
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SeeleColors.warning)
+                    }
+                    .padding(SeeleSpacing.lg)
+                    .frame(width: 260)
+                }
+            }
         }
         .padding(.top, SeeleSpacing.md)
     }

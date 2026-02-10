@@ -65,6 +65,10 @@ struct TransfersView: View {
                     color: SeeleColors.success
                 )
 
+                if selectedTab == .uploads || appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
+                    uploadQueueStat
+                }
+
                 Spacer()
 
                 // Clear buttons
@@ -97,6 +101,23 @@ struct TransfersView: View {
         }
         .padding(.bottom, SeeleSpacing.sm)
         .background(SeeleColors.surface.opacity(0.5))
+    }
+
+    private var uploadQueueStat: some View {
+        HStack(spacing: SeeleSpacing.sm) {
+            Image(systemName: "person.2.fill")
+                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .bold))
+                .foregroundStyle(SeeleColors.success)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Slots")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                Text("\(appState.uploadManager.slotsSummary) · Queue: \(appState.uploadManager.queueDepth)")
+                    .font(SeeleTypography.mono)
+                    .foregroundStyle(SeeleColors.textPrimary)
+            }
+        }
     }
 
     private func speedStat(icon: String, label: String, speed: Int64, color: Color) -> some View {

@@ -40,6 +40,10 @@ final class ChatState {
     var showUserListPanel: Bool = false
     var userListSearchQuery: String = ""
 
+    // MARK: - User Stats Cache
+    var userStatsCache: [String: (speed: UInt32, files: UInt32)] = [:]
+    private var pendingStatsRequests: Set<String> = []
+
     // MARK: - Room Management
     var showRoomManagement: Bool = false
     var tickersCollapsed: Bool = false
@@ -173,6 +177,39 @@ final class ChatState {
         // Listen for user status updates to update private chat online status
         client.addUserStatusHandler { [weak self] username, status, _ in
             self?.updateUserOnlineStatus(username: username, status: status)
+        }
+
+        // User stats updates (for room user list display)
+        client.addUserStatsHandler { [weak self] username, avgSpeed, _, files, _ in
+            guard let self else { return }
+            self.userStatsCache[username] = (speed: avgSpeed, files: files)
+            self.pendingStatsRequests.remove(username)
+        }
+    }
+
+    // MARK: - User Stats Requests
+
+    /// Request user stats for a list of usernames (throttled, skips cached)
+    func requestUserStats(for usernames: [String]) {
+        let uncached = usernames.filter { userStatsCache[$0] == nil && !pendingStatsRequests.contains($0) }
+        guard !uncached.isEmpty else { return }
+
+        // Batch in groups of 5 to avoid flooding the server
+        let batches = stride(from: 0, to: uncached.count, by: 5).map {
+            Array(uncached[$0..<min($0 + 5, uncached.count)])
+        }
+
+        Task {
+            for batch in batches {
+                for username in batch {
+                    pendingStatsRequests.insert(username)
+                    try? await networkClient?.getUserStats(username)
+                }
+                // Small delay between batches
+                if batches.count > 1 {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
         }
     }
 
