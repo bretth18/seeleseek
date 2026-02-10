@@ -998,8 +998,8 @@ final class NetworkClient {
         }
     }
 
-    /// Cancel a pending browse (used when direct connection succeeds)
-    private func cancelPendingBrowse(token: UInt32) {
+    /// Cancel a pending browse (used when direct connection succeeds or search delivery completes)
+    func cancelPendingBrowse(token: UInt32) {
         if let state = pendingBrowseStates.removeValue(forKey: token) {
             state.timeoutTask?.cancel()
             // Don't resume continuation - caller will handle the success case

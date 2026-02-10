@@ -28,7 +28,10 @@ final class DownloadManager {
     private let maxRetries = 3
     private let baseRetryDelay: TimeInterval = 5  // Start with 5 seconds
     private var pendingRetries: [UUID: Task<Void, Never>] = [:]  // Track retry tasks
-    private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer
+    private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer (60s)
+    private var connectionRetryTimer: Task<Void, Never>?  // Retry failed connections (3 min)
+    private var queuePositionTimer: Task<Void, Never>?  // Update queue positions (5 min)
+    private var staleRecoveryTimer: Task<Void, Never>?  // Recover stale downloads (15 min)
 
     struct PendingDownload {
         let transferId: UUID
@@ -162,32 +165,58 @@ final class DownloadManager {
             }
         }
 
-        // Start periodic re-queue timer (like nicotine+ - re-sends QueueDownload every 60s)
-        startReQueueTimer()
+        // Start periodic timers (nicotine+ style)
+        startReQueueTimer()           // Re-sends QueueDownload every 60s
+        startConnectionRetryTimer()   // Retries failed connections every 3 min
+        startQueuePositionTimer()     // Updates queue positions every 5 min
+        startStaleRecoveryTimer()     // Recovers stale downloads every 15 min
     }
 
     // MARK: - Download API
 
-    /// Resume all queued/waiting downloads (called on app launch after loading from database)
-    func resumeQueuedDownloads() {
+    /// Resume all retriable downloads on connect (queued, waiting, and failed-but-retriable)
+    func resumeDownloadsOnConnect() {
         guard let transferState else {
             logger.error("TransferState not configured for resume")
             return
         }
 
+        // Gather downloads that should be resumed
         let queuedDownloads = transferState.downloads.filter {
             $0.status == .queued || $0.status == .waiting || $0.status == .connecting
         }
 
-        guard !queuedDownloads.isEmpty else {
-            logger.info("No queued downloads to resume")
+        // Also gather failed downloads with retriable errors
+        let retriableFailedDownloads = transferState.downloads.filter {
+            $0.status == .failed && $0.direction == .download &&
+            isRetriableError($0.error ?? "")
+        }
+
+        let allToResume = queuedDownloads + retriableFailedDownloads
+
+        guard !allToResume.isEmpty else {
+            logger.info("No downloads to resume on connect")
             return
         }
 
-        logger.info("Resuming \(queuedDownloads.count) queued downloads")
+        logger.info("Resuming \(allToResume.count) downloads on connect (\(queuedDownloads.count) queued, \(retriableFailedDownloads.count) retrying failed)")
 
-        for transfer in queuedDownloads {
+        // Reset failed downloads back to queued
+        for transfer in retriableFailedDownloads {
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.status = .queued
+                t.error = nil
+                t.retryCount = 0
+            }
+        }
+
+        // Stagger download starts to avoid connection storms
+        for (index, transfer) in allToResume.enumerated() {
+            let delay = Double(index) * 0.5  // 500ms between each
             Task {
+                if delay > 0 {
+                    try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+                }
                 await startDownload(transfer: transfer)
             }
         }
@@ -272,12 +301,21 @@ final class DownloadManager {
             logger.debug("Requesting peer address for \(transfer.username)")
             try await networkClient.getUserAddress(transfer.username)
 
-            // Wait for peer address callback (handled in handlePeerAddress)
-            // Set a timeout
-            try await Task.sleep(for: .seconds(30))
+            // Poll every 500ms for up to 30s, checking if connection was established
+            // handlePeerAddress() will set peerConnection or remove the pending entry
+            var elapsed: TimeInterval = 0
+            let timeoutSeconds: TimeInterval = 30
+            while elapsed < timeoutSeconds {
+                try await Task.sleep(for: .milliseconds(500))
+                elapsed += 0.5
+                // Connection established by handlePeerAddress
+                if pendingDownloads[token]?.peerConnection != nil { return }
+                // Already handled (removed from pending by handlePeerAddress or other handler)
+                if pendingDownloads[token] == nil { return }
+            }
 
-            // If we're still here and not connected, mark as failed and schedule retry
-            if let pending = pendingDownloads[token], pending.peerConnection == nil {
+            // Timed out - mark as failed and schedule retry
+            if pendingDownloads[token] != nil {
                 let errorMsg = "Connection timeout"
                 let currentRetryCount = transferState.getTransfer(id: transfer.id)?.retryCount ?? 0
 
@@ -327,17 +365,24 @@ final class DownloadManager {
             return
         }
 
-        // Find pending download for this user
-        guard let (token, pending) = pendingDownloads.first(where: { $0.value.username == username }) else {
+        // Find ALL pending downloads for this user (not just first)
+        let matchingEntries = pendingDownloads.filter { $0.value.username == username }
+        guard !matchingEntries.isEmpty else {
             logger.debug("No pending download for \(username)")
             return
         }
 
-        logger.info("Peer address for \(username): \(ip):\(port), token=\(token)")
+        // Use first entry as the "primary" for connection establishment
+        let (token, pending) = matchingEntries.first!
+        let additionalEntries = matchingEntries.filter { $0.key != token }
 
-        // Store peer address for potential outgoing F connection
-        pendingDownloads[token]?.peerIP = ip
-        pendingDownloads[token]?.peerPort = port
+        logger.info("Peer address for \(username): \(ip):\(port), token=\(token) (\(matchingEntries.count) pending downloads)")
+
+        // Store peer address for all pending downloads
+        for (t, _) in matchingEntries {
+            pendingDownloads[t]?.peerIP = ip
+            pendingDownloads[t]?.peerPort = port
+        }
 
         // First, check if we already have a connection to this user (from incoming connections)
         if let existingConnection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
@@ -349,6 +394,16 @@ final class DownloadManager {
                 try await existingConnection.queueDownload(filename: pending.filename)
                 try? await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
                 logger.info("Sent QueueDownload for \(pending.filename)")
+
+                // Also queue additional downloads on the same connection
+                for (extraToken, extraPending) in additionalEntries {
+                    pendingDownloads[extraToken]?.peerConnection = existingConnection
+                    await setupTransferRequestCallback(token: extraToken, connection: existingConnection)
+                    try? await existingConnection.queueDownload(filename: extraPending.filename)
+                    try? await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                    logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
+                }
+
                 await waitForTransferResponse(token: token)
             } catch {
                 logger.error("Failed to queue download on existing connection: \(error.localizedDescription)")
@@ -408,28 +463,30 @@ final class DownloadManager {
                 isIndirect = true
                 logger.info("Got indirect connection from \(username)")
             } catch {
-                // Both paths failed
+                // Both paths failed - fail all pending downloads for this user
                 logger.error("Both direct and indirect connections to \(username) failed")
                 let isSameNetwork = networkClient.externalIP == ip
                 let errorMsg = isSameNetwork
                     ? "Same network - hairpin NAT limitation"
                     : "Connection timeout - peer unreachable"
 
-                let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
-                transferState.updateTransfer(id: pending.transferId) { t in
-                    t.status = .failed
-                    t.error = errorMsg
-                }
-                pendingDownloads.removeValue(forKey: token)
+                for (failToken, failPending) in matchingEntries {
+                    let currentRetryCount = transferState.getTransfer(id: failPending.transferId)?.retryCount ?? 0
+                    transferState.updateTransfer(id: failPending.transferId) { t in
+                        t.status = .failed
+                        t.error = errorMsg
+                    }
+                    pendingDownloads.removeValue(forKey: failToken)
 
-                if !isSameNetwork && currentRetryCount < maxRetries {
-                    scheduleRetry(
-                        transferId: pending.transferId,
-                        username: pending.username,
-                        filename: pending.filename,
-                        size: pending.size,
-                        retryCount: currentRetryCount
-                    )
+                    if !isSameNetwork && currentRetryCount < maxRetries {
+                        scheduleRetry(
+                            transferId: failPending.transferId,
+                            username: failPending.username,
+                            filename: failPending.filename,
+                            size: failPending.size,
+                            retryCount: currentRetryCount
+                        )
+                    }
                 }
                 return
             }
@@ -441,7 +498,7 @@ final class DownloadManager {
             await connection.resumeReceivingForPeerConnection()
         }
 
-        // Got a connection - send QueueDownload
+        // Got a connection - send QueueDownload for all pending downloads
         pendingDownloads[token]?.peerConnection = connection
 
         do {
@@ -455,6 +512,16 @@ final class DownloadManager {
             try await connection.queueDownload(filename: pending.filename)
             try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
             logger.info("Sent QueueDownload for \(pending.filename)")
+
+            // Also queue additional downloads on the same connection
+            for (extraToken, extraPending) in additionalEntries {
+                pendingDownloads[extraToken]?.peerConnection = connection
+                await setupTransferRequestCallback(token: extraToken, connection: connection)
+                try? await connection.queueDownload(filename: extraPending.filename)
+                try? await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
+            }
+
             await waitForTransferResponse(token: token)
         } catch {
             logger.error("Failed to queue download: \(error.localizedDescription)")
@@ -1877,6 +1944,7 @@ final class DownloadManager {
     }
 
     /// Re-send QueueDownload and PlaceInQueueRequest for waiting/queued downloads
+    /// If no connection exists, re-initiate the download from scratch
     private func reQueueWaitingDownloads() async {
         guard let transferState, let networkClient else { return }
 
@@ -1887,19 +1955,164 @@ final class DownloadManager {
 
         logger.info("Re-queuing \(waitingDownloads.count) waiting downloads")
 
-        for transfer in waitingDownloads {
+        // Group by username to avoid duplicate connection attempts
+        let byUser = Dictionary(grouping: waitingDownloads, by: { $0.username })
+
+        for (username, transfers) in byUser {
             // Try to find an existing connection to this user
-            if let connection = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
-                do {
-                    // Re-send QueueDownload to keep our spot in the remote queue
-                    try await connection.queueDownload(filename: transfer.filename)
-                    // Ask for our queue position so the UI shows it
-                    try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
-                    logger.debug("Re-queued + requested position: \(transfer.filename)")
-                } catch {
-                    logger.debug("Failed to re-queue \(transfer.filename): \(error.localizedDescription)")
+            if let connection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
+                for transfer in transfers {
+                    do {
+                        // Re-send QueueDownload to keep our spot in the remote queue
+                        try await connection.queueDownload(filename: transfer.filename)
+                        // Ask for our queue position so the UI shows it
+                        try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
+                        logger.debug("Re-queued + requested position: \(transfer.filename)")
+                    } catch {
+                        logger.debug("Failed to re-queue \(transfer.filename): \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                // No connection exists - re-initiate the first download from scratch
+                // (handlePeerAddress will handle all downloads for this user)
+                logger.info("No connection to \(username), re-initiating download")
+                let transfer = transfers[0]
+
+                // Only re-initiate if not already being handled by a pending download
+                let alreadyPending = pendingDownloads.values.contains { $0.username == username }
+                if !alreadyPending {
+                    await startDownload(transfer: transfer)
                 }
             }
+        }
+    }
+
+    // MARK: - Connection Retry Timer (every 3 minutes)
+
+    /// Retry downloads that failed due to connection issues
+    private func startConnectionRetryTimer() {
+        connectionRetryTimer?.cancel()
+        connectionRetryTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(180))  // 3 minutes
+                guard let self, !Task.isCancelled else { return }
+                await self.retryFailedConnectionDownloads()
+            }
+        }
+    }
+
+    /// Re-initiate downloads that failed due to connection timeouts/errors
+    private func retryFailedConnectionDownloads() async {
+        guard let transferState else { return }
+
+        let failedDownloads = transferState.downloads.filter {
+            $0.status == .failed && $0.direction == .download &&
+            isRetriableError($0.error ?? "")
+        }
+        guard !failedDownloads.isEmpty else { return }
+
+        logger.info("Connection retry: \(failedDownloads.count) failed downloads to retry")
+
+        // Group by username and stagger
+        let byUser = Dictionary(grouping: failedDownloads, by: { $0.username })
+        var staggerIndex = 0
+        for (username, transfers) in byUser {
+            // Skip if already has a pending download for this user
+            let alreadyPending = pendingDownloads.values.contains { $0.username == username }
+            if alreadyPending { continue }
+
+            let transfer = transfers[0]
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.status = .queued
+                t.error = nil
+            }
+
+            let currentDelay = Double(staggerIndex) * 1.0
+            Task {
+                if currentDelay > 0 {
+                    try? await Task.sleep(for: .milliseconds(Int(currentDelay * 1000)))
+                }
+                await startDownload(transfer: transfer)
+            }
+            staggerIndex += 1
+        }
+    }
+
+    // MARK: - Queue Position Update Timer (every 5 minutes)
+
+    /// Periodically request queue positions for waiting downloads
+    private func startQueuePositionTimer() {
+        queuePositionTimer?.cancel()
+        queuePositionTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(300))  // 5 minutes
+                guard let self, !Task.isCancelled else { return }
+                await self.updateQueuePositions()
+            }
+        }
+    }
+
+    /// Send PlaceInQueueRequest for all waiting downloads to get updated queue positions
+    private func updateQueuePositions() async {
+        guard let transferState, let networkClient else { return }
+
+        let waitingDownloads = transferState.downloads.filter {
+            $0.status == .waiting
+        }
+        guard !waitingDownloads.isEmpty else { return }
+
+        logger.info("Updating queue positions for \(waitingDownloads.count) waiting downloads")
+
+        for transfer in waitingDownloads {
+            if let connection = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
+                do {
+                    try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
+                } catch {
+                    logger.debug("Failed to request queue position for \(transfer.filename)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Stale Download Recovery Timer (every 15 minutes)
+
+    /// Recover downloads stuck in waiting state for too long
+    private func startStaleRecoveryTimer() {
+        staleRecoveryTimer?.cancel()
+        staleRecoveryTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(900))  // 15 minutes
+                guard let self, !Task.isCancelled else { return }
+                await self.recoverStaleDownloads()
+            }
+        }
+    }
+
+    /// Re-initiate downloads stuck in .waiting for more than 10 minutes
+    private func recoverStaleDownloads() async {
+        guard let transferState else { return }
+
+        let staleThreshold = Date().addingTimeInterval(-600)  // 10 minutes ago
+
+        let staleDownloads = transferState.downloads.filter {
+            $0.status == .waiting && $0.direction == .download &&
+            ($0.startTime ?? Date()) < staleThreshold
+        }
+        guard !staleDownloads.isEmpty else { return }
+
+        logger.info("Recovering \(staleDownloads.count) stale waiting downloads")
+
+        let byUser = Dictionary(grouping: staleDownloads, by: { $0.username })
+        for (username, transfers) in byUser {
+            let alreadyPending = pendingDownloads.values.contains { $0.username == username }
+            if alreadyPending { continue }
+
+            let transfer = transfers[0]
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.status = .queued
+                t.error = nil
+            }
+            await startDownload(transfer: transfer)
         }
     }
 

@@ -42,6 +42,9 @@ actor ServerConnection {
     private var messageHandler: ((UInt32, Data) async -> Void)?
     private var stateHandler: ((State) -> Void)?
 
+    // Connection continuation - stored as property to ensure single-resume safety
+    private var connectContinuation: CheckedContinuation<Void, Error>?
+
     // Async stream for messages
     private var messageContinuation: AsyncStream<Data>.Continuation?
 
@@ -114,10 +117,11 @@ actor ServerConnection {
         connection = conn
 
         return try await withCheckedThrowingContinuation { continuation in
+            self.connectContinuation = continuation
             conn.stateUpdateHandler = { [weak self] newState in
                 guard let self else { return }
                 Task {
-                    await self.handleStateChange(newState, continuation: continuation)
+                    await self.handleStateChange(newState)
                 }
             }
             conn.start(queue: .global(qos: .userInitiated))
@@ -128,6 +132,11 @@ actor ServerConnection {
         connection?.cancel()
         connection = nil
         receiveBuffer = Data()
+        // Resume any pending connect continuation before state change
+        if let continuation = connectContinuation {
+            connectContinuation = nil
+            continuation.resume(throwing: ConnectionError.notConnected)
+        }
         updateState(.disconnected)
     }
 
@@ -193,22 +202,35 @@ actor ServerConnection {
 
     // MARK: - Private Methods
 
-    private func handleStateChange(_ newState: NWConnection.State, continuation: CheckedContinuation<Void, Error>?) {
+    private func handleStateChange(_ newState: NWConnection.State) {
         switch newState {
         case .ready:
             logger.info("Connected to \(self.host):\(self.port)")
             updateState(.connected)
-            continuation?.resume()
+            // Resume continuation exactly once, then nil it out
+            if let continuation = connectContinuation {
+                connectContinuation = nil
+                continuation.resume()
+            }
             Task { await startReceiving() }
 
         case .failed(let error):
             logger.error("Connection failed: \(error.localizedDescription)")
             updateState(.failed(error))
-            continuation?.resume(throwing: ConnectionError.connectionFailed(error.localizedDescription))
+            // Resume continuation exactly once, then nil it out
+            if let continuation = connectContinuation {
+                connectContinuation = nil
+                continuation.resume(throwing: ConnectionError.connectionFailed(error.localizedDescription))
+            }
 
         case .cancelled:
             logger.info("Connection cancelled")
             updateState(.disconnected)
+            // If cancelled during connect, resume with error
+            if let continuation = connectContinuation {
+                connectContinuation = nil
+                continuation.resume(throwing: ConnectionError.connectionFailed("Connection cancelled"))
+            }
 
         case .waiting(let error):
             logger.warning("Connection waiting: \(error.localizedDescription)")

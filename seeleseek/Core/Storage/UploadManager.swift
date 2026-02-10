@@ -751,6 +751,12 @@ final class UploadManager {
             let filename = (filePath as NSString).lastPathComponent
             let uploadUsername = activeUploads[transferId]?.username ?? "unknown"
 
+            // Report upload speed to server
+            let avgSpeed = duration > 0 ? UInt32(Double(bytesSent - offset) / duration) : 0
+            if avgSpeed > 0 {
+                try? await networkClient?.reportUploadSpeed(avgSpeed)
+            }
+
             await MainActor.run { [transferState, statisticsState] in
                 transferState?.updateTransfer(id: transferId) { t in
                     t.status = .completed
@@ -1054,6 +1060,12 @@ final class UploadManager {
             let avgSpeed = elapsed > 0 ? Double(bytesTransferred) / elapsed : 0
 
             logger.info("Upload complete: \(filePath) (\(bytesTransferred) bytes in \(String(format: "%.1f", elapsed))s, \(Int64(avgSpeed)) B/s)")
+
+            // Report upload speed to server
+            let reportSpeed = UInt32(avgSpeed)
+            if reportSpeed > 0 {
+                try? await networkClient?.reportUploadSpeed(reportSpeed)
+            }
 
             transferState?.updateTransfer(id: transferId) { t in
                 t.status = .completed

@@ -838,19 +838,50 @@ final class ServerMessageHandler {
             )
         }
 
-        // Try direct connection first
-        do {
-            let address = try await client.getPeerAddress(for: username)
-            let connectionToken = UInt32.random(in: 0...UInt32.max)
+        // Race direct and indirect connections simultaneously for faster delivery
+        let indirectToken = UInt32.random(in: 0...UInt32.max)
 
-            let connection = try await withTimeout(seconds: 10) {
-                try await client.peerConnectionPool.connect(
-                    to: username,
-                    ip: address.ip,
-                    port: address.port,
-                    token: connectionToken
-                )
+        // Register pending indirect BEFORE starting anything (to catch early PierceFirewall)
+        client.registerPendingBrowse(token: indirectToken, username: username, timeout: 15)
+        await client.sendConnectToPeer(token: indirectToken, username: username, connectionType: "P")
+
+        do {
+            let connection: PeerConnection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
+                // Direct path: get address + connect + handshake
+                group.addTask {
+                    let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
+                    let connectionToken = UInt32.random(in: 0...UInt32.max)
+                    let conn = try await client.peerConnectionPool.connect(
+                        to: username,
+                        ip: address.ip,
+                        port: address.port,
+                        token: connectionToken
+                    )
+                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                    return conn
+                }
+
+                // Indirect path: wait for PierceFirewall
+                group.addTask {
+                    let conn = try await client.waitForPendingBrowse(token: indirectToken)
+                    await conn.resumeReceivingForPeerConnection()
+                    try await conn.sendPeerInit(username: client.username)
+                    return conn
+                }
+
+                // Timeout: give up after 12s
+                group.addTask {
+                    try await Task.sleep(for: .seconds(12))
+                    throw NetworkError.timeout
+                }
+
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
             }
+
+            // Cancel the pending indirect if we got direct
+            client.cancelPendingBrowse(token: indirectToken)
 
             try await connection.sendSearchReply(
                 username: client.username,
@@ -858,33 +889,9 @@ final class ServerMessageHandler {
                 results: results
             )
             logger.info("Sent \(files.count) search results to \(username) for token \(token)")
-            return
         } catch {
-            logger.debug("Direct search result delivery to \(username) failed: \(error.localizedDescription)")
-        }
-
-        // Fallback: indirect via ConnectToPeer/PierceFirewall
-        do {
-            let indirectToken = UInt32.random(in: 0...UInt32.max)
-
-            // Register pending browse state to catch the PierceFirewall
-            client.registerPendingBrowse(token: indirectToken, username: username, timeout: 15)
-            await client.sendConnectToPeer(token: indirectToken, username: username, connectionType: "P")
-
-            let connection = try await client.waitForPendingBrowse(token: indirectToken)
-            await connection.resumeReceivingForPeerConnection()
-
-            // Send PeerInit so peer knows who we are
-            try await connection.sendPeerInit(username: client.username)
-
-            try await connection.sendSearchReply(
-                username: client.username,
-                token: token,
-                results: results
-            )
-            logger.info("Sent \(files.count) search results to \(username) via indirect for token \(token)")
-        } catch {
-            logger.debug("Indirect search result delivery to \(username) also failed")
+            client.cancelPendingBrowse(token: indirectToken)
+            logger.debug("Search result delivery to \(username) failed: \(error.localizedDescription)")
         }
     }
 
