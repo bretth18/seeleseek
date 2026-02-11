@@ -6,6 +6,7 @@ import SwiftUI
 struct SeeleTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<_Label>) -> some View {
         configuration
+            .textFieldStyle(.plain)
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm + 2)
             .background(SeeleColors.surfaceSecondary)

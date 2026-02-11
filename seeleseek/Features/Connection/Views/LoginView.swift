@@ -20,7 +20,7 @@ struct LoginView: View {
                     .foregroundStyle(SeeleColors.accent)
 
                     Text("seeleseek")
-                        .font(SeeleTypography.largeTitle)
+                        .font(SeeleTypography.logo)
                         .foregroundStyle(SeeleColors.textPrimary)
 
                     Text("a soulseek client from The Virtuous Corporation")

@@ -7,6 +7,10 @@ final class SearchState {
     // MARK: - Search Input
     var searchQuery: String = ""
 
+    // MARK: - URL Resolution
+    var isResolvingURL: Bool = false
+    let urlResolver = URLResolverClient()
+
     // MARK: - Tabbed Searches
     /// All active search tabs - results stream in over time
     var searches: [SearchQuery] = []

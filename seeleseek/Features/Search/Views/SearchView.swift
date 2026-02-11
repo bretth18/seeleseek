@@ -39,10 +39,16 @@ struct SearchView: View {
     private func searchBar(binding: Binding<String>) -> some View {
         HStack(spacing: SeeleSpacing.md) {
             HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(SeeleColors.textTertiary)
+                if searchState.isResolvingURL {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
 
-                TextField("Search for music...", text: binding)
+                TextField("Search or paste a music URL...", text: binding)
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -258,14 +264,37 @@ struct SearchView: View {
     private func performSearch() {
         guard searchState.canSearch else { return }
 
+        let query = searchState.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check if query is a music streaming URL
+        if URLResolverClient.detectService(from: query) != nil {
+            Task {
+                searchState.isResolvingURL = true
+                defer { searchState.isResolvingURL = false }
+
+                do {
+                    let resolved = try await searchState.urlResolver.resolve(url: query)
+                    let searchQuery = URLResolverClient.buildSearchQuery(artist: resolved.artist, title: resolved.title)
+                    searchState.searchQuery = searchQuery
+                    executeSearch()
+                } catch {
+                    // Resolution failed — fall through and search with the raw text
+                    executeSearch()
+                }
+            }
+            return
+        }
+
+        executeSearch()
+    }
+
+    private func executeSearch() {
         let token = UInt32.random(in: 1...UInt32.max)
         searchState.startSearch(token: token)
 
         Task {
             do {
                 try await appState.networkClient.search(query: searchState.searchQuery, token: token)
-                // Results stream in from peers - no "finish" needed
-                // The search tab stays open until user closes it
             } catch {
                 print("Search error: \(error)")
             }
