@@ -7,7 +7,9 @@ struct SearchFilterBar: View {
         HStack(spacing: SeeleSpacing.sm) {
             // Filter toggle
             Button {
-                searchState.showFilters.toggle()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    searchState.showFilters.toggle()
+                }
             } label: {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: "line.3.horizontal.decrease.circle")

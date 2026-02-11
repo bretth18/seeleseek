@@ -295,10 +295,10 @@ struct BrowseView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(browseState.displayedFolders) { folder in
+                        ForEach(browseState.visibleFlatTree) { item in
                             FileTreeRow(
-                                file: folder,
-                                depth: 0,
+                                file: item.file,
+                                depth: item.depth,
                                 browseState: browseState,
                                 username: shares.username
                             )

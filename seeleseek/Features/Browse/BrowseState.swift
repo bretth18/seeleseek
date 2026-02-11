@@ -1,6 +1,12 @@
 import SwiftUI
 import os
 
+struct FlatTreeItem: Identifiable {
+    let id: UUID
+    let file: SharedFile
+    let depth: Int
+}
+
 @Observable
 @MainActor
 final class BrowseState {
@@ -48,6 +54,22 @@ final class BrowseState {
 
         // Find the target folder and return its contents
         return findFolder(at: folderPath, in: browse.folders)?.children ?? []
+    }
+
+    /// Flat list of currently visible tree items (only expanded folders contribute children)
+    var visibleFlatTree: [FlatTreeItem] {
+        var result: [FlatTreeItem] = []
+        appendVisible(files: displayedFolders, depth: 0, to: &result)
+        return result
+    }
+
+    private func appendVisible(files: [SharedFile], depth: Int, to result: inout [FlatTreeItem]) {
+        for file in files {
+            result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
+            if file.isDirectory, expandedFolders.contains(file.id), let children = file.children {
+                appendVisible(files: children, depth: depth + 1, to: &result)
+            }
+        }
     }
 
     /// Find a folder by its path in the tree

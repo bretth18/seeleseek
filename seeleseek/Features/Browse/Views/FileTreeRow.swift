@@ -23,107 +23,92 @@ struct FileTreeRow: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: SeeleSpacing.sm) {
-                // Indentation
-                if depth > 0 {
-                    Spacer()
-                        .frame(width: CGFloat(depth) * 20)
-                }
-
-                // Expand/collapse for folders
-                if file.isDirectory {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                        .foregroundStyle(SeeleColors.textTertiary)
-                        .frame(width: SeeleSpacing.iconSize)
-                } else {
-                    Spacer().frame(width: SeeleSpacing.iconSize)
-                }
-
-                // Icon
-                Image(systemName: file.icon)
-                    .font(.system(size: SeeleSpacing.iconSize))
-                    .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
-
-                // Name
-                Text(file.displayName)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .lineLimit(1)
-
-                // Private/locked indicator (buddy-only)
-                if file.isPrivate {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeXS))
-                        .foregroundStyle(SeeleColors.warning)
-                        .help("Private file - only shared with buddies")
-                }
-
+        HStack(spacing: SeeleSpacing.sm) {
+            // Indentation
+            if depth > 0 {
                 Spacer()
+                    .frame(width: CGFloat(depth) * 20)
+            }
 
-                // Size (for files) or file count (for folders)
-                if file.isDirectory {
-                    if let children = file.children {
-                        let fileCount = countFiles(in: children)
-                        Text("\(fileCount) files")
-                            .font(SeeleTypography.monoSmall)
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
+            // Expand/collapse for folders
+            if file.isDirectory {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
+                    .foregroundStyle(SeeleColors.textTertiary)
+                    .frame(width: SeeleSpacing.iconSize)
+            } else {
+                Spacer().frame(width: SeeleSpacing.iconSize)
+            }
 
-                    // Download folder button
-                    Button {
-                        downloadFolder()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: SeeleSpacing.iconSize))
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(isHovered ? 1 : 0)
-                    .help("Download folder")
-                } else {
-                    Text(file.formattedSize)
+            // Icon
+            Image(systemName: file.icon)
+                .font(.system(size: SeeleSpacing.iconSize))
+                .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
+
+            // Name
+            Text(file.displayName)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
+                .lineLimit(1)
+
+            // Private/locked indicator (buddy-only)
+            if file.isPrivate {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
+                    .foregroundStyle(SeeleColors.warning)
+                    .help("Private file - only shared with buddies")
+            }
+
+            Spacer()
+
+            // Size (for files) or file count (for folders)
+            if file.isDirectory {
+                if file.fileCount > 0 {
+                    Text("\(file.fileCount) files")
                         .font(SeeleTypography.monoSmall)
                         .foregroundStyle(SeeleColors.textTertiary)
+                }
 
-                    // Download button with status indicator
-                    Button {
-                        if !isQueued {
-                            downloadFile()
-                        }
-                    } label: {
-                        downloadButtonIcon
+                // Download folder button
+                Button {
+                    downloadFolder()
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: SeeleSpacing.iconSize))
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovered ? 1 : 0)
+                .help("Download folder")
+            } else {
+                Text(file.formattedSize)
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.textTertiary)
+
+                // Download button with status indicator
+                Button {
+                    if !isQueued {
+                        downloadFile()
                     }
-                    .buttonStyle(.plain)
-                    .opacity(isHovered || isQueued ? 1 : 0)
-                    .disabled(isQueued)
-                    .help(downloadButtonHelp)
+                } label: {
+                    downloadButtonIcon
                 }
+                .buttonStyle(.plain)
+                .opacity(isHovered || isQueued ? 1 : 0)
+                .disabled(isQueued)
+                .help(downloadButtonHelp)
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(isHovered ? SeeleColors.surfaceSecondary : .clear)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                browseState.selectFile(file)
-            }
-            .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.1)) {
-                    isHovered = hovering
-                }
-            }
-
-            // Children (if expanded)
-            if file.isDirectory, isExpanded, let children = file.children {
-                ForEach(children) { child in
-                    FileTreeRow(
-                        file: child,
-                        depth: depth + 1,
-                        browseState: browseState,
-                        username: username
-                    )
-                }
+        }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(isHovered ? SeeleColors.surfaceSecondary : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            browseState.selectFile(file)
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovered = hovering
             }
         }
     }
@@ -149,7 +134,7 @@ struct FileTreeRow: View {
     private func downloadFolder() {
         guard file.isDirectory, let children = file.children else { return }
 
-        let allFiles = collectAllFiles(in: children)
+        let allFiles = SharedFile.collectAllFiles(in: children)
         print("📁 Browse download folder: \(file.displayName) (\(allFiles.count) files)")
 
         var queuedCount = 0
@@ -176,34 +161,6 @@ struct FileTreeRow: View {
         } else {
             print("ℹ️ All files in folder already queued")
         }
-    }
-
-    private func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {
-        var result: [SharedFile] = []
-        for f in files {
-            if f.isDirectory {
-                if let children = f.children {
-                    result.append(contentsOf: collectAllFiles(in: children))
-                }
-            } else {
-                result.append(f)
-            }
-        }
-        return result
-    }
-
-    private func countFiles(in files: [SharedFile]) -> Int {
-        var count = 0
-        for f in files {
-            if f.isDirectory {
-                if let children = f.children {
-                    count += countFiles(in: children)
-                }
-            } else {
-                count += 1
-            }
-        }
-        return count
     }
 
     private var downloadButtonIcon: some View {

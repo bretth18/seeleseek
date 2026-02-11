@@ -9,6 +9,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     let isDirectory: Bool
     let isPrivate: Bool  // Buddy-only / locked file
     var children: [SharedFile]?
+    var fileCount: Int = 0  // Cached count of files (recursive) — set during tree building
 
     nonisolated init(
         id: UUID = UUID(),
@@ -18,7 +19,8 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         duration: UInt32? = nil,
         isDirectory: Bool = false,
         isPrivate: Bool = false,
-        children: [SharedFile]? = nil
+        children: [SharedFile]? = nil,
+        fileCount: Int = 0
     ) {
         self.id = id
         self.filename = filename
@@ -28,6 +30,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         self.isDirectory = isDirectory
         self.isPrivate = isPrivate
         self.children = children
+        self.fileCount = fileCount
     }
 
     var displayName: String {
@@ -93,6 +96,21 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     var isLossless: Bool {
         let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
         return losslessExtensions.contains(fileExtension)
+    }
+
+    /// Recursively collect all non-directory files from a tree
+    static func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {
+        var result: [SharedFile] = []
+        for f in files {
+            if f.isDirectory {
+                if let children = f.children {
+                    result.append(contentsOf: collectAllFiles(in: children))
+                }
+            } else {
+                result.append(f)
+            }
+        }
+        return result
     }
 
     // MARK: - Tree Building
@@ -171,15 +189,17 @@ struct SharedFile: Identifiable, Hashable, Sendable {
                 return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
             }
 
-            // Calculate total size of folder
+            // Calculate total size and file count for folder
             let totalSize = children.reduce(0) { $0 + $1.size }
+            let totalFiles = children.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
 
             return SharedFile(
                 id: folderData.id,
                 filename: path,
                 size: totalSize,
                 isDirectory: true,
-                children: children
+                children: children,
+                fileCount: totalFiles
             )
         }
 

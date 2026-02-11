@@ -44,8 +44,6 @@ struct MainView: View {
             Sidebar()
         } detail: {
             detailView
-                .navigationTitle("")
-                .toolbarTitleDisplayMode(.inline)
         }
         .frame(minWidth: 900, minHeight: 600)
         .sheet(isPresented: Binding(

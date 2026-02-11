@@ -28,6 +28,7 @@ struct SearchView: View {
 
                 if searchState.showFilters {
                     SearchFilterPanel(searchState: searchState)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                         .zIndex(1)
                 }
             }

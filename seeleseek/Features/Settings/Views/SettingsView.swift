@@ -13,6 +13,7 @@ struct SettingsView: View {
         case chat = "Chat"
         case privacy = "Privacy"
         case diagnostics = "Diagnostics"
+        case update = "Update"
 
         var icon: String {
             switch self {
@@ -24,6 +25,7 @@ struct SettingsView: View {
             case .chat: "bubble.left"
             case .privacy: "lock.shield"
             case .diagnostics: "ant"
+            case .update: "arrow.triangle.2.circlepath"
             }
         }
     }
@@ -60,6 +62,8 @@ struct SettingsView: View {
                         PrivacySettingsSection(settings: appState.settings)
                     case .diagnostics:
                         DiagnosticsSection()
+                    case .update:
+                        UpdateSettingsSection(updateState: appState.updateState)
                     }
                 }
                 .padding(SeeleSpacing.lg)

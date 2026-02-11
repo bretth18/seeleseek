@@ -15,6 +15,11 @@ struct SeeleSeekApp: App {
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    Task { await appState.updateState.checkForUpdate() }
+                }
+            }
             CommandMenu("Connection") {
                 Button("Connect...") {
                     // Show login if disconnected
@@ -33,45 +38,50 @@ struct SeeleSeekApp: App {
                     appState.sidebarSelection = .search
                 }
                 .keyboardShortcut("1", modifiers: .command)
+                
+                Button("Wishlists") {
+                    appState.sidebarSelection = .wishlists
+                }
+                .keyboardShortcut("2", modifiers: .command)
 
                 Button("Transfers") {
                     appState.sidebarSelection = .transfers
                 }
-                .keyboardShortcut("2", modifiers: .command)
+                .keyboardShortcut("3", modifiers: .command)
 
                 Button("Browse") {
                     appState.sidebarSelection = .browse
                 }
-                .keyboardShortcut("3", modifiers: .command)
+                .keyboardShortcut("4", modifiers: .command)
 
                 Button("Social") {
                     appState.sidebarSelection = .social
                 }
-                .keyboardShortcut("4", modifiers: .command)
+                .keyboardShortcut("5", modifiers: .command)
 
                 Button("Chat") {
                     appState.sidebarSelection = .chat
                 }
-                .keyboardShortcut("5", modifiers: .command)
+                .keyboardShortcut("6", modifiers: .command)
 
                 Divider()
 
                 Button("Statistics") {
                     appState.sidebarSelection = .statistics
                 }
-                .keyboardShortcut("6", modifiers: .command)
+                .keyboardShortcut("7", modifiers: .command)
 
                 Button("Network Monitor") {
                     appState.sidebarSelection = .networkMonitor
                 }
-                .keyboardShortcut("7", modifiers: .command)
+                .keyboardShortcut("8", modifiers: .command)
 
                 Divider()
 
                 Button("Settings") {
                     appState.sidebarSelection = .settings
                 }
-                .keyboardShortcut("8", modifiers: .command)
+                .keyboardShortcut("9", modifiers: .command)
             }
         }
         #endif

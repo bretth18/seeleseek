@@ -15,6 +15,7 @@ final class AppState {
     var metadataState = MetadataState()
     var socialState = SocialState()
     var wishlistState = WishlistState()
+    var updateState = UpdateState()
 
     // MARK: - Admin Messages
     var adminMessages: [AdminMessage] = []
@@ -190,6 +191,9 @@ final class AppState {
 
         // Load wishlist items
         await wishlistState.loadFromDatabase()
+
+        // Check for updates on launch
+        updateState.checkOnLaunch()
 
         logger.info("Persisted state loaded")
     }

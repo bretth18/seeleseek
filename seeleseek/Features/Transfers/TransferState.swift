@@ -93,8 +93,22 @@ struct TransferHistoryItem: Identifiable, Sendable {
 @MainActor
 final class TransferState {
     // MARK: - Transfers
-    var downloads: [Transfer] = []
+    var downloads: [Transfer] = [] {
+        didSet { rebuildDownloadIndex() }
+    }
     var uploads: [Transfer] = []
+
+    // MARK: - Download Status Index (O(1) lookup)
+    private(set) var downloadStatusIndex: [String: Transfer.TransferStatus] = [:]
+
+    private func rebuildDownloadIndex() {
+        var index: [String: Transfer.TransferStatus] = [:]
+        index.reserveCapacity(downloads.count)
+        for transfer in downloads {
+            index["\(transfer.username)\0\(transfer.filename)"] = transfer.status
+        }
+        downloadStatusIndex = index
+    }
 
     // MARK: - History
     var history: [TransferHistoryItem] = []
@@ -247,19 +261,13 @@ final class TransferState {
 
     /// Check if a file is already queued or downloading
     func downloadStatus(for filename: String, from username: String) -> Transfer.TransferStatus? {
-        downloads.first {
-            $0.filename == filename && $0.username == username
-        }?.status
+        downloadStatusIndex["\(username)\0\(filename)"]
     }
 
     /// Check if any file with this exact path exists in downloads (any state except completed/cancelled)
     func isFileQueued(filename: String, username: String) -> Bool {
-        downloads.contains {
-            $0.filename == filename &&
-            $0.username == username &&
-            $0.status != .completed &&
-            $0.status != .cancelled
-        }
+        guard let status = downloadStatusIndex["\(username)\0\(filename)"] else { return false }
+        return status != .completed && status != .cancelled
     }
 
     func addDownload(_ transfer: Transfer) {
