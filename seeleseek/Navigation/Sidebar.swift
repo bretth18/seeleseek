@@ -44,7 +44,7 @@ struct Sidebar: View {
         }
         .background(SeeleColors.surface)
         #if os(macOS)
-        .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+        .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
         #endif
     }
 

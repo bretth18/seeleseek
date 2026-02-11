@@ -21,7 +21,16 @@ struct SearchView: View {
             SearchFilterBar(searchState: searchState)
 
             Divider().background(SeeleColors.surfaceSecondary)
-            resultsArea
+
+            // ZStack so filter panel overlays results instead of pushing layout
+            ZStack(alignment: .top) {
+                resultsArea
+
+                if searchState.showFilters {
+                    SearchFilterPanel(searchState: searchState)
+                        .zIndex(1)
+                }
+            }
         }
         .background(SeeleColors.background)
     }

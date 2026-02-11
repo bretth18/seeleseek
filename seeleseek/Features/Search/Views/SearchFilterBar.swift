@@ -4,158 +4,174 @@ struct SearchFilterBar: View {
     @Bindable var searchState: SearchState
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Always-visible row
-            HStack(spacing: SeeleSpacing.sm) {
-                // Filter toggle
-                Button {
-                    withAnimation(.easeInOut(duration: SeeleSpacing.animationFast)) {
-                        searchState.showFilters.toggle()
-                    }
-                } label: {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
-                            .foregroundStyle(searchState.showFilters ? SeeleColors.accent : SeeleColors.textSecondary)
+        HStack(spacing: SeeleSpacing.sm) {
+            // Filter toggle
+            Button {
+                searchState.showFilters.toggle()
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
+                        .foregroundStyle(searchState.showFilters ? SeeleColors.accent : SeeleColors.textSecondary)
 
-                        if searchState.hasActiveFilters {
-                            Circle()
-                                .fill(SeeleColors.accent)
-                                .frame(width: 6, height: 6)
-                                .offset(x: 2, y: -2)
-                        }
+                    if searchState.hasActiveFilters {
+                        Circle()
+                            .fill(SeeleColors.accent)
+                            .frame(width: 6, height: 6)
+                            .offset(x: 2, y: -2)
                     }
+                }
+            }
+            .buttonStyle(.plain)
+
+            // Quick preset chips
+            filterChip("MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
+                searchState.applyPreset(.mp3_320)
+            }
+            filterChip("FLAC", isActive: searchState.isPresetActive(.flac)) {
+                searchState.applyPreset(.flac)
+            }
+            filterChip("Lossless", isActive: searchState.isPresetActive(.lossless)) {
+                searchState.applyPreset(.lossless)
+            }
+            filterChip("Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
+                searchState.applyPreset(.hiRes)
+            }
+
+            Spacer()
+
+            if searchState.hasActiveFilters {
+                Text("\(searchState.activeFilterCount) active")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.accent)
+
+                Button {
+                    searchState.clearFilters()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.xs)
+        .background(SeeleColors.surface.opacity(0.3))
+    }
 
-                // Quick preset chips
-                filterChip("MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
-                    searchState.applyPreset(.mp3_320)
+    // MARK: - Components
+
+    func filterChip(_ label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(SeeleTypography.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
+                .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Expanded Filter Panel (overlays results area)
+
+struct SearchFilterPanel: View {
+    @Bindable var searchState: SearchState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+            // Format row
+            filterRow("Format") {
+                let formats = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "ape"]
+                ForEach(formats, id: \.self) { ext in
+                    filterChip(ext.uppercased(), isActive: searchState.filterExtensions.contains(ext)) {
+                        searchState.toggleExtension(ext)
+                    }
                 }
-                filterChip("FLAC", isActive: searchState.isPresetActive(.flac)) {
-                    searchState.applyPreset(.flac)
+            }
+
+            // Bitrate row
+            filterRow("Bitrate") {
+                let presets: [(String, Int?)] = [
+                    ("Any", nil), ("128+", 128), ("192+", 192), ("256+", 256), ("320+", 320)
+                ]
+                ForEach(presets, id: \.0) { label, value in
+                    filterChip(label, isActive: searchState.filterMinBitrate == value) {
+                        searchState.filterMinBitrate = value
+                    }
                 }
-                filterChip("Lossless", isActive: searchState.isPresetActive(.lossless)) {
-                    searchState.applyPreset(.lossless)
+            }
+
+            // Sample rate row
+            filterRow("Sample") {
+                let presets: [(String, Int?)] = [
+                    ("Any", nil), ("44.1k+", 44100), ("48k+", 48000), ("96k+", 96000)
+                ]
+                ForEach(presets, id: \.0) { label, value in
+                    filterChip(label, isActive: searchState.filterMinSampleRate == value) {
+                        searchState.filterMinSampleRate = value
+                    }
                 }
-                filterChip("Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
-                    searchState.applyPreset(.hiRes)
+            }
+
+            // Bit depth row
+            filterRow("Depth") {
+                let presets: [(String, Int?)] = [
+                    ("Any", nil), ("16+", 16), ("24+", 24), ("32+", 32)
+                ]
+                ForEach(presets, id: \.0) { label, value in
+                    filterChip(label, isActive: searchState.filterMinBitDepth == value) {
+                        searchState.filterMinBitDepth = value
+                    }
+                }
+            }
+
+            // Options row
+            HStack(spacing: SeeleSpacing.lg) {
+                HStack(spacing: SeeleSpacing.sm) {
+                    Text("Free slots only")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                    Toggle("", isOn: $searchState.filterFreeSlotOnly)
+                        .toggleStyle(SeeleToggleStyle())
+                        .labelsHidden()
                 }
 
                 Spacer()
 
-                if searchState.hasActiveFilters {
-                    Text("\(searchState.activeFilterCount) active")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.accent)
-
-                    Button {
-                        searchState.clearFilters()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: SeeleSpacing.iconSizeSmall))
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.xs)
-            .background(SeeleColors.surface.opacity(0.3))
-
-            // Expanded filter panel
-            if searchState.showFilters {
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    // Format row
-                    filterRow("Format") {
-                        let formats = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "ape"]
-                        ForEach(formats, id: \.self) { ext in
-                            filterChip(ext.uppercased(), isActive: searchState.filterExtensions.contains(ext)) {
-                                searchState.toggleExtension(ext)
-                            }
-                        }
-                    }
-
-                    // Bitrate row
-                    filterRow("Bitrate") {
-                        let presets: [(String, Int?)] = [
-                            ("Any", nil), ("128+", 128), ("192+", 192), ("256+", 256), ("320+", 320)
-                        ]
-                        ForEach(presets, id: \.0) { label, value in
-                            filterChip(label, isActive: searchState.filterMinBitrate == value) {
-                                searchState.filterMinBitrate = value
-                            }
-                        }
-                    }
-
-                    // Sample rate row
-                    filterRow("Sample") {
-                        let presets: [(String, Int?)] = [
-                            ("Any", nil), ("44.1k+", 44100), ("48k+", 48000), ("96k+", 96000)
-                        ]
-                        ForEach(presets, id: \.0) { label, value in
-                            filterChip(label, isActive: searchState.filterMinSampleRate == value) {
-                                searchState.filterMinSampleRate = value
-                            }
-                        }
-                    }
-
-                    // Bit depth row
-                    filterRow("Depth") {
-                        let presets: [(String, Int?)] = [
-                            ("Any", nil), ("16+", 16), ("24+", 24), ("32+", 32)
-                        ]
-                        ForEach(presets, id: \.0) { label, value in
-                            filterChip(label, isActive: searchState.filterMinBitDepth == value) {
-                                searchState.filterMinBitDepth = value
-                            }
-                        }
-                    }
-
-                    // Options row
-                    HStack(spacing: SeeleSpacing.lg) {
-                        HStack(spacing: SeeleSpacing.sm) {
-                            Text("Free slots only")
-                                .font(SeeleTypography.caption)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                            Toggle("", isOn: $searchState.filterFreeSlotOnly)
-                                .toggleStyle(SeeleToggleStyle())
-                                .labelsHidden()
-                        }
-
-                        Spacer()
-
-                        // Sort order
-                        Menu {
-                            ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
-                                Button {
-                                    searchState.sortOrder = order
-                                } label: {
-                                    HStack {
-                                        Text(order.rawValue)
-                                        if searchState.sortOrder == order {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
+                // Sort order
+                Menu {
+                    ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
+                        Button {
+                            searchState.sortOrder = order
+                        } label: {
+                            HStack {
+                                Text(order.rawValue)
+                                if searchState.sortOrder == order {
+                                    Image(systemName: "checkmark")
                                 }
                             }
-                        } label: {
-                            HStack(spacing: SeeleSpacing.xs) {
-                                Text("Sort: \(searchState.sortOrder.rawValue)")
-                                    .font(SeeleTypography.caption)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                            }
-                            .foregroundStyle(SeeleColors.textSecondary)
                         }
                     }
+                } label: {
+                    HStack(spacing: SeeleSpacing.xs) {
+                        Text("Sort: \(searchState.sortOrder.rawValue)")
+                            .font(SeeleTypography.caption)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
+                    }
+                    .foregroundStyle(SeeleColors.textSecondary)
                 }
-                .padding(.horizontal, SeeleSpacing.lg)
-                .padding(.vertical, SeeleSpacing.sm)
-                .background(SeeleColors.surface.opacity(0.5))
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(SeeleColors.surface.opacity(0.95))
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
     }
 
     // MARK: - Components
