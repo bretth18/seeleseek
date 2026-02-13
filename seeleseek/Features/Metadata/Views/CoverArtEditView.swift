@@ -92,6 +92,7 @@ struct CoverArtEditView: View {
     private var coverArtSourceText: String {
         switch state.coverArtSource {
         case .none: return ""
+        case .embedded: return "From file"
         case .musicBrainz: return "From MusicBrainz"
         case .manual: return "Custom image"
         }

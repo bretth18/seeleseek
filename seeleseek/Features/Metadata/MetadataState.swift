@@ -1,6 +1,7 @@
 import SwiftUI
 import os
 import UniformTypeIdentifiers
+import AVFoundation
 #if os(macOS)
 import AppKit
 #endif
@@ -45,6 +46,7 @@ final class MetadataState {
 
     enum CoverArtSource {
         case none
+        case embedded
         case musicBrainz
         case manual
     }
@@ -98,6 +100,9 @@ final class MetadataState {
         searchError = nil
         applyError = nil
 
+        // Extract embedded cover art from the audio file
+        extractEmbeddedCoverArt(from: filePath)
+
         isEditorPresented = true
 
         // Auto-search if we have metadata
@@ -105,6 +110,22 @@ final class MetadataState {
             Task {
                 await search()
             }
+        }
+    }
+
+    /// Extract embedded cover art from an audio file using AVFoundation
+    private func extractEmbeddedCoverArt(from url: URL) {
+        let asset = AVAsset(url: url)
+        let artworkItems = AVMetadataItem.metadataItems(
+            from: asset.commonMetadata,
+            filteredByIdentifier: .commonIdentifierArtwork
+        )
+
+        if let artworkItem = artworkItems.first,
+           let data = artworkItem.dataValue {
+            coverArtData = data
+            coverArtSource = .embedded
+            logger.info("Loaded embedded cover art from file (\(data.count) bytes)")
         }
     }
 
@@ -199,9 +220,9 @@ final class MetadataState {
             logger.warning("Failed to fetch release: \(error.localizedDescription)")
         }
 
-        // Only fetch cover art if we don't already have manual cover art
-        guard coverArtSource != .manual else {
-            logger.info("Skipping cover art fetch - manual art already set")
+        // Only fetch cover art if we don't already have manual or embedded cover art
+        guard coverArtSource != .manual && coverArtSource != .embedded else {
+            logger.info("Skipping cover art fetch - \(self.coverArtSource == .manual ? "manual" : "embedded") art already set")
             return
         }
 

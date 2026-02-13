@@ -18,6 +18,7 @@ struct MyProfileView: View {
         @Bindable var state = appState
 
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+            
             // Header
             HStack {
                 Text("My Profile")
