@@ -38,37 +38,12 @@ struct SearchView: View {
 
     private func searchBar(binding: Binding<String>) -> some View {
         HStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.sm) {
-                if searchState.isResolvingURL {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 14, height: 14)
-                } else {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-
-                TextField("Search or paste a music URL...", text: binding)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .onSubmit {
-                        performSearch()
-                    }
-
-                if !searchState.searchQuery.isEmpty {
-                    Button {
-                        searchState.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            StandardSearchField(
+                text: binding,
+                placeholder: "Search or paste a music URL...",
+                isLoading: searchState.isResolvingURL,
+                onSubmit: performSearch
+            )
 
             Button {
                 performSearch()
@@ -195,59 +170,47 @@ struct SearchView: View {
 
     private var resultsListView: some View {
         VStack(spacing: 0) {
-            // Results header
-            HStack {
+            Group {
                 if let search = searchState.currentSearch {
-                    HStack(spacing: SeeleSpacing.sm) {
-                        Text("\(searchState.filteredResults.count) results")
-                            .font(SeeleTypography.subheadline)
-                            .foregroundStyle(SeeleColors.textSecondary)
+                    StandardSectionHeader("Results from \(search.uniqueUsers) users", count: searchState.filteredResults.count) {
+                        HStack(spacing: SeeleSpacing.sm) {
+                            if searchState.filteredResults.count != search.results.count {
+                                Text("\(search.results.count) total")
+                                    .font(SeeleTypography.caption)
+                                    .foregroundStyle(SeeleColors.textTertiary)
+                            }
 
-                        if searchState.filteredResults.count != search.results.count {
-                            Text("(\(search.results.count) total)")
-                                .font(SeeleTypography.caption)
-                                .foregroundStyle(SeeleColors.textTertiary)
-                        }
-
-                        Text("from \(search.uniqueUsers) users")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
-
-                        if search.isSearching {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // Sort picker
-                Menu {
-                    ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
-                        Button {
-                            searchState.sortOrder = order
-                        } label: {
-                            HStack {
-                                Text(order.rawValue)
-                                if searchState.sortOrder == order {
-                                    Image(systemName: "checkmark")
+                            Menu {
+                                ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
+                                    Button {
+                                        searchState.sortOrder = order
+                                    } label: {
+                                        HStack {
+                                            Text(order.rawValue)
+                                            if searchState.sortOrder == order {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
                                 }
+                            } label: {
+                                HStack(spacing: SeeleSpacing.xs) {
+                                    Text("Sort: \(searchState.sortOrder.rawValue)")
+                                        .font(SeeleTypography.caption)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: SeeleSpacing.iconSizeXS))
+                                }
+                                .foregroundStyle(SeeleColors.textSecondary)
+                            }
+
+                            if search.isSearching {
+                                ProgressView()
+                                    .scaleEffect(0.6)
                             }
                         }
                     }
-                } label: {
-                    HStack(spacing: SeeleSpacing.xs) {
-                        Text("Sort: \(searchState.sortOrder.rawValue)")
-                            .font(SeeleTypography.caption)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: SeeleSpacing.iconSizeXS))
-                    }
-                    .foregroundStyle(SeeleColors.textSecondary)
                 }
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
             .background(SeeleColors.surface.opacity(0.3))
 
             // Results list

@@ -85,6 +85,8 @@ final class ActivityLog {
         }
 
         triggerActivity()
+
+        NotificationService.shared.handleActivityEvent(type: type, title: title, detail: detail)
     }
 
     func clear() {

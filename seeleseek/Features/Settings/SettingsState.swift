@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 import os
 
 enum DownloadFolderFormat: String, CaseIterable {
@@ -41,6 +42,12 @@ final class SettingsState {
     private let incompleteLocationKey = "settings.incompleteLocation"
     private let downloadFolderFormatKey = "settings.downloadFolderFormat"
     private let downloadFolderTemplateKey = "settings.downloadFolderTemplate"
+    private let launchAtLoginKey = "settings.launchAtLogin"
+    private let showInMenuBarKey = "settings.showInMenuBar"
+    private let notifyDownloadsKey = "settings.notifyDownloads"
+    private let notifyUploadsKey = "settings.notifyUploads"
+    private let notifyPrivateMessagesKey = "settings.notifyPrivateMessages"
+    private let notifyOnlyInBackgroundKey = "settings.notifyOnlyInBackground"
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -72,8 +79,27 @@ final class SettingsState {
             save()
         }
     }
-    var launchAtLogin: Bool = false
-    var showInMenuBar: Bool = true
+    var launchAtLogin: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            do {
+                if launchAtLogin {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                logger.error("Failed to \(self.launchAtLogin ? "register" : "unregister") launch at login: \(error.localizedDescription)")
+            }
+            save()
+        }
+    }
+    var showInMenuBar: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
 
     // MARK: - Network Settings
     var listenPort: Int = 2234 {
@@ -163,6 +189,32 @@ final class SettingsState {
     var enableNotifications: Bool = true
     var notificationSound: Bool = true
 
+    // MARK: - Notification Settings (granular)
+    var notifyDownloads: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var notifyUploads: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var notifyPrivateMessages: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var notifyOnlyInBackground: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
     // MARK: - Privacy Settings
     var showOnlineStatus: Bool = true
     var allowBrowsing: Bool = true
@@ -205,9 +257,22 @@ final class SettingsState {
         showJoinLeaveMessages = true
         enableNotifications = true
         notificationSound = true
+        notifyDownloads = true
+        notifyUploads = false
+        notifyPrivateMessages = true
+        notifyOnlyInBackground = false
         showOnlineStatus = true
         allowBrowsing = true
         save()
+    }
+
+    // MARK: - Launch at Login Sync
+
+    /// Sync launchAtLogin state from the system (user may toggle it in System Settings)
+    func syncLaunchAtLoginState() {
+        isLoading = true
+        defer { isLoading = false }
+        launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - Persistence
@@ -226,6 +291,12 @@ final class SettingsState {
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
         UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
         UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
+        UserDefaults.standard.set(launchAtLogin, forKey: launchAtLoginKey)
+        UserDefaults.standard.set(showInMenuBar, forKey: showInMenuBarKey)
+        UserDefaults.standard.set(notifyDownloads, forKey: notifyDownloadsKey)
+        UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
+        UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
+        UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
 
         // Save to database asynchronously
         Task {
@@ -297,6 +368,21 @@ final class SettingsState {
         }
         if let template = UserDefaults.standard.string(forKey: downloadFolderTemplateKey) {
             downloadFolderTemplate = template
+        }
+        if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
+            showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
+        }
+        if UserDefaults.standard.object(forKey: notifyDownloadsKey) != nil {
+            notifyDownloads = UserDefaults.standard.bool(forKey: notifyDownloadsKey)
+        }
+        if UserDefaults.standard.object(forKey: notifyUploadsKey) != nil {
+            notifyUploads = UserDefaults.standard.bool(forKey: notifyUploadsKey)
+        }
+        if UserDefaults.standard.object(forKey: notifyPrivateMessagesKey) != nil {
+            notifyPrivateMessages = UserDefaults.standard.bool(forKey: notifyPrivateMessagesKey)
+        }
+        if UserDefaults.standard.object(forKey: notifyOnlyInBackgroundKey) != nil {
+            notifyOnlyInBackground = UserDefaults.standard.bool(forKey: notifyOnlyInBackgroundKey)
         }
     }
 

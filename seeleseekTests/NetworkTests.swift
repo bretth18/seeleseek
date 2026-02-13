@@ -25,7 +25,7 @@ final class NetworkTests: XCTestCase {
     func testFileSearchMessageFormat() throws {
         let token: UInt32 = 12345
         let query = "test query"
-        let message = MessageBuilder.fileSearch(token: token, query: query)
+        let message = MessageBuilder.fileSearchMessage(token: token, query: query)
 
         let length = message.readUInt32(at: 0)
         XCTAssertEqual(length, UInt32(message.count - 4))
@@ -251,7 +251,7 @@ extension NetworkTests {
     func testMessageBuilderPerformance() throws {
         measure {
             for _ in 0..<1000 {
-                _ = MessageBuilder.fileSearch(token: UInt32.random(in: 0...UInt32.max), query: "test query string")
+                _ = MessageBuilder.fileSearchMessage(token: UInt32.random(in: 0...UInt32.max), query: "test query string")
             }
         }
     }

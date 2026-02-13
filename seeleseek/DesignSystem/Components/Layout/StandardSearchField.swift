@@ -4,13 +4,21 @@ import SwiftUI
 struct StandardSearchField: View {
     @Binding var text: String
     var placeholder: String = "Search..."
+    var isLoading: Bool = false
     var onSubmit: (() -> Void)?
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: SeeleSpacing.iconSizeSmall))
-                .foregroundStyle(SeeleColors.textTertiary)
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(0.6)
+                    .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.textTertiary)
+            }
 
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)

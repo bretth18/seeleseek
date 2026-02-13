@@ -14,6 +14,8 @@ final class SocialState {
     var blockedUsers: [BlockedUser] = []
     var showBlockUserSheet = false
     var blockSearchQuery: String = ""
+    var ignoredUsers: [IgnoredUser] = []
+    var ignoreSearchQuery: String = ""
 
     // MARK: - Leech Detection
     var leechSettings = LeechSettings()
@@ -71,8 +73,17 @@ final class SocialState {
         return blockedUsers.filter { $0.username.localizedCaseInsensitiveContains(blockSearchQuery) }
     }
 
+    var filteredIgnoredUsers: [IgnoredUser] {
+        guard !ignoreSearchQuery.isEmpty else { return ignoredUsers }
+        return ignoredUsers.filter { $0.username.localizedCaseInsensitiveContains(ignoreSearchQuery) }
+    }
+
     func isBlocked(_ username: String) -> Bool {
         blockedUsers.contains { $0.username.lowercased() == username.lowercased() }
+    }
+
+    func isIgnored(_ username: String) -> Bool {
+        ignoredUsers.contains { $0.username.lowercased() == username.lowercased() }
     }
 
     func isLeech(_ username: String) -> Bool {
@@ -179,6 +190,13 @@ final class SocialState {
             // Load blocked users
             blockedUsers = try await SocialRepository.fetchBlockedUsers()
             logger.info("Loaded \(self.blockedUsers.count) blocked users from database")
+
+            // Load ignored users
+            if let ignoredJSON = try await SocialRepository.getProfileSetting("ignoredUsers"),
+               let data = ignoredJSON.data(using: .utf8) {
+                ignoredUsers = try JSONDecoder().decode([IgnoredUser].self, from: data)
+                logger.info("Loaded \(self.ignoredUsers.count) ignored users from database")
+            }
 
             // Load interests
             let interests = try await SocialRepository.fetchInterests()
@@ -622,6 +640,50 @@ final class SocialState {
             logger.info("Unblocked user \(username)")
         } catch {
             logger.error("Failed to remove blocked user: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Ignore Actions
+
+    func ignoreUser(_ username: String, reason: String? = nil) async {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !isIgnored(trimmed) else { return }
+
+        do {
+            try await networkClient?.ignoreUser(trimmed)
+        } catch {
+            logger.error("Failed to ignore user on server: \(error.localizedDescription)")
+        }
+
+        ignoredUsers.append(IgnoredUser(username: trimmed, reason: reason))
+        await persistIgnoredUsers()
+        logger.info("Ignored user \(trimmed)")
+    }
+
+    func unignoreUser(_ username: String) async {
+        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        do {
+            try await networkClient?.unignoreUser(trimmed)
+        } catch {
+            logger.error("Failed to unignore user on server: \(error.localizedDescription)")
+        }
+
+        ignoredUsers.removeAll { $0.username.lowercased() == trimmed.lowercased() }
+        await persistIgnoredUsers()
+        logger.info("Unignored user \(trimmed)")
+    }
+
+    private func persistIgnoredUsers() async {
+        do {
+            let data = try JSONEncoder().encode(ignoredUsers)
+            if let json = String(data: data, encoding: .utf8) {
+                try await SocialRepository.setProfileSetting("ignoredUsers", value: json)
+            }
+        } catch {
+            logger.error("Failed to persist ignored users: \(error.localizedDescription)")
         }
     }
 

@@ -114,6 +114,13 @@ final class AppState {
         // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
 
+        // Sync launch-at-login state from system (user may toggle in System Settings)
+        settings.syncLaunchAtLoginState()
+
+        // Configure notifications
+        NotificationService.shared.settings = settings
+        NotificationService.shared.requestAuthorization()
+
         // Initialize database asynchronously
         Task {
             await initializeDatabase()

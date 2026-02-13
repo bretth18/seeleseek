@@ -28,6 +28,13 @@ struct BuddyRowView: View {
                         Text(countryFlag(for: code))
                             .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                     }
+
+                    if appState.socialState.isIgnored(buddy.username) {
+                        Image(systemName: "eye.slash")
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
+                            .foregroundStyle(SeeleColors.warning)
+                            .help("Ignored")
+                    }
                 }
 
                 // Stats line

@@ -78,7 +78,7 @@ final class LiveServerTests: XCTestCase {
 
         // Send FileSearch
         let token = UInt32.random(in: 1...UInt32.max)
-        let searchMsg = MessageBuilder.fileSearch(token: token, query: "test")
+        let searchMsg = MessageBuilder.fileSearchMessage(token: token, query: "test")
         try await serverConn.send(searchMsg)
         print("🧪 Sent FileSearch: 'test' token=\(token)")
 

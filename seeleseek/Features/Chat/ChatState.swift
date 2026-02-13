@@ -512,6 +512,11 @@ final class ChatState {
             }
         }
 
+        // Log incoming private messages for notifications
+        if !message.isOwn && !message.isSystem {
+            ActivityLog.shared.logChatMessage(from: username, room: nil)
+        }
+
         // Persist to database (skip system messages like join/leave)
         if !message.isSystem {
             Task {

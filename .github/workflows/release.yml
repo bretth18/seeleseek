@@ -1,0 +1,155 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+
+    env:
+      KEYCHAIN_PASSWORD: ${{ github.run_id }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set keychain path
+      run: echo "KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db" >> "$GITHUB_ENV"
+
+    - name: Install certificates
+      env:
+        DEVELOPER_ID_APPLICATION_P12: ${{ secrets.DEVELOPER_ID_APPLICATION_P12 }}
+        DEVELOPER_ID_INSTALLER_P12: ${{ secrets.DEVELOPER_ID_INSTALLER_P12 }}
+        P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      run: |
+        # Create temporary keychain
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+        security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+        # Import Developer ID Application certificate + private key (for app signing)
+        echo "$DEVELOPER_ID_APPLICATION_P12" | base64 --decode > /tmp/app_cert.p12
+        security import /tmp/app_cert.p12 \
+          -P "$P12_PASSWORD" \
+          -A \
+          -f pkcs12 \
+          -k "$KEYCHAIN_PATH"
+
+        # Import Developer ID Installer certificate + private key (for pkg signing)
+        echo "$DEVELOPER_ID_INSTALLER_P12" | base64 --decode > /tmp/installer_cert.p12
+        security import /tmp/installer_cert.p12 \
+          -P "$P12_PASSWORD" \
+          -A \
+          -f pkcs12 \
+          -k "$KEYCHAIN_PATH"
+
+        # Add keychain to search list
+        security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+        security default-keychain -s "$KEYCHAIN_PATH"
+
+        # Allow codesign to access keychain without UI prompt
+        security set-key-partition-list -S apple-tool:,apple:,codesign:,productsign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+        # Clean up cert files
+        rm -f /tmp/app_cert.p12 /tmp/installer_cert.p12
+
+        # Debug: list all identities in keychain
+        echo "=== All identities ==="
+        security find-identity -v "$KEYCHAIN_PATH"
+        echo "=== Codesigning identities ==="
+        security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+    - name: Archive App
+      run: |
+        xcodebuild -scheme abledex \
+          -archivePath $PWD/build/abledex.xcarchive \
+          -configuration Release \
+          archive \
+          CODE_SIGN_STYLE=Manual \
+          CODE_SIGN_IDENTITY="Developer ID Application: Brett Henderson (94XUGF9CU7)" \
+          DEVELOPMENT_TEAM=94XUGF9CU7 \
+          OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"
+
+    - name: Export App
+      run: |
+        cat <<EOF > ExportOptions.plist
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>developer-id</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>Developer ID Application: Brett Henderson (94XUGF9CU7)</string>
+            <key>teamID</key>
+            <string>94XUGF9CU7</string>
+        </dict>
+        </plist>
+        EOF
+
+        xcodebuild -exportArchive \
+          -archivePath $PWD/build/abledex.xcarchive \
+          -exportOptionsPlist ExportOptions.plist \
+          -exportPath $PWD/build
+
+    - name: Extract version from tag
+      id: version
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+    - name: Store notarization credentials
+      env:
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+      run: |
+        xcrun notarytool store-credentials "notary-profile" \
+          --apple-id "$APPLE_ID" \
+          --password "$APPLE_ID_PASSWORD" \
+          --team-id "94XUGF9CU7" \
+          --keychain "$KEYCHAIN_PATH"
+
+    - name: Build, sign, notarize, and staple pkg
+      run: |
+        VERSION="${{ steps.version.outputs.VERSION }}"
+
+        # Build unsigned pkg
+        pkgbuild \
+          --component build/abledex.app \
+          --install-location /Applications \
+          --identifier computerdata.abledex \
+          --version "$VERSION" \
+          build/abledex-unsigned.pkg
+
+        # Sign pkg with Developer ID Installer certificate
+        productsign \
+          --sign "Developer ID Installer: Brett Henderson (94XUGF9CU7)" \
+          --keychain "$KEYCHAIN_PATH" \
+          build/abledex-unsigned.pkg \
+          build/abledex.pkg
+
+        rm build/abledex-unsigned.pkg
+
+        # Notarize using stored credentials (avoids secrets in process args)
+        xcrun notarytool submit build/abledex.pkg \
+          --keychain-profile "notary-profile" \
+          --keychain "$KEYCHAIN_PATH" \
+          --wait
+
+        # Staple the notarization ticket
+        xcrun stapler staple build/abledex.pkg
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/abledex.pkg
+        generate_release_notes: true
+
+    - name: Cleanup keychain
+      if: always()
+      run: security delete-keychain "$KEYCHAIN_PATH"

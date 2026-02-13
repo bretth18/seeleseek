@@ -56,7 +56,7 @@ enum MessageParser {
             guard let ip = payload.readUInt32(at: offset) else { return nil }
             offset += 4
 
-            let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
+            let ipString = formatLittleEndianIPv4(ip)
 
             var hashString: String?
             if let (hash, _) = payload.readString(at: offset) {
@@ -133,9 +133,13 @@ enum MessageParser {
 
         let privileged = payload.readBool(at: offset) ?? false
 
-        let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
+        let ipString = formatLittleEndianIPv4(ip)
 
         return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
+    }
+
+    nonisolated private static func formatLittleEndianIPv4(_ ip: UInt32) -> String {
+        "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
     }
 
     struct UserStatusInfo: Sendable {

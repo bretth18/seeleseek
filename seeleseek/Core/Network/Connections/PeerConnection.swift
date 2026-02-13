@@ -531,8 +531,8 @@ actor PeerConnection {
         try await send(message)
     }
 
-    func sendTransferReply(token: UInt32, allowed: Bool, reason: String? = nil) async throws {
-        let message = MessageBuilder.transferReplyMessage(token: token, allowed: allowed, reason: reason)
+    func sendTransferReply(token: UInt32, allowed: Bool, fileSize: UInt64? = nil, reason: String? = nil) async throws {
+        let message = MessageBuilder.transferReplyMessage(token: token, allowed: allowed, fileSize: fileSize, reason: reason)
         try await send(message)
         logger.info("Sent transfer reply: token=\(token) allowed=\(allowed)")
     }
@@ -1268,6 +1268,9 @@ actor PeerConnection {
         case UInt32(PeerMessageCode.placeInQueueRequest.rawValue):
             await handlePlaceInQueueRequest(payload)
 
+        case UInt32(PeerMessageCode.uploadQueueNotification.rawValue):
+            logger.debug("Received UploadQueueNotification (deprecated)")
+
         case UInt32(PeerMessageCode.userInfoRequest.rawValue):
             await handleUserInfoRequest()
 
@@ -1488,31 +1491,39 @@ actor PeerConnection {
         logger.debug("[\(self.peerInfo.username)] handleSearchReply called with \(data.count) bytes")
         logger.info("handleSearchReply called with \(data.count) bytes")
 
-        // Search replies may be zlib compressed - try decompression first
-        var parseData = data
-        var wasCompressed = false
+        // Search replies may be zlib compressed - try decompression first.
+        // If decompressed bytes do not parse, fall back to raw payload parsing.
+        var candidatePayloads: [(data: Data, wasCompressed: Bool)] = [(data, false)]
         if data.count > 4 {
             do {
                 let decompressed = try decompressZlib(data)
                 logger.debug("[\(self.peerInfo.username)] Decompressed from \(data.count) to \(decompressed.count) bytes")
                 logger.info("Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
-                parseData = decompressed
-                wasCompressed = true
+                candidatePayloads.insert((decompressed, true), at: 0)
             } catch {
                 logger.debug("[\(self.peerInfo.username)] Not compressed or decompression failed: \(error)")
-                // Not compressed or decompression failed - try parsing raw data
             }
         }
 
-        let dataPreview = parseData.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("[\(self.peerInfo.username)] Parsing data (compressed=\(wasCompressed))")
+        var parsedInfo: MessageParser.SearchReplyInfo?
+        var parsedFromCompressed = false
+        for candidate in candidatePayloads {
+            logger.debug("[\(self.peerInfo.username)] Parsing data (compressed=\(candidate.wasCompressed))")
+            if let parsed = MessageParser.parseSearchReply(candidate.data) {
+                parsedInfo = parsed
+                parsedFromCompressed = candidate.wasCompressed
+                break
+            }
+        }
 
-        guard let parsed = MessageParser.parseSearchReply(parseData) else {
+        guard let parsed = parsedInfo else {
+            let dataPreview = data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
             logger.error("[\(self.peerInfo.username)] Failed to parse search reply!")
             logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
-            logger.error("Failed to parse search reply, data starts with: \(parseData.prefix(20).map { String(format: "%02x", $0) }.joined())")
             return
         }
+
+        logger.debug("[\(self.peerInfo.username)] Search reply parse succeeded (compressed=\(parsedFromCompressed))")
 
         let results = parsed.files.map { file in
             SearchResult(
@@ -1701,55 +1712,69 @@ actor PeerConnection {
         guard let (folder, folderLen) = decompressed.readString(at: offset) else { return }
         offset += folderLen
 
-        guard let fileCount = decompressed.readUInt32(at: offset) else { return }
+        guard let folderCount = decompressed.readUInt32(at: offset) else { return }
         offset += 4
 
         var files: [SharedFile] = []
+        let maxFolderCount: UInt32 = 100_000
+        let maxFileCount: UInt32 = 100_000
+        let maxAttributeCount: UInt32 = 100
+        guard folderCount <= maxFolderCount else { return }
 
-        for _ in 0..<fileCount {
-            // uint8 code
-            guard decompressed.readByte(at: offset) != nil else { break }
-            offset += 1
+        for _ in 0..<folderCount {
+            guard let (_, dirLen) = decompressed.readString(at: offset) else { break }
+            offset += dirLen
 
-            // string filename
-            guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-            offset += filenameLen
-
-            // uint64 size
-            guard let size = decompressed.readUInt64(at: offset) else { break }
-            offset += 8
-
-            // string extension
-            guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-            offset += extLen
-
-            // uint32 attribute count
-            guard let attrCount = decompressed.readUInt32(at: offset) else { break }
+            guard let fileCount = decompressed.readUInt32(at: offset) else { break }
             offset += 4
+            guard fileCount <= maxFileCount else { break }
 
-            var bitrate: UInt32?
-            var duration: UInt32?
+            for _ in 0..<fileCount {
+                // uint8 code
+                guard decompressed.readByte(at: offset) != nil else { break }
+                offset += 1
 
-            for _ in 0..<attrCount {
-                guard let attrType = decompressed.readUInt32(at: offset) else { break }
+                // string filename
+                guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
+                offset += filenameLen
+
+                // uint64 size
+                guard let size = decompressed.readUInt64(at: offset) else { break }
+                offset += 8
+
+                // string extension
+                guard let (_, extLen) = decompressed.readString(at: offset) else { break }
+                offset += extLen
+
+                // uint32 attribute count
+                guard let attrCount = decompressed.readUInt32(at: offset) else { break }
                 offset += 4
-                guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                offset += 4
+                guard attrCount <= maxAttributeCount else { break }
 
-                switch attrType {
-                case 0: bitrate = attrValue
-                case 1: duration = attrValue
-                default: break
+                var bitrate: UInt32?
+                var duration: UInt32?
+
+                for _ in 0..<attrCount {
+                    guard let attrType = decompressed.readUInt32(at: offset) else { break }
+                    offset += 4
+                    guard let attrValue = decompressed.readUInt32(at: offset) else { break }
+                    offset += 4
+
+                    switch attrType {
+                    case 0: bitrate = attrValue
+                    case 1: duration = attrValue
+                    default: break
+                    }
                 }
-            }
 
-            let file = SharedFile(
-                filename: filename,
-                size: size,
-                bitrate: bitrate,
-                duration: duration
-            )
-            files.append(file)
+                let file = SharedFile(
+                    filename: filename,
+                    size: size,
+                    bitrate: bitrate,
+                    duration: duration
+                )
+                files.append(file)
+            }
         }
 
         logger.info("Received folder contents: \(folder) (\(files.count) files)")

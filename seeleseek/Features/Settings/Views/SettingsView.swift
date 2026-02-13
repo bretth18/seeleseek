@@ -11,9 +11,11 @@ struct SettingsView: View {
         case shares = "Shares"
         case metadata = "Metadata"
         case chat = "Chat"
+        case notifications = "Notifications"
         case privacy = "Privacy"
         case diagnostics = "Diagnostics"
         case update = "Update"
+        case about = "About"
 
         var icon: String {
             switch self {
@@ -23,9 +25,11 @@ struct SettingsView: View {
             case .shares: "folder"
             case .metadata: "music.note"
             case .chat: "bubble.left"
+            case .notifications: "bell"
             case .privacy: "lock.shield"
             case .diagnostics: "ant"
             case .update: "arrow.triangle.2.circlepath"
+            case .about: "info.circle"
             }
         }
     }
@@ -58,13 +62,18 @@ struct SettingsView: View {
                         MetadataSettingsSection(settings: appState.settings)
                     case .chat:
                         ChatSettingsSection(settings: appState.settings)
+                    case .notifications:
+                        NotificationSettingsSection(settings: appState.settings)
                     case .privacy:
                         PrivacySettingsSection(settings: appState.settings)
                     case .diagnostics:
                         DiagnosticsSection()
                     case .update:
                         UpdateSettingsSection(updateState: appState.updateState)
+                    case .about:
+                        AboutSettingsSection()
                     }
+
                 }
                 .padding(SeeleSpacing.lg)
             }

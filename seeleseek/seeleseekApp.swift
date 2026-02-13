@@ -92,6 +92,12 @@ struct SeeleSeekApp: App {
                 .environment(\.appState, appState)
                 .frame(minWidth: 700, minHeight: 500)
         }
+
+        MenuBarExtra("SeeleSeek", systemImage: "music.note", isInserted: $appState.settings.showInMenuBar) {
+            MenuBarView()
+                .environment(\.appState, appState)
+        }
+        .menuBarExtraStyle(.menu)
         #endif
     }
 }
