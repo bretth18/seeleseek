@@ -46,7 +46,7 @@ struct SettingsRepository {
 
     /// Delete a setting
     static func delete(_ key: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try SettingRecord.filter(Column("key") == key).deleteAll(db)
         }
     }
@@ -80,8 +80,8 @@ struct SettingsRepository {
 struct TransferHistoryRepository {
     /// Record a completed transfer
     static func record(_ history: TransferHistoryRecord) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = history
+        _ = try await DatabaseManager.shared.write { db in
+            let record = history
             try record.insert(db)
         }
     }
@@ -134,7 +134,7 @@ struct TransferHistoryRepository {
 
     /// Delete history older than a certain date
     static func deleteOlderThan(_ date: Date) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try TransferHistoryRecord
                 .filter(Column("timestamp") < date.timeIntervalSince1970)
                 .deleteAll(db)

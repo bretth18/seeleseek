@@ -68,20 +68,25 @@ struct SharesVisualizationPanel: View {
         let folders = shares.folders
 
         Task.detached(priority: .userInitiated) {
-            let files = Self.collectFilesNonRecursive(from: folders)
-            let audio = files.filter { $0.isAudioFile }
-            let top = files
-                .sorted { $0.size > $1.size }
-                .prefix(5)
-                .map { ($0.displayFilename, $0.size) }
+            let (files, audio, top) = Self.computeStats(from: folders)
 
             await MainActor.run {
                 cachedAllFiles = files
                 cachedAudioFiles = audio
-                cachedTopFiles = Array(top)
+                cachedTopFiles = top
                 isComputing = false
             }
         }
+    }
+
+    nonisolated private static func computeStats(from folders: [SharedFile]) -> (files: [SharedFile], audio: [SharedFile], top: [(String, UInt64)]) {
+        let files = collectFilesNonRecursive(from: folders)
+        let audio = files.filter { $0.isAudioFile }
+        let top = files
+            .sorted { $0.size > $1.size }
+            .prefix(5)
+            .map { ($0.displayFilename, $0.size) }
+        return (files, audio, Array(top))
     }
 
     nonisolated private static func collectFilesNonRecursive(from folders: [SharedFile]) -> [SharedFile] {

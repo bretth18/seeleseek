@@ -39,7 +39,7 @@ extension Data {
     }
 
     // SECURITY: Maximum string length for protocol parsing
-    private static let maxStringLength: UInt32 = 1_000_000  // 1MB max for any single string
+    nonisolated static let maxStringLength: UInt32 = 1_000_000  // 1MB max for any single string
 
     nonisolated func readString(at offset: Int) -> (string: String, bytesConsumed: Int)? {
         guard let length = readUInt32(at: offset) else { return nil }

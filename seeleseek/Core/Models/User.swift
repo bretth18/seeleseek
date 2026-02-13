@@ -44,5 +44,3 @@ struct User: Identifiable, Hashable, Sendable {
         }
     }
 }
-
-// ByteFormatter moved to Core/Utilities/Formatters.swift

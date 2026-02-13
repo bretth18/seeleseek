@@ -575,7 +575,7 @@ final class DownloadManager {
     /// Called when PierceFirewall arrives - check if it matches a racing download
     /// Returns true if it was handled
     private func handlePierceFirewallForRace(token: UInt32, connection: PeerConnection) -> Bool {
-        guard var state = pendingIndirectStates[token] else {
+        guard let state = pendingIndirectStates[token] else {
             return false
         }
 
@@ -585,8 +585,7 @@ final class DownloadManager {
             await connection.setPeerUsername(state.username)
         }
 
-        state.receivedConnection = connection
-        pendingIndirectStates[token] = state
+        pendingIndirectStates[token]?.receivedConnection = connection
         return true
     }
 

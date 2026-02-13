@@ -33,7 +33,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         self.fileCount = fileCount
     }
 
-    var displayName: String {
+    nonisolated var displayName: String {
         if let lastComponent = filename.split(separator: "\\").last {
             return String(lastComponent)
         }
@@ -44,7 +44,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         ByteFormatter.format(Int64(size))
     }
 
-    var fileExtension: String {
+    nonisolated var fileExtension: String {
         let components = displayName.split(separator: ".")
         if components.count > 1, let ext = components.last {
             return String(ext).lowercased()
@@ -69,12 +69,12 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         return "doc"
     }
 
-    var displayFilename: String {
+    nonisolated var displayFilename: String {
         displayName
     }
 
-    var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
+    nonisolated var isAudioFile: Bool {
+        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape", "aif"]
         return audioExtensions.contains(fileExtension)
     }
 
@@ -94,7 +94,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     }
 
     var isLossless: Bool {
-        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
+        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape", "aif"]
         return losslessExtensions.contains(fileExtension)
     }
 
@@ -130,7 +130,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
             // Build folder hierarchy
             var currentPath = ""
             for (index, component) in pathComponents.dropLast().enumerated() {
-                let parentPath = currentPath
+                _ = currentPath
                 currentPath = currentPath.isEmpty ? component : "\(currentPath)\\\(component)"
 
                 if folderMap[currentPath] == nil {

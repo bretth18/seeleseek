@@ -93,7 +93,7 @@ struct SeeleSeekApp: App {
                 .frame(minWidth: 700, minHeight: 500)
         }
 
-        MenuBarExtra("SeeleSeek", systemImage: "music.note", isInserted: $appState.settings.showInMenuBar) {
+        MenuBarExtra("SeeleSeek", image: .gsgaag2Menubar2, isInserted: $appState.settings.showInMenuBar) {
             MenuBarView()
                 .environment(\.appState, appState)
         }

@@ -17,15 +17,15 @@ struct SocialRepository {
 
     /// Save or update a buddy
     static func saveBuddy(_ buddy: Buddy) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = BuddyRecord.from(buddy)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = BuddyRecord.from(buddy)
             try record.save(db)
         }
     }
 
     /// Delete a buddy by username
     static func deleteBuddy(_ username: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try BuddyRecord
                 .filter(Column("username") == username)
                 .deleteAll(db)
@@ -58,15 +58,15 @@ struct SocialRepository {
 
     /// Save an interest
     static func saveInterest(_ item: String, type: InterestType) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = InterestRecord.from(item: item, type: type)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = InterestRecord.from(item: item, type: type)
             try record.save(db)
         }
     }
 
     /// Delete an interest by item name
     static func deleteInterest(_ item: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try InterestRecord
                 .filter(Column("item") == item)
                 .deleteAll(db)
@@ -75,7 +75,7 @@ struct SocialRepository {
 
     /// Delete all interests of a specific type
     static func deleteAllInterests(type: InterestType) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try InterestRecord
                 .filter(Column("type") == type.rawValue)
                 .deleteAll(db)
@@ -96,15 +96,15 @@ struct SocialRepository {
 
     /// Set a profile setting value
     static func setProfileSetting(_ key: String, value: String) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = ProfileSettingRecord.from(key: key, value: value)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = ProfileSettingRecord.from(key: key, value: value)
             try record.save(db)
         }
     }
 
     /// Delete a profile setting
     static func deleteProfileSetting(_ key: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try ProfileSettingRecord
                 .filter(Column("key") == key)
                 .deleteAll(db)
@@ -125,15 +125,15 @@ struct SocialRepository {
 
     /// Save a blocked user
     static func saveBlockedUser(_ blockedUser: BlockedUser) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = BlockedUserRecord.from(blockedUser)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = BlockedUserRecord.from(blockedUser)
             try record.save(db)
         }
     }
 
     /// Delete a blocked user by username
     static func deleteBlockedUser(_ username: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try BlockedUserRecord
                 .filter(Column("username") == username)
                 .deleteAll(db)

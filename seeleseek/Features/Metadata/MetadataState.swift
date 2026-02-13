@@ -115,17 +115,27 @@ final class MetadataState {
 
     /// Extract embedded cover art from an audio file using AVFoundation
     private func extractEmbeddedCoverArt(from url: URL) {
-        let asset = AVAsset(url: url)
-        let artworkItems = AVMetadataItem.metadataItems(
-            from: asset.commonMetadata,
-            filteredByIdentifier: .commonIdentifierArtwork
-        )
+        let asset = AVURLAsset(url: url)
 
-        if let artworkItem = artworkItems.first,
-           let data = artworkItem.dataValue {
-            coverArtData = data
-            coverArtSource = .embedded
-            logger.info("Loaded embedded cover art from file (\(data.count) bytes)")
+        Task {
+            do {
+                let metadata = try await asset.load(.commonMetadata)
+                let artworkItems = AVMetadataItem.metadataItems(
+                    from: metadata,
+                    filteredByIdentifier: .commonIdentifierArtwork
+                )
+
+                if let artworkItem = artworkItems.first {
+                    let data = try await artworkItem.load(.dataValue)
+                    if let data {
+                        coverArtData = data
+                        coverArtSource = .embedded
+                        logger.info("Loaded embedded cover art from file (\(data.count) bytes)")
+                    }
+                }
+            } catch {
+                logger.debug("Failed to load embedded cover art: \(error.localizedDescription)")
+            }
         }
     }
 

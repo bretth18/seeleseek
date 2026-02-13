@@ -671,6 +671,10 @@ actor PeerConnection {
         let neededFromNetwork = count - fileTransferBuffer.count
         logger.debug("[\(self.peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(self.fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
 
+        // Capture and clear buffer before entering non-isolated closure
+        let bufferedData = fileTransferBuffer
+        fileTransferBuffer.removeAll()
+
         return try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask { [self] in
                 try await withCheckedThrowingContinuation { continuation in
@@ -684,10 +688,9 @@ actor PeerConnection {
                                 await self?.recordReceived(data.count)
                             }
                             // Combine buffered data with newly received data
-                            if let self = self, !self.fileTransferBuffer.isEmpty {
-                                var combined = self.fileTransferBuffer
+                            if !bufferedData.isEmpty {
+                                var combined = bufferedData
                                 combined.append(data)
-                                self.fileTransferBuffer.removeAll()
                                 continuation.resume(returning: Data(combined.prefix(count)))
                             } else {
                                 continuation.resume(returning: data)

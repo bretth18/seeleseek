@@ -45,12 +45,12 @@ struct BrowseRepository {
                 .deleteAll(db)
 
             // Insert new user shares record
-            var userSharesRecord = UserSharesRecord.from(userShares)
+            let userSharesRecord = UserSharesRecord.from(userShares)
             try userSharesRecord.insert(db)
 
             // Insert all files
             let fileRecords = SharedFileRecord.from(userShares.folders, userSharesId: userShares.id)
-            for var record in fileRecords {
+            for record in fileRecords {
                 try record.insert(db)
             }
         }
@@ -58,7 +58,7 @@ struct BrowseRepository {
 
     /// Delete cache for a specific user
     static func delete(username: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try UserSharesRecord
                 .filter(Column("username").collating(.nocase) == username)
                 .deleteAll(db)
@@ -69,7 +69,7 @@ struct BrowseRepository {
     static func deleteExpired(olderThan age: TimeInterval) async throws {
         let cutoff = Date().timeIntervalSince1970 - age
 
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try UserSharesRecord.filter(Column("cachedAt") < cutoff).deleteAll(db)
         }
     }

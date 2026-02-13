@@ -696,7 +696,6 @@ final class ServerMessageHandler {
     }
 
     private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        let startTime = Date()
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
                 do {
@@ -1464,7 +1463,7 @@ final class ServerMessageHandler {
     private func handleAdminMessage(_ data: Data) {
         // Server Code 66 - Global/Admin Message
         // A global message from the server admin has arrived
-        var offset = 0
+        let offset = 0
         guard let (message, _) = data.readString(at: offset) else {
             logger.warning("Failed to parse AdminMessage")
             return
