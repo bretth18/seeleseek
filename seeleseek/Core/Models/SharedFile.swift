@@ -33,7 +33,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         self.fileCount = fileCount
     }
 
-    var displayName: String {
+    nonisolated var displayName: String {
         if let lastComponent = filename.split(separator: "\\").last {
             return String(lastComponent)
         }
@@ -44,7 +44,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         ByteFormatter.format(Int64(size))
     }
 
-    var fileExtension: String {
+    nonisolated var fileExtension: String {
         let components = displayName.split(separator: ".")
         if components.count > 1, let ext = components.last {
             return String(ext).lowercased()
@@ -69,12 +69,12 @@ struct SharedFile: Identifiable, Hashable, Sendable {
         return "doc"
     }
 
-    var displayFilename: String {
+    nonisolated var displayFilename: String {
         displayName
     }
 
-    var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
+    nonisolated var isAudioFile: Bool {
+        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape", "aif"]
         return audioExtensions.contains(fileExtension)
     }
 
@@ -94,7 +94,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     }
 
     var isLossless: Bool {
-        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
+        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape", "aif"]
         return losslessExtensions.contains(fileExtension)
     }
 
@@ -118,7 +118,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
     /// Build a hierarchical tree from flat file paths
     /// Input: Flat array of files with paths like "@@share\Folder\Subfolder\file.mp3"
     /// Output: Tree structure with directories containing children
-    static func buildTree(from flatFiles: [SharedFile]) -> [SharedFile] {
+    nonisolated static func buildTree(from flatFiles: [SharedFile]) -> [SharedFile] {
         // Use a dictionary to track folders by their full path
         var folderMap: [String: (id: UUID, children: [SharedFile])] = [:]
         var rootFolders: [String] = []
@@ -130,7 +130,7 @@ struct SharedFile: Identifiable, Hashable, Sendable {
             // Build folder hierarchy
             var currentPath = ""
             for (index, component) in pathComponents.dropLast().enumerated() {
-                let parentPath = currentPath
+                _ = currentPath
                 currentPath = currentPath.isEmpty ? component : "\(currentPath)\\\(component)"
 
                 if folderMap[currentPath] == nil {
@@ -225,7 +225,7 @@ struct UserShares: Identifiable, Sendable {
     private(set) var cachedTotalFiles: Int?
     private(set) var cachedTotalSize: UInt64?
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         username: String,
         folders: [SharedFile] = [],
@@ -248,12 +248,12 @@ struct UserShares: Identifiable, Sendable {
     }
 
     /// Compute and cache stats (call this after building tree, off main thread)
-    mutating func computeStats() {
+    nonisolated mutating func computeStats() {
         cachedTotalFiles = countFiles(in: folders)
         cachedTotalSize = sumSize(in: folders)
     }
 
-    private func countFiles(in files: [SharedFile]) -> Int {
+    private nonisolated func countFiles(in files: [SharedFile]) -> Int {
         var count = 0
         for file in files {
             if file.isDirectory, let children = file.children {
@@ -265,7 +265,7 @@ struct UserShares: Identifiable, Sendable {
         return count
     }
 
-    private func sumSize(in files: [SharedFile]) -> UInt64 {
+    private nonisolated func sumSize(in files: [SharedFile]) -> UInt64 {
         var total: UInt64 = 0
         for file in files {
             if file.isDirectory, let children = file.children {

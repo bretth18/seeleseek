@@ -61,8 +61,8 @@ struct SearchRepository {
 
     /// Save a search query
     static func save(_ query: SearchQuery) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = SearchQueryRecord.from(query)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = SearchQueryRecord.from(query)
             try record.insert(db)
         }
     }
@@ -73,7 +73,7 @@ struct SearchRepository {
 
         try await DatabaseManager.shared.write { db in
             for result in results {
-                var record = SearchResultRecord.from(result, queryId: queryId)
+                let record = SearchResultRecord.from(result, queryId: queryId)
                 try record.insert(db)
             }
         }
@@ -83,12 +83,12 @@ struct SearchRepository {
     static func saveComplete(_ query: SearchQuery) async throws {
         try await DatabaseManager.shared.write { db in
             // Save query
-            var queryRecord = SearchQueryRecord.from(query)
+            let queryRecord = SearchQueryRecord.from(query)
             try queryRecord.insert(db)
 
             // Save results
             for result in query.results {
-                var resultRecord = SearchResultRecord.from(result, queryId: query.id)
+                let resultRecord = SearchResultRecord.from(result, queryId: query.id)
                 try resultRecord.insert(db)
             }
         }
@@ -96,7 +96,7 @@ struct SearchRepository {
 
     /// Delete a search query (cascades to results)
     static func delete(id: UUID) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try SearchQueryRecord.filter(Column("id") == id.uuidString).deleteAll(db)
         }
     }
@@ -105,7 +105,7 @@ struct SearchRepository {
     static func deleteExpired(olderThan age: TimeInterval) async throws {
         let cutoff = Date().timeIntervalSince1970 - age
 
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try SearchQueryRecord.filter(Column("createdAt") < cutoff).deleteAll(db)
         }
     }

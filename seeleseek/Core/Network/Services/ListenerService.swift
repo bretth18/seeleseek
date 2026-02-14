@@ -184,7 +184,7 @@ actor ListenerService {
     /// Scans for SoulSeek clients on local network
     static func scanLocalNetwork() async -> [DiscoveredPeer] {
         // This would use Bonjour/mDNS or port scanning
-        // For now, return empty - real implementation would scan
+        // UNIMPLEMENTED
         return []
     }
 }

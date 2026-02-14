@@ -37,5 +37,21 @@ struct UserContextMenuItems: View {
                 Label("Add Buddy", systemImage: "person.badge.plus")
             }
         }
+
+        Divider()
+
+        if appState.socialState.isIgnored(username) {
+            Button {
+                Task { await appState.socialState.unignoreUser(username) }
+            } label: {
+                Label("Unignore User", systemImage: "eye")
+            }
+        } else {
+            Button {
+                Task { await appState.socialState.ignoreUser(username) }
+            } label: {
+                Label("Ignore User", systemImage: "eye.slash")
+            }
+        }
     }
 }

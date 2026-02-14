@@ -18,118 +18,119 @@ struct SearchResultRow: View {
     }
 
     var body: some View {
-        HStack(spacing: SeeleSpacing.md) {
-            // File type icon
-            fileIcon
+        StandardListRow(onHoverChanged: { hovering in
+            isHovered = hovering
+        }) {
+            HStack(spacing: SeeleSpacing.md) {
+                // File type icon
+                fileIcon
 
-            // File info
-            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                Text(result.displayFilename)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .lineLimit(1)
+                // File info
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                    Text(result.displayFilename)
+                        .font(SeeleTypography.body)
+                        .foregroundStyle(SeeleColors.textPrimary)
+                        .lineLimit(1)
 
-                HStack(spacing: SeeleSpacing.md) {
-                    HStack(spacing: SeeleSpacing.xxs) {
-                        // Country flag (if available)
-                        if let flag = countryFlag, !flag.isEmpty {
-                            Text(flag)
-                                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
+                    HStack(spacing: SeeleSpacing.md) {
+                        HStack(spacing: SeeleSpacing.xxs) {
+                            // Country flag (if available)
+                            if let flag = countryFlag, !flag.isEmpty {
+                                Text(flag)
+                                    .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
+                            }
+
+                            Label(result.username, systemImage: "person")
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textSecondary)
                         }
 
-                        Label(result.username, systemImage: "person")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-
-                    if !result.folderPath.isEmpty {
-                        Text(result.folderPath)
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
-                            .lineLimit(1)
+                        if !result.folderPath.isEmpty {
+                            Text(result.folderPath)
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                                .lineLimit(1)
+                        }
                     }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            // Metadata badges
-            HStack(spacing: SeeleSpacing.sm) {
-               
-                StandardMetadataBadge(result.fileExtension, color: iconColor)
-                
-                
-                if let bitrate = result.formattedBitrate {
-                    StandardMetadataBadge(bitrate, color: bitrateColor)
-                }
+                // Metadata badges
+                HStack(spacing: SeeleSpacing.sm) {
+                    StandardMetadataBadge(result.fileExtension, color: iconColor)
 
-                if let sampleRate = result.formattedSampleRate {
-                    StandardMetadataBadge(sampleRate, color: sampleRateColor)
-                }
+                    if let bitrate = result.formattedBitrate {
+                        StandardMetadataBadge(bitrate, color: bitrateColor)
+                    }
 
-                if let bitDepth = result.formattedBitDepth {
-                    StandardMetadataBadge(bitDepth, color: SeeleColors.textTertiary)
-                }
+                    if let sampleRate = result.formattedSampleRate {
+                        StandardMetadataBadge(sampleRate, color: sampleRateColor)
+                    }
 
-                if let duration = result.formattedDuration {
-                    StandardMetadataBadge(duration, color: SeeleColors.textTertiary)
-                }
+                    if let bitDepth = result.formattedBitDepth {
+                        StandardMetadataBadge(bitDepth, color: SeeleColors.textTertiary)
+                    }
 
-                StandardMetadataBadge(result.formattedSize, color: SeeleColors.textTertiary)
+                    if let duration = result.formattedDuration {
+                        StandardMetadataBadge(duration, color: SeeleColors.textTertiary)
+                    }
 
-                // Private/locked indicator (buddy-only)
-                if result.isPrivate {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
-                        .foregroundStyle(SeeleColors.warning)
-                        .help("Private file - only shared with buddies")
-                }
+                    StandardMetadataBadge(result.formattedSize, color: SeeleColors.textTertiary)
 
-                // Queue/slot indicator
-                if result.freeSlots {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeSmall))
-                        .foregroundStyle(SeeleColors.success)
-                } else {
-                    HStack(spacing: SeeleSpacing.xxs) {
-                        Image(systemName: "hourglass")
+                    // Private/locked indicator (buddy-only)
+                    if result.isPrivate {
+                        Image(systemName: "lock.fill")
                             .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
-                        Text("\(result.queueLength)")
-                            .font(SeeleTypography.monoSmall)
+                            .foregroundStyle(SeeleColors.warning)
+                            .help("Private file - only shared with buddies")
                     }
-                    .foregroundStyle(SeeleColors.warning)
-                }
-            }
 
-            // Browse user button
-            Button {
-                browseUser()
-            } label: {
-                Image(systemName: "folder")
-                    .font(.system(size: SeeleSpacing.iconSizeMedium - 2))
-                    .foregroundStyle(isHovered ? SeeleColors.textSecondary : SeeleColors.textTertiary)
-            }
-            .buttonStyle(.plain)
-            .help("Browse \(result.username)'s files")
+                    if appState.socialState.isIgnored(result.username) {
+                        Image(systemName: "eye.slash.fill")
+                            .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
+                            .foregroundStyle(SeeleColors.warning)
+                            .help("Ignored user")
+                    }
 
-            // Download button
-            Button {
-                if !isQueued {
-                    downloadFile()
+                    // Queue/slot indicator
+                    if result.freeSlots {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: SeeleSpacing.iconSizeSmall))
+                            .foregroundStyle(SeeleColors.success)
+                    } else {
+                        HStack(spacing: SeeleSpacing.xxs) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
+                            Text("\(result.queueLength)")
+                                .font(SeeleTypography.monoSmall)
+                        }
+                        .foregroundStyle(SeeleColors.warning)
+                    }
                 }
-            } label: {
-                downloadButtonIcon
-            }
-            .buttonStyle(.plain)
-            .disabled(isQueued)
-            .help(downloadButtonHelp)
-        }
-        .padding(.horizontal, SeeleSpacing.lg)
-        .padding(.vertical, SeeleSpacing.md)
-        .background(isHovered ? SeeleColors.surfaceSecondary : SeeleColors.surface)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
+
+                // Browse user button
+                Button {
+                    browseUser()
+                } label: {
+                    Image(systemName: "folder")
+                        .font(.system(size: SeeleSpacing.iconSizeMedium - 2))
+                        .foregroundStyle(isHovered ? SeeleColors.textSecondary : SeeleColors.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Browse \(result.username)'s files")
+
+                // Download button
+                Button {
+                    if !isQueued {
+                        downloadFile()
+                    }
+                } label: {
+                    downloadButtonIcon
+                }
+                .buttonStyle(.plain)
+                .disabled(isQueued)
+                .help(downloadButtonHelp)
             }
         }
         .contextMenu {
@@ -168,6 +169,22 @@ struct SearchResultRow: View {
                 Task { await appState.socialState.loadProfile(for: result.username) }
             } label: {
                 Label("View Profile", systemImage: "person.crop.circle")
+            }
+
+            Divider()
+
+            if appState.socialState.isIgnored(result.username) {
+                Button {
+                    Task { await appState.socialState.unignoreUser(result.username) }
+                } label: {
+                    Label("Unignore User", systemImage: "eye")
+                }
+            } else {
+                Button {
+                    Task { await appState.socialState.ignoreUser(result.username) }
+                } label: {
+                    Label("Ignore User", systemImage: "eye.slash")
+                }
             }
 
             Divider()

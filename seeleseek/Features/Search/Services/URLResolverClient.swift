@@ -109,9 +109,18 @@ actor URLResolverClient {
         return nil
     }
 
-    /// Build a search query from artist + title
+    /// Build a search query from artist + title, stripping metadata that hurts SoulSeek matching
     static func buildSearchQuery(artist: String, title: String) -> String {
-        "\(artist) \(title)".trimmingCharacters(in: .whitespaces)
+        // Strip (feat. ...), (ft. ...), [feat. ...], [ft. ...] — these are rarely in filenames
+        let strippedTitle = title
+            .replacingOccurrences(
+                of: #"\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+[^\)\]]+[\)\]]"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespaces)
+
+        return "\(artist) \(strippedTitle)".trimmingCharacters(in: .whitespaces)
     }
 
     /// Clean YouTube-style titles by stripping common video suffixes

@@ -117,6 +117,20 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    nonisolated static func ignoreUserMessage(username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.ignoreUser.rawValue)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
+    nonisolated static func unignoreUserMessage(username: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.unignoreUser.rawValue)
+        payload.appendString(username)
+        return wrapMessage(payload)
+    }
+
     nonisolated static func getUserStatusMessage(username: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.getUserStatus.rawValue)
@@ -436,13 +450,16 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    /// Reply to a transfer request - allowed=true means we accept the transfer
-    nonisolated static func transferReplyMessage(token: UInt32, allowed: Bool, reason: String? = nil) -> Data {
+    /// Reply to a transfer request - allowed=true means we accept the transfer.
+    /// For deprecated download-response flow (peer code 41a), include fileSize when allowed.
+    nonisolated static func transferReplyMessage(token: UInt32, allowed: Bool, fileSize: UInt64? = nil, reason: String? = nil) -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.transferReply.rawValue))
         payload.appendUInt32(token)
         payload.appendBool(allowed)
-        if !allowed, let reason {
+        if allowed, let fileSize {
+            payload.appendUInt64(fileSize)
+        } else if !allowed, let reason {
             payload.appendString(reason)
         }
         return wrapMessage(payload)
@@ -620,6 +637,16 @@ enum MessageBuilder {
     nonisolated static func roomSearch(room: String, token: UInt32, query: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.roomSearch.rawValue)
+        payload.appendString(room)
+        payload.appendUInt32(token)
+        payload.appendString(query)
+        return wrapMessage(payload)
+    }
+
+    /// Legacy room search code 25 (still used by some peers/servers)
+    nonisolated static func fileSearchRoomMessage(room: String, token: UInt32, query: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(ServerMessageCode.fileSearchRoom.rawValue)
         payload.appendString(room)
         payload.appendUInt32(token)
         payload.appendString(query)

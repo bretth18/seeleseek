@@ -116,6 +116,22 @@ struct MessageBubble: View {
                                 } label: {
                                     Label("Browse Files", systemImage: "folder")
                                 }
+
+                                Divider()
+
+                                if appState.socialState.isIgnored(message.username) {
+                                    Button {
+                                        Task { await appState.socialState.unignoreUser(message.username) }
+                                    } label: {
+                                        Label("Unignore User", systemImage: "eye")
+                                    }
+                                } else {
+                                    Button {
+                                        Task { await appState.socialState.ignoreUser(message.username) }
+                                    } label: {
+                                        Label("Ignore User", systemImage: "eye.slash")
+                                    }
+                                }
                             }
                         }
                     }

@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "gsgaag.svg",
+      "filename" : "gsgaag2menubar2.svg",
       "idiom" : "universal",
       "scale" : "1x"
     },
@@ -19,6 +19,7 @@
     "version" : 1
   },
   "properties" : {
+    "preserves-vector-representation" : true,
     "template-rendering-intent" : "template"
   }
 }

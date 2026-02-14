@@ -257,6 +257,22 @@ struct UserProfileSheet: View {
                     .padding(SeeleSpacing.lg)
                     .frame(width: 260)
                 }
+
+                if appState.socialState.isIgnored(profile.username) {
+                    Button {
+                        Task { await appState.socialState.unignoreUser(profile.username) }
+                    } label: {
+                        Label("Unignore", systemImage: "eye")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        Task { await appState.socialState.ignoreUser(profile.username) }
+                    } label: {
+                        Label("Ignore", systemImage: "eye.slash")
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(.top, SeeleSpacing.md)

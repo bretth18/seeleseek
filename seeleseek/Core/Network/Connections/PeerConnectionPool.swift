@@ -586,7 +586,7 @@ final class PeerConnectionPool {
         for (key, conn) in activeConnections_ {
             if conn === connection {
                 // Found the connection, update its info
-                if var info = connections[key] {
+                if let info = connections[key] {
                     let newInfo = PeerConnectionInfo(
                         id: info.id,
                         username: username,

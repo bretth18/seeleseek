@@ -4,17 +4,17 @@ import os
 /// Parser for SoulSeek protocol messages.
 /// All types are Sendable to allow use across actor boundaries.
 enum MessageParser {
-    private static let logger = Logger(subsystem: "com.seeleseek", category: "MessageParser")
+    nonisolated static let logger = Logger(subsystem: "com.seeleseek", category: "MessageParser")
 
     // MARK: - Security Limits
     // These limits prevent DoS attacks via malicious payloads with large counts
 
     /// Maximum number of items in any list (files, rooms, users, etc.)
-    private static let maxItemCount: UInt32 = 100_000
+    nonisolated static let maxItemCount: UInt32 = 100_000
     /// Maximum number of attributes per file
-    private static let maxAttributeCount: UInt32 = 100
+    nonisolated static let maxAttributeCount: UInt32 = 100
     /// Maximum message size (reduced from 100MB)
-    private static let maxMessageSize: UInt32 = 100_000_000  // 100MB - large share lists can exceed 10MB
+    nonisolated static let maxMessageSize: UInt32 = 100_000_000  // 100MB - large share lists can exceed 10MB
 
     // MARK: - Frame Parsing
 
@@ -56,7 +56,7 @@ enum MessageParser {
             guard let ip = payload.readUInt32(at: offset) else { return nil }
             offset += 4
 
-            let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
+            let ipString = formatLittleEndianIPv4(ip)
 
             var hashString: String?
             if let (hash, _) = payload.readString(at: offset) {
@@ -133,9 +133,13 @@ enum MessageParser {
 
         let privileged = payload.readBool(at: offset) ?? false
 
-        let ipString = "\((ip >> 24) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 8) & 0xFF).\(ip & 0xFF)"
+        let ipString = formatLittleEndianIPv4(ip)
 
         return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
+    }
+
+    nonisolated private static func formatLittleEndianIPv4(_ ip: UInt32) -> String {
+        "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
     }
 
     struct UserStatusInfo: Sendable {
@@ -217,7 +221,7 @@ enum MessageParser {
         let attributes: [FileAttribute]
         let isPrivate: Bool  // Buddy-only / locked file
 
-        init(filename: String, size: UInt64, extension: String, attributes: [FileAttribute], isPrivate: Bool = false) {
+        nonisolated init(filename: String, size: UInt64, extension: String, attributes: [FileAttribute], isPrivate: Bool = false) {
             self.filename = filename
             self.size = size
             self.extension = `extension`

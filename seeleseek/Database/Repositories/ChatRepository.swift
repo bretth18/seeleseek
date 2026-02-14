@@ -27,15 +27,15 @@ struct ChatRepository {
 
     /// Save a single message
     static func saveMessage(_ message: ChatMessage, peerUsername: String) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = PrivateMessageRecord.from(message, peerUsername: peerUsername)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = PrivateMessageRecord.from(message, peerUsername: peerUsername)
             try record.save(db)
         }
     }
 
     /// Delete all messages for a conversation
     static func deleteConversation(_ peerUsername: String) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try PrivateMessageRecord
                 .filter(Column("peerUsername") == peerUsername)
                 .deleteAll(db)

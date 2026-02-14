@@ -8,6 +8,8 @@ enum ServerMessageCode: UInt32 {
     case login = 1
     case setListenPort = 2
     case getPeerAddress = 3
+    case ignoreUser = 11
+    case unignoreUser = 12
     case watchUser = 5
     case unwatchUser = 6
     case getUserStatus = 7
@@ -19,18 +21,29 @@ enum ServerMessageCode: UInt32 {
     case connectToPeer = 18
     case privateMessages = 22
     case acknowledgePrivateMessage = 23
+    case fileSearchRoom = 25
     case fileSearch = 26
     case setOnlineStatus = 28
     case ping = 32
+    case sendConnectToken = 33
+    case sendDownloadSpeed = 34
     case sharedFoldersFiles = 35
     case getUserStats = 36
+    case uploadSlotsFull = 40
     case relogged = 41
     case userSearch = 42
+    case similarRecommendations = 50
     case addThingILike = 51
     case removeThingILike = 52
     case recommendations = 54
+    case myRecommendations = 55
     case globalRecommendations = 56
     case userInterests = 57
+    case adminCommand = 58
+    case placeInLineRequest = 59
+    case placeInLineResponse = 60
+    case roomAdded = 62
+    case roomRemoved = 63
     case roomList = 64
     case exactFileSearch = 65
     case adminMessage = 66
@@ -40,10 +53,14 @@ enum ServerMessageCode: UInt32 {
 
     // Distributed network - client to server
     case haveNoParent = 71  // Tell server we need a distributed parent
+    case searchParent = 73
 
     case parentMinSpeed = 83
     case parentSpeedRatio = 84
     case minParentsInCache = 86
+    case searchInactivityTimeout = 87
+    case minParentsInCacheDeprecated = 88
+    case distribPingInterval = 90
 
     case addToPrivileged = 91
     case checkPrivileges = 92
@@ -67,6 +84,7 @@ enum ServerMessageCode: UInt32 {
     case sendUploadSpeedRequest = 121
     case userPrivileges = 122
     case givePrivileges = 123
+    case privateRoomUnknown124 = 124
 
     // Distributed network - branch info from client
     case childDepth = 125  // Tell server our child depth
@@ -76,6 +94,7 @@ enum ServerMessageCode: UInt32 {
     case acceptChildren = 100  // Tell server if we accept child nodes
 
     case resetDistributed = 130
+    case privateRoomUnknown129 = 129
 
     // Private rooms
     case privateRoomMembers = 133
@@ -83,6 +102,7 @@ enum ServerMessageCode: UInt32 {
     case privateRoomRemoveMember = 135
     case privateRoomCancelMembership = 136
     case privateRoomCancelOwnership = 137
+    case privateRoomUnknown138 = 138
     case privateRoomAddOperator = 143
     case privateRoomRemoveOperator = 144
     case privateRoomOperatorGranted = 145
@@ -100,6 +120,7 @@ enum ServerMessageCode: UInt32 {
 
     // Global room messages
     case globalRoomMessage = 152
+    case roomUnknown153 = 153
 
     // Search
     case excludedSearchPhrases = 160
@@ -113,6 +134,8 @@ enum ServerMessageCode: UInt32 {
         case .login: "Login"
         case .setListenPort: "SetListenPort"
         case .getPeerAddress: "GetPeerAddress"
+        case .ignoreUser: "IgnoreUser"
+        case .unignoreUser: "UnignoreUser"
         case .watchUser: "WatchUser"
         case .unwatchUser: "UnwatchUser"
         case .getUserStatus: "GetUserStatus"
@@ -124,18 +147,37 @@ enum ServerMessageCode: UInt32 {
         case .connectToPeer: "ConnectToPeer"
         case .privateMessages: "PrivateMessages"
         case .acknowledgePrivateMessage: "AcknowledgePrivateMessage"
+        case .fileSearchRoom: "FileSearchRoom"
         case .fileSearch: "FileSearch"
         case .setOnlineStatus: "SetOnlineStatus"
         case .ping: "Ping"
+        case .sendConnectToken: "SendConnectToken"
+        case .sendDownloadSpeed: "SendDownloadSpeed"
         case .sharedFoldersFiles: "SharedFoldersFiles"
         case .getUserStats: "GetUserStats"
+        case .uploadSlotsFull: "UploadSlotsFull"
         case .relogged: "Relogged"
         case .userSearch: "UserSearch"
+        case .similarRecommendations: "SimilarRecommendations"
+        case .myRecommendations: "MyRecommendations"
+        case .adminCommand: "AdminCommand"
+        case .placeInLineRequest: "PlaceInLineRequest"
+        case .placeInLineResponse: "PlaceInLineResponse"
+        case .roomAdded: "RoomAdded"
+        case .roomRemoved: "RoomRemoved"
         case .cantConnectToPeer: "CantConnectToPeer"
         case .cantCreateRoom: "CantCreateRoom"
         case .haveNoParent: "HaveNoParent"
+        case .searchParent: "SearchParent"
+        case .searchInactivityTimeout: "SearchInactivityTimeout"
+        case .minParentsInCacheDeprecated: "MinParentsInCacheDeprecated"
+        case .distribPingInterval: "DistribPingInterval"
         case .possibleParents: "PossibleParents"
         case .embeddedMessage: "EmbeddedMessage"
+        case .privateRoomUnknown124: "PrivateRoomUnknown124"
+        case .privateRoomUnknown129: "PrivateRoomUnknown129"
+        case .privateRoomUnknown138: "PrivateRoomUnknown138"
+        case .roomUnknown153: "RoomUnknown153"
         case .resetDistributed: "ResetDistributed"
         case .branchLevel: "BranchLevel"
         case .branchRoot: "BranchRoot"
@@ -178,6 +220,7 @@ enum PeerMessageCode: UInt8 {
     case uploadFailed = 46
     case uploadDenied = 50
     case placeInQueueRequest = 51
+    case uploadQueueNotification = 52
 
     nonisolated var description: String {
         switch self {
@@ -199,6 +242,7 @@ enum PeerMessageCode: UInt8 {
         case .uploadFailed: "UploadFailed"
         case .uploadDenied: "UploadDenied"
         case .placeInQueueRequest: "PlaceInQueueRequest"
+        case .uploadQueueNotification: "UploadQueueNotification"
         }
     }
 }
@@ -209,6 +253,8 @@ enum DistributedMessageCode: UInt8 {
     case searchRequest = 3
     case branchLevel = 4
     case branchRoot = 5
+    case childDepth = 7
+    case embeddedMessage = 93
 
     nonisolated var description: String {
         switch self {
@@ -216,6 +262,8 @@ enum DistributedMessageCode: UInt8 {
         case .searchRequest: "DistributedSearch"
         case .branchLevel: "BranchLevel"
         case .branchRoot: "BranchRoot"
+        case .childDepth: "ChildDepth"
+        case .embeddedMessage: "EmbeddedMessage"
         }
     }
 }

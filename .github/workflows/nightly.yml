@@ -1,0 +1,83 @@
+name: Nightly Build
+
+on:
+  push:
+    branches-ignore:
+      - 'main'
+
+jobs:
+  nightly-build:
+    runs-on: macos-26
+    name: Build Nightly
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Select Xcode
+      run: sudo xcode-select -s /Applications/Xcode.app
+
+    - name: Archive Nightly App
+      run: |
+        xcodebuild -scheme seeleseek \
+          -archivePath $PWD/build/seeleseek_nightly.xcarchive \
+          -configuration Release \
+          archive \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO
+
+    - name: Export Nightly App
+      run: |
+        cat <<EOF > ExportOptions.plist
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>mac-application</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+        </dict>
+        </plist>
+        EOF
+
+        xcodebuild -exportArchive \
+          -archivePath $PWD/build/seeleseek_nightly.xcarchive \
+          -exportOptionsPlist ExportOptions.plist \
+          -exportPath $PWD/build \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=NO
+
+    - name: Rename and Patch Nightly App
+      run: |
+        cd build
+        mv seeleseek.app "SeeleSeek Nightly.app"
+
+        # Update Bundle ID
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier computerdata.seeleseek.nightly" "SeeleSeek Nightly.app/Contents/Info.plist"
+
+        # Update Display Name
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName SeeleSeek Nightly" "SeeleSeek Nightly.app/Contents/Info.plist"
+
+        # Verify changes
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "SeeleSeek Nightly.app/Contents/Info.plist"
+
+    - name: Re-sign Nightly App
+      run: |
+        cd build
+        # Re-sign with Ad-Hoc identity to fix the signature invalidated by Info.plist changes
+        # We need to include entitlements to ensure Apple Events work
+        codesign --force --deep --sign - --entitlements ../seeleseek/seeleseek.entitlements "SeeleSeek Nightly.app"
+
+    - name: Zip Nightly Application
+      run: |
+        cd build
+        zip -r seeleseek-nightly.zip "SeeleSeek Nightly.app"
+
+    - name: Upload Nightly Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: seeleseek-nightly-build
+        path: build/seeleseek-nightly.zip
+        retention-days: 5

@@ -47,13 +47,13 @@ struct TransferRepository {
 
     /// Save a transfer (insert or update)
     static func save(_ transfer: Transfer) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             // Check if exists to preserve createdAt
             if let existing = try TransferRecord.filter(Column("id") == transfer.id.uuidString).fetchOne(db) {
-                var record = TransferRecord.from(transfer, createdAt: existing.createdAt)
+                let record = TransferRecord.from(transfer, createdAt: existing.createdAt)
                 try record.update(db)
             } else {
-                var record = TransferRecord.from(transfer)
+                let record = TransferRecord.from(transfer)
                 try record.insert(db)
             }
         }
@@ -89,21 +89,21 @@ struct TransferRepository {
 
     /// Delete a transfer
     static func delete(id: UUID) async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try TransferRecord.filter(Column("id") == id.uuidString).deleteAll(db)
         }
     }
 
     /// Delete completed transfers
     static func deleteCompleted() async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try TransferRecord.filter(Column("status") == "completed").deleteAll(db)
         }
     }
 
     /// Delete failed/cancelled transfers
     static func deleteFailed() async throws {
-        try await DatabaseManager.shared.write { db in
+        _ = try await DatabaseManager.shared.write { db in
             try TransferRecord
                 .filter(["failed", "cancelled"].contains(Column("status")))
                 .deleteAll(db)
@@ -115,8 +115,8 @@ struct TransferRepository {
         guard let startTime = transfer.startTime else { return }
         let duration = Date().timeIntervalSince(startTime)
 
-        try await DatabaseManager.shared.write { db in
-            var record = TransferHistoryRecord.from(transfer, duration: duration)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = TransferHistoryRecord.from(transfer, duration: duration)
             try record.insert(db)
         }
     }

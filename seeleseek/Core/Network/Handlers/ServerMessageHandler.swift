@@ -6,6 +6,7 @@ import os
 final class ServerMessageHandler {
     private let logger = Logger(subsystem: "com.seeleseek", category: "ServerMessageHandler")
     private weak var client: NetworkClient?
+    private let maxItemCount: UInt32 = 100_000
 
     init(client: NetworkClient) {
         self.client = client
@@ -42,8 +43,14 @@ final class ServerMessageHandler {
         switch code {
         case .login:
             handleLogin(payload)
+        case .ignoreUser:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .unignoreUser:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .roomList:
             handleRoomList(payload)
+        case .fileSearchRoom:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .joinRoom:
             handleJoinRoom(payload)
         case .leaveRoom:
@@ -58,10 +65,16 @@ final class ServerMessageHandler {
             handlePrivateMessage(payload)
         case .getPeerAddress:
             handleGetUserAddress(payload)
+        case .watchUser:
+            handleWatchUser(payload)
         case .getUserStatus:
             handleGetUserStatus(payload)
         case .connectToPeer:
             handleConnectToPeer(payload)
+        case .sendConnectToken:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .sendDownloadSpeed:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .possibleParents:
             handlePossibleParents(payload)
         case .embeddedMessage:
@@ -72,7 +85,19 @@ final class ServerMessageHandler {
             handleParentMinSpeed(payload)
         case .parentSpeedRatio:
             handleParentSpeedRatio(payload)
+        case .searchParent:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .searchInactivityTimeout:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .minParentsInCacheDeprecated:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .distribPingInterval:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .recommendations:
+            handleRecommendations(payload)
+        case .similarRecommendations:
+            handleRecommendations(payload)
+        case .myRecommendations:
             handleRecommendations(payload)
         case .globalRecommendations:
             handleGlobalRecommendations(payload)
@@ -112,10 +137,30 @@ final class ServerMessageHandler {
             handlePrivateRoomOperatorRevoked(payload)
         case .privateRoomOperators:
             handlePrivateRoomOperators(payload)
+        case .privateRoomUnknown124:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .privateRoomUnknown129:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .privateRoomUnknown138:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .cantConnectToPeer:
             handleCantConnectToPeer(payload)
         case .adminMessage:
             handleAdminMessage(payload)
+        case .adminCommand:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .uploadSlotsFull:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .placeInLineRequest:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .placeInLineResponse:
+            handleProtocolNotice(code: codeValue, payload: payload)
+        case .roomAdded:
+            handleRoomAdded(payload)
+        case .roomRemoved:
+            handleRoomRemoved(payload)
+        case .roomUnknown153:
+            handleProtocolNotice(code: codeValue, payload: payload)
         case .relogged:
             handleRelogged()
         case .excludedSearchPhrases:
@@ -204,6 +249,7 @@ final class ServerMessageHandler {
         // Parse operated private room names (just names, no counts)
         var operatedNames: [String] = []
         if let opCount = data.readUInt32(at: offset) {
+            guard opCount <= maxItemCount else { return }
             offset += 4
             for _ in 0..<opCount {
                 guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
@@ -223,6 +269,7 @@ final class ServerMessageHandler {
     /// Parse a sequence of room names followed by their user counts
     private func parseRoomNamesAndCounts(data: Data, offset: inout Int) -> [ChatRoom] {
         guard let roomCount = data.readUInt32(at: offset) else { return [] }
+        guard roomCount <= maxItemCount else { return [] }
         offset += 4
 
         var roomNames: [String] = []
@@ -233,6 +280,7 @@ final class ServerMessageHandler {
         }
 
         guard let countCount = data.readUInt32(at: offset) else { return roomNames.map { ChatRoom(name: $0) } }
+        guard countCount <= maxItemCount else { return roomNames.map { ChatRoom(name: $0) } }
         offset += 4
 
         var userCounts: [UInt32] = []
@@ -258,6 +306,7 @@ final class ServerMessageHandler {
 
         // Number of users
         guard let userCount = data.readUInt32(at: offset) else { return }
+        guard userCount <= maxItemCount else { return }
         offset += 4
 
         // User names
@@ -270,24 +319,34 @@ final class ServerMessageHandler {
 
         // Skip statuses (uint32 per user)
         if let statusCount = data.readUInt32(at: offset) {
+            guard statusCount <= maxItemCount else { return }
             offset += 4
-            offset += Int(statusCount) * 4
+            let bytesToSkip = Int(statusCount) * 4
+            guard offset + bytesToSkip <= data.count else { return }
+            offset += bytesToSkip
         }
 
         // Skip user stats (avgspeed uint32, uploadnum uint64, files uint32, dirs uint32 = 20 bytes per user)
         if let statsCount = data.readUInt32(at: offset) {
+            guard statsCount <= maxItemCount else { return }
             offset += 4
-            offset += Int(statsCount) * 20
+            let bytesToSkip = Int(statsCount) * 20
+            guard offset + bytesToSkip <= data.count else { return }
+            offset += bytesToSkip
         }
 
         // Skip slotsfull (uint32 per user)
         if let slotsCount = data.readUInt32(at: offset) {
+            guard slotsCount <= maxItemCount else { return }
             offset += 4
-            offset += Int(slotsCount) * 4
+            let bytesToSkip = Int(slotsCount) * 4
+            guard offset + bytesToSkip <= data.count else { return }
+            offset += bytesToSkip
         }
 
         // Skip countries (string per user)
         if let countryCount = data.readUInt32(at: offset) {
+            guard countryCount <= maxItemCount else { return }
             offset += 4
             for _ in 0..<countryCount {
                 guard let (_, countryLen) = data.readString(at: offset) else { break }
@@ -306,6 +365,7 @@ final class ServerMessageHandler {
 
                 // Operator count + names
                 if let opCount = data.readUInt32(at: offset) {
+                    guard opCount <= maxItemCount else { return }
                     offset += 4
                     for _ in 0..<opCount {
                         guard let (opName, opLen) = data.readString(at: offset) else { break }
@@ -423,6 +483,49 @@ final class ServerMessageHandler {
 
         // Use internal handler that dispatches to both pending requests AND external callback
         client?.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port))
+    }
+
+    private func handleWatchUser(_ data: Data) {
+        var offset = 0
+
+        guard let (username, usernameLen) = data.readString(at: offset) else { return }
+        offset += usernameLen
+
+        guard let exists = data.readBool(at: offset) else { return }
+        offset += 1
+
+        guard exists else {
+            // User does not exist; treat as offline and not privileged.
+            Task { @MainActor in
+                self.client?.handleUserStatusResponse(username: username, status: .offline, privileged: false)
+            }
+            return
+        }
+
+        guard let statusRaw = data.readUInt32(at: offset) else { return }
+        offset += 4
+        guard let avgSpeed = data.readUInt32(at: offset) else { return }
+        offset += 4
+        guard let uploadNum = data.readUInt32(at: offset) else { return }
+        offset += 4
+        guard data.readUInt32(at: offset) != nil else { return }  // Unknown field per protocol
+        offset += 4
+        guard let files = data.readUInt32(at: offset) else { return }
+        offset += 4
+        guard let dirs = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        let status = UserStatus(rawValue: statusRaw) ?? .offline
+
+        // Initial watch response includes status + stats; status updates continue via code 7.
+        Task { @MainActor in
+            self.client?.handleUserStatusResponse(username: username, status: status, privileged: false)
+            self.client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
+        }
+
+        if status == .away || status == .online, let (countryCode, _) = data.readString(at: offset) {
+            logger.debug("WatchUser country for \(username): \(countryCode)")
+        }
     }
 
     private func handleGetUserStatus(_ data: Data) {
@@ -593,7 +696,6 @@ final class ServerMessageHandler {
     }
 
     private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-        let startTime = Date()
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
                 do {
@@ -723,6 +825,12 @@ final class ServerMessageHandler {
         case UInt32(DistributedMessageCode.searchRequest.rawValue):
             // This is a search request from the distributed network
             handleDistributedSearch(payload)
+
+        case UInt32(DistributedMessageCode.childDepth.rawValue):
+            logger.debug("Distributed child depth update received")
+
+        case UInt32(DistributedMessageCode.embeddedMessage.rawValue):
+            handleEmbeddedMessage(payload)
 
         default:
             logger.warning("Unknown distributed message code: \(code)")
@@ -1355,7 +1463,7 @@ final class ServerMessageHandler {
     private func handleAdminMessage(_ data: Data) {
         // Server Code 66 - Global/Admin Message
         // A global message from the server admin has arrived
-        var offset = 0
+        let offset = 0
         guard let (message, _) = data.readString(at: offset) else {
             logger.warning("Failed to parse AdminMessage")
             return
@@ -1382,6 +1490,32 @@ final class ServerMessageHandler {
         guard let (roomName, _) = data.readString(at: 0) else { return }
         logger.warning("Can't create room: \(roomName)")
         client?.onCantCreateRoom?(roomName)
+    }
+
+    private func handleRoomAdded(_ data: Data) {
+        guard let (roomName, _) = data.readString(at: 0) else {
+            handleProtocolNotice(code: ServerMessageCode.roomAdded.rawValue, payload: data)
+            return
+        }
+        logger.info("Room added: \(roomName)")
+        client?.onRoomAdded?(roomName)
+    }
+
+    private func handleRoomRemoved(_ data: Data) {
+        guard let (roomName, _) = data.readString(at: 0) else {
+            handleProtocolNotice(code: ServerMessageCode.roomRemoved.rawValue, payload: data)
+            return
+        }
+        logger.info("Room removed: \(roomName)")
+        client?.onRoomRemoved?(roomName)
+    }
+
+    private func handleProtocolNotice(code: UInt32, payload: Data) {
+        // Centralized handling for protocol codes that are recognized but not yet fully modeled.
+        // Keeps parity explicit and provides a single callback surface for future feature wiring.
+        let preview = payload.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " ")
+        logger.info("Protocol notice: code=\(code) payload=\(payload.count) bytes preview=\(preview)")
+        client?.onProtocolNotice?(code, payload)
     }
 
     // MARK: - Helpers

@@ -15,8 +15,8 @@ struct WishlistRepository {
 
     /// Save or update a wishlist item
     static func save(_ item: WishlistItem) async throws {
-        try await DatabaseManager.shared.write { db in
-            var record = WishlistRecord.from(item)
+        _ = try await DatabaseManager.shared.write { db in
+            let record = WishlistRecord.from(item)
             try record.save(db)
         }
     }

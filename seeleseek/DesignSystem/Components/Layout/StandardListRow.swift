@@ -3,9 +3,16 @@ import SwiftUI
 /// Consistent list row with hover support
 struct StandardListRow<Content: View>: View {
     let content: Content
+    let onHoverChanged: ((Bool) -> Void)?
     @State private var isHovered = false
 
     init(@ViewBuilder content: () -> Content) {
+        self.onHoverChanged = nil
+        self.content = content()
+    }
+
+    init(onHoverChanged: ((Bool) -> Void)?, @ViewBuilder content: () -> Content) {
+        self.onHoverChanged = onHoverChanged
         self.content = content()
     }
 
@@ -18,6 +25,7 @@ struct StandardListRow<Content: View>: View {
                 withAnimation(.easeInOut(duration: 0.1)) {
                     isHovered = hovering
                 }
+                onHoverChanged?(hovering)
             }
     }
 }

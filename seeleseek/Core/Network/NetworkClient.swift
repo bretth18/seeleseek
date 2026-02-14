@@ -277,6 +277,8 @@ final class NetworkClient {
     var onRoomMembershipRevoked: ((String) -> Void)?  // room name
     var onRoomInvitationsEnabled: ((Bool) -> Void)?  // enabled
     var onPasswordChanged: ((String) -> Void)?  // confirmed password
+    var onRoomAdded: ((String) -> Void)?  // room name
+    var onRoomRemoved: ((String) -> Void)?  // room name
 
     // Can't create room callback
     var onCantCreateRoom: ((String) -> Void)?  // room name
@@ -286,6 +288,7 @@ final class NetworkClient {
 
     // Global room callback
     var onGlobalRoomMessage: ((String, String, String) -> Void)?  // (room, username, message)
+    var onProtocolNotice: ((UInt32, Data) -> Void)?  // (server code, raw payload)
 
     // MARK: - Connection
 
@@ -581,14 +584,20 @@ final class NetworkClient {
     // SECURITY: Maximum search query length
     private static let maxSearchQueryLength = 500
 
+    private func requireConnectedServerConnection() throws -> ServerConnection {
+        guard isConnected, let connection = serverConnection else {
+            throw NetworkError.notConnected
+        }
+        return connection
+    }
+
     func search(query: String, token: UInt32) async throws {
         guard isConnected, let connection = serverConnection else {
             throw NetworkError.notConnected
         }
 
-        // SECURITY: Truncate query if too long
-        let sanitizedQuery = String(query.prefix(Self.maxSearchQueryLength))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Sanitize: truncate, normalize Unicode, and clean for SoulSeek compatibility
+        let sanitizedQuery = Self.sanitizeSearchQuery(query)
 
         guard !sanitizedQuery.isEmpty else {
             throw NetworkError.invalidResponse
@@ -597,6 +606,28 @@ final class NetworkClient {
         let message = MessageBuilder.fileSearchMessage(token: token, query: sanitizedQuery)
         try await connection.send(message)
         logger.info("Sent search request: query='\(sanitizedQuery)' token=\(token)")
+    }
+
+    /// Sanitize a search query for SoulSeek protocol compatibility
+    private static func sanitizeSearchQuery(_ query: String) -> String {
+        var q = String(query.prefix(maxSearchQueryLength))
+
+        // Normalize Unicode: smart/curly quotes → ASCII, em-dash → hyphen, etc.
+        // NFKD decomposes compatibility characters, then we replace known offenders
+        q = q.precomposedStringWithCompatibilityMapping
+        q = q.replacingOccurrences(of: "\u{2018}", with: "'")  // left single quote
+            .replacingOccurrences(of: "\u{2019}", with: "'")    // right single quote
+            .replacingOccurrences(of: "\u{201C}", with: "\"")   // left double quote
+            .replacingOccurrences(of: "\u{201D}", with: "\"")   // right double quote
+            .replacingOccurrences(of: "\u{2013}", with: "-")    // en-dash
+            .replacingOccurrences(of: "\u{2014}", with: "-")    // em-dash
+
+        // Collapse multiple spaces
+        while q.contains("  ") {
+            q = q.replacingOccurrences(of: "  ", with: " ")
+        }
+
+        return q.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func getRoomList() async throws {
@@ -1051,7 +1082,7 @@ final class NetworkClient {
     func addThingILike(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.addThingILike(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Added thing I like: \(item)")
     }
 
@@ -1059,7 +1090,7 @@ final class NetworkClient {
     func removeThingILike(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.removeThingILike(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Removed thing I like: \(item)")
     }
 
@@ -1067,7 +1098,7 @@ final class NetworkClient {
     func addThingIHate(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.addThingIHate(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Added thing I hate: \(item)")
     }
 
@@ -1075,7 +1106,7 @@ final class NetworkClient {
     func removeThingIHate(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.removeThingIHate(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Removed thing I hate: \(item)")
     }
 
@@ -1083,7 +1114,7 @@ final class NetworkClient {
     func getRecommendations() async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getRecommendations()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested recommendations")
     }
 
@@ -1091,7 +1122,7 @@ final class NetworkClient {
     func getGlobalRecommendations() async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getGlobalRecommendations()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested global recommendations")
     }
 
@@ -1099,7 +1130,7 @@ final class NetworkClient {
     func getUserInterests(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getUserInterests(username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested interests for: \(username)")
     }
 
@@ -1107,7 +1138,7 @@ final class NetworkClient {
     func getSimilarUsers() async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getSimilarUsers()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested similar users")
     }
 
@@ -1115,7 +1146,7 @@ final class NetworkClient {
     func getItemRecommendations(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getItemRecommendations(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested recommendations for item: \(item)")
     }
 
@@ -1123,7 +1154,7 @@ final class NetworkClient {
     func getItemSimilarUsers(_ item: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getItemSimilarUsers(item)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested similar users for item: \(item)")
     }
 
@@ -1133,7 +1164,7 @@ final class NetworkClient {
     func watchUser(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.watchUserMessage(username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Watching user: \(username)")
     }
 
@@ -1141,15 +1172,31 @@ final class NetworkClient {
     func unwatchUser(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.unwatchUserMessage(username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Unwatched user: \(username)")
+    }
+
+    /// Ignore user (server code 11)
+    func ignoreUser(_ username: String) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.ignoreUserMessage(username: username)
+        try await requireConnectedServerConnection().send(message)
+        logger.info("Ignored user: \(username)")
+    }
+
+    /// Unignore user (server code 12)
+    func unignoreUser(_ username: String) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.unignoreUserMessage(username: username)
+        try await requireConnectedServerConnection().send(message)
+        logger.info("Unignored user: \(username)")
     }
 
     /// Get a user's current status
     func getUserStatus(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getUserStatusMessage(username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested status for: \(username)")
     }
 
@@ -1165,7 +1212,7 @@ final class NetworkClient {
 
         // Send the status request
         let message = MessageBuilder.getUserStatusMessage(username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Checking online status for: \(username)")
 
         // Wait for response with timeout
@@ -1203,7 +1250,7 @@ final class NetworkClient {
     func getUserStats(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getUserStats(username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested stats for: \(username)")
     }
 
@@ -1211,7 +1258,7 @@ final class NetworkClient {
     func checkPrivileges() async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.checkPrivileges()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Checking privileges")
     }
 
@@ -1219,7 +1266,7 @@ final class NetworkClient {
     func getUserPrivileges(_ username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.getUserPrivileges(username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Requested privileges for: \(username)")
     }
 
@@ -1229,7 +1276,7 @@ final class NetworkClient {
     func setRoomTicker(room: String, ticker: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.setRoomTicker(room: room, ticker: ticker)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Set ticker in \(room): \(ticker)")
     }
 
@@ -1239,15 +1286,23 @@ final class NetworkClient {
     func searchRoom(_ room: String, query: String, token: UInt32) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.roomSearch(room: room, token: token, query: query)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Room search in \(room): \(query)")
+    }
+
+    /// Legacy room search request (server code 25)
+    func searchRoomLegacy(_ room: String, query: String, token: UInt32) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.fileSearchRoomMessage(room: room, token: token, query: query)
+        try await requireConnectedServerConnection().send(message)
+        logger.info("Legacy room search in \(room): \(query)")
     }
 
     /// Add a wishlist search (runs periodically)
     func addWishlistSearch(query: String, token: UInt32) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.wishlistSearch(token: token, query: query)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Added wishlist search: \(query)")
     }
 
@@ -1257,7 +1312,7 @@ final class NetworkClient {
     func addPrivateRoomMember(room: String, username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomAddMember(room: room, username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Adding \(username) to private room \(room)")
     }
 
@@ -1265,7 +1320,7 @@ final class NetworkClient {
     func removePrivateRoomMember(room: String, username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomRemoveMember(room: room, username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Removing \(username) from private room \(room)")
     }
 
@@ -1273,7 +1328,7 @@ final class NetworkClient {
     func leavePrivateRoom(_ room: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomCancelMembership(room: room)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Leaving private room \(room)")
     }
 
@@ -1281,7 +1336,7 @@ final class NetworkClient {
     func giveUpPrivateRoomOwnership(_ room: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomCancelOwnership(room: room)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Giving up ownership of \(room)")
     }
 
@@ -1289,7 +1344,7 @@ final class NetworkClient {
     func addPrivateRoomOperator(room: String, username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomAddOperator(room: room, username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Adding \(username) as operator in \(room)")
     }
 
@@ -1297,7 +1352,7 @@ final class NetworkClient {
     func removePrivateRoomOperator(room: String, username: String) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.privateRoomRemoveOperator(room: room, username: username)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Removing \(username) as operator from \(room)")
     }
 
@@ -1306,7 +1361,7 @@ final class NetworkClient {
     /// Search a specific user's files
     func userSearch(username: String, token: UInt32, query: String) async throws {
         let message = MessageBuilder.userSearchMessage(username: username, token: token, query: query)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     // MARK: - Upload Speed & Privileges
@@ -1314,13 +1369,13 @@ final class NetworkClient {
     /// Report upload speed to server
     func reportUploadSpeed(_ speed: UInt32) async throws {
         let message = MessageBuilder.sendUploadSpeedMessage(speed: speed)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     /// Give privileges to another user
     func givePrivileges(to username: String, days: UInt32) async throws {
         let message = MessageBuilder.givePrivilegesMessage(username: username, days: days)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     // MARK: - Room Invitations
@@ -1328,7 +1383,7 @@ final class NetworkClient {
     /// Enable or disable room invitations
     func enableRoomInvitations(_ enable: Bool) async throws {
         let message = MessageBuilder.enableRoomInvitationsMessage(enable: enable)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     // MARK: - Bulk Messaging
@@ -1336,7 +1391,7 @@ final class NetworkClient {
     /// Send a message to multiple users at once
     func messageUsers(_ usernames: [String], message: String) async throws {
         let msg = MessageBuilder.messageUsersMessage(usernames: usernames, message: message)
-        try await serverConnection?.send(msg)
+        try await requireConnectedServerConnection().send(msg)
     }
 
     // MARK: - Global Room
@@ -1344,13 +1399,13 @@ final class NetworkClient {
     /// Join the global room
     func joinGlobalRoom() async throws {
         let message = MessageBuilder.joinGlobalRoomMessage()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     /// Leave the global room
     func leaveGlobalRoom() async throws {
         let message = MessageBuilder.leaveGlobalRoomMessage()
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
     }
 
     // MARK: - Distributed Network
@@ -1360,7 +1415,7 @@ final class NetworkClient {
         guard isConnected else { throw NetworkError.notConnected }
         acceptDistributedChildren = accept
         let message = MessageBuilder.acceptChildren(accept)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Set AcceptChildren(\(accept))")
     }
 
@@ -1369,7 +1424,7 @@ final class NetworkClient {
         guard isConnected else { throw NetworkError.notConnected }
         distributedBranchLevel = level
         let message = MessageBuilder.branchLevel(level)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Set BranchLevel(\(level))")
     }
 
@@ -1378,7 +1433,7 @@ final class NetworkClient {
         guard isConnected else { throw NetworkError.notConnected }
         distributedBranchRoot = root
         let message = MessageBuilder.branchRoot(root)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Set BranchRoot(\(root))")
     }
 
@@ -1386,7 +1441,7 @@ final class NetworkClient {
     func setDistributedChildDepth(_ depth: UInt32) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         let message = MessageBuilder.childDepth(depth)
-        try await serverConnection?.send(message)
+        try await requireConnectedServerConnection().send(message)
         logger.info("Set ChildDepth(\(depth))")
     }
 
@@ -1409,13 +1464,13 @@ final class NetworkClient {
         // Tell server we have no parent and need one
         do {
             let haveNoParentMessage = MessageBuilder.haveNoParent(true)
-            try await serverConnection?.send(haveNoParentMessage)
+            try await requireConnectedServerConnection().send(haveNoParentMessage)
 
             let branchLevelMessage = MessageBuilder.branchLevel(0)
-            try await serverConnection?.send(branchLevelMessage)
+            try await requireConnectedServerConnection().send(branchLevelMessage)
 
             let acceptChildrenMessage = MessageBuilder.acceptChildren(acceptDistributedChildren)
-            try await serverConnection?.send(acceptChildrenMessage)
+            try await requireConnectedServerConnection().send(acceptChildrenMessage)
 
             logger.info("Distributed network reset complete, awaiting new parent assignment")
         } catch {

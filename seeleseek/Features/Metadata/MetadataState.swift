@@ -15,6 +15,7 @@ final class MetadataState {
     // MARK: - Services
     let musicBrainz = MusicBrainzClient()
     let coverArtArchive = CoverArtArchive()
+    private let metadataWriter = MetadataWriter()
 
     // MARK: - Editor State
     var isEditorPresented = false
@@ -115,17 +116,27 @@ final class MetadataState {
 
     /// Extract embedded cover art from an audio file using AVFoundation
     private func extractEmbeddedCoverArt(from url: URL) {
-        let asset = AVAsset(url: url)
-        let artworkItems = AVMetadataItem.metadataItems(
-            from: asset.commonMetadata,
-            filteredByIdentifier: .commonIdentifierArtwork
-        )
+        let asset = AVURLAsset(url: url)
 
-        if let artworkItem = artworkItems.first,
-           let data = artworkItem.dataValue {
-            coverArtData = data
-            coverArtSource = .embedded
-            logger.info("Loaded embedded cover art from file (\(data.count) bytes)")
+        Task {
+            do {
+                let metadata = try await asset.load(.commonMetadata)
+                let artworkItems = AVMetadataItem.metadataItems(
+                    from: metadata,
+                    filteredByIdentifier: .commonIdentifierArtwork
+                )
+
+                if let artworkItem = artworkItems.first {
+                    let data = try await artworkItem.load(.dataValue)
+                    if let data {
+                        coverArtData = data
+                        coverArtSource = .embedded
+                        logger.info("Loaded embedded cover art from file (\(data.count) bytes)")
+                    }
+                }
+            } catch {
+                logger.debug("Failed to load embedded cover art: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -332,13 +343,25 @@ final class MetadataState {
         logger.info("  Genre: \(metadata.genre)")
         logger.info("  Cover art: \(metadata.coverArt != nil ? "\(metadata.coverArt!.count) bytes" : "none")")
 
-        // TODO: Implement actual ID3 tag writing
-        // This would require a library like ID3TagEditor or TagLib
-        // For now, just simulate success
-        try? await Task.sleep(for: .milliseconds(500))
-
-        isApplying = false
-        return true
+        do {
+            let writerMetadata = MetadataWriter.Metadata(
+                title: metadata.title,
+                artist: metadata.artist,
+                album: metadata.album,
+                year: metadata.year,
+                trackNumber: metadata.trackNumber,
+                genre: metadata.genre,
+                coverArt: metadata.coverArt
+            )
+            try await metadataWriter.write(writerMetadata, to: filePath)
+            isApplying = false
+            return true
+        } catch {
+            logger.error("Failed to apply metadata: \(error.localizedDescription)")
+            applyError = error.localizedDescription
+            isApplying = false
+            return false
+        }
     }
 
     /// Metadata structure for applying to files

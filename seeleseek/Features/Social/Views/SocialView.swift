@@ -5,12 +5,14 @@ struct SocialView: View {
 
     enum SocialTab: String, CaseIterable {
         case buddies = "Buddies"
+        case ignored = "Ignored"
         case interests = "Interests"
         case discover = "Discover"
 
         var icon: String {
             switch self {
             case .buddies: "person.2"
+            case .ignored: "eye.slash"
             case .interests: "heart"
             case .discover: "sparkles"
             }
@@ -43,6 +45,8 @@ struct SocialView: View {
                 switch selectedTab {
                 case .buddies:
                     BuddyListView()
+                case .ignored:
+                    IgnoredUsersView()
                 case .interests:
                     InterestsView()
                 case .discover:

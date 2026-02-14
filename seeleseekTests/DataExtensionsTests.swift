@@ -112,7 +112,7 @@ struct DataExtensionsTests {
         // Invalid ranges
         #expect(data.safeSubdata(in: -1..<3) == nil)
         #expect(data.safeSubdata(in: 0..<10) == nil)
-        #expect(data.safeSubdata(in: 3..<2) == nil)
+        // Note: 3..<2 can't be tested — Range traps if lowerBound > upperBound at construction
     }
 
     @Test("Hex string conversion")
