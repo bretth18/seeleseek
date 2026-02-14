@@ -110,7 +110,17 @@ final class AppState {
     let uploadManager = UploadManager()
 
     // MARK: - Initialization
-    init() {
+
+    // init() is intentionally lightweight — @Entry and SwiftUI may construct
+    // multiple AppState instances.  Heavy side-effects live in configure().
+    private var isConfigured = false
+
+    /// One-time setup: load settings, request notifications, init database.
+    /// Call exactly once from the App struct's .task modifier.
+    func configure() {
+        guard !isConfigured else { return }
+        isConfigured = true
+
         // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
 

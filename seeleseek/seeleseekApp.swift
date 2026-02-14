@@ -9,6 +9,7 @@ struct SeeleSeekApp: App {
             MainView()
                 .environment(\.appState, appState)
                 .tint(SeeleColors.accent)
+                .task { appState.configure() }
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
