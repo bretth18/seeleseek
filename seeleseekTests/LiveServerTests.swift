@@ -1,29 +1,32 @@
-import XCTest
+import Testing
 import Network
+import Foundation
 @testable import seeleseek
 
 /// Live tests against the real SoulSeek server
 /// These tests require network access and a valid account
-final class LiveServerTests: XCTestCase {
+@Suite("Live Server Tests", .serialized)
+struct LiveServerTests {
 
     /// Test the full search flow against the real server
-    func testRealServerSearch() async throws {
+    @Test("Real server search flow")
+    func realServerSearch() async throws {
         // Use test credentials - create a throwaway account for testing
         let username = "seeleseek_test_\(Int.random(in: 1000...9999))"
         let password = "testpass123"
 
-        print("🧪 Starting live server test with username: \(username)")
+        print("Starting live server test with username: \(username)")
 
         // Create server connection
         let serverConn = ServerConnection(host: "server.slsknet.org", port: 2242)
 
-        print("🧪 Connecting to server...")
+        print("Connecting to server...")
         try await serverConn.connect()
-        print("✅ Connected to server")
+        print("Connected to server")
 
         // Send login
         let loginMsg = MessageBuilder.loginMessage(username: username, password: password)
-        print("🧪 Sending login...")
+        print("Sending login...")
         try await serverConn.send(loginMsg)
 
         // Wait for login response
@@ -35,7 +38,7 @@ final class LiveServerTests: XCTestCase {
 
             if code == 1 { // Login response
                 let success = data.readByte(at: 8)
-                print("🧪 Login response: success=\(success ?? 0)")
+                print("Login response: success=\(success ?? 0)")
 
                 if success == 1 {
                     loggedIn = true
@@ -49,19 +52,19 @@ final class LiveServerTests: XCTestCase {
                             let b3 = (ip >> 16) & 0xFF
                             let b4 = (ip >> 24) & 0xFF
                             serverIP = "\(b1).\(b2).\(b3).\(b4)"
-                            print("📍 Server reports our IP: \(serverIP!)")
+                            print("Server reports our IP: \(serverIP!)")
                         }
                     }
                 } else {
                     // New account might fail - that's OK for this test
-                    print("⚠️ Login failed (expected for new account)")
+                    print("Login failed (expected for new account)")
                 }
                 break
             }
         }
 
         if !loggedIn {
-            print("⚠️ Could not log in - skipping rest of test")
+            print("Could not log in - skipping rest of test")
             await serverConn.disconnect()
             return
         }
@@ -69,24 +72,23 @@ final class LiveServerTests: XCTestCase {
         // Send SetListenPort
         let portMsg = MessageBuilder.setListenPortMessage(port: 2234)
         try await serverConn.send(portMsg)
-        print("🧪 Sent SetListenPort: 2234")
+        print("Sent SetListenPort: 2234")
 
         // Send SetOnlineStatus
         let statusMsg = MessageBuilder.setOnlineStatusMessage(status: .online)
         try await serverConn.send(statusMsg)
-        print("🧪 Sent SetOnlineStatus: online")
+        print("Sent SetOnlineStatus: online")
 
         // Send FileSearch
-        let token = UInt32.random(in: 1...UInt32.max)
+        let token = UInt32.random(in: 1..<0x8000_0000)
         let searchMsg = MessageBuilder.fileSearchMessage(token: token, query: "test")
         try await serverConn.send(searchMsg)
-        print("🧪 Sent FileSearch: 'test' token=\(token)")
+        print("Sent FileSearch: 'test' token=\(token)")
 
         // Listen for responses
         var connectToPeerCount = 0
-        var incomingCount = 0
 
-        print("🧪 Waiting for responses...")
+        print("Waiting for responses...")
 
         // Collect messages for 10 seconds
         let deadline = Date().addingTimeInterval(10)
@@ -100,7 +102,6 @@ final class LiveServerTests: XCTestCase {
             case 18: // ConnectToPeer
                 connectToPeerCount += 1
                 if connectToPeerCount <= 5 {
-                    // Parse and log the first few
                     var offset = 8
                     if let (peerUsername, len) = data.readString(at: offset) {
                         offset += len
@@ -113,7 +114,7 @@ final class LiveServerTests: XCTestCase {
                                     let b2 = (ip >> 8) & 0xFF
                                     let b3 = (ip >> 16) & 0xFF
                                     let b4 = (ip >> 24) & 0xFF
-                                    print("📞 ConnectToPeer #\(connectToPeerCount): \(peerUsername) type=\(connType) ip=\(b1).\(b2).\(b3).\(b4) port=\(port)")
+                                    print("ConnectToPeer #\(connectToPeerCount): \(peerUsername) type=\(connType) ip=\(b1).\(b2).\(b3).\(b4) port=\(port)")
                                 }
                             }
                         }
@@ -121,45 +122,47 @@ final class LiveServerTests: XCTestCase {
                 }
 
             case 102: // EmbeddedMessage (distributed search)
-                print("🌐 EmbeddedMessage received")
+                print("EmbeddedMessage received")
 
             default:
                 if code != 32 { // Skip pings
-                    print("📨 Message code: \(code)")
+                    print("Message code: \(code)")
                 }
             }
         }
 
-        print("🧪 Test complete:")
+        print("Test complete:")
         print("   - ConnectToPeer messages: \(connectToPeerCount)")
         print("   - Server IP: \(serverIP ?? "unknown")")
 
         await serverConn.disconnect()
 
-        // The test "passes" if we got ANY ConnectToPeer messages
-        // This proves the search was sent correctly
-        XCTAssertGreaterThan(connectToPeerCount, 0, "Should receive at least one ConnectToPeer")
+        #expect(connectToPeerCount > 0, "Should receive at least one ConnectToPeer")
     }
 
     /// Test that we can establish an incoming connection on our listen port
-    func testListenerAcceptsConnections() async throws {
+    @Test("Listener accepts connections")
+    func listenerAcceptsConnections() async throws {
         let listener = ListenerService()
-        let expectation = XCTestExpectation(description: "Receive connection")
-
-        await listener.setOnNewConnection { conn, obfuscated in
-            print("✅ Received incoming connection!")
-            expectation.fulfill()
-        }
 
         let ports = try await listener.start()
-        print("🧪 Listening on port \(ports.port)")
+        print("Listening on port \(ports.port)")
 
         // Connect to ourselves to verify listener works
         let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: ports.port)!)
         let conn = NWConnection(to: endpoint, using: .tcp)
-        conn.start(queue: .global())
 
-        await fulfillment(of: [expectation], timeout: 5.0)
+        await confirmation("Receive connection") { confirm in
+            await listener.setOnNewConnection { _, _ in
+                print("Received incoming connection!")
+                confirm()
+            }
+
+            conn.start(queue: .global())
+
+            // Give time for connection to establish
+            try? await Task.sleep(for: .seconds(3))
+        }
 
         conn.cancel()
         await listener.stop()

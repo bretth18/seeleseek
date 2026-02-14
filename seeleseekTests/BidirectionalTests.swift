@@ -249,16 +249,15 @@ struct BidirectionalTests {
         peerConn.start(queue: .global())
         try await Task.sleep(for: .milliseconds(500))
 
-        // Step 1: Send PierceFirewall
-        var pierceFirewall = Data()
-        pierceFirewall.appendUInt32(5)        // length = 1 (code) + 4 (token)
-        pierceFirewall.appendUInt8(0)         // code = 0 = PierceFirewall
-        pierceFirewall.appendUInt32(12345)    // token
+        // Step 1: Send PeerInit (code 1) to establish a P-type message connection
+        // PierceFirewall (code 0) stops the receive loop for file transfer mode,
+        // so we use PeerInit instead for search reply exchange.
+        let peerInit = MessageBuilder.peerInitMessage(username: "testuser", connectionType: "P", token: 12345)
 
-        print("📤 PierceFirewall: \(pierceFirewall.map { String(format: "%02x", $0) }.joined(separator: " "))")
+        print("PeerInit: \(peerInit.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " "))...")
 
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            peerConn.send(content: pierceFirewall, completion: .contentProcessed { e in
+            peerConn.send(content: peerInit, completion: .contentProcessed { e in
                 if let e = e { cont.resume(throwing: e) } else { cont.resume() }
             })
         }
