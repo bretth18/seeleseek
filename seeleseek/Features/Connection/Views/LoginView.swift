@@ -14,16 +14,14 @@ struct LoginView: View {
                 VStack(spacing: SeeleSpacing.md) {
                     Image(nsImage: .gsgaag2)
                         .renderingMode(.template)
-//                        .frame(width: SeeleSpacing.iconSize, height: SeeleSpacing.iconSize)
 
-//                    .font(.system(size: SeeleSpacing.iconSizeHero + 16, weight: .light))
                     .foregroundStyle(SeeleColors.accent)
 
                     Text("seeleseek")
                         .font(SeeleTypography.logo)
                         .foregroundStyle(SeeleColors.textPrimary)
 
-                    Text("a soulseek client from The Virtuous Corporation")
+                    Text("a soulseek client for your seele")
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }

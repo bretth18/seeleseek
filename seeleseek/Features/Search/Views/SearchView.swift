@@ -259,7 +259,7 @@ struct SearchView: View {
             do {
                 try await appState.networkClient.search(query: searchState.searchQuery, token: token)
             } catch {
-                print("Search error: \(error)")
+                searchState.markSearchComplete(token: token)
             }
         }
     }

@@ -104,6 +104,14 @@ actor ServerConnection {
 
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
+        // Enable TCP keepalive to detect silent connection deaths quickly
+        // Without this, a dead connection (NAT timeout, ISP reset) can go undetected for hours
+        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.enableKeepalive = true
+            tcpOptions.keepaliveInterval = 60  // probe every 60s after idle
+            tcpOptions.keepaliveCount = 3      // give up after 3 missed probes
+            tcpOptions.keepaliveIdle = 120     // start probing after 2 min idle
+        }
 
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw ConnectionError.connectionFailed("Invalid port: \(port)")
@@ -137,6 +145,9 @@ actor ServerConnection {
             connectContinuation = nil
             continuation.resume(throwing: ConnectionError.notConnected)
         }
+        // Finish the async message stream so NetworkClient's `for await` loop exits
+        messageContinuation?.finish()
+        messageContinuation = nil
         updateState(.disconnected)
     }
 
@@ -216,12 +227,13 @@ actor ServerConnection {
 
         case .failed(let error):
             logger.error("Connection failed: \(error.localizedDescription)")
-            updateState(.failed(error))
-            // Resume continuation exactly once, then nil it out
+            // Resume continuation exactly once if still connecting
             if let continuation = connectContinuation {
                 connectContinuation = nil
                 continuation.resume(throwing: ConnectionError.connectionFailed(error.localizedDescription))
             }
+            // Clean up and end the async stream so NetworkClient detects the loss
+            disconnect()
 
         case .cancelled:
             logger.info("Connection cancelled")
@@ -251,9 +263,9 @@ actor ServerConnection {
                     await self.handleReceivedData(data)
                 }
 
-                if isComplete {
+                if isComplete || error != nil {
                     await self.disconnect()
-                } else if error == nil {
+                } else {
                     await self.startReceiving()
                 }
             }
