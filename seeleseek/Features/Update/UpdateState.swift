@@ -56,7 +56,7 @@ final class UpdateState {
         }
 
         do {
-            let result = try await updateClient.fetchLatestRelease(currentVersion: currentVersion)
+            let result = try await updateClient.fetchLatestRelease(currentVersion: "\(currentVersion).\(currentBuild)")
 
             updateAvailable = result.isNewer
             latestVersion = result.release.tagName

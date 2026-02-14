@@ -491,8 +491,9 @@ final class NetworkClient {
                 } catch is CancellationError {
                     return
                 } catch {
-                    self?.logger.warning("Keepalive ping failed: \(error.localizedDescription)")
-                    // Continue trying - connection may recover
+                    self?.logger.error("Keepalive ping failed, connection is dead: \(error.localizedDescription)")
+                    self?.disconnect()
+                    return
                 }
             }
         }
