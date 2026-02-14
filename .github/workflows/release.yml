@@ -66,8 +66,8 @@ jobs:
 
     - name: Archive App
       run: |
-        xcodebuild -scheme abledex \
-          -archivePath $PWD/build/abledex.xcarchive \
+        xcodebuild -scheme seeleseek \
+          -archivePath $PWD/build/seeleseek.xcarchive \
           -configuration Release \
           archive \
           CODE_SIGN_STYLE=Manual \
@@ -95,7 +95,7 @@ jobs:
         EOF
 
         xcodebuild -exportArchive \
-          -archivePath $PWD/build/abledex.xcarchive \
+          -archivePath $PWD/build/seeleseek.xcarchive \
           -exportOptionsPlist ExportOptions.plist \
           -exportPath $PWD/build
 
@@ -120,34 +120,34 @@ jobs:
 
         # Build unsigned pkg
         pkgbuild \
-          --component build/abledex.app \
+          --component build/seeleseek.app \
           --install-location /Applications \
-          --identifier computerdata.abledex \
+          --identifier computerdata.seeleseek \
           --version "$VERSION" \
-          build/abledex-unsigned.pkg
+          build/seeleseek-unsigned.pkg
 
         # Sign pkg with Developer ID Installer certificate
         productsign \
           --sign "Developer ID Installer: Brett Henderson (94XUGF9CU7)" \
           --keychain "$KEYCHAIN_PATH" \
-          build/abledex-unsigned.pkg \
-          build/abledex.pkg
+          build/seeleseek-unsigned.pkg \
+          build/seeleseek.pkg
 
-        rm build/abledex-unsigned.pkg
+        rm build/seeleseek-unsigned.pkg
 
         # Notarize using stored credentials (avoids secrets in process args)
-        xcrun notarytool submit build/abledex.pkg \
+        xcrun notarytool submit build/seeleseek.pkg \
           --keychain-profile "notary-profile" \
           --keychain "$KEYCHAIN_PATH" \
           --wait
 
         # Staple the notarization ticket
-        xcrun stapler staple build/abledex.pkg
+        xcrun stapler staple build/seeleseek.pkg
 
     - name: Release
       uses: softprops/action-gh-release@v1
       with:
-        files: build/abledex.pkg
+        files: build/seeleseek.pkg
         generate_release_notes: true
 
     - name: Cleanup keychain

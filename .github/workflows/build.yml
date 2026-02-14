@@ -19,7 +19,7 @@ jobs:
 
     - name: Build App
       run: |
-        xcodebuild -scheme abledex -destination 'platform=macOS' -configuration Release build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+        xcodebuild -scheme seeleseek -destination 'platform=macOS' -configuration Release build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
 
   test:
     name: Test
@@ -33,4 +33,4 @@ jobs:
 
     - name: Run Unit Tests
       run: |
-        xcodebuild -scheme abledexTests -destination 'platform=macOS' test CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+        xcodebuild -scheme seeleseek -destination 'platform=macOS' test CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO

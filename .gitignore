@@ -9,3 +9,6 @@ CMakePresets.json
 
 
 *.log
+
+
+.internal

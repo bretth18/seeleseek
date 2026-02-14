@@ -15,6 +15,7 @@ final class MetadataState {
     // MARK: - Services
     let musicBrainz = MusicBrainzClient()
     let coverArtArchive = CoverArtArchive()
+    private let metadataWriter = MetadataWriter()
 
     // MARK: - Editor State
     var isEditorPresented = false
@@ -343,7 +344,16 @@ final class MetadataState {
         logger.info("  Cover art: \(metadata.coverArt != nil ? "\(metadata.coverArt!.count) bytes" : "none")")
 
         do {
-            try writeMetadata(metadata, to: filePath)
+            let writerMetadata = MetadataWriter.Metadata(
+                title: metadata.title,
+                artist: metadata.artist,
+                album: metadata.album,
+                year: metadata.year,
+                trackNumber: metadata.trackNumber,
+                genre: metadata.genre,
+                coverArt: metadata.coverArt
+            )
+            try await metadataWriter.write(writerMetadata, to: filePath)
             isApplying = false
             return true
         } catch {
@@ -363,157 +373,6 @@ final class MetadataState {
         let trackNumber: Int?
         let genre: String
         let coverArt: Data?
-    }
-
-    // MARK: - Metadata Writing
-
-    private enum MetadataWriteError: LocalizedError {
-        case unsupportedFileType(String)
-        case invalidID3Size
-        case fileReadFailed
-
-        var errorDescription: String? {
-            switch self {
-            case .unsupportedFileType(let ext):
-                return "Writing metadata is currently supported for MP3 files only (received .\(ext))."
-            case .invalidID3Size:
-                return "Existing ID3 tag appears corrupted."
-            case .fileReadFailed:
-                return "Could not read audio file."
-            }
-        }
-    }
-
-    private func writeMetadata(_ metadata: EditableMetadata, to fileURL: URL) throws {
-        let ext = fileURL.pathExtension.lowercased()
-        guard ext == "mp3" else {
-            throw MetadataWriteError.unsupportedFileType(ext.isEmpty ? "unknown" : ext)
-        }
-
-        let originalData = try Data(contentsOf: fileURL)
-        guard !originalData.isEmpty else {
-            throw MetadataWriteError.fileReadFailed
-        }
-
-        let withoutID3v2 = try stripExistingID3v2(from: originalData)
-        let audioData = stripID3v1Footer(from: withoutID3v2)
-        let newTag = buildID3v24Tag(for: metadata)
-        let finalData = newTag + audioData
-
-        try finalData.write(to: fileURL, options: .atomic)
-        logger.info("Wrote ID3 metadata to \(fileURL.lastPathComponent)")
-    }
-
-    private func stripExistingID3v2(from data: Data) throws -> Data {
-        guard data.count >= 10 else { return data }
-        guard data[0] == 0x49, data[1] == 0x44, data[2] == 0x33 else {  // "ID3"
-            return data
-        }
-
-        let tagSize = decodeSynchsafeInt(data[6], data[7], data[8], data[9])
-        let totalSize = 10 + tagSize
-        guard totalSize <= data.count else {
-            throw MetadataWriteError.invalidID3Size
-        }
-        return data.subdata(in: totalSize..<data.count)
-    }
-
-    private func stripID3v1Footer(from data: Data) -> Data {
-        guard data.count >= 128 else { return data }
-        let footerStart = data.count - 128
-        if data[footerStart] == 0x54, data[footerStart + 1] == 0x41, data[footerStart + 2] == 0x47 {  // "TAG"
-            return data.subdata(in: 0..<footerStart)
-        }
-        return data
-    }
-
-    private func buildID3v24Tag(for metadata: EditableMetadata) -> Data {
-        var frames = Data()
-        frames.append(textFrame(id: "TIT2", value: metadata.title))
-        frames.append(textFrame(id: "TPE1", value: metadata.artist))
-        frames.append(textFrame(id: "TALB", value: metadata.album))
-        frames.append(textFrame(id: "TCON", value: metadata.genre))
-
-        if let track = metadata.trackNumber, track > 0 {
-            frames.append(textFrame(id: "TRCK", value: String(track)))
-        }
-
-        if !metadata.year.isEmpty {
-            frames.append(textFrame(id: "TDRC", value: metadata.year))
-        }
-
-        if let art = metadata.coverArt {
-            frames.append(apicFrame(imageData: art))
-        }
-
-        var header = Data()
-        header.append(contentsOf: [0x49, 0x44, 0x33])  // ID3
-        header.append(0x04)  // v2.4
-        header.append(0x00)  // revision
-        header.append(0x00)  // flags
-        header.append(contentsOf: synchsafeBytes(for: frames.count))
-
-        return header + frames
-    }
-
-    private func textFrame(id: String, value: String) -> Data {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return Data() }
-
-        var payload = Data()
-        payload.append(0x03)  // UTF-8 encoding
-        payload.append(trimmed.data(using: .utf8) ?? Data())
-
-        var frame = Data()
-        frame.append(id.data(using: .ascii) ?? Data())
-        frame.append(contentsOf: synchsafeBytes(for: payload.count))
-        frame.append(contentsOf: [0x00, 0x00])  // flags
-        frame.append(payload)
-        return frame
-    }
-
-    private func apicFrame(imageData: Data) -> Data {
-        guard !imageData.isEmpty else { return Data() }
-
-        var payload = Data()
-        payload.append(0x03)  // UTF-8 encoding
-
-        let mimeType: String
-        if imageData.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            mimeType = "image/png"
-        } else {
-            mimeType = "image/jpeg"
-        }
-
-        payload.append(mimeType.data(using: .ascii) ?? Data())
-        payload.append(0x00)  // null terminator
-        payload.append(0x03)  // front cover
-        payload.append(0x00)  // empty description
-        payload.append(imageData)
-
-        var frame = Data()
-        frame.append("APIC".data(using: .ascii) ?? Data())
-        frame.append(contentsOf: synchsafeBytes(for: payload.count))
-        frame.append(contentsOf: [0x00, 0x00])  // flags
-        frame.append(payload)
-        return frame
-    }
-
-    private func synchsafeBytes(for value: Int) -> [UInt8] {
-        let safeValue = max(0, value)
-        return [
-            UInt8((safeValue >> 21) & 0x7F),
-            UInt8((safeValue >> 14) & 0x7F),
-            UInt8((safeValue >> 7) & 0x7F),
-            UInt8(safeValue & 0x7F)
-        ]
-    }
-
-    private func decodeSynchsafeInt(_ b0: UInt8, _ b1: UInt8, _ b2: UInt8, _ b3: UInt8) -> Int {
-        (Int(b0 & 0x7F) << 21)
-            | (Int(b1 & 0x7F) << 14)
-            | (Int(b2 & 0x7F) << 7)
-            | Int(b3 & 0x7F)
     }
 
     // MARK: - Filename Parsing

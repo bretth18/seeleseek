@@ -13,14 +13,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-
     - name: Select Xcode
       run: sudo xcode-select -s /Applications/Xcode.app
 
     - name: Archive Nightly App
       run: |
-        xcodebuild -scheme abledex \
-          -archivePath $PWD/build/abledex_nightly.xcarchive \
+        xcodebuild -scheme seeleseek \
+          -archivePath $PWD/build/seeleseek_nightly.xcarchive \
           -configuration Release \
           archive \
           CODE_SIGN_IDENTITY="-" \
@@ -44,7 +43,7 @@ jobs:
         EOF
 
         xcodebuild -exportArchive \
-          -archivePath $PWD/build/abledex_nightly.xcarchive \
+          -archivePath $PWD/build/seeleseek_nightly.xcarchive \
           -exportOptionsPlist ExportOptions.plist \
           -exportPath $PWD/build \
           CODE_SIGN_IDENTITY="-" \
@@ -53,32 +52,32 @@ jobs:
     - name: Rename and Patch Nightly App
       run: |
         cd build
-        mv abledex.app "Abledex Nightly.app"
+        mv seeleseek.app "SeeleSeek Nightly.app"
 
         # Update Bundle ID
-        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier computerdata.abledex.nightly" "Abledex Nightly.app/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier computerdata.seeleseek.nightly" "SeeleSeek Nightly.app/Contents/Info.plist"
 
         # Update Display Name
-        /usr/libexec/PlistBuddy -c "Set :CFBundleName Abledex Nightly" "Abledex Nightly.app/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c "Set :CFBundleName SeeleSeek Nightly" "SeeleSeek Nightly.app/Contents/Info.plist"
 
         # Verify changes
-        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "Abledex Nightly.app/Contents/Info.plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "SeeleSeek Nightly.app/Contents/Info.plist"
 
     - name: Re-sign Nightly App
       run: |
         cd build
         # Re-sign with Ad-Hoc identity to fix the signature invalidated by Info.plist changes
         # We need to include entitlements to ensure Apple Events work
-        codesign --force --deep --sign - --entitlements ../abledex/abledex.entitlements "Abledex Nightly.app"
+        codesign --force --deep --sign - --entitlements ../seeleseek/seeleseek.entitlements "SeeleSeek Nightly.app"
 
     - name: Zip Nightly Application
       run: |
         cd build
-        zip -r abledex-nightly.zip "Abledex Nightly.app"
+        zip -r seeleseek-nightly.zip "SeeleSeek Nightly.app"
 
     - name: Upload Nightly Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: abledex-nightly-build
-        path: build/abledex-nightly.zip
+        name: seeleseek-nightly-build
+        path: build/seeleseek-nightly.zip
         retention-days: 5

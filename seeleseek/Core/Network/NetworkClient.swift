@@ -596,9 +596,8 @@ final class NetworkClient {
             throw NetworkError.notConnected
         }
 
-        // SECURITY: Truncate query if too long
-        let sanitizedQuery = String(query.prefix(Self.maxSearchQueryLength))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Sanitize: truncate, normalize Unicode, and clean for SoulSeek compatibility
+        let sanitizedQuery = Self.sanitizeSearchQuery(query)
 
         guard !sanitizedQuery.isEmpty else {
             throw NetworkError.invalidResponse
@@ -607,6 +606,28 @@ final class NetworkClient {
         let message = MessageBuilder.fileSearchMessage(token: token, query: sanitizedQuery)
         try await connection.send(message)
         logger.info("Sent search request: query='\(sanitizedQuery)' token=\(token)")
+    }
+
+    /// Sanitize a search query for SoulSeek protocol compatibility
+    private static func sanitizeSearchQuery(_ query: String) -> String {
+        var q = String(query.prefix(maxSearchQueryLength))
+
+        // Normalize Unicode: smart/curly quotes → ASCII, em-dash → hyphen, etc.
+        // NFKD decomposes compatibility characters, then we replace known offenders
+        q = q.precomposedStringWithCompatibilityMapping
+        q = q.replacingOccurrences(of: "\u{2018}", with: "'")  // left single quote
+            .replacingOccurrences(of: "\u{2019}", with: "'")    // right single quote
+            .replacingOccurrences(of: "\u{201C}", with: "\"")   // left double quote
+            .replacingOccurrences(of: "\u{201D}", with: "\"")   // right double quote
+            .replacingOccurrences(of: "\u{2013}", with: "-")    // en-dash
+            .replacingOccurrences(of: "\u{2014}", with: "-")    // em-dash
+
+        // Collapse multiple spaces
+        while q.contains("  ") {
+            q = q.replacingOccurrences(of: "  ", with: " ")
+        }
+
+        return q.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func getRoomList() async throws {

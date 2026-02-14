@@ -344,8 +344,8 @@ final class BrowseState {
         // Cancel any existing task for this browse
         activeBrowseTasks[browseId]?.cancel()
 
-        // Start a NEW detached task that won't be cancelled by view lifecycle
-        // Using Task.detached ensures the task lives independently of the calling context
+        // Task inherits @MainActor for async networking, but we detach the CPU-bound
+        // tree building so it doesn't block the UI on large file lists.
         let task = Task { [weak self] in
             self?.logger.info("Starting browse request for \(username)")
 
@@ -357,14 +357,11 @@ final class BrowseState {
 
                 if status == .offline {
                     self?.logger.info("User \(username) is offline, aborting browse")
-                    await MainActor.run {
-                        guard let self else { return }
-                        if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
-                            self.browses[idx].error = "User \(username) is offline"
-                            self.browses[idx].isLoading = false
-                        }
-                        self.activeBrowseTasks.removeValue(forKey: browseId)
+                    if let idx = self?.browses.firstIndex(where: { $0.id == browseId }) {
+                        self?.browses[idx].error = "User \(username) is offline"
+                        self?.browses[idx].isLoading = false
                     }
+                    self?.activeBrowseTasks.removeValue(forKey: browseId)
                     return
                 }
 
@@ -373,32 +370,29 @@ final class BrowseState {
                 // Step 2: User is online, proceed with the actual browse
                 let flatFiles = try await networkClient.browseUser(username)
 
-                // Build hierarchical tree structure (do this off main thread for large file lists)
-                let treeFiles = SharedFile.buildTree(from: flatFiles)
+                // Build hierarchical tree + compute stats OFF the main thread
+                let precomputedShares = await Task.detached {
+                    let treeFiles = SharedFile.buildTree(from: flatFiles)
+                    var userShares = UserShares(id: browseId, username: username, folders: treeFiles, isLoading: false)
+                    userShares.computeStats()
+                    return userShares
+                }.value
 
-                // Pre-compute stats off main thread
-                var userShares = UserShares(id: browseId, username: username, folders: treeFiles, isLoading: false)
-                userShares.computeStats()
-                let precomputedShares = userShares
+                guard let self else { return }
+                // Find the browse by ID (index may have changed)
+                if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
+                    self.browses[idx] = precomputedShares
+                    self.logger.info("Got \(flatFiles.count) files -> \(precomputedShares.folders.count) root folders for \(username)")
 
-                // Update on main actor
-                await MainActor.run {
-                    guard let self else { return }
-                    // Find the browse by ID (index may have changed)
-                    if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
-                        self.browses[idx] = precomputedShares
-                        self.logger.info("Got \(flatFiles.count) files -> \(treeFiles.count) root folders for \(username)")
+                    // Cache the results
+                    self.cacheUserShares(self.browses[idx])
 
-                        // Cache the results
-                        self.cacheUserShares(self.browses[idx])
-
-                        // Auto-expand to target path if set
-                        if self.targetPath != nil {
-                            self.expandToTargetPath(in: treeFiles)
-                        }
+                    // Auto-expand to target path if set
+                    if self.targetPath != nil {
+                        self.expandToTargetPath(in: precomputedShares.folders)
                     }
-                    self.activeBrowseTasks.removeValue(forKey: browseId)
                 }
+                self.activeBrowseTasks.removeValue(forKey: browseId)
             } catch {
                 // Check if cancelled
                 if Task.isCancelled {
@@ -406,15 +400,12 @@ final class BrowseState {
                     return
                 }
 
-                await MainActor.run {
-                    guard let self else { return }
-                    if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
-                        self.browses[idx].error = "Failed to browse \(username): \(error.localizedDescription)"
-                        self.browses[idx].isLoading = false
-                        self.logger.error("Browse error for \(username): \(error.localizedDescription)")
-                    }
-                    self.activeBrowseTasks.removeValue(forKey: browseId)
+                if let idx = self?.browses.firstIndex(where: { $0.id == browseId }) {
+                    self?.browses[idx].error = "Failed to browse \(username): \(error.localizedDescription)"
+                    self?.browses[idx].isLoading = false
+                    self?.logger.error("Browse error for \(username): \(error.localizedDescription)")
                 }
+                self?.activeBrowseTasks.removeValue(forKey: browseId)
             }
         }
 

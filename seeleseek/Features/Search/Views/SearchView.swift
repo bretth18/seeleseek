@@ -252,7 +252,7 @@ struct SearchView: View {
     }
 
     private func executeSearch() {
-        let token = UInt32.random(in: 1...UInt32.max)
+        let token = UInt32.random(in: 1..<0x8000_0000)
         searchState.startSearch(token: token)
 
         Task {
