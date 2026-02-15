@@ -1200,7 +1200,14 @@ final class DownloadManager {
 
         // Extract filename (last component) and folders (everything else)
         let filename = pathComponents.last!
-        let folders = pathComponents.dropLast().joined(separator: "/")
+        let folderComponents = Array(pathComponents.dropLast())
+        let folders = folderComponents.joined(separator: "/")
+
+        // Derive artist and album from folder hierarchy:
+        // Artist/Album/file.mp3 → artist=Artist, album=Album
+        // Genre/Artist/Album/file.mp3 → artist=Artist, album=Album
+        let album = folderComponents.last ?? ""
+        let artist = folderComponents.count >= 2 ? folderComponents[folderComponents.count - 2] : ""
 
         // Get the active template
         let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
@@ -1209,6 +1216,8 @@ final class DownloadManager {
         var result = template
             .replacingOccurrences(of: "{username}", with: username)
             .replacingOccurrences(of: "{folders}", with: folders)
+            .replacingOccurrences(of: "{artist}", with: artist)
+            .replacingOccurrences(of: "{album}", with: album)
             .replacingOccurrences(of: "{filename}", with: filename)
 
         // Clean up double slashes from empty tokens (e.g. empty folders)
