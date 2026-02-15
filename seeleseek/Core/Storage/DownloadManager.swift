@@ -156,6 +156,14 @@ final class DownloadManager {
             }
         }
 
+        // Set up callback for pool-level TransferRequests (arrives on connections not directly managed by us,
+        // e.g. stale direct connections when PierceFirewall won the race)
+        networkClient.onTransferRequest = { [weak self] request in
+            Task { @MainActor in
+                await self?.handlePoolTransferRequest(request)
+            }
+        }
+
         // Set up callback for PlaceInQueueReply (peer tells us our queue position)
         networkClient.onPlaceInQueueReply = { [weak self] username, filename, position in
             Task { @MainActor in
@@ -625,6 +633,21 @@ final class DownloadManager {
         }
     }
 
+    /// Handle TransferRequest arriving via pool-level callback (from connections not directly managed by us,
+    /// e.g. stale direct connections left over when PierceFirewall won the race)
+    private func handlePoolTransferRequest(_ request: TransferRequest) async {
+        let matchingEntry = pendingDownloads.first { (_, pending) in
+            pending.filename == request.filename
+        }
+
+        if let (token, _) = matchingEntry {
+            logger.info("Pool TransferRequest matched pending download: \(request.filename)")
+            await handleTransferRequest(token: token, request: request)
+        } else {
+            logger.debug("Pool TransferRequest: no matching pending download for \(request.filename)")
+        }
+    }
+
     private func waitForTransferResponse(token: UInt32) async {
         guard let transferState, let pending = pendingDownloads[token] else { return }
 
@@ -704,6 +727,7 @@ final class DownloadManager {
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
                 t.startTime = Date()
+                t.queuePosition = nil
             }
 
             // Wait for the file connection - peer may connect to us, or we connect to them

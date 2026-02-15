@@ -146,6 +146,12 @@ final class NetworkClient {
             self?.onFolderContentsResponse?(token, folder, files)
         }
 
+        // Wire up pool-level TransferRequest (catches requests on connections not directly managed by DownloadManager)
+        peerConnectionPool.onTransferRequest = { [weak self] request in
+            self?.logger.debug("NetworkClient: Pool TransferRequest for \(request.filename) from \(request.username)")
+            self?.onTransferRequest?(request)
+        }
+
         // Wire up PlaceInQueueRequest for queue position management
         peerConnectionPool.onPlaceInQueueRequest = { [weak self] username, filename, connection in
             self?.logger.debug("NetworkClient: PlaceInQueueRequest from \(username): \(filename)")
@@ -221,6 +227,7 @@ final class NetworkClient {
     var onTransferResponse: ((UInt32, Bool, UInt64?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, connection)
     var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
+    var onTransferRequest: ((TransferRequest) -> Void)?  // Pool-level TransferRequest (for connections not directly managed by DownloadManager)
     var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
     var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
 

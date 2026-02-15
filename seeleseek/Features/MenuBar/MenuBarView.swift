@@ -36,3 +36,8 @@ struct MenuBarView: View {
         }
     }
 }
+
+#Preview {
+    MenuBarView()
+        .environment(\.appState, AppState())
+}
