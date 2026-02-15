@@ -181,6 +181,7 @@ final class SettingsState {
     var autoFetchMetadata: Bool = true
     var autoFetchAlbumArt: Bool = true
     var embedAlbumArt: Bool = true
+    var setFolderIcons: Bool = true
     var organizeDownloads: Bool = false
     var organizationPattern: String = "{artist}/{album}/{track} - {title}"
 
@@ -252,6 +253,7 @@ final class SettingsState {
         autoFetchMetadata = true
         autoFetchAlbumArt = true
         embedAlbumArt = true
+        setFolderIcons = true
         organizeDownloads = false
         organizationPattern = "{artist}/{album}/{track} - {title}"
         showJoinLeaveMessages = true

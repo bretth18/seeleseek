@@ -13,6 +13,7 @@ struct MetadataSettingsSection: View {
                     .disabled(!settings.autoFetchMetadata)
                 settingsToggle("Embed album art in files", isOn: $settings.embedAlbumArt)
                     .disabled(!settings.autoFetchAlbumArt)
+                settingsToggle("Set album art as folder icon", isOn: $settings.setFolderIcons)
             }
 
             settingsGroup("Organization") {

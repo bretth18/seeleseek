@@ -51,6 +51,9 @@ final class NetworkClient {
     // Share manager
     let shareManager = ShareManager()
 
+    // Metadata reader for SeeleSeek artwork extension
+    private let metadataReader = MetadataReader()
+
     // User info cache (country codes, etc.)
     let userInfoCache = UserInfoCache()
 
@@ -165,6 +168,12 @@ final class NetworkClient {
         peerConnectionPool.onUserInfoRequest = { [weak self] username, connection in
             self?.logger.info("NetworkClient: UserInfoRequest from \(username) - sending our user info")
             await self?.handleUserInfoRequest(username: username, connection: connection)
+        }
+
+        // Wire up ArtworkRequest (SeeleSeek extension) for when peers want album art
+        peerConnectionPool.onArtworkRequest = { [weak self] username, token, filePath, connection in
+            self?.logger.info("NetworkClient: ArtworkRequest from \(username) for \(filePath)")
+            await self?.handleArtworkRequest(token: token, filePath: filePath, connection: connection)
         }
 
         // Wire up shares received through pool (for unsolicited shares or pool-routed browse)
@@ -1630,6 +1639,78 @@ final class NetworkClient {
             logger.info("Sent user info to \(username)")
         } catch {
             logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - SeeleSeek Artwork Request Handling
+
+    /// Handle artwork request from a SeeleSeek peer — look up the file and send back embedded artwork.
+    private func handleArtworkRequest(token: UInt32, filePath: String, connection: PeerConnection) async {
+        // Find the file in our share index by SoulSeek path
+        guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filePath }) else {
+            logger.warning("ArtworkRequest: file not found in shares: \(filePath)")
+            // Send empty reply
+            let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
+            try? await connection.send(reply)
+            return
+        }
+
+        let localURL = URL(fileURLWithPath: indexedFile.localPath)
+
+        // Extract artwork off-main-thread via MetadataReader actor
+        let imageData = await metadataReader.extractArtwork(from: localURL) ?? Data()
+
+        logger.info("ArtworkRequest: sending \(imageData.count) bytes for \(filePath)")
+        let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: imageData)
+        try? await connection.send(reply)
+    }
+
+    /// Pending artwork request callbacks keyed by token.
+    private var artworkCallbacks: [UInt32: (Data?) -> Void] = [:]
+
+    /// Request artwork from a SeeleSeek peer.
+    /// The completion handler is called with image data, or nil if the peer doesn't respond / isn't SeeleSeek.
+    /// Only works if we already have a connection to the peer (e.g., from search results).
+    func requestArtwork(from username: String, filePath: String, completion: @escaping (Data?) -> Void) {
+        guard isConnected else {
+            completion(nil)
+            return
+        }
+
+        let token = UInt32.random(in: 1..<0x8000_0000)
+        artworkCallbacks[token] = completion
+
+        Task {
+            guard let connection = await peerConnectionPool.getConnectionForUser(username) else {
+                logger.debug("No existing connection to \(username) for artwork request")
+                artworkCallbacks.removeValue(forKey: token)
+                completion(nil)
+                return
+            }
+
+            // Set up artwork reply callback on this connection
+            await connection.setOnArtworkReply { [weak self] receivedToken, imageData in
+                guard let callback = self?.artworkCallbacks.removeValue(forKey: receivedToken) else { return }
+                callback(imageData.isEmpty ? nil : imageData)
+            }
+
+            let request = MessageBuilder.artworkRequestMessage(token: token, filePath: filePath)
+            do {
+                try await connection.send(request)
+            } catch {
+                if let callback = artworkCallbacks.removeValue(forKey: token) {
+                    callback(nil)
+                }
+                return
+            }
+
+            // Timeout: clean up after 10 seconds if no response (peer isn't SeeleSeek)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                if let callback = self?.artworkCallbacks.removeValue(forKey: token) {
+                    callback(nil)
+                }
+            }
         }
     }
 

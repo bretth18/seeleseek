@@ -139,7 +139,7 @@ struct WishlistItemRow: View {
     }
 
     private var resultCount: Int {
-        wishlistState.results[item.id]?.count ?? item.resultCount
+        wishlistState.results[item.id]?.count ?? 0
     }
 
     var body: some View {

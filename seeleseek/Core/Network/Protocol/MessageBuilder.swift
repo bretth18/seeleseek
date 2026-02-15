@@ -829,6 +829,36 @@ enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    // MARK: - SeeleSeek Extension Messages
+
+    /// SeeleSeek handshake (code 10000) — identify ourselves as a SeeleSeek client.
+    /// Sent right after PeerInit. Payload: uint8 version (currently 1).
+    nonisolated static func seeleseekHandshakeMessage() -> Data {
+        var payload = Data()
+        payload.appendUInt32(SeeleSeekPeerCode.handshake.rawValue)
+        payload.appendUInt8(1) // protocol version
+        return wrapMessage(payload)
+    }
+
+    /// Artwork request (code 10001) — ask peer for album art embedded in a file.
+    nonisolated static func artworkRequestMessage(token: UInt32, filePath: String) -> Data {
+        var payload = Data()
+        payload.appendUInt32(SeeleSeekPeerCode.artworkRequest.rawValue)
+        payload.appendUInt32(token)
+        payload.appendString(filePath)
+        return wrapMessage(payload)
+    }
+
+    /// Artwork reply (code 10002) — respond with image data (or empty if none found).
+    nonisolated static func artworkReplyMessage(token: UInt32, imageData: Data) -> Data {
+        var payload = Data()
+        payload.appendUInt32(SeeleSeekPeerCode.artworkReply.rawValue)
+        payload.appendUInt32(token)
+        // Write raw image bytes (length is implicit from message frame)
+        payload.append(imageData)
+        return wrapMessage(payload)
+    }
+
     // MARK: - Utilities
 
     nonisolated private static func wrapMessage(_ payload: Data) -> Data {

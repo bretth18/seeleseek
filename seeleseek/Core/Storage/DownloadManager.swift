@@ -24,6 +24,11 @@ final class DownloadManager {
     // Array-based to support multiple concurrent downloads from same user
     private var pendingFileTransfersByUser: [String: [PendingFileTransfer]] = [:]
 
+    // MARK: - Post-Download Processing
+    private let metadataReader = MetadataReader()
+    /// Directories that already have folder icons applied (avoid redundant work)
+    private var iconAppliedDirs: Set<URL> = []
+
     // MARK: - Retry Configuration (nicotine+ style)
     private let maxRetries = 3
     private let baseRetryDelay: TimeInterval = 5  // Start with 5 seconds
@@ -788,6 +793,7 @@ final class DownloadManager {
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
         } catch {
             logger.error("File transfer failed: \(error.localizedDescription)")
@@ -916,6 +922,7 @@ final class DownloadManager {
 
             logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
             // Record in statistics
             statisticsState?.recordTransfer(
@@ -1326,6 +1333,27 @@ final class DownloadManager {
         return false
     }
 
+    // MARK: - Post-Download Processing
+
+    /// Apply album artwork as the Finder folder icon for the directory containing the downloaded file.
+    /// Runs off-main-thread via MetadataReader actor. Fire-and-forget.
+    private func applyFolderArtworkIfNeeded(for filePath: URL) {
+        guard settings?.setFolderIcons == true else { return }
+
+        let directory = filePath.deletingLastPathComponent()
+
+        // Skip if we've already set an icon for this directory in this session
+        guard !iconAppliedDirs.contains(directory) else { return }
+        iconAppliedDirs.insert(directory)
+
+        Task.detached { [metadataReader, logger] in
+            let applied = await metadataReader.applyArtworkAsFolderIcon(for: directory)
+            if applied {
+                logger.info("Applied album art as folder icon for \(directory.lastPathComponent)")
+            }
+        }
+    }
+
     // MARK: - Incoming Connection Handling
 
     /// Called when we receive an indirect connection from a peer
@@ -1481,6 +1509,7 @@ final class DownloadManager {
                     t.error = nil
                 }
                 ActivityLog.shared.logDownloadCompleted(filename: destPath.lastPathComponent)
+                applyFolderArtworkIfNeeded(for: destPath)
                 statisticsState?.recordTransfer(
                     filename: destPath.lastPathComponent,
                     username: pending.username,
@@ -1591,6 +1620,7 @@ final class DownloadManager {
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
             logger.debug("Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
             if let stats = statisticsState {

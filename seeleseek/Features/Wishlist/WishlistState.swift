@@ -154,6 +154,9 @@ final class WishlistState {
         let token = nextWishlistToken()
         tokenToWishlistId[token] = item.id
 
+        // Clear stale results from previous search cycle
+        results[item.id] = []
+
         Task {
             do {
                 try await client.addWishlistSearch(query: item.query, token: token)
@@ -163,14 +166,15 @@ final class WishlistState {
             }
         }
 
-        // Update last searched time
+        // Update last searched time and reset result count
         if let index = items.firstIndex(where: { $0.id == item.id }) {
             items[index].lastSearchedAt = Date()
+            items[index].resultCount = 0
             let updated = items[index]
             Task {
                 try? await WishlistRepository.updateLastSearched(
                     id: updated.id,
-                    resultCount: updated.resultCount
+                    resultCount: 0
                 )
             }
         }
