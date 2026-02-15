@@ -24,6 +24,11 @@ final class DownloadManager {
     // Array-based to support multiple concurrent downloads from same user
     private var pendingFileTransfersByUser: [String: [PendingFileTransfer]] = [:]
 
+    // MARK: - Post-Download Processing
+    private let metadataReader = MetadataReader()
+    /// Directories that already have folder icons applied (avoid redundant work)
+    private var iconAppliedDirs: Set<URL> = []
+
     // MARK: - Retry Configuration (nicotine+ style)
     private let maxRetries = 3
     private let baseRetryDelay: TimeInterval = 5  // Start with 5 seconds
@@ -148,6 +153,14 @@ final class DownloadManager {
         networkClient.onUploadFailed = { [weak self] filename in
             Task { @MainActor in
                 self?.handleUploadFailed(filename: filename)
+            }
+        }
+
+        // Set up callback for pool-level TransferRequests (arrives on connections not directly managed by us,
+        // e.g. stale direct connections when PierceFirewall won the race)
+        networkClient.onTransferRequest = { [weak self] request in
+            Task { @MainActor in
+                await self?.handlePoolTransferRequest(request)
             }
         }
 
@@ -620,6 +633,21 @@ final class DownloadManager {
         }
     }
 
+    /// Handle TransferRequest arriving via pool-level callback (from connections not directly managed by us,
+    /// e.g. stale direct connections left over when PierceFirewall won the race)
+    private func handlePoolTransferRequest(_ request: TransferRequest) async {
+        let matchingEntry = pendingDownloads.first { (_, pending) in
+            pending.filename == request.filename
+        }
+
+        if let (token, _) = matchingEntry {
+            logger.info("Pool TransferRequest matched pending download: \(request.filename)")
+            await handleTransferRequest(token: token, request: request)
+        } else {
+            logger.debug("Pool TransferRequest: no matching pending download for \(request.filename)")
+        }
+    }
+
     private func waitForTransferResponse(token: UInt32) async {
         guard let transferState, let pending = pendingDownloads[token] else { return }
 
@@ -699,6 +727,7 @@ final class DownloadManager {
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
                 t.startTime = Date()
+                t.queuePosition = nil
             }
 
             // Wait for the file connection - peer may connect to us, or we connect to them
@@ -788,6 +817,7 @@ final class DownloadManager {
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
         } catch {
             logger.error("File transfer failed: \(error.localizedDescription)")
@@ -916,6 +946,7 @@ final class DownloadManager {
 
             logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
             // Record in statistics
             statisticsState?.recordTransfer(
@@ -1193,7 +1224,14 @@ final class DownloadManager {
 
         // Extract filename (last component) and folders (everything else)
         let filename = pathComponents.last!
-        let folders = pathComponents.dropLast().joined(separator: "/")
+        let folderComponents = Array(pathComponents.dropLast())
+        let folders = folderComponents.joined(separator: "/")
+
+        // Derive artist and album from folder hierarchy:
+        // Artist/Album/file.mp3 → artist=Artist, album=Album
+        // Genre/Artist/Album/file.mp3 → artist=Artist, album=Album
+        let album = folderComponents.last ?? ""
+        let artist = folderComponents.count >= 2 ? folderComponents[folderComponents.count - 2] : ""
 
         // Get the active template
         let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
@@ -1202,6 +1240,8 @@ final class DownloadManager {
         var result = template
             .replacingOccurrences(of: "{username}", with: username)
             .replacingOccurrences(of: "{folders}", with: folders)
+            .replacingOccurrences(of: "{artist}", with: artist)
+            .replacingOccurrences(of: "{album}", with: album)
             .replacingOccurrences(of: "{filename}", with: filename)
 
         // Clean up double slashes from empty tokens (e.g. empty folders)
@@ -1324,6 +1364,27 @@ final class DownloadManager {
         }
 
         return false
+    }
+
+    // MARK: - Post-Download Processing
+
+    /// Apply album artwork as the Finder folder icon for the directory containing the downloaded file.
+    /// Runs off-main-thread via MetadataReader actor. Fire-and-forget.
+    private func applyFolderArtworkIfNeeded(for filePath: URL) {
+        guard settings?.setFolderIcons == true else { return }
+
+        let directory = filePath.deletingLastPathComponent()
+
+        // Skip if we've already set an icon for this directory in this session
+        guard !iconAppliedDirs.contains(directory) else { return }
+        iconAppliedDirs.insert(directory)
+
+        Task.detached { [metadataReader, logger] in
+            let applied = await metadataReader.applyArtworkAsFolderIcon(for: directory)
+            if applied {
+                logger.info("Applied album art as folder icon for \(directory.lastPathComponent)")
+            }
+        }
     }
 
     // MARK: - Incoming Connection Handling
@@ -1481,6 +1542,7 @@ final class DownloadManager {
                     t.error = nil
                 }
                 ActivityLog.shared.logDownloadCompleted(filename: destPath.lastPathComponent)
+                applyFolderArtworkIfNeeded(for: destPath)
                 statisticsState?.recordTransfer(
                     filename: destPath.lastPathComponent,
                     username: pending.username,
@@ -1591,6 +1653,7 @@ final class DownloadManager {
 
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
+            applyFolderArtworkIfNeeded(for: destPath)
 
             logger.debug("Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
             if let stats = statisticsState {

@@ -7,7 +7,9 @@ struct GeneralSettingsSection: View {
         let template = settings.activeDownloadTemplate
         var result = template
             .replacingOccurrences(of: "{username}", with: "user123")
-            .replacingOccurrences(of: "{folders}", with: "Artist/Album")
+            .replacingOccurrences(of: "{folders}", with: "Daft Punk/Discovery")
+            .replacingOccurrences(of: "{artist}", with: "Daft Punk")
+            .replacingOccurrences(of: "{album}", with: "Discovery")
             .replacingOccurrences(of: "{filename}", with: "01 Track.mp3")
         while result.contains("//") {
             result = result.replacingOccurrences(of: "//", with: "/")
@@ -52,7 +54,7 @@ struct GeneralSettingsSection: View {
                             TextField("{username}/{folders}/{filename}", text: $settings.downloadFolderTemplate)
                                 .textFieldStyle(SeeleTextFieldStyle())
 
-                            Text("Tokens: {username}, {folders}, {filename}")
+                            Text("Tokens: {username}, {folders}, {artist}, {album}, {filename}")
                                 .font(SeeleTypography.caption2)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }

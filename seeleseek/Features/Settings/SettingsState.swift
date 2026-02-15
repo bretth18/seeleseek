@@ -5,6 +5,7 @@ import os
 enum DownloadFolderFormat: String, CaseIterable {
     case usernameAndPath = "usernameAndPath"
     case pathOnly = "pathOnly"
+    case artistAlbum = "artistAlbum"
     case flat = "flat"
     case custom = "custom"
 
@@ -12,6 +13,7 @@ enum DownloadFolderFormat: String, CaseIterable {
         switch self {
         case .usernameAndPath: "Username / Full Path"
         case .pathOnly: "Full Path"
+        case .artistAlbum: "Artist - Album"
         case .flat: "Filename Only"
         case .custom: "Custom"
         }
@@ -21,6 +23,7 @@ enum DownloadFolderFormat: String, CaseIterable {
         switch self {
         case .usernameAndPath: "{username}/{folders}/{filename}"
         case .pathOnly: "{folders}/{filename}"
+        case .artistAlbum: "{artist} - {album}/{filename}"
         case .flat: "{filename}"
         case .custom: ""
         }
@@ -181,6 +184,7 @@ final class SettingsState {
     var autoFetchMetadata: Bool = true
     var autoFetchAlbumArt: Bool = true
     var embedAlbumArt: Bool = true
+    var setFolderIcons: Bool = true
     var organizeDownloads: Bool = false
     var organizationPattern: String = "{artist}/{album}/{track} - {title}"
 
@@ -252,6 +256,7 @@ final class SettingsState {
         autoFetchMetadata = true
         autoFetchAlbumArt = true
         embedAlbumArt = true
+        setFolderIcons = true
         organizeDownloads = false
         organizationPattern = "{artist}/{album}/{track} - {title}"
         showJoinLeaveMessages = true

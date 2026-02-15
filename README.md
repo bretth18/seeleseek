@@ -4,6 +4,7 @@ seeleseek is a native macOS client for the soulseek protocol.
 
 ## Overview
 
+seeleseek is a modern, native macOS client for the soulseek protocol. It provides a clean and intuitive interface for searching, downloading, and sharing files on the soulseek network.
 
 
 ## Installation

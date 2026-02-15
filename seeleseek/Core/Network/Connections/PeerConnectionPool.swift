@@ -73,6 +73,7 @@ final class PeerConnectionPool {
     var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
     var onSharesRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants to browse our shares
     var onUserInfoRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants our user info
+    var onArtworkRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, filePath, connection) - SeeleSeek artwork preview
 
     // MARK: - Configuration
 
@@ -540,6 +541,13 @@ final class PeerConnectionPool {
                 await self.onUserInfoRequest?(peerUsername, conn)
             }
 
+            // Set up ArtworkRequest callback (SeeleSeek extension)
+            await connection.setOnArtworkRequest { [weak self] token, filePath, conn in
+                guard let self else { return }
+                let peerUsername = await conn.getPeerUsername()
+                await self.onArtworkRequest?(peerUsername, token, filePath, conn)
+            }
+
             // Track the connection (username will be determined after handshake)
             let info = PeerConnectionInfo(
                 id: connectionId,
@@ -903,6 +911,12 @@ final class PeerConnectionPool {
             guard let self else { return }
             self.logger.info("UserInfoRequest from \(username): peer wants our user info")
             await self.onUserInfoRequest?(username, conn)
+        }
+
+        // Set up ArtworkRequest callback (SeeleSeek extension)
+        await connection.setOnArtworkRequest { [weak self] token, filePath, conn in
+            guard let self else { return }
+            await self.onArtworkRequest?(username, token, filePath, conn)
         }
 
         await connection.setOnStateChanged { [weak self] state in

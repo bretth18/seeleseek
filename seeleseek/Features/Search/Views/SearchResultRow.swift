@@ -7,6 +7,9 @@ struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
     @State private var isHovered = false
+    @State private var artworkData: Data?
+    @State private var isLoadingArtwork = false
+    @State private var showArtworkPopover = false
 
     /// Check if this file is already queued/downloading
     private var downloadStatus: Transfer.TransferStatus? {
@@ -171,6 +174,21 @@ struct SearchResultRow: View {
                 Label("View Profile", systemImage: "person.crop.circle")
             }
 
+            if result.isAudioFile {
+                Button {
+                    fetchArtwork()
+                } label: {
+                    if isLoadingArtwork {
+                        Label("Loading artwork...", systemImage: "photo")
+                    } else if artworkData != nil {
+                        Label("Show Album Art", systemImage: "photo.fill")
+                    } else {
+                        Label("Preview Album Art", systemImage: "photo")
+                    }
+                }
+                .disabled(isLoadingArtwork)
+            }
+
             Divider()
 
             if appState.socialState.isIgnored(result.username) {
@@ -204,22 +222,38 @@ struct SearchResultRow: View {
     }
 
     private var fileIcon: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                .fill(iconColor.opacity(0.15))
-                .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
-            
+        Group {
+            if let artworkData, let nsImage = NSImage(data: artworkData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .popover(isPresented: $showArtworkPopover) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 300, maxHeight: 300)
+                            .padding(SeeleSpacing.sm)
+                    }
+                    .onTapGesture { showArtworkPopover.toggle() }
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                        .fill(iconColor.opacity(0.15))
+                        .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
 
-            Image(systemName: iconName)
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(iconColor)
-                .offset(x: -6, y: -6)
-            
-            Text(result.fileExtension)
-                .font(SeeleTypography.monoXSmall)
-                .foregroundStyle(iconColor)
-                .offset(x: 6, y: 6)
+                    Image(systemName: iconName)
+                        .font(.system(size: SeeleSpacing.iconSize))
+                        .foregroundStyle(iconColor)
+                        .offset(x: -6, y: -6)
 
+                    Text(result.fileExtension)
+                        .font(SeeleTypography.monoXSmall)
+                        .foregroundStyle(iconColor)
+                        .offset(x: 6, y: 6)
+                }
+            }
         }
     }
 
@@ -324,6 +358,23 @@ struct SearchResultRow: View {
             print("✅ Queued \(queuedCount) files from folder")
         } else {
             print("ℹ️ All files in folder already queued")
+        }
+    }
+
+    private func fetchArtwork() {
+        // If we already have artwork, just show the popover
+        if artworkData != nil {
+            showArtworkPopover = true
+            return
+        }
+
+        isLoadingArtwork = true
+        appState.networkClient.requestArtwork(from: result.username, filePath: result.filename) { data in
+            isLoadingArtwork = false
+            if let data {
+                artworkData = data
+                showArtworkPopover = true
+            }
         }
     }
 

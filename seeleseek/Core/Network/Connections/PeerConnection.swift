@@ -99,6 +99,11 @@ actor PeerConnection {
     private var _onSharesRequest: ((PeerConnection) async -> Void)?  // Peer wants to browse our shares
     private var _onUserInfoRequest: ((PeerConnection) async -> Void)?  // Peer wants our user info
 
+    // SeeleSeek extension state
+    private(set) var isSeeleSeekPeer = false
+    private var _onArtworkRequest: ((UInt32, String, PeerConnection) async -> Void)?  // (token, filePath, connection)
+    private var _onArtworkReply: ((UInt32, Data) async -> Void)?  // (token, imageData)
+
     // Callback setters for external access
     func setOnStateChanged(_ handler: @escaping (State) async -> Void) {
         _onStateChanged = handler
@@ -183,6 +188,14 @@ actor PeerConnection {
 
     func setOnUserInfoRequest(_ handler: @escaping (PeerConnection) async -> Void) {
         _onUserInfoRequest = handler
+    }
+
+    func setOnArtworkRequest(_ handler: @escaping (UInt32, String, PeerConnection) async -> Void) {
+        _onArtworkRequest = handler
+    }
+
+    func setOnArtworkReply(_ handler: @escaping (UInt32, Data) async -> Void) {
+        _onArtworkReply = handler
     }
 
     /// Get the discovered peer username (from PeerInit message)
@@ -450,6 +463,9 @@ actor PeerConnection {
         // We can now receive peer messages (code >= 4) without waiting for peer's response
         handshakeComplete = true
         logger.debug("PeerInit sent, handshake marked complete")
+
+        // Send SeeleSeek handshake so the peer knows we support extensions
+        try? await send(MessageBuilder.seeleseekHandshakeMessage())
     }
 
     func sendPierceFirewall() async throws {
@@ -1224,9 +1240,15 @@ actor PeerConnection {
     }
 
     private func handlePeerMessage(code: UInt32, payload: Data) async {
-        let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid"
+        let codeDescription: String
+        if let seeleCode = SeeleSeekPeerCode(rawValue: code) {
+            codeDescription = seeleCode.description
+        } else if code <= 255, let peerCode = PeerMessageCode(rawValue: UInt8(code)) {
+            codeDescription = peerCode.description
+        } else {
+            codeDescription = "unknown(\(code))"
+        }
         logger.debug("[\(self.peerInfo.username)] handlePeerMessage: code=\(code) (\(codeDescription)) payload=\(payload.count) bytes")
-        logger.debug("Peer message: code=\(code) length=\(payload.count)")
 
         // Handle based on message code
         switch code {
@@ -1277,6 +1299,16 @@ actor PeerConnection {
         case UInt32(PeerMessageCode.userInfoRequest.rawValue):
             await handleUserInfoRequest()
 
+        // SeeleSeek extension codes
+        case SeeleSeekPeerCode.handshake.rawValue:
+            handleSeeleSeekHandshake(payload)
+
+        case SeeleSeekPeerCode.artworkRequest.rawValue:
+            await handleArtworkRequest(payload)
+
+        case SeeleSeekPeerCode.artworkReply.rawValue:
+            await handleArtworkReply(payload)
+
         default:
             logger.debug("Unhandled peer message code: \(code)")
             await _onMessage?(code, payload)
@@ -1308,6 +1340,47 @@ actor PeerConnection {
             logger.warning("[\(self.peerUsername)] No onUserInfoRequest callback set!")
         }
     }
+
+    // MARK: - SeeleSeek Extension Handlers
+
+    /// Handle SeeleSeek handshake (code 10000) — marks this peer as a SeeleSeek client.
+    private func handleSeeleSeekHandshake(_ payload: Data) {
+        let version = payload.count > 0 ? payload[payload.startIndex] : 0
+        isSeeleSeekPeer = true
+        logger.info("[\(self.peerUsername)] SeeleSeek peer detected (version \(version))")
+    }
+
+    /// Handle artwork request (code 10001) — peer wants album art for a file.
+    private func handleArtworkRequest(_ payload: Data) async {
+        var offset = 0
+        guard let token = payload.readUInt32(at: offset) else {
+            logger.warning("[\(self.peerUsername)] ArtworkRequest: missing token")
+            return
+        }
+        offset += 4
+        guard let (filePath, _) = payload.readString(at: offset) else {
+            logger.warning("[\(self.peerUsername)] ArtworkRequest: missing filePath")
+            return
+        }
+        logger.info("[\(self.peerUsername)] ArtworkRequest: token=\(token) file=\(filePath)")
+        await _onArtworkRequest?(token, filePath, self)
+    }
+
+    /// Handle artwork reply (code 10002) — peer sent us album art.
+    private func handleArtworkReply(_ payload: Data) async {
+        var offset = 0
+        guard let token = payload.readUInt32(at: offset) else {
+            logger.warning("[\(self.peerUsername)] ArtworkReply: missing token")
+            return
+        }
+        offset += 4
+        // Remaining bytes are the image data
+        let imageData = payload.count > offset ? Data(payload[offset...]) : Data()
+        logger.info("[\(self.peerUsername)] ArtworkReply: token=\(token) imageSize=\(imageData.count)")
+        await _onArtworkReply?(token, imageData)
+    }
+
+    // MARK: - Standard Peer Message Handlers
 
     private func handleSharesReply(_ data: Data) async {
         logger.debug("[\(self.peerInfo.username)] handleSharesReply called with \(data.count) bytes")
