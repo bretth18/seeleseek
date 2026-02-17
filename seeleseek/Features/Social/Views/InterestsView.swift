@@ -17,26 +17,41 @@ struct InterestsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Add new interest
-            addInterestSection
+            // Toolbar
+            toolbar
 
             Divider().background(SeeleColors.surfaceSecondary)
-                .padding(SeeleSpacing.dividerSpacing)
 
-            // Interests lists
+            // Content
             ScrollView {
-                VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
+                    addInterestSection
                     likesSection
                     hatesSection
                 }
-                .padding(SeeleSpacing.sm)
+                .padding(SeeleSpacing.lg)
             }
         }
     }
 
+    private var toolbar: some View {
+        HStack(spacing: SeeleSpacing.md) {
+            Text("Interests")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            Spacer()
+
+            Text("\(socialState.myLikes.count + socialState.myHates.count) total")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textSecondary)
+        }
+        .padding(SeeleSpacing.lg)
+        .background(SeeleColors.surface)
+    }
+
     private var addInterestSection: some View {
         HStack(spacing: SeeleSpacing.md) {
-            // Interest input
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: interestType == .like ? "heart" : "heart.slash")
                     .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
@@ -60,10 +75,8 @@ struct InterestsView: View {
                 }
             }
             .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
-            // Type picker
             Picker("Type", selection: $interestType) {
                 ForEach(InterestType.allCases, id: \.self) { type in
                     Text(type.rawValue).tag(type)
@@ -73,7 +86,6 @@ struct InterestsView: View {
             .pickerStyle(.segmented)
             .frame(width: 180)
 
-            // Add button
             Button {
                 addInterest()
             } label: {
@@ -88,15 +100,12 @@ struct InterestsView: View {
             .buttonStyle(.plain)
             .disabled(newInterest.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface.opacity(0.5))
     }
 
     private var likesSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             HStack {
                 Image(systemName: "heart.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.success)
                 Text("Things I Like")
                     .font(SeeleTypography.headline)
@@ -113,12 +122,11 @@ struct InterestsView: View {
                 Text("No likes added yet.")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textTertiary)
-                    .padding(.horizontal, SeeleSpacing.rowHorizontal)
-                    .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(SeeleSpacing.md)
                     .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             } else {
-                FlowLayout(spacing: SeeleSpacing.tagSpacing) {
+                FlowLayout(spacing: SeeleSpacing.sm) {
                     ForEach(socialState.myLikes, id: \.self) { interest in
                         interestTag(interest, color: SeeleColors.success) {
                             Task {
@@ -132,10 +140,9 @@ struct InterestsView: View {
     }
 
     private var hatesSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             HStack {
                 Image(systemName: "heart.slash.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.error)
                 Text("Things I Dislike")
                     .font(SeeleTypography.headline)
@@ -152,12 +159,11 @@ struct InterestsView: View {
                 Text("No dislikes added yet.")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textTertiary)
-                    .padding(.horizontal, SeeleSpacing.rowHorizontal)
-                    .padding(.vertical, SeeleSpacing.rowVertical)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(SeeleSpacing.md)
                     .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             } else {
-                FlowLayout(spacing: SeeleSpacing.tagSpacing) {
+                FlowLayout(spacing: SeeleSpacing.sm) {
                     ForEach(socialState.myHates, id: \.self) { interest in
                         interestTag(interest, color: SeeleColors.error) {
                             Task {
@@ -180,14 +186,14 @@ struct InterestsView: View {
                 onRemove()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                     .foregroundStyle(color.opacity(0.6))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, SeeleSpacing.sm)
-        .padding(.vertical, SeeleSpacing.xs)
-        .background(color.opacity(0.12), in: Capsule())
+        .padding(.horizontal, SeeleSpacing.md)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(color.opacity(0.1), in: Capsule())
     }
 
     private func addInterest() {
