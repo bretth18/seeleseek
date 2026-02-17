@@ -47,7 +47,9 @@ final class AppState {
             let originalSearchCallback = _networkClient!.onSearchResults
             _networkClient!.onSearchResults = { [weak self] token, results in
                 guard let self else { return }
-                if self.wishlistState.isWishlistToken(token) {
+                let isWishlist = self.wishlistState.isWishlistToken(token)
+                self.logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
+                if isWishlist {
                     self.wishlistState.handleSearchResults(token: token, results: results)
                 } else {
                     originalSearchCallback?(token, results)

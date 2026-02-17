@@ -56,7 +56,11 @@ final class WishlistState {
 
     /// Check if a search token belongs to a wishlist search
     func isWishlistToken(_ token: UInt32) -> Bool {
-        token >= 0x8000_0000
+        let result = token >= 0x8000_0000
+        if result {
+            logger.info("isWishlistToken: token=\(String(format: "0x%08X", token)) → YES, mapped=\(self.tokenToWishlistId[token] != nil)")
+        }
+        return result
     }
 
     private func nextWishlistToken() -> UInt32 {
@@ -149,10 +153,14 @@ final class WishlistState {
     }
 
     func searchNow(item: WishlistItem) {
-        guard let client = networkClient else { return }
+        guard let client = networkClient else {
+            logger.error("searchNow: networkClient is nil!")
+            return
+        }
 
         let token = nextWishlistToken()
         tokenToWishlistId[token] = item.id
+        logger.info("searchNow: query='\(item.query)' token=\(String(format: "0x%08X", token)) itemId=\(item.id) activeTokens=\(self.tokenToWishlistId.count)")
 
         // Clear stale results from previous search cycle
         results[item.id] = []
@@ -183,8 +191,9 @@ final class WishlistState {
     // MARK: - Result Handling
 
     func handleSearchResults(token: UInt32, results: [SearchResult]) {
+        logger.info("handleSearchResults: token=\(String(format: "0x%08X", token)) results=\(results.count) knownTokens=\(self.tokenToWishlistId.keys.map { String(format: "0x%08X", $0) })")
         guard let itemId = tokenToWishlistId[token] else {
-            logger.warning("No wishlist item for token \(token)")
+            logger.warning("No wishlist item for token \(String(format: "0x%08X", token))")
             return
         }
 
