@@ -13,23 +13,32 @@ struct IgnoredUsersView: View {
         @Bindable var state = appState
 
         VStack(spacing: 0) {
+            // Toolbar
             HStack(spacing: SeeleSpacing.md) {
-                Text("Ignored Users")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
+                StandardSearchField(
+                    text: $state.socialState.ignoreSearchQuery,
+                    placeholder: "Search ignored users..."
+                )
 
                 Spacer()
 
                 Text("\(socialState.ignoredUsers.count) ignored")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
+
+                Button {
+                    socialState.showIgnoreInput.toggle()
+                } label: {
+                    Label("Ignore", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
             }
             .padding(SeeleSpacing.lg)
             .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            VStack(spacing: SeeleSpacing.md) {
+            if socialState.showIgnoreInput {
                 HStack(spacing: SeeleSpacing.sm) {
                     TextField("Username", text: $usernameInput)
                         .textFieldStyle(.roundedBorder)
@@ -52,16 +61,10 @@ struct IgnoredUsersView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(usernameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .padding(SeeleSpacing.lg)
 
-                StandardSearchField(
-                    text: $state.socialState.ignoreSearchQuery,
-                    placeholder: "Search ignored users..."
-                )
+                Divider().background(SeeleColors.surfaceSecondary)
             }
-            .padding(SeeleSpacing.lg)
-            .background(SeeleColors.surface.opacity(0.5))
-
-            Divider().background(SeeleColors.surfaceSecondary)
 
             if socialState.filteredIgnoredUsers.isEmpty {
                 StandardEmptyState(

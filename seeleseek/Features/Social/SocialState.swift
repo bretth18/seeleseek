@@ -16,6 +16,7 @@ final class SocialState {
     var blockSearchQuery: String = ""
     var ignoredUsers: [IgnoredUser] = []
     var ignoreSearchQuery: String = ""
+    var showIgnoreInput = false
 
     // MARK: - Leech Detection
     var leechSettings = LeechSettings()
