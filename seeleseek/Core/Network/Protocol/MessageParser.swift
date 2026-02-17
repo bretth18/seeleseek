@@ -139,7 +139,13 @@ enum MessageParser {
     }
 
     nonisolated private static func formatLittleEndianIPv4(_ ip: UInt32) -> String {
-        "\(ip & 0xFF).\((ip >> 8) & 0xFF).\((ip >> 16) & 0xFF).\((ip >> 24) & 0xFF)"
+        // IP is stored in network byte order (big-endian) within a LE uint32:
+        // high byte = first octet
+        let b1 = (ip >> 24) & 0xFF
+        let b2 = (ip >> 16) & 0xFF
+        let b3 = (ip >> 8) & 0xFF
+        let b4 = ip & 0xFF
+        return "\(b1).\(b2).\(b3).\(b4)"
     }
 
     struct UserStatusInfo: Sendable {
@@ -311,7 +317,10 @@ enum MessageParser {
 
         // Parse privately shared results (buddy-only files)
         // These come after the regular file list and are only visible if we're on the user's buddy list
-        // Note: Some clients may send an extra "free upload slots" uint32 after queueLength
+        // Format: uint32 unknown (always 0), uint32 private file count, then file entries
+        // Skip the "unknown" uint32 first
+        offset += 4
+
         let remainingBytes = payload.count - offset
         if remainingBytes >= 4 {
             let potentialPrivateCount = payload.readUInt32(at: offset) ?? 0

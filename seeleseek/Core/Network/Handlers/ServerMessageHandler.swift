@@ -89,7 +89,7 @@ final class ServerMessageHandler {
             handleProtocolNotice(code: codeValue, payload: payload)
         case .searchInactivityTimeout:
             handleProtocolNotice(code: codeValue, payload: payload)
-        case .minParentsInCacheDeprecated:
+        case .minParentsInCache:
             handleProtocolNotice(code: codeValue, payload: payload)
         case .distribPingInterval:
             handleProtocolNotice(code: codeValue, payload: payload)
@@ -137,9 +137,9 @@ final class ServerMessageHandler {
             handlePrivateRoomOperatorRevoked(payload)
         case .privateRoomOperators:
             handlePrivateRoomOperators(payload)
-        case .privateRoomUnknown124:
+        case .notifyPrivileges:
             handleProtocolNotice(code: codeValue, payload: payload)
-        case .privateRoomUnknown129:
+        case .ackNotifyPrivileges:
             handleProtocolNotice(code: codeValue, payload: payload)
         case .privateRoomUnknown138:
             handleProtocolNotice(code: codeValue, payload: payload)
@@ -442,15 +442,21 @@ final class ServerMessageHandler {
         guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
         offset += bytesConsumed
 
-        guard let (message, _) = data.readString(at: offset) else { return }
+        guard let (message, messageLen) = data.readString(at: offset) else { return }
+        offset += messageLen
+
+        // isNewMessage: true = real-time message, false = offline/buffered message
+        let isNewMessage = data.readBool(at: offset) ?? true
 
         let chatMessage = ChatMessage(
             id: UUID(),
+            messageId: messageId,
             timestamp: Date(timeIntervalSince1970: TimeInterval(timestamp)),
             username: username,
             content: message,
             isSystem: false,
-            isOwn: false
+            isOwn: false,
+            isNewMessage: isNewMessage
         )
 
         client?.onPrivateMessage?(username, chatMessage)
@@ -746,6 +752,12 @@ final class ServerMessageHandler {
             logger.debug("Parent \(i+1): \(username) at \(ipStr):\(port)")
         }
 
+        // Skip if we already have a parent
+        if distributedParentConnection != nil {
+            logger.debug("Already have a distributed parent, ignoring PossibleParents")
+            return
+        }
+
         // Try to connect to first few parents until one succeeds (limit to avoid resource exhaustion)
         Task {
             let maxAttempts = min(3, parents.count)
@@ -788,12 +800,26 @@ final class ServerMessageHandler {
 
             logger.info("Connected to distributed parent: \(username)")
 
+            // Disconnect old parent before storing new one
+            if let oldParent = distributedParentConnection {
+                logger.info("Disconnecting old distributed parent")
+                await oldParent.disconnect()
+            }
+
             // Store the connection to keep it alive
             distributedParentConnection = connection
 
             // Set up message handling for distributed messages
+            let parentUsername = username
             await connection.setOnMessage { [weak self] code, payload in
-                await self?.handleDistributedMessage(code: code, payload: payload)
+                await self?.handleDistributedMessage(code: code, payload: payload, parentUsername: parentUsername)
+            }
+
+            // Tell server we have a parent now
+            do {
+                try await client?.sendHaveNoParent(false)
+            } catch {
+                logger.error("Failed to send HaveNoParent(false): \(error.localizedDescription)")
             }
 
             return true
@@ -805,21 +831,44 @@ final class ServerMessageHandler {
         }
     }
 
-    private func handleDistributedMessage(code: UInt32, payload: Data) async {
+    private func handleDistributedMessage(code: UInt32, payload: Data, parentUsername: String = "") async {
         logger.debug("Distributed message received: code=\(code) size=\(payload.count)")
 
         // Distributed messages use the same codes as DistributedMessageCode
         switch code {
         case UInt32(DistributedMessageCode.branchLevel.rawValue):
-            // uint32 branch level
-            if let level = payload.readUInt32(at: 0) {
-                logger.debug("Branch level: \(level)")
+            // uint32 branch level from parent
+            if let parentLevel = payload.readUInt32(at: 0) {
+                let ourLevel = parentLevel + 1
+                logger.info("Parent branch level: \(parentLevel), our level: \(ourLevel)")
+
+                // Report our level to server and propagate to children
+                Task {
+                    try? await client?.setDistributedBranchLevel(ourLevel)
+
+                    // If parent is level 0, they ARE the branch root
+                    if parentLevel == 0 {
+                        logger.info("Parent is branch root: \(parentUsername)")
+                        try? await client?.setDistributedBranchRoot(parentUsername)
+
+                        // Propagate to children
+                        await sendBranchInfoToChildren(level: ourLevel, root: parentUsername)
+                    }
+                }
             }
 
         case UInt32(DistributedMessageCode.branchRoot.rawValue):
-            // string branch root username
+            // string branch root username from parent
             if let (rootUsername, _) = payload.readString(at: 0) {
-                logger.debug("Branch root: \(rootUsername)")
+                logger.info("Branch root: \(rootUsername)")
+
+                // Report to server and propagate to children
+                Task {
+                    try? await client?.setDistributedBranchRoot(rootUsername)
+
+                    let ourLevel = client?.distributedBranchLevel ?? 0
+                    await sendBranchInfoToChildren(level: ourLevel, root: rootUsername)
+                }
             }
 
         case UInt32(DistributedMessageCode.searchRequest.rawValue):
@@ -835,6 +884,37 @@ final class ServerMessageHandler {
         default:
             logger.warning("Unknown distributed message code: \(code)")
         }
+    }
+
+    private func sendBranchInfoToChildren(level: UInt32, root: String) async {
+        guard let children = client?.distributedChildren, !children.isEmpty else { return }
+
+        // Build DistribBranchLevel message: [length][uint8 code=4][uint32 level]
+        var levelPayload = Data()
+        levelPayload.appendUInt8(DistributedMessageCode.branchLevel.rawValue)
+        levelPayload.appendUInt32(level)
+        var levelMessage = Data()
+        levelMessage.appendUInt32(UInt32(levelPayload.count))
+        levelMessage.append(levelPayload)
+
+        // Build DistribBranchRoot message: [length][uint8 code=5][string root]
+        var rootPayload = Data()
+        rootPayload.appendUInt8(DistributedMessageCode.branchRoot.rawValue)
+        rootPayload.appendString(root)
+        var rootMessage = Data()
+        rootMessage.appendUInt32(UInt32(rootPayload.count))
+        rootMessage.append(rootPayload)
+
+        for child in children {
+            do {
+                try await child.send(levelMessage)
+                try await child.send(rootMessage)
+            } catch {
+                logger.error("Failed to send branch info to child: \(error.localizedDescription)")
+            }
+        }
+
+        logger.info("Propagated branch info (level=\(level), root=\(root)) to \(children.count) children")
     }
 
     private func handleEmbeddedMessage(_ data: Data) {
@@ -973,7 +1053,7 @@ final class ServerMessageHandler {
                 group.addTask {
                     let conn = try await client.waitForPendingBrowse(token: indirectToken)
                     await conn.resumeReceivingForPeerConnection()
-                    try await conn.sendPeerInit(username: client.username)
+                    // PierceFirewall IS the handshake for indirect connections -- do NOT send PeerInit
                     return conn
                 }
 
@@ -1264,8 +1344,11 @@ final class ServerMessageHandler {
         guard let avgSpeed = data.readUInt32(at: offset) else { return }
         offset += 4
 
-        guard let uploadNum = data.readUInt64(at: offset) else { return }
-        offset += 8
+        guard let uploadNum = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        // uint32 unknown (skip)
+        offset += 4
 
         guard let files = data.readUInt32(at: offset) else { return }
         offset += 4
@@ -1273,7 +1356,7 @@ final class ServerMessageHandler {
         guard let dirs = data.readUInt32(at: offset) else { return }
 
         logger.info("User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
-        client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: uploadNum, files: files, dirs: dirs)
+        client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
     }
 
     private func handleCheckPrivileges(_ data: Data) {
@@ -1478,10 +1561,9 @@ final class ServerMessageHandler {
     // MARK: - Relogged
 
     private func handleRelogged() {
-        logger.warning("Relogged: another client logged in with the same credentials")
         logger.warning("Relogged: kicked from server because another client logged in with the same credentials")
         ActivityLog.shared.logRelogged()
-        client?.disconnect()
+        client?.handleReloggedDisconnect()
     }
 
     // MARK: - Can't Create Room

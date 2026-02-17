@@ -127,6 +127,8 @@ struct LoginView: View {
                 appState.connection.setDisconnected()
             case .connecting:
                 appState.connection.setConnecting()
+            case .reconnecting:
+                appState.connection.setReconnecting(reason: appState.networkClient.connectionError)
             case .error:
                 appState.connection.setError(appState.networkClient.connectionError ?? "Unknown error")
             }

@@ -4,6 +4,7 @@ enum ConnectionStatus: String, CaseIterable {
     case disconnected
     case connecting
     case connected
+    case reconnecting
     case error
 
     var color: Color {
@@ -11,6 +12,7 @@ enum ConnectionStatus: String, CaseIterable {
         case .disconnected: SeeleColors.textTertiary
         case .connecting: SeeleColors.warning
         case .connected: SeeleColors.success
+        case .reconnecting: SeeleColors.warning
         case .error: SeeleColors.error
         }
     }
@@ -20,6 +22,7 @@ enum ConnectionStatus: String, CaseIterable {
         case .disconnected: "Disconnected"
         case .connecting: "Connecting..."
         case .connected: "Connected"
+        case .reconnecting: "Reconnecting..."
         case .error: "Error"
         }
     }
@@ -29,6 +32,7 @@ enum ConnectionStatus: String, CaseIterable {
         case .disconnected: "circle.slash"
         case .connecting: "arrow.triangle.2.circlepath"
         case .connected: "checkmark.circle.fill"
+        case .reconnecting: "arrow.triangle.2.circlepath"
         case .error: "exclamationmark.triangle.fill"
         }
     }

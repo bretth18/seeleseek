@@ -73,7 +73,6 @@ final class DownloadManager {
     // MARK: - Errors
 
     enum DownloadError: Error, LocalizedError {
-        case noPeerConnection
         case invalidPort
         case connectionCancelled
         case connectionClosed
@@ -84,7 +83,6 @@ final class DownloadManager {
 
         var errorDescription: String? {
             switch self {
-            case .noPeerConnection: return "No peer connection available"
             case .invalidPort: return "Invalid port number"
             case .connectionCancelled: return "Connection was cancelled"
             case .connectionClosed: return "Connection closed unexpectedly"
@@ -771,65 +769,6 @@ final class DownloadManager {
         }
     }
 
-    private func startFileTransfer(token: UInt32, request: TransferRequest) async {
-        guard let _ = networkClient, let transferState, let pending = pendingDownloads[token] else { return }
-
-        logger.info("Starting file transfer for \(request.filename) (\(request.size) bytes)")
-
-        // Compute destination path preserving folder structure
-        let destPath = computeDestPath(for: pending.filename, username: pending.username)
-        let filename = destPath.lastPathComponent
-
-        logger.info("Downloading to: \(destPath.path)")
-
-        do {
-            // Create file connection to peer
-            // Get peer address from the request
-            guard let peerConnection = pending.peerConnection else {
-                throw DownloadError.noPeerConnection
-            }
-
-            let peerInfo = peerConnection.peerInfo
-            logger.info("Creating file connection to \(peerInfo.ip):\(peerInfo.port)")
-
-            // Create a file transfer connection
-            let fileConnection = try await createFileConnection(
-                ip: peerInfo.ip,
-                port: peerInfo.port,
-                token: request.token
-            )
-
-            // Receive the file data
-            try await receiveFileData(
-                connection: fileConnection,
-                destPath: destPath,
-                expectedSize: request.size,
-                transferId: pending.transferId
-            )
-
-            // Mark as completed with local path for Finder reveal
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .completed
-                t.bytesTransferred = request.size
-                t.localPath = destPath
-                t.error = nil
-            }
-
-            logger.info("Download complete: \(filename) -> \(destPath.path)")
-            ActivityLog.shared.logDownloadCompleted(filename: filename)
-            applyFolderArtworkIfNeeded(for: destPath)
-
-        } catch {
-            logger.error("File transfer failed: \(error.localizedDescription)")
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
-            }
-        }
-
-        pendingDownloads.removeValue(forKey: token)
-    }
-
     // MARK: - Outgoing File Connection (NAT traversal fallback)
 
     /// Initiate an outgoing F connection to the peer (when they can't connect to us)
@@ -875,13 +814,16 @@ final class DownloadManager {
 
             // Wait for connection
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.stateUpdateHandler = { state in
+                connection.stateUpdateHandler = { [weak connection] state in
                     switch state {
                     case .ready:
+                        connection?.stateUpdateHandler = nil
                         continuation.resume()
                     case .failed(let error):
+                        connection?.stateUpdateHandler = nil
                         continuation.resume(throwing: error)
                     case .cancelled:
+                        connection?.stateUpdateHandler = nil
                         continuation.resume(throwing: DownloadError.connectionCancelled)
                     default:
                         break
@@ -964,51 +906,6 @@ final class DownloadManager {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
             // Don't mark as failed yet - the timeout will handle that
         }
-    }
-
-    // MARK: - File Transfer Connection
-
-    private func createFileConnection(ip: String, port: Int, token: UInt32) async throws -> NWConnection {
-        // Validate port
-        guard port > 0, port <= Int(UInt16.max), let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
-            throw DownloadError.invalidPort
-        }
-
-        let endpoint = NWEndpoint.hostPort(
-            host: NWEndpoint.Host(ip),
-            port: nwPort
-        )
-
-        let params = NWParameters.tcp
-        let connection = NWConnection(to: endpoint, using: params)
-
-        // Wait for connection
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    continuation.resume()
-                case .failed(let error):
-                    continuation.resume(throwing: error)
-                case .cancelled:
-                    continuation.resume(throwing: DownloadError.connectionCancelled)
-                default:
-                    break
-                }
-            }
-            connection.start(queue: .global(qos: .userInitiated))
-        }
-
-        logger.info("File connection established to \(ip):\(port)")
-
-        // Send the token to identify this transfer
-        var tokenData = Data()
-        tokenData.appendUInt32(token)
-        try await sendData(connection: connection, data: tokenData)
-
-        logger.info("Sent transfer token: \(token)")
-
-        return connection
     }
 
     private func sendData(connection: NWConnection, data: Data) async throws {

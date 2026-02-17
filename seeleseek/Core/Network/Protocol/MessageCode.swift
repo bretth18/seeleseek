@@ -57,9 +57,9 @@ enum ServerMessageCode: UInt32 {
 
     case parentMinSpeed = 83
     case parentSpeedRatio = 84
-    case minParentsInCache = 86
+    case parentInactivityTimeout = 86  // OBSOLETE
     case searchInactivityTimeout = 87
-    case minParentsInCacheDeprecated = 88
+    case minParentsInCache = 88  // OBSOLETE
     case distribPingInterval = 90
 
     case addToPrivileged = 91
@@ -84,17 +84,17 @@ enum ServerMessageCode: UInt32 {
     case sendUploadSpeedRequest = 121
     case userPrivileges = 122
     case givePrivileges = 123
-    case privateRoomUnknown124 = 124
+    case notifyPrivileges = 124  // DEPRECATED (was privateRoomUnknown124)
+    case ackNotifyPrivileges = 125  // DEPRECATED
 
     // Distributed network - branch info from client
-    case childDepth = 125  // Tell server our child depth
     case branchLevel = 126  // Tell server our branch level
     case branchRoot = 127  // Tell server our branch root
 
     case acceptChildren = 100  // Tell server if we accept child nodes
 
+    case childDepth = 129  // Tell server our child depth (DEPRECATED)
     case resetDistributed = 130
-    case privateRoomUnknown129 = 129
 
     // Private rooms
     case privateRoomMembers = 133
@@ -170,12 +170,12 @@ enum ServerMessageCode: UInt32 {
         case .haveNoParent: "HaveNoParent"
         case .searchParent: "SearchParent"
         case .searchInactivityTimeout: "SearchInactivityTimeout"
-        case .minParentsInCacheDeprecated: "MinParentsInCacheDeprecated"
+        case .minParentsInCache: "MinParentsInCache"
         case .distribPingInterval: "DistribPingInterval"
         case .possibleParents: "PossibleParents"
         case .embeddedMessage: "EmbeddedMessage"
-        case .privateRoomUnknown124: "PrivateRoomUnknown124"
-        case .privateRoomUnknown129: "PrivateRoomUnknown129"
+        case .notifyPrivileges: "NotifyPrivileges"
+        case .ackNotifyPrivileges: "AckNotifyPrivileges"
         case .privateRoomUnknown138: "PrivateRoomUnknown138"
         case .roomUnknown153: "RoomUnknown153"
         case .resetDistributed: "ResetDistributed"

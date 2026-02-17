@@ -8,6 +8,7 @@ struct ChatMessage: Identifiable, Hashable, Sendable {
     let content: String
     let isSystem: Bool
     let isOwn: Bool
+    let isNewMessage: Bool  // true = real-time, false = offline/buffered
 
     init(
         id: UUID = UUID(),
@@ -16,7 +17,8 @@ struct ChatMessage: Identifiable, Hashable, Sendable {
         username: String,
         content: String,
         isSystem: Bool = false,
-        isOwn: Bool = false
+        isOwn: Bool = false,
+        isNewMessage: Bool = true
     ) {
         self.id = id
         self.messageId = messageId
@@ -25,6 +27,7 @@ struct ChatMessage: Identifiable, Hashable, Sendable {
         self.content = content
         self.isSystem = isSystem
         self.isOwn = isOwn
+        self.isNewMessage = isNewMessage
     }
 
     var formattedTime: String {

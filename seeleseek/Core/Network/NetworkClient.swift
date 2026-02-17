@@ -25,10 +25,10 @@ final class NetworkClient {
     private(set) var externalIP: String?
 
     // MARK: - Distributed Network
-    var acceptDistributedChildren = false  // Set to true to participate as a node
+    var acceptDistributedChildren = true  // Participate in distributed search network
     private(set) var distributedBranchLevel: UInt32 = 0
     private(set) var distributedBranchRoot: String = ""
-    private var distributedChildren: [PeerConnection] = []
+    private(set) var distributedChildren: [PeerConnection] = []
 
     // MARK: - Internal
     private var serverConnection: ServerConnection?
@@ -36,6 +36,17 @@ final class NetworkClient {
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var loginContinuation: CheckedContinuation<Bool, Error>?
+
+    // MARK: - Auto-Reconnect
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectAttempt = 0
+    private var shouldAutoReconnect = false
+    private var lastServer: String?
+    private var lastPort: UInt16?
+    private var lastPassword: String?
+    private var lastPreferredListenPort: UInt16?
+    /// Base delays for exponential backoff: 5s, 10s, 30s, 60s, then cap at 60s
+    private static let reconnectDelays: [TimeInterval] = [5, 10, 30, 60]
 
     // MARK: - Keepalive Configuration
     /// Interval between ping messages (5 minutes)
@@ -311,6 +322,16 @@ final class NetworkClient {
     func connect(server: String, port: UInt16, username: String, password: String, preferredListenPort: UInt16? = nil) async {
         guard !isConnecting && !isConnected else { return }
 
+        // Store for auto-reconnect
+        lastServer = server
+        lastPort = port
+        lastPassword = password
+        lastPreferredListenPort = preferredListenPort
+        shouldAutoReconnect = true
+        reconnectAttempt = 0
+        reconnectTask?.cancel()
+        reconnectTask = nil
+
         isConnecting = true
         connectionError = nil
         self.username = username
@@ -377,10 +398,11 @@ final class NetworkClient {
                     }
                 }
             } catch {
-                // Login timed out or failed via continuation
+                // Login timed out or failed — don't auto-reconnect on auth failure
                 isConnecting = false
                 isConnected = false
                 connectionError = error.localizedDescription
+                shouldAutoReconnect = false
                 onConnectionStatusChanged?(.disconnected)
                 await listenerService.stop()
                 return
@@ -431,6 +453,7 @@ final class NetworkClient {
 
                 isConnecting = false
                 isConnected = true
+                reconnectAttempt = 0  // Reset backoff on successful connection
                 onConnectionStatusChanged?(.connected)
                 logger.info("Login successful!")
 
@@ -448,14 +471,29 @@ final class NetworkClient {
             isConnecting = false
             isConnected = false
             connectionError = error.localizedDescription
-            onConnectionStatusChanged?(.disconnected)
 
             // Cleanup
             await listenerService.stop()
+
+            // If auto-reconnect is active, schedule retry instead of staying disconnected
+            if shouldAutoReconnect {
+                scheduleReconnect(reason: error.localizedDescription)
+            } else {
+                onConnectionStatusChanged?(.disconnected)
+            }
         }
     }
 
     func disconnect() {
+        // User-initiated disconnect — stop auto-reconnect
+        shouldAutoReconnect = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        performDisconnect()
+    }
+
+    /// Internal disconnect that preserves auto-reconnect eligibility
+    private func performDisconnect() {
         logger.info("Disconnecting...")
         ActivityLog.shared.logDisconnected()
 
@@ -489,6 +527,58 @@ final class NetworkClient {
         logger.info("Disconnected")
     }
 
+    /// Called when connection drops unexpectedly — triggers auto-reconnect if eligible
+    func handleUnexpectedDisconnect(reason: String? = nil) {
+        guard shouldAutoReconnect else { return }
+        guard !isConnecting else { return }
+
+        performDisconnect()
+        scheduleReconnect(reason: reason)
+    }
+
+    /// Called when server sends Relogged (another client logged in) — no reconnect
+    func handleReloggedDisconnect() {
+        shouldAutoReconnect = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        performDisconnect()
+    }
+
+    private func scheduleReconnect(reason: String? = nil) {
+        guard shouldAutoReconnect,
+              let server = lastServer,
+              let port = lastPort,
+              let password = lastPassword else { return }
+
+        let delayIndex = min(reconnectAttempt, Self.reconnectDelays.count - 1)
+        let delay = Self.reconnectDelays[delayIndex]
+        reconnectAttempt += 1
+
+        let attempt = reconnectAttempt
+        connectionError = reason ?? "Connection lost"
+        onConnectionStatusChanged?(.reconnecting)
+        logger.info("Auto-reconnect attempt \(attempt) in \(delay)s")
+
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return  // Cancelled
+            }
+
+            guard let self, self.shouldAutoReconnect else { return }
+            self.logger.info("Auto-reconnect attempt \(attempt) starting...")
+            await self.connect(
+                server: server,
+                port: port,
+                username: self.username,
+                password: password,
+                preferredListenPort: self.lastPreferredListenPort
+            )
+        }
+    }
+
     // MARK: - Keepalive
 
     /// Start periodic ping timer to keep connection alive
@@ -508,7 +598,7 @@ final class NetworkClient {
                     return
                 } catch {
                     self?.logger.error("Keepalive ping failed, connection is dead: \(error.localizedDescription)")
-                    self?.disconnect()
+                    self?.handleUnexpectedDisconnect(reason: "Keepalive failed")
                     return
                 }
             }
@@ -583,11 +673,9 @@ final class NetworkClient {
                 await self.handleMessage(message)
             }
 
-            // Stream ended (connection closed)
+            // Stream ended (connection closed unexpectedly)
             await MainActor.run {
-                self.connectionError = "Connection closed"
-                self.isConnected = false
-                self.onConnectionStatusChanged?(.disconnected)
+                self.handleUnexpectedDisconnect(reason: "Connection closed")
             }
         }
     }
@@ -927,6 +1015,13 @@ final class NetworkClient {
             } catch {
                 // Direct timed out or failed - use indirect (PierceFirewall) connection
                 logger.debug("Browse: Direct failed (\(error.localizedDescription)), waiting for indirect...")
+
+                // Clean up stale direct connection from pool to prevent it lingering
+                if let staleConn = await peerConnectionPool.getConnectionForUser(username) {
+                    logger.debug("Browse: Disconnecting stale direct connection to \(username)")
+                    await staleConn.disconnect()
+                }
+
                 connection = try await waitForPendingBrowse(token: token)
                 isIndirectConnection = true
                 logger.debug("Browse: Got indirect connection from \(username)")
@@ -1437,6 +1532,14 @@ final class NetworkClient {
     }
 
     /// Update our branch level
+    /// Tell server whether we have a distributed parent
+    func sendHaveNoParent(_ haveNoParent: Bool) async throws {
+        guard isConnected else { throw NetworkError.notConnected }
+        let message = MessageBuilder.haveNoParent(haveNoParent)
+        try await requireConnectedServerConnection().send(message)
+        logger.info("Sent HaveNoParent(\(haveNoParent))")
+    }
+
     func setDistributedBranchLevel(_ level: UInt32) async throws {
         guard isConnected else { throw NetworkError.notConnected }
         distributedBranchLevel = level
