@@ -62,7 +62,7 @@ struct MessageParserTests {
         switch result {
         case .success(let greeting, let ip, _):
             #expect(greeting == "Welcome to SoulSeek!")
-            #expect(ip == "13.12.11.10") // Little-endian IP
+            #expect(ip == "10.11.12.13") // Network byte order (big-endian) within LE uint32
         case .failure, .none:
             Issue.record("Expected success response")
         }

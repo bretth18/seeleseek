@@ -163,7 +163,7 @@ final class UploadManager {
 
             if shareManager.fileIndex.first(where: { $0.sharedPath == filename }) == nil {
                 do {
-                    try await connection.sendUploadDenied(filename: filename, reason: "File not shared")
+                    try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
                 } catch {
                     logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
                 }
@@ -234,7 +234,7 @@ final class UploadManager {
         guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("File not found in shares: \(filename)")
             do {
-                try await connection.sendUploadDenied(filename: filename, reason: "File not shared")
+                try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
             }
@@ -245,7 +245,7 @@ final class UploadManager {
         guard FileManager.default.fileExists(atPath: indexedFile.localPath) else {
             logger.warning("Local file missing: \(indexedFile.localPath)")
             do {
-                try await connection.sendUploadDenied(filename: filename, reason: "File not available")
+                try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
             }
@@ -256,7 +256,7 @@ final class UploadManager {
         if let checker = uploadPermissionChecker, !checker(username) {
             logger.info("Upload denied for \(username): blocked or leech")
             do {
-                try await connection.sendUploadDenied(filename: filename, reason: "Forbidden")
+                try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
             }
@@ -268,7 +268,7 @@ final class UploadManager {
         if userQueueCount >= maxQueuedPerUser {
             logger.warning("User \(username) has too many queued uploads (\(userQueueCount))")
             do {
-                try await connection.sendUploadDenied(filename: filename, reason: "Too many files queued")
+                try await connection.sendUploadDenied(filename: filename, reason: "Too many files")
             } catch {
                 logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
             }
@@ -347,9 +347,26 @@ final class UploadManager {
 
         logger.info("Starting upload: \(upload.filename) to \(upload.username), token=\(token)")
 
+        // Get a fresh connection -- the one stored at queue time may be stale
+        let connection: PeerConnection
+        if await upload.connection.isConnected {
+            connection = upload.connection
+        } else if let fresh = await networkClient?.peerConnectionPool.getConnectionForUser(upload.username) {
+            logger.info("Using fresh connection for upload to \(upload.username) (original was stale)")
+            connection = fresh
+        } else {
+            logger.warning("No active connection to \(upload.username), upload cannot proceed")
+            transferState?.updateTransfer(id: transfer.id) { t in
+                t.status = .failed
+                t.error = "Peer disconnected"
+            }
+            await processQueue()
+            return
+        }
+
         // Send TransferRequest (direction=1=upload, meaning we're ready to upload to them)
         do {
-            try await upload.connection.sendTransferRequest(
+            try await connection.sendTransferRequest(
                 direction: .upload,
                 token: token,
                 filename: upload.filename,
@@ -598,6 +615,10 @@ final class UploadManager {
 
         logger.info("F connection established to \(ip):\(port)")
 
+        // Direct connection succeeded -- remove from pendingTransfers so PierceFirewall path
+        // doesn't also start a transfer, and timeout doesn't mark it as failed
+        pendingTransfers.removeValue(forKey: token)
+
         // Send PeerInit with type "F" and token 0 (always 0 for F connections per protocol)
         // PeerInit format: [length][code=1][username][type="F"][token=0]
         let username = networkClient.username
@@ -802,6 +823,11 @@ final class UploadManager {
                     t.status = .failed
                     t.error = error.localizedDescription
                 }
+            }
+
+            // Notify peer so they can re-queue
+            if let active = activeUploads[transferId] {
+                await sendUploadFailedToPeer(username: active.username, filename: active.filename)
             }
 
             activeUploads.removeValue(forKey: transferId)
@@ -1119,8 +1145,26 @@ final class UploadManager {
                 t.error = error.localizedDescription
             }
 
+            // Notify peer so they can re-queue
+            if let active = activeUploads[transferId] {
+                await sendUploadFailedToPeer(username: active.username, filename: active.filename)
+            }
+
             activeUploads.removeValue(forKey: transferId)
             await processQueue()
+        }
+    }
+
+    /// Send UploadFailed to peer over a P connection so they can re-queue the download
+    private func sendUploadFailedToPeer(username: String, filename: String) async {
+        guard let pool = networkClient?.peerConnectionPool else { return }
+        if let pConn = await pool.getConnectionForUser(username) {
+            do {
+                try await pConn.sendUploadFailed(filename: filename)
+                logger.info("Sent UploadFailed to \(username) for \(filename)")
+            } catch {
+                logger.debug("Could not send UploadFailed to \(username): \(error.localizedDescription)")
+            }
         }
     }
 }

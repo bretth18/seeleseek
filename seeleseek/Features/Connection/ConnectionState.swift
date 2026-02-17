@@ -46,6 +46,11 @@ final class ConnectionState {
         serverGreeting = nil
     }
 
+    func setReconnecting(reason: String?) {
+        connectionStatus = .reconnecting
+        errorMessage = reason
+    }
+
     func setError(_ message: String) {
         connectionStatus = .error
         errorMessage = message
