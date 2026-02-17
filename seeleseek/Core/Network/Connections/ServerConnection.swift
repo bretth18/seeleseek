@@ -107,6 +107,7 @@ actor ServerConnection {
         // Enable TCP keepalive to detect silent connection deaths quickly
         // Without this, a dead connection (NAT timeout, ISP reset) can go undetected for hours
         if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true
             tcpOptions.enableKeepalive = true
             tcpOptions.keepaliveInterval = 60  // probe every 60s after idle
             tcpOptions.keepaliveCount = 3      // give up after 3 missed probes
@@ -255,7 +256,7 @@ actor ServerConnection {
     private func startReceiving() async {
         guard let connection else { return }
 
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) { [weak self] data, _, isComplete, error in
             guard let self else { return }
 
             Task {

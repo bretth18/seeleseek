@@ -22,6 +22,11 @@ struct PrivacySettingsSection: View {
 
             settingsGroup("Search Responses") {
                 settingsToggle("Respond to search requests", isOn: $settings.respondToSearches)
+                    .onChange(of: settings.respondToSearches) { _, newValue in
+                        Task {
+                            try? await appState.networkClient.setAcceptDistributedChildren(newValue)
+                        }
+                    }
                 settingsNumberField("Min query length", value: $settings.minSearchQueryLength, range: 1...20)
                 settingsNumberField("Max results per response", value: $settings.maxSearchResponseResults, range: 0...500, placeholder: "0 = unlimited")
             }

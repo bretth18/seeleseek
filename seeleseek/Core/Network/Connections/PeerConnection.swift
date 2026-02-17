@@ -314,6 +314,9 @@ actor PeerConnection {
         // Use simple TCP parameters - minimal configuration for maximum compatibility
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
+        if let tcpOptions = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true
+        }
 
         let conn = NWConnection(to: endpoint, using: params)
         logger.debug("Creating TCP connection to \(self.peerInfo.ip):\(self.peerInfo.port)")
@@ -966,7 +969,7 @@ actor PeerConnection {
 
         logger.debug("[\(self.peerInfo.username)] Starting receive loop...")
 
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) { [weak self] data, _, isComplete, error in
             guard let self else {
                 // self is nil, cannot log
                 return

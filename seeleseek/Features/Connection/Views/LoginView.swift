@@ -134,6 +134,8 @@ struct LoginView: View {
             }
         }
 
+        appState.networkClient.acceptDistributedChildren = appState.settings.respondToSearches
+
         await appState.networkClient.connect(
             server: ServerConnection.defaultHost,
             port: ServerConnection.defaultPort,
