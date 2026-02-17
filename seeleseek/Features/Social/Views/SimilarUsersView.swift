@@ -75,11 +75,14 @@ struct SimilarUsersView: View {
             } else if socialState.similarUsers.isEmpty && !socialState.isLoadingSimilar {
                 noResultsView("No similar users found. Try adding more interests.")
             } else {
-                LazyVStack(spacing: SeeleSpacing.sm) {
-                    ForEach(socialState.similarUsers, id: \.username) { user in
-                        similarUserRow(username: user.username, rating: user.rating)
+                ScrollView {
+                    LazyVStack(spacing: SeeleSpacing.sm) {
+                        ForEach(socialState.similarUsers, id: \.username) { user in
+                            SimilarUserRow(username: user.username, rating: user.rating)
+                        }
                     }
                 }
+                .frame(maxHeight: 400)
             }
         }
     }
@@ -110,7 +113,7 @@ struct SimilarUsersView: View {
             } else {
                 FlowLayout(spacing: SeeleSpacing.sm) {
                     ForEach(socialState.recommendations.prefix(20), id: \.item) { rec in
-                        recommendationTag(item: rec.item, score: rec.score)
+                        RecommendationTag(item: rec.item, score: rec.score)
                     }
                 }
             }
@@ -140,7 +143,7 @@ struct SimilarUsersView: View {
             } else {
                 FlowLayout(spacing: SeeleSpacing.sm) {
                     ForEach(socialState.globalRecommendations.prefix(30), id: \.item) { rec in
-                        recommendationTag(item: rec.item, score: rec.score)
+                        RecommendationTag(item: rec.item, score: rec.score)
                     }
                 }
             }
@@ -157,103 +160,6 @@ struct SimilarUsersView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-    }
-
-    private func similarUserRow(username: String, rating: UInt32) -> some View {
-        HStack(spacing: SeeleSpacing.md) {
-            // Avatar placeholder
-            Circle()
-                .fill(SeeleColors.surfaceSecondary)
-                .frame(width: SeeleSpacing.iconSizeXL + 4, height: SeeleSpacing.iconSizeXL + 4)
-                .overlay {
-                    Text(String(username.prefix(1)).uppercased())
-                        .font(SeeleTypography.body)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-
-            // Username
-            Text(username)
-                .font(SeeleTypography.body)
-                .foregroundStyle(SeeleColors.textPrimary)
-
-            Spacer()
-
-            // Similarity score
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "star.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.warning)
-                Text("\(rating)")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-            }
-            .padding(.horizontal, SeeleSpacing.sm)
-            .padding(.vertical, SeeleSpacing.xs)
-            .background(SeeleColors.surface, in: Capsule())
-
-            // Actions
-            HStack(spacing: SeeleSpacing.sm) {
-                Button {
-                    Task {
-                        await socialState.loadProfile(for: username)
-                    }
-                } label: {
-                    Image(systemName: "person.crop.circle")
-                }
-                .help("View Profile")
-                
-                Button {
-                    Task {
-                        await socialState.addBuddy(username)
-                    }
-                } label: {
-                    Image(systemName: "person.badge.plus")
-                }
-                .help("Add Buddy")
-
-                Button {
-                    appState.browseState.browseUser(username)
-                    appState.sidebarSelection = .browse
-                } label: {
-                    Image(systemName: "folder")
-                }
-                .help("Browse Files")
-
-                Button {
-                    appState.chatState.selectPrivateChat(username)
-                    appState.sidebarSelection = .chat
-                } label: {
-                    Image(systemName: "bubble.left")
-                }
-                .help("Send Message")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(SeeleColors.accent)
-        }
-        .padding(SeeleSpacing.md)
-        .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-    }
-
-    private func recommendationTag(item: String, score: Int32) -> some View {
-        Button {
-            Task {
-                await socialState.addLike(item)
-            }
-        } label: {
-            HStack(spacing: SeeleSpacing.xs) {
-                Text(item)
-                    .font(SeeleTypography.body)
-
-                Image(systemName: "plus.circle")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
-            }
-            .foregroundStyle(SeeleColors.accent)
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(SeeleColors.accent.opacity(0.1), in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help("Add '\(item)' to your likes")
     }
 
     private func refresh() {

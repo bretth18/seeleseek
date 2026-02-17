@@ -42,6 +42,9 @@ actor DatabaseManager {
         let dbPath = dbDir.appendingPathComponent("seeleseek.sqlite")
         logger.info("Database path: \(dbPath.path)")
 
+        // Migrate from sandboxed container if needed (v1.0.5 → v1.0.6 sandbox removal)
+        migrateFromSandboxedContainer(to: dbPath)
+
         var config = Configuration()
         config.prepareDatabase { db in
             // Enable foreign keys
@@ -265,5 +268,50 @@ actor DatabaseManager {
         }
 
         logger.info("Expired cache cleaned up")
+    }
+
+    /// Migrate database from the sandboxed container to the unsandboxed location.
+    /// When the app moves from sandboxed (v1.0.5) to unsandboxed (v1.0.6),
+    /// the Application Support directory changes. This copies the old database
+    /// if the new one doesn't exist yet, preserving user data (interests, profile, buddies, messages).
+    private func migrateFromSandboxedContainer(to destinationPath: URL) {
+        let fm = FileManager.default
+
+        // Only migrate if the destination database doesn't already exist
+        guard !fm.fileExists(atPath: destinationPath.path) else { return }
+
+        // Build the old sandboxed container database path
+        guard let homeDir = fm.homeDirectoryForCurrentUser as URL? else { return }
+        let containerDB = homeDir
+            .appendingPathComponent("Library/Containers/computerdata.seeleseek/Data/Library/Application Support/SeeleSeek/seeleseek.sqlite")
+
+        guard fm.fileExists(atPath: containerDB.path) else {
+            logger.debug("No sandboxed container database found, skipping migration")
+            return
+        }
+
+        logger.info("Found sandboxed container database, migrating to unsandboxed location...")
+
+        do {
+            // Copy the main database file
+            try fm.copyItem(at: containerDB, to: destinationPath)
+
+            // Also copy WAL and SHM files if they exist
+            let walSource = containerDB.deletingLastPathComponent().appendingPathComponent("seeleseek.sqlite-wal")
+            let walDest = destinationPath.deletingLastPathComponent().appendingPathComponent("seeleseek.sqlite-wal")
+            if fm.fileExists(atPath: walSource.path) {
+                try fm.copyItem(at: walSource, to: walDest)
+            }
+
+            let shmSource = containerDB.deletingLastPathComponent().appendingPathComponent("seeleseek.sqlite-shm")
+            let shmDest = destinationPath.deletingLastPathComponent().appendingPathComponent("seeleseek.sqlite-shm")
+            if fm.fileExists(atPath: shmSource.path) {
+                try fm.copyItem(at: shmSource, to: shmDest)
+            }
+
+            logger.info("Successfully migrated database from sandboxed container")
+        } catch {
+            logger.error("Failed to migrate sandboxed database: \(error.localizedDescription)")
+        }
     }
 }

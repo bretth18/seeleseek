@@ -10,27 +10,23 @@ extension Data {
 
     nonisolated func readUInt16(at offset: Int) -> UInt16? {
         guard offset >= 0, offset + 2 <= count else { return nil }
-        let start = self.startIndex.advanced(by: offset)
-        return UInt16(self[start]) | (UInt16(self[start.advanced(by: 1)]) << 8)
+        return withUnsafeBytes { bytes in
+            UInt16(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self))
+        }
     }
 
     nonisolated func readUInt32(at offset: Int) -> UInt32? {
         guard offset >= 0, offset + 4 <= count else { return nil }
-        let start = self.startIndex.advanced(by: offset)
-        return UInt32(self[start]) |
-               (UInt32(self[start.advanced(by: 1)]) << 8) |
-               (UInt32(self[start.advanced(by: 2)]) << 16) |
-               (UInt32(self[start.advanced(by: 3)]) << 24)
+        return withUnsafeBytes { bytes in
+            UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+        }
     }
 
     nonisolated func readUInt64(at offset: Int) -> UInt64? {
         guard offset >= 0, offset + 8 <= count else { return nil }
-        let start = self.startIndex.advanced(by: offset)
-        var value: UInt64 = 0
-        for i in 0..<8 {
-            value |= UInt64(self[start.advanced(by: i)]) << (i * 8)
+        return withUnsafeBytes { bytes in
+            UInt64(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
         }
-        return value
     }
 
     nonisolated func readInt32(at offset: Int) -> Int32? {

@@ -5,7 +5,8 @@ import SwiftUI
 enum PreviewData {
     static var connectedAppState: AppState {
         let state = AppState()
-        state.configure()
+        // Skip configure() in previews — it triggers database init, filesystem migration,
+        // and notification authorization which timeout in the preview sandbox
         state.connection.setConnected(
             username: "previewuser",
             ip: "208.76.170.59",
@@ -16,13 +17,15 @@ enum PreviewData {
 
     static var disconnectedAppState: AppState {
         let state = AppState()
-        state.configure()
+        // Skip configure() in previews — it triggers database init, filesystem migration,
+        // and notification authorization which timeout in the preview sandbox
         return state
     }
 
     static var connectingAppState: AppState {
         let state = AppState()
-        state.configure()
+        // Skip configure() in previews — it triggers database init, filesystem migration,
+        // and notification authorization which timeout in the preview sandbox
         state.connection.setConnecting()
         state.connection.loginUsername = "testuser"
         return state
@@ -30,7 +33,8 @@ enum PreviewData {
 
     static var errorAppState: AppState {
         let state = AppState()
-        state.configure()
+        // Skip configure() in previews — it triggers database init, filesystem migration,
+        // and notification authorization which timeout in the preview sandbox
         state.connection.setError("Invalid username or password")
         state.connection.loginUsername = "testuser"
         return state

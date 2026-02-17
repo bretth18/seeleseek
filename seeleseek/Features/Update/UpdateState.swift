@@ -41,7 +41,10 @@ final class UpdateState {
     }
 
     var autoCheckEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: autoCheckKey) }
+        get {
+            if UserDefaults.standard.object(forKey: autoCheckKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: autoCheckKey)
+        }
         set { UserDefaults.standard.set(newValue, forKey: autoCheckKey) }
     }
 

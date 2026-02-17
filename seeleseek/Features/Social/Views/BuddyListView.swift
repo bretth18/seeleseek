@@ -32,13 +32,12 @@ struct BuddyListView: View {
                 Button {
                     socialState.showAddBuddySheet = true
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
+                    Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(SeeleColors.accent)
+                .buttonStyle(.bordered)
             }
-            .padding(SeeleSpacing.md)
+            .padding(SeeleSpacing.lg)
+            .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
 

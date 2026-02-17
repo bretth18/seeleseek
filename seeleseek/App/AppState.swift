@@ -47,7 +47,9 @@ final class AppState {
             let originalSearchCallback = _networkClient!.onSearchResults
             _networkClient!.onSearchResults = { [weak self] token, results in
                 guard let self else { return }
-                if self.wishlistState.isWishlistToken(token) {
+                let isWishlist = self.wishlistState.isWishlistToken(token)
+                self.logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
+                if isWishlist {
                     self.wishlistState.handleSearchResults(token: token, results: results)
                 } else {
                     originalSearchCallback?(token, results)
@@ -120,6 +122,9 @@ final class AppState {
     func configure() {
         guard !isConfigured else { return }
         isConfigured = true
+
+        // Migrate UserDefaults from sandboxed container if needed (v1.0.5 → v1.0.6)
+        migrateUserDefaultsFromContainer()
 
         // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
@@ -197,6 +202,44 @@ final class AppState {
         } catch {
             logger.error("UserDefaults migration failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Migrate UserDefaults from the sandboxed container plist to the standard location.
+    /// When moving from sandboxed (v1.0.5) to unsandboxed (v1.0.6), UserDefaults reads
+    /// from a different plist file. This copies essential keys if they're missing.
+    private func migrateUserDefaultsFromContainer() {
+        let defaults = UserDefaults.standard
+        let migrationKey = "containerPlistMigrated"
+
+        guard !defaults.bool(forKey: migrationKey) else { return }
+
+        let containerPlist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers/computerdata.seeleseek/Data/Library/Preferences/computerdata.seeleseek.plist")
+
+        guard let containerDefaults = NSDictionary(contentsOf: containerPlist) as? [String: Any] else {
+            // No container plist found — either fresh install or already unsandboxed
+            defaults.set(true, forKey: migrationKey)
+            return
+        }
+
+        logger.info("Migrating UserDefaults from sandboxed container...")
+
+        // Copy keys that aren't already set in the current defaults
+        let keysToMigrate = containerDefaults.keys.filter { key in
+            // Skip Apple/system keys and window frame data
+            !key.hasPrefix("NS") && !key.hasPrefix("Apple") && !key.hasPrefix("com.apple")
+        }
+
+        var migratedCount = 0
+        for key in keysToMigrate {
+            if defaults.object(forKey: key) == nil, let value = containerDefaults[key] {
+                defaults.set(value, forKey: key)
+                migratedCount += 1
+            }
+        }
+
+        defaults.set(true, forKey: migrationKey)
+        logger.info("Migrated \(migratedCount) UserDefaults keys from sandboxed container")
     }
 
     private func loadPersistedState() async {

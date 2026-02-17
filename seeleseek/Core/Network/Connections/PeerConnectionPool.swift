@@ -367,9 +367,8 @@ final class PeerConnectionPool {
                     self?.logger.info("Received \(results.count) search results from incoming connection")
                     self?.onSearchResults?(token, results)
                 }
-                // Close connection after a brief delay to prevent connection accumulation
+                // Close connection after results received to prevent accumulation
                 Task {
-                    try? await Task.sleep(for: .milliseconds(500))
                     await connection.disconnect()
                     await MainActor.run {
                         self?.decrementIPCounter(for: capturedIP)
@@ -821,9 +820,8 @@ final class PeerConnectionPool {
                     self?.logger.warning("PeerConnectionPool: onSearchResults callback is nil!")
                 }
             }
-            // Close connection after receiving search results (like Nicotine+)
+            // Close connection after receiving search results
             Task {
-                try? await Task.sleep(for: .milliseconds(500))
                 await connection.disconnect()
                 await MainActor.run {
                     // Find and remove this connection by username prefix
