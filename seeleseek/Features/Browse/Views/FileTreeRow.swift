@@ -7,6 +7,9 @@ struct FileTreeRow: View {
     var browseState: BrowseState
     let username: String
     @State private var isHovered = false
+    @State private var artworkData: Data?
+    @State private var isLoadingArtwork = false
+    @State private var showArtworkPopover = false
 
     private var isExpanded: Bool {
         browseState.expandedFolders.contains(file.id)
@@ -41,9 +44,25 @@ struct FileTreeRow: View {
             }
 
             // Icon
-            Image(systemName: file.icon)
-                .font(.system(size: SeeleSpacing.iconSize))
-                .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
+            if !file.isDirectory, let artworkData, let nsImage = NSImage(data: artworkData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: SeeleSpacing.iconSize, height: SeeleSpacing.iconSize)
+                    .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+                    .popover(isPresented: $showArtworkPopover) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 300, maxHeight: 300)
+                            .padding(SeeleSpacing.sm)
+                    }
+                    .onTapGesture { showArtworkPopover.toggle() }
+            } else {
+                Image(systemName: file.icon)
+                    .font(.system(size: SeeleSpacing.iconSize))
+                    .foregroundStyle(file.isDirectory ? SeeleColors.warning : SeeleColors.accent)
+            }
 
             // Name
             Text(file.displayName)
@@ -111,6 +130,75 @@ struct FileTreeRow: View {
                 isHovered = hovering
             }
         }
+        .contextMenu {
+            if file.isDirectory {
+                Button {
+                    downloadFolder()
+                } label: {
+                    Label("Download Folder", systemImage: "arrow.down.circle")
+                }
+
+                Divider()
+
+                Button {
+                    copyFilename()
+                } label: {
+                    Label("Copy folder name", systemImage: "doc.on.doc")
+                }
+
+                Button {
+                    copyPath()
+                } label: {
+                    Label("Copy full path", systemImage: "link")
+                }
+            } else {
+                Button {
+                    if !isQueued { downloadFile() }
+                } label: {
+                    Label("Download File", systemImage: "arrow.down.circle")
+                }
+                .disabled(isQueued)
+
+                Button {
+                    downloadContainingFolder()
+                } label: {
+                    Label("Download Containing Folder", systemImage: "arrow.down.circle.fill")
+                }
+
+                if file.isAudioFile {
+                    Button {
+                        fetchArtwork()
+                    } label: {
+                        if isLoadingArtwork {
+                            Label("Loading artwork...", systemImage: "photo")
+                        } else if artworkData != nil {
+                            Label("Show Album Art", systemImage: "photo.fill")
+                        } else {
+                            Label("Preview Album Art", systemImage: "photo")
+                        }
+                    }
+                    .disabled(isLoadingArtwork)
+                }
+
+                Divider()
+
+                Button {
+                    copyFilename()
+                } label: {
+                    Label("Copy filename", systemImage: "doc.on.doc")
+                }
+
+                Button {
+                    copyPath()
+                } label: {
+                    Label("Copy full path", systemImage: "link")
+                }
+            }
+
+            Divider()
+
+            UserContextMenuItems(username: username)
+        }
     }
 
     private func downloadFile() {
@@ -169,5 +257,74 @@ struct FileTreeRow: View {
 
     private var downloadButtonHelp: String {
         DownloadStatusIcon(status: downloadStatus).helpText
+    }
+
+    private func downloadContainingFolder() {
+        // Derive parent folder path from the file's full path
+        let components = file.filename.split(separator: "\\")
+        guard components.count >= 2 else { return }
+        let parentPath = components.dropLast().joined(separator: "\\")
+
+        // Find the parent folder in the tree and download all its files
+        let rootFolders = appState.browseState.currentBrowse?.folders ?? browseState.displayedFolders
+        guard let parent = findFolder(at: parentPath, in: rootFolders),
+              let children = parent.children else { return }
+
+        let allFiles = SharedFile.collectAllFiles(in: children)
+        for childFile in allFiles {
+            if !appState.transferState.isFileQueued(filename: childFile.filename, username: username) {
+                let result = SearchResult(
+                    username: username,
+                    filename: childFile.filename,
+                    size: childFile.size,
+                    bitrate: childFile.bitrate,
+                    duration: childFile.duration,
+                    isVBR: false,
+                    freeSlots: true,
+                    uploadSpeed: 0,
+                    queueLength: 0
+                )
+                appState.downloadManager.queueDownload(from: result)
+            }
+        }
+    }
+
+    private func findFolder(at path: String, in folders: [SharedFile]) -> SharedFile? {
+        for folder in folders {
+            if folder.isDirectory && folder.filename == path {
+                return folder
+            }
+            if let children = folder.children,
+               let found = findFolder(at: path, in: children) {
+                return found
+            }
+        }
+        return nil
+    }
+
+    private func fetchArtwork() {
+        if artworkData != nil {
+            showArtworkPopover = true
+            return
+        }
+
+        isLoadingArtwork = true
+        appState.networkClient.requestArtwork(from: username, filePath: file.filename) { data in
+            isLoadingArtwork = false
+            if let data {
+                artworkData = data
+                showArtworkPopover = true
+            }
+        }
+    }
+
+    private func copyFilename() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(file.displayName, forType: .string)
+    }
+
+    private func copyPath() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(file.filename, forType: .string)
     }
 }
