@@ -57,7 +57,13 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             content.body = body
         }
         if settings?.notificationSound == true {
-            content.sound = .default
+            let selected = settings?.selectedNotificationSound ?? .default
+            switch selected {
+            case .default:
+                content.sound = .default
+            default:
+                content.sound = UNNotificationSound(named: UNNotificationSoundName(selected.rawValue))
+            }
         }
 
         let request = UNNotificationRequest(

@@ -53,6 +53,27 @@ func settingsToggle(_ title: String, isOn: Binding<Bool>) -> some View {
     }
 }
 
+func settingsPicker<T: Hashable>(_ title: String, selection: Binding<T>, options: [T], optionLabel: @escaping (T) -> String) -> some View {
+    settingsRow {
+        HStack {
+            Text(title)
+                .font(SeeleTypography.body)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            Spacer()
+
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { option in
+                    Text(optionLabel(option))
+                        .tag(option)
+                }
+            }
+            .pickerStyle(MenuPickerStyle())
+            .labelsHidden()
+        }
+    }
+}
+
 /// Numeric text field row
 func settingsNumberField(_ title: String, value: Binding<Int>, range: ClosedRange<Int>, placeholder: String = "") -> some View {
     settingsRow {
@@ -132,3 +153,4 @@ func folderPicker(_ title: String, url: Binding<URL>) -> some View {
         }
     }
 }
+
