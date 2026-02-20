@@ -13,6 +13,8 @@ struct NotificationSettingsSection: View {
                     .disabled(!settings.enableNotifications)
                 settingsToggle("Only when app is in background", isOn: $settings.notifyOnlyInBackground)
                     .disabled(!settings.enableNotifications)
+                settingsPicker("Notification sound", selection: $settings.selectedNotificationSound, options: settings.availableNotificationSounds) { $0.displayName }
+                    .disabled(!settings.enableNotifications || !settings.notificationSound)
             }
 
             settingsGroup("Notify me about") {

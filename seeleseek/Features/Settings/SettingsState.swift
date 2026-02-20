@@ -2,6 +2,44 @@ import SwiftUI
 import ServiceManagement
 import os
 
+enum NotificationSound: String, CaseIterable {
+    case `default` = "default"
+    case basso = "Basso"
+    case blow = "Blow"
+    case bottle = "Bottle"
+    case frog = "Frog"
+    case funk = "Funk"
+    case glass = "Glass"
+    case hero = "Hero"
+    case morse = "Morse"
+    case ping = "Ping"
+    case pop = "Pop"
+    case purr = "Purr"
+    case sosumi = "Sosumi"
+    case submarine = "Submarine"
+    case tink = "Tink"
+
+    var displayName: String {
+        switch self {
+        case .default: "Default"
+        case .basso: "Basso"
+        case .blow: "Blow"
+        case .bottle: "Bottle"
+        case .frog: "Frog"
+        case .funk: "Funk"
+        case .glass: "Glass"
+        case .hero: "Hero"
+        case .morse: "Morse"
+        case .ping: "Ping"
+        case .pop: "Pop"
+        case .purr: "Purr"
+        case .sosumi: "Sosumi"
+        case .submarine: "Submarine"
+        case .tink: "Tink"
+        }
+    }
+}
+
 enum DownloadFolderFormat: String, CaseIterable {
     case usernameAndPath = "usernameAndPath"
     case pathOnly = "pathOnly"
@@ -51,6 +89,7 @@ final class SettingsState {
     private let notifyUploadsKey = "settings.notifyUploads"
     private let notifyPrivateMessagesKey = "settings.notifyPrivateMessages"
     private let notifyOnlyInBackgroundKey = "settings.notifyOnlyInBackground"
+    private let notificationSoundNameKey = "settings.notificationSoundName"
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -192,6 +231,16 @@ final class SettingsState {
     var showJoinLeaveMessages: Bool = true
     var enableNotifications: Bool = true
     var notificationSound: Bool = true
+    var selectedNotificationSound: NotificationSound = .default {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
+    var availableNotificationSounds: [NotificationSound] {
+        NotificationSound.allCases
+    }
 
     // MARK: - Notification Settings (granular)
     var notifyDownloads: Bool = true {
@@ -262,6 +311,7 @@ final class SettingsState {
         showJoinLeaveMessages = true
         enableNotifications = true
         notificationSound = true
+        selectedNotificationSound = .default
         notifyDownloads = true
         notifyUploads = false
         notifyPrivateMessages = true
@@ -302,6 +352,7 @@ final class SettingsState {
         UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
         UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
+        UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
 
         // Save to database asynchronously
         Task {
@@ -388,6 +439,10 @@ final class SettingsState {
         }
         if UserDefaults.standard.object(forKey: notifyOnlyInBackgroundKey) != nil {
             notifyOnlyInBackground = UserDefaults.standard.bool(forKey: notifyOnlyInBackgroundKey)
+        }
+        if let soundRaw = UserDefaults.standard.string(forKey: notificationSoundNameKey),
+           let sound = NotificationSound(rawValue: soundRaw) {
+            selectedNotificationSound = sound
         }
     }
 

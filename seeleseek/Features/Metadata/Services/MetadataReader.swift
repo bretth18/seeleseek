@@ -2,10 +2,40 @@ import AVFoundation
 import AppKit
 import os
 
+/// Basic audio metadata extracted from file tags (ID3, Vorbis Comment, etc.)
+struct AudioFileMetadata {
+    var artist: String?
+    var album: String?
+    var title: String?
+}
+
 /// Off-main-thread actor for reading metadata (especially artwork) from audio files.
 /// Supports MP3 (ID3v2), FLAC (Vorbis Comment + PICTURE), and AIF/AIFF.
 actor MetadataReader {
     private let logger = Logger(subsystem: "com.seeleseek", category: "MetadataReader")
+
+    /// Extract artist, album, and title metadata from an audio file.
+    /// Returns nil if no metadata could be read at all.
+    func extractAudioMetadata(from url: URL) async -> AudioFileMetadata? {
+        let asset = AVURLAsset(url: url)
+        do {
+            let metadata = try await asset.load(.commonMetadata)
+
+            let artist = try? await AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierArtist)
+                .first?.load(.stringValue)
+            let album = try? await AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierAlbumName)
+                .first?.load(.stringValue)
+            let title = try? await AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierTitle)
+                .first?.load(.stringValue)
+
+            // Only return if we got at least one field
+            guard artist != nil || album != nil || title != nil else { return nil }
+            return AudioFileMetadata(artist: artist, album: album, title: title)
+        } catch {
+            logger.debug("Failed to extract metadata from \(url.lastPathComponent): \(error.localizedDescription)")
+            return nil
+        }
+    }
 
     /// Extract embedded album artwork from an audio file.
     /// Returns the raw image data (JPEG or PNG) or nil if none found.

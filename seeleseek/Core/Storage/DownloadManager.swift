@@ -889,6 +889,7 @@ final class DownloadManager {
             logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
             applyFolderArtworkIfNeeded(for: destPath)
+            organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
 
             // Record in statistics
             statisticsState?.recordTransfer(
@@ -1104,7 +1105,32 @@ final class DownloadManager {
     /// e.g., "@@music\Artist\Album\01 Song.mp3" -> "Downloads/SeeleSeek/Artist/Album/01 Song.mp3"
     private func computeDestPath(for soulseekPath: String, username: String) -> URL {
         let downloadDir = getDownloadDirectory()
+        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
+        let relativePath = DownloadManager.resolveDownloadPath(
+            soulseekPath: soulseekPath,
+            username: username,
+            template: template
+        )
 
+        // Split into components, sanitize each, and build the URL
+        let resultComponents = relativePath.split(separator: "/").map(String.init)
+        var destURL = downloadDir
+        for component in resultComponents {
+            destURL = destURL.appendingPathComponent(sanitizeFilename(component))
+        }
+
+        return destURL
+    }
+
+    /// Resolve a SoulSeek path into a relative download path using a template.
+    /// Prefers metadata values (artist, album) over folder-derived values when available.
+    /// Returns a relative path string (no leading/trailing slashes).
+    nonisolated static func resolveDownloadPath(
+        soulseekPath: String,
+        username: String,
+        template: String,
+        metadata: AudioFileMetadata? = nil
+    ) -> String {
         // Parse the SoulSeek path (uses backslash separators)
         var pathComponents = soulseekPath.split(separator: "\\").map(String.init)
 
@@ -1116,7 +1142,7 @@ final class DownloadManager {
         // Need at least a filename
         guard !pathComponents.isEmpty else {
             let fallbackName = (soulseekPath as NSString).lastPathComponent
-            return downloadDir.appendingPathComponent(fallbackName.isEmpty ? "unknown" : fallbackName)
+            return fallbackName.isEmpty ? "unknown" : fallbackName
         }
 
         // Extract filename (last component) and folders (everything else)
@@ -1127,11 +1153,12 @@ final class DownloadManager {
         // Derive artist and album from folder hierarchy:
         // Artist/Album/file.mp3 → artist=Artist, album=Album
         // Genre/Artist/Album/file.mp3 → artist=Artist, album=Album
-        let album = folderComponents.last ?? ""
-        let artist = folderComponents.count >= 2 ? folderComponents[folderComponents.count - 2] : ""
+        let folderAlbum = folderComponents.last ?? ""
+        let folderArtist = folderComponents.count >= 2 ? folderComponents[folderComponents.count - 2] : ""
 
-        // Get the active template
-        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
+        // Prefer metadata values when available
+        let artist = metadata?.artist ?? folderArtist
+        let album = metadata?.album ?? folderAlbum
 
         // Substitute tokens
         var result = template
@@ -1148,14 +1175,7 @@ final class DownloadManager {
         // Trim leading/trailing slashes
         result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        // Split into components, sanitize each, and build the URL
-        let resultComponents = result.split(separator: "/").map(String.init)
-        var destURL = downloadDir
-        for component in resultComponents {
-            destURL = destURL.appendingPathComponent(sanitizeFilename(component))
-        }
-
-        return destURL
+        return result
     }
 
     /// Sanitize a filename/folder name for the filesystem
@@ -1280,6 +1300,97 @@ final class DownloadManager {
             let applied = await metadataReader.applyArtworkAsFolderIcon(for: directory)
             if applied {
                 logger.info("Applied album art as folder icon for \(directory.lastPathComponent)")
+            }
+        }
+    }
+
+    /// Re-organize a completed download using actual audio metadata (artist, album).
+    /// If the active template uses {artist} or {album} tokens, reads metadata from the file
+    /// and moves it to the metadata-derived path if different. Fire-and-forget.
+    private func organizeCompletedDownload(
+        currentPath: URL,
+        soulseekFilename: String,
+        username: String,
+        transferId: UUID
+    ) {
+        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
+
+        // Only worth doing if the template uses artist or album tokens
+        guard template.contains("{artist}") || template.contains("{album}") else { return }
+
+        let downloadDir = getDownloadDirectory()
+
+        Task.detached { [metadataReader, logger, weak self] in
+            guard let metadata = await metadataReader.extractAudioMetadata(from: currentPath) else {
+                return
+            }
+
+            // Re-resolve path with metadata
+            let newRelativePath = DownloadManager.resolveDownloadPath(
+                soulseekPath: soulseekFilename,
+                username: username,
+                template: template,
+                metadata: metadata
+            )
+
+            // Build the new full path with sanitized components
+            let newComponents = newRelativePath.split(separator: "/").map(String.init)
+            var newPath = downloadDir
+            for component in newComponents {
+                // Inline the same sanitization logic
+                var sanitized = component
+                if sanitized == ".." || sanitized == "." { sanitized = "unnamed" }
+                for char: Character in [":", "/", "\\", "\0"] {
+                    sanitized = sanitized.replacingOccurrences(of: String(char), with: "_")
+                }
+                while sanitized.contains("..") {
+                    sanitized = sanitized.replacingOccurrences(of: "..", with: "_")
+                }
+                sanitized = sanitized.replacingOccurrences(of: "~", with: "_")
+                sanitized = sanitized.trimmingCharacters(in: .whitespaces)
+                if sanitized.hasPrefix(".") { sanitized = "_" + sanitized.dropFirst() }
+                if sanitized.isEmpty { sanitized = "unnamed" }
+                newPath = newPath.appendingPathComponent(sanitized)
+            }
+
+            // If the path didn't change, nothing to do
+            guard newPath != currentPath else { return }
+
+            let fm = FileManager.default
+
+            // Create parent directories
+            let newDir = newPath.deletingLastPathComponent()
+            try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
+
+            // Move the file
+            do {
+                // If a file already exists at destination, skip (don't overwrite)
+                guard !fm.fileExists(atPath: newPath.path) else {
+                    logger.debug("Metadata-organized path already exists, skipping move")
+                    return
+                }
+                try fm.moveItem(at: currentPath, to: newPath)
+                logger.info("Reorganized download: \(currentPath.lastPathComponent) → \(newRelativePath)")
+
+                // Update the transfer's localPath on the main actor
+                await MainActor.run {
+                    self?.transferState?.updateTransfer(id: transferId) { t in
+                        t.localPath = newPath
+                    }
+                }
+
+                // Clean up empty parent directories from the old location
+                var oldDir = currentPath.deletingLastPathComponent()
+                while oldDir != downloadDir {
+                    let contents = (try? fm.contentsOfDirectory(atPath: oldDir.path)) ?? []
+                    // Only remove if truly empty (ignore .DS_Store)
+                    let meaningful = contents.filter { $0 != ".DS_Store" }
+                    guard meaningful.isEmpty else { break }
+                    try? fm.removeItem(at: oldDir)
+                    oldDir = oldDir.deletingLastPathComponent()
+                }
+            } catch {
+                logger.warning("Failed to reorganize download: \(error.localizedDescription)")
             }
         }
     }
@@ -1440,6 +1551,7 @@ final class DownloadManager {
                 }
                 ActivityLog.shared.logDownloadCompleted(filename: destPath.lastPathComponent)
                 applyFolderArtworkIfNeeded(for: destPath)
+                organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
                 statisticsState?.recordTransfer(
                     filename: destPath.lastPathComponent,
                     username: pending.username,
@@ -1551,6 +1663,7 @@ final class DownloadManager {
             logger.info("Download complete: \(filename) -> \(destPath.path)")
             ActivityLog.shared.logDownloadCompleted(filename: filename)
             applyFolderArtworkIfNeeded(for: destPath)
+            organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
 
             logger.debug("Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
             if let stats = statisticsState {
