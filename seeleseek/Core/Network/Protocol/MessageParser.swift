@@ -31,6 +31,9 @@ enum MessageParser {
         // SECURITY: Reject excessively large messages
         guard length <= maxMessageSize else { return nil }
 
+        // Message must contain at least a 4-byte code
+        guard length >= 4 else { return nil }
+
         let totalLength = 4 + Int(length)
 
         guard data.count >= totalLength else { return nil }
@@ -405,7 +408,8 @@ enum MessageParser {
         logger.debug("direction raw: \(directionRaw) at offset \(offset)")
         offset += 4
 
-        guard let direction = FileTransferDirection(rawValue: UInt8(directionRaw)) else {
+        guard let directionByte = UInt8(exactly: directionRaw),
+              let direction = FileTransferDirection(rawValue: directionByte) else {
             logger.debug("Invalid direction: \(directionRaw)")
             return nil
         }

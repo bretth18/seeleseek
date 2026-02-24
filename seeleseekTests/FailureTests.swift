@@ -1,0 +1,845 @@
+import Testing
+import Foundation
+@testable import seeleseek
+
+@Suite("Failure & Negative Tests")
+struct FailureTests {
+
+    // MARK: - 1. DataExtensions Boundary Tests
+
+    @Test("Read integer types from empty Data")
+    func testReadFromEmptyData() {
+        let empty = Data()
+        #expect(empty.readUInt8(at: 0) == nil)
+        #expect(empty.readUInt16(at: 0) == nil)
+        #expect(empty.readUInt32(at: 0) == nil)
+        #expect(empty.readUInt64(at: 0) == nil)
+        #expect(empty.readInt32(at: 0) == nil)
+        #expect(empty.readString(at: 0) == nil)
+        #expect(empty.readBool(at: 0) == nil)
+        #expect(empty.readByte(at: 0) == nil)
+    }
+
+    @Test("Read UInt32 at exact boundary where only 3 bytes remain")
+    func testReadUInt32AtBoundary() {
+        let data = Data([0x01, 0x02, 0x03])
+        #expect(data.readUInt32(at: 0) == nil)
+
+        // Read at offset where only 3 bytes are left
+        let data2 = Data([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        #expect(data2.readUInt32(at: 4) == nil)
+    }
+
+    @Test("Read UInt64 at exact boundary where only 7 bytes remain")
+    func testReadUInt64AtBoundary() {
+        let data = Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07])
+        #expect(data.readUInt64(at: 0) == nil)
+    }
+
+    @Test("Read UInt16 at exact boundary where only 1 byte remains")
+    func testReadUInt16AtBoundary() {
+        let data = Data([0x42])
+        #expect(data.readUInt16(at: 0) == nil)
+    }
+
+    @Test("Read string where length field claims more bytes than available")
+    func testReadStringLengthExceedsData() {
+        var data = Data()
+        data.appendUInt32(100) // Claims 100 bytes
+        data.append(Data([0x41])) // Only 1 byte of content
+        #expect(data.readString(at: 0) == nil)
+    }
+
+    @Test("Read string at exactly maxStringLength boundary succeeds")
+    func testReadStringMaxLengthBoundary() {
+        var data = Data()
+        data.appendUInt32(Data.maxStringLength) // 1_000_000
+        data.append(Data(repeating: 0x41, count: Int(Data.maxStringLength)))
+
+        let result = data.readString(at: 0)
+        #expect(result != nil)
+        #expect(result?.string.count == Int(Data.maxStringLength))
+        #expect(result?.bytesConsumed == 4 + Int(Data.maxStringLength))
+    }
+
+    @Test("Read string exceeding maxStringLength rejects")
+    func testReadStringExceedsMaxLength() {
+        var data = Data()
+        data.appendUInt32(Data.maxStringLength + 1)
+        data.append(Data(repeating: 0x41, count: Int(Data.maxStringLength) + 1))
+        #expect(data.readString(at: 0) == nil)
+    }
+
+    @Test("Read string with length 0xFFFFFFFF rejects immediately")
+    func testReadStringMaxUInt32Length() {
+        var data = Data()
+        data.appendUInt32(0xFFFFFFFF)
+        // Don't need to append that many bytes — length check rejects first
+        #expect(data.readString(at: 0) == nil)
+    }
+
+    @Test("safeSubdata with empty and boundary ranges")
+    func testSafeSubdataEdgeCases() {
+        let data = Data([0x01, 0x02, 0x03])
+
+        // Empty range at start
+        #expect(data.safeSubdata(in: 0..<0) == Data())
+        // Empty range at end
+        #expect(data.safeSubdata(in: 3..<3) == Data())
+        // Full range
+        #expect(data.safeSubdata(in: 0..<3) == data)
+        // Just past end
+        #expect(data.safeSubdata(in: 0..<4) == nil)
+        // Negative lower bound
+        #expect(data.safeSubdata(in: -1..<2) == nil)
+
+        // Empty data
+        let empty = Data()
+        #expect(empty.safeSubdata(in: 0..<0) == Data())
+        #expect(empty.safeSubdata(in: 0..<1) == nil)
+    }
+
+    @Test("readString with invalid UTF-8 falls back to Latin-1")
+    func testReadStringInvalidUTF8FallsBackToLatin1() {
+        // 0xE9 alone is invalid UTF-8 (expects continuation bytes)
+        // but is 'é' in Latin-1
+        var data = Data()
+        data.appendUInt32(1)
+        data.append(Data([0xE9]))
+
+        let result = data.readString(at: 0)
+        #expect(result != nil)
+        #expect(result?.string == "é")
+        #expect(result?.bytesConsumed == 5)
+    }
+
+    @Test("readString with bytes that are invalid UTF-8 but valid Latin-1")
+    func testReadStringLatin1ControlCharacters() {
+        // 0x80-0x9F are control chars in Latin-1 but invalid as standalone UTF-8
+        var data = Data()
+        let bytes: [UInt8] = [0x80, 0x8F, 0x9F, 0xFF]
+        data.appendUInt32(UInt32(bytes.count))
+        data.append(Data(bytes))
+
+        let result = data.readString(at: 0)
+        #expect(result != nil)
+        #expect(result?.bytesConsumed == 4 + bytes.count)
+    }
+
+    @Test("hexString round-trip with odd-length hex input")
+    func testHexStringOddLength() {
+        // "abc" → "ab" = 0xAB, "c" = 0x0C
+        let data = Data(hexString: "abc")
+        #expect(data == Data([0xAB, 0x0C]))
+
+        // Single char
+        let single = Data(hexString: "f")
+        #expect(single == Data([0x0F]))
+
+        // Empty
+        let empty = Data(hexString: "")
+        #expect(empty == Data())
+
+        // Invalid hex chars produce empty data
+        let invalid = Data(hexString: "zz")
+        #expect(invalid == Data())
+    }
+
+    // MARK: - 2. Frame Parsing Failure Tests
+
+    @Test("Frame with length = 0 returns nil (no room for code)")
+    func testFrameLengthZero() {
+        var data = Data()
+        data.appendUInt32(0) // length = 0
+        data.appendUInt32(1) // bytes exist but outside frame
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with length = 3 returns nil (code needs 4 bytes)")
+    func testFrameLengthThree() {
+        var data = Data()
+        data.appendUInt32(3) // length = 3, not enough for code
+        data.append(Data(repeating: 0x00, count: 5))
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with length = 1 returns nil")
+    func testFrameLengthOne() {
+        var data = Data()
+        data.appendUInt32(1)
+        data.append(Data(repeating: 0x00, count: 5))
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with length = 2 returns nil")
+    func testFrameLengthTwo() {
+        var data = Data()
+        data.appendUInt32(2)
+        data.append(Data(repeating: 0x00, count: 5))
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with length = 4 is minimal valid frame with empty payload")
+    func testFrameLengthFourMinimal() {
+        var data = Data()
+        data.appendUInt32(4) // just the code
+        data.appendUInt32(1) // code = 1
+
+        let result = MessageParser.parseFrame(from: data)
+        #expect(result != nil)
+        #expect(result?.frame.code == 1)
+        #expect(result?.frame.payload.isEmpty == true)
+        #expect(result?.consumed == 8)
+    }
+
+    @Test("Frame with length = maxMessageSize but insufficient data returns nil")
+    func testFrameMaxMessageSizeBoundary() {
+        var data = Data()
+        data.appendUInt32(MessageParser.maxMessageSize) // 100_000_000
+        data.appendUInt32(1) // Only 4 bytes of payload
+
+        // data.count < 4 + maxMessageSize → nil
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with length = maxMessageSize + 1 exceeds limit")
+    func testFrameExceedsMaxMessageSize() {
+        var data = Data()
+        data.appendUInt32(MessageParser.maxMessageSize + 1)
+        data.appendUInt32(1)
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Frame with only 7 bytes returns nil (need 8 minimum)")
+    func testFrameSevenBytes() {
+        let data = Data([0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00])
+        #expect(data.count == 7)
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    @Test("Multiple frames in buffer, second one truncated")
+    func testMultipleFramesSecondTruncated() {
+        var data = Data()
+        // First frame: length=4, code=1
+        data.appendUInt32(4)
+        data.appendUInt32(1)
+        // Second frame: length=100 but only 4 bytes of payload
+        data.appendUInt32(100)
+        data.appendUInt32(2)
+
+        // First frame parses fine
+        let result1 = MessageParser.parseFrame(from: data)
+        #expect(result1 != nil)
+        #expect(result1?.frame.code == 1)
+        #expect(result1?.consumed == 8)
+
+        // Second frame (from remaining data) fails
+        let remaining = Data(data.dropFirst(8))
+        #expect(MessageParser.parseFrame(from: remaining) == nil)
+    }
+
+    @Test("Frame with entirely zero bytes returns nil (length=0)")
+    func testFrameAllZeros() {
+        let data = Data(repeating: 0x00, count: 8)
+        #expect(MessageParser.parseFrame(from: data) == nil)
+    }
+
+    // MARK: - 3. Login Response Parsing Failures
+
+    @Test("Login success but no greeting string")
+    func testLoginSuccessNoGreeting() {
+        var payload = Data()
+        payload.appendBool(true) // success
+        // No greeting
+        #expect(MessageParser.parseLoginResponse(payload) == nil)
+    }
+
+    @Test("Login success with greeting but no IP field")
+    func testLoginSuccessNoIP() {
+        var payload = Data()
+        payload.appendBool(true)
+        payload.appendString("Welcome!")
+        // No IP
+        #expect(MessageParser.parseLoginResponse(payload) == nil)
+    }
+
+    @Test("Login success with greeting and IP but truncated hash")
+    func testLoginSuccessTruncatedHash() {
+        var payload = Data()
+        payload.appendBool(true)
+        payload.appendString("Welcome!")
+        payload.appendUInt32(0x0A0B0C0D) // IP
+        // Hash length claims 100 bytes but none follow
+        payload.appendUInt32(100)
+
+        // Should still succeed — hash is optional
+        let result = MessageParser.parseLoginResponse(payload)
+        switch result {
+        case .success(let greeting, let ip, let hash):
+            #expect(greeting == "Welcome!")
+            #expect(ip == "10.11.12.13")
+            #expect(hash == nil)
+        default:
+            Issue.record("Expected success with nil hash")
+        }
+    }
+
+    @Test("Login failure but no reason string returns Unknown error")
+    func testLoginFailureNoReason() {
+        var payload = Data()
+        payload.appendBool(false)
+        // No reason string
+
+        let result = MessageParser.parseLoginResponse(payload)
+        switch result {
+        case .failure(let reason):
+            #expect(reason == "Unknown error")
+        default:
+            Issue.record("Expected failure with Unknown error")
+        }
+    }
+
+    @Test("Login with just success byte returns nil")
+    func testLoginJustSuccessByte() {
+        let payload = Data([0x01])
+        #expect(MessageParser.parseLoginResponse(payload) == nil)
+    }
+
+    @Test("Login payload 0x00 with no reason defaults to Unknown error")
+    func testLoginJustFailureByte() {
+        let payload = Data([0x00])
+        let result = MessageParser.parseLoginResponse(payload)
+        switch result {
+        case .failure(let reason):
+            #expect(reason == "Unknown error")
+        default:
+            Issue.record("Expected failure with Unknown error")
+        }
+    }
+
+    // MARK: - 4. Room List Parsing Failures
+
+    @Test("Room count = 5 but only 3 room names provided")
+    func testRoomListTruncatedNames() {
+        var payload = Data()
+        payload.appendUInt32(5)
+        payload.appendString("room1")
+        payload.appendString("room2")
+        payload.appendString("room3")
+        // Missing room4 and room5
+
+        #expect(MessageParser.parseRoomList(payload) == nil)
+    }
+
+    @Test("Room count exceeds maxItemCount")
+    func testRoomListExceedsMaxItemCount() {
+        var payload = Data()
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseRoomList(payload) == nil)
+    }
+
+    @Test("Room count at exactly maxItemCount passes limit check")
+    func testRoomListAtMaxItemCount() {
+        var payload = Data()
+        payload.appendUInt32(MessageParser.maxItemCount) // Exactly at limit
+        // Payload won't have enough data, but the limit check passes
+        // It will fail later trying to read room names
+        #expect(MessageParser.parseRoomList(payload) == nil)
+    }
+
+    @Test("Room names parsed but userCountsCount is missing")
+    func testRoomListMissingUserCountsCount() {
+        var payload = Data()
+        payload.appendUInt32(2)
+        payload.appendString("room1")
+        payload.appendString("room2")
+        // No userCountsCount field
+
+        #expect(MessageParser.parseRoomList(payload) == nil)
+    }
+
+    @Test("Mismatch: 5 room names but only 2 user counts uses min")
+    func testRoomListMismatchedCounts() {
+        var payload = Data()
+        payload.appendUInt32(5)
+        payload.appendString("room1")
+        payload.appendString("room2")
+        payload.appendString("room3")
+        payload.appendString("room4")
+        payload.appendString("room5")
+        payload.appendUInt32(2) // only 2 user counts
+        payload.appendUInt32(10)
+        payload.appendUInt32(20)
+
+        let result = MessageParser.parseRoomList(payload)
+        #expect(result != nil)
+        #expect(result?.count == 2)
+        #expect(result?[0].name == "room1")
+        #expect(result?[0].userCount == 10)
+        #expect(result?[1].name == "room2")
+        #expect(result?[1].userCount == 20)
+    }
+
+    @Test("Room count = 0 returns empty array")
+    func testRoomListZeroRooms() {
+        var payload = Data()
+        payload.appendUInt32(0) // no rooms
+        payload.appendUInt32(0) // no user counts
+
+        let result = MessageParser.parseRoomList(payload)
+        #expect(result != nil)
+        #expect(result?.isEmpty == true)
+    }
+
+    @Test("Room name with length field pointing past end of data")
+    func testRoomListNameLengthOverflow() {
+        var payload = Data()
+        payload.appendUInt32(1) // 1 room
+        payload.appendUInt32(9999) // room name claims 9999 bytes
+        // No actual string data
+
+        #expect(MessageParser.parseRoomList(payload) == nil)
+    }
+
+    // MARK: - 5. Search Reply Parsing Failures
+
+    @Test("Search reply with no username")
+    func testSearchReplyNoUsername() {
+        let payload = Data()
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with username but no token")
+    func testSearchReplyNoToken() {
+        var payload = Data()
+        payload.appendString("user1")
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with token but no file count")
+    func testSearchReplyNoFileCount() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with file count exceeding maxItemCount")
+    func testSearchReplyFileCountExceedsLimit() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply file entry truncated mid-filename")
+    func testSearchReplyTruncatedFilename() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1) // 1 file
+        payload.appendUInt8(1) // code byte
+        payload.appendUInt32(100) // filename length = 100
+        payload.append(Data([0x41, 0x42])) // only 2 bytes
+
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply file entry truncated at size field (only 4 of 8 bytes)")
+    func testSearchReplyTruncatedSize() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1)
+        payload.appendUInt8(1)
+        payload.appendString("test.mp3")
+        payload.append(Data([0x01, 0x02, 0x03, 0x04])) // 4 of 8 bytes for UInt64
+
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with attribute count exceeding maxAttributeCount")
+    func testSearchReplyAttrCountExceedsLimit() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1)
+        payload.appendUInt8(1)
+        payload.appendString("test.mp3")
+        payload.appendUInt64(1024)
+        payload.appendString("mp3")
+        payload.appendUInt32(MessageParser.maxAttributeCount + 1)
+
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with attribute entry truncated (type present, value missing)")
+    func testSearchReplyTruncatedAttribute() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1)
+        payload.appendUInt8(1)
+        payload.appendString("test.mp3")
+        payload.appendUInt64(1024)
+        payload.appendString("mp3")
+        payload.appendUInt32(1) // 1 attribute
+        payload.appendUInt32(0) // attr type
+        // Missing attr value
+
+        #expect(MessageParser.parseSearchReply(payload) == nil)
+    }
+
+    @Test("Search reply with private files count exceeding limit still returns public files")
+    func testSearchReplyInvalidPrivateCount() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1) // 1 public file
+        payload.appendUInt8(1)
+        payload.appendString("test.mp3")
+        payload.appendUInt64(1024)
+        payload.appendString("mp3")
+        payload.appendUInt32(0) // no attributes
+        payload.appendBool(true) // freeSlots
+        payload.appendUInt32(100) // uploadSpeed
+        payload.appendUInt32(0) // queueLength
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(MessageParser.maxItemCount + 1) // exceeds limit
+
+        let result = MessageParser.parseSearchReply(payload)
+        #expect(result != nil)
+        #expect(result?.files.count == 1)
+        #expect(result?.files[0].filename == "test.mp3")
+        #expect(result?.files[0].isPrivate == false)
+    }
+
+    @Test("Search reply with valid public files but corrupted private files returns public files")
+    func testSearchReplyCorruptedPrivateFiles() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        payload.appendUInt32(1)
+        payload.appendUInt8(1)
+        payload.appendString("public.mp3")
+        payload.appendUInt64(2048)
+        payload.appendString("mp3")
+        payload.appendUInt32(0)
+        payload.appendBool(true)
+        payload.appendUInt32(100)
+        payload.appendUInt32(0)
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(2) // claims 2 private files
+        // But only garbage follows
+        payload.append(Data([0xFF, 0xFF]))
+
+        let result = MessageParser.parseSearchReply(payload)
+        #expect(result != nil)
+        #expect(result?.files.count == 1)
+        #expect(result?.files[0].filename == "public.mp3")
+    }
+
+    // MARK: - 6. Transfer Request Parsing Failures
+
+    @Test("Transfer request payload too short (< 12 bytes)")
+    func testTransferRequestTooShort() {
+        let payload = Data([0x00, 0x00, 0x00, 0x00, 0x01, 0x02])
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
+    }
+
+    @Test("Transfer request with invalid direction value (255)")
+    func testTransferRequestInvalidDirection() {
+        var payload = Data()
+        payload.appendUInt32(255) // Invalid direction (only 0 and 1 valid)
+        payload.appendUInt32(12345)
+        payload.appendString("test.mp3")
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
+    }
+
+    @Test("Transfer request upload direction but not enough bytes for fileSize")
+    func testTransferRequestUploadMissingFileSize() {
+        var payload = Data()
+        payload.appendUInt32(1) // upload
+        payload.appendUInt32(12345)
+        payload.appendString("test.mp3")
+        // No fileSize bytes
+
+        let result = MessageParser.parseTransferRequest(payload)
+        #expect(result != nil)
+        #expect(result?.direction == .upload)
+        #expect(result?.fileSize == nil) // Missing but not fatal
+    }
+
+    @Test("Transfer request download direction succeeds without fileSize")
+    func testTransferRequestDownloadNoFileSize() {
+        var payload = Data()
+        payload.appendUInt32(0) // download
+        payload.appendUInt32(12345)
+        payload.appendString("test.mp3")
+
+        let result = MessageParser.parseTransferRequest(payload)
+        #expect(result != nil)
+        #expect(result?.direction == .download)
+        #expect(result?.token == 12345)
+        #expect(result?.filename == "test.mp3")
+        #expect(result?.fileSize == nil)
+    }
+
+    @Test("Transfer request with truncated filename")
+    func testTransferRequestTruncatedFilename() {
+        var payload = Data()
+        payload.appendUInt32(0) // download
+        payload.appendUInt32(12345)
+        payload.appendUInt32(100) // filename length claims 100 bytes
+        payload.append(Data([0x41, 0x42])) // only 2 bytes
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
+    }
+
+    @Test("Transfer request with direction > 255 stored in UInt32")
+    func testTransferRequestLargeDirection() {
+        var payload = Data()
+        payload.appendUInt32(256) // Doesn't fit in UInt8
+        payload.appendUInt32(12345)
+        payload.appendString("test.mp3")
+        // Should return nil, not crash
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
+    }
+
+    // MARK: - 7. ConnectToPeer Parsing Failures
+
+    @Test("ConnectToPeer with missing username")
+    func testConnectToPeerNoUsername() {
+        let payload = Data()
+        #expect(MessageParser.parseConnectToPeer(payload) == nil)
+    }
+
+    @Test("ConnectToPeer with username but no connection type")
+    func testConnectToPeerNoType() {
+        var payload = Data()
+        payload.appendString("user1")
+        #expect(MessageParser.parseConnectToPeer(payload) == nil)
+    }
+
+    @Test("ConnectToPeer missing IP/port after type")
+    func testConnectToPeerNoIPPort() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendString("P")
+        #expect(MessageParser.parseConnectToPeer(payload) == nil)
+    }
+
+    @Test("ConnectToPeer missing token after port")
+    func testConnectToPeerNoToken() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendString("P")
+        payload.appendUInt32(0x0A0B0C0D) // IP
+        payload.appendUInt32(2234) // port
+        // No token
+        #expect(MessageParser.parseConnectToPeer(payload) == nil)
+    }
+
+    // MARK: - 8. Private Message Parsing Failures
+
+    @Test("Private message with missing message ID")
+    func testPrivateMessageNoID() {
+        let payload = Data()
+        #expect(MessageParser.parsePrivateMessage(payload) == nil)
+    }
+
+    @Test("Private message with ID + timestamp but no username")
+    func testPrivateMessageNoUsername() {
+        var payload = Data()
+        payload.appendUInt32(1) // ID
+        payload.appendUInt32(1704067200) // timestamp
+        #expect(MessageParser.parsePrivateMessage(payload) == nil)
+    }
+
+    @Test("Private message with ID + timestamp + username but no message body")
+    func testPrivateMessageNoBody() {
+        var payload = Data()
+        payload.appendUInt32(1)
+        payload.appendUInt32(1704067200)
+        payload.appendString("sender")
+        #expect(MessageParser.parsePrivateMessage(payload) == nil)
+    }
+
+    @Test("Private message with all fields but missing isAdmin byte defaults to false")
+    func testPrivateMessageNoAdminByte() {
+        var payload = Data()
+        payload.appendUInt32(1)
+        payload.appendUInt32(1704067200)
+        payload.appendString("sender")
+        payload.appendString("Hello!")
+        // No isAdmin byte
+
+        let result = MessageParser.parsePrivateMessage(payload)
+        #expect(result != nil)
+        #expect(result?.isAdmin == false)
+    }
+
+    // MARK: - 9. Chat Room Message Parsing Failures
+
+    @Test("Chat room message with missing room name")
+    func testChatRoomNoRoomName() {
+        let payload = Data()
+        #expect(MessageParser.parseSayInChatRoom(payload) == nil)
+    }
+
+    @Test("Chat room message with room name but no username")
+    func testChatRoomNoUsername() {
+        var payload = Data()
+        payload.appendString("room1")
+        #expect(MessageParser.parseSayInChatRoom(payload) == nil)
+    }
+
+    @Test("Chat room message with room name + username but no message")
+    func testChatRoomNoMessage() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendString("user1")
+        #expect(MessageParser.parseSayInChatRoom(payload) == nil)
+    }
+
+    // MARK: - 10. UserStatus Parsing Failures
+
+    @Test("UserStatus with missing username")
+    func testUserStatusNoUsername() {
+        let payload = Data()
+        #expect(MessageParser.parseGetUserStatus(payload) == nil)
+    }
+
+    @Test("UserStatus with username but no status value")
+    func testUserStatusNoStatus() {
+        var payload = Data()
+        payload.appendString("user1")
+        #expect(MessageParser.parseGetUserStatus(payload) == nil)
+    }
+
+    @Test("UserStatus with unknown raw value defaults to offline")
+    func testUserStatusUnknownValue() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(99) // Unknown status
+
+        let result = MessageParser.parseGetUserStatus(payload)
+        #expect(result != nil)
+        #expect(result?.status == .offline)
+    }
+
+    @Test("UserStatus with missing privileged byte defaults to false")
+    func testUserStatusNoPrivilegedByte() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(2) // online
+        // No privileged byte
+
+        let result = MessageParser.parseGetUserStatus(payload)
+        #expect(result != nil)
+        #expect(result?.status == .online)
+        #expect(result?.privileged == false)
+    }
+
+    // MARK: - 11. Message Builder Edge Cases
+
+    @Test("Build login message with empty username and password")
+    func testBuildLoginEmptyCredentials() {
+        let message = MessageBuilder.loginMessage(username: "", password: "")
+
+        // Should not crash, should produce a valid frame
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+        #expect(frame?.frame.code == ServerMessageCode.login.rawValue)
+    }
+
+    @Test("wrapMessage produces correct length prefix for ping")
+    func testWrapMessageCorrectLengthPing() {
+        let message = MessageBuilder.pingMessage()
+
+        // Ping: length prefix (4 bytes) + code 32 (4 bytes) = 8 bytes total
+        #expect(message.count == 8)
+        #expect(message.readUInt32(at: 0) == 4) // length = 4
+        #expect(message.readUInt32(at: 4) == ServerMessageCode.ping.rawValue)
+    }
+
+    @Test("wrapMessage produces correct length for known payload size")
+    func testWrapMessageCorrectLengthWithPayload() {
+        // setListenPort: code(4) + port(4) = 8 bytes payload
+        let message = MessageBuilder.setListenPortMessage(port: 2234)
+        #expect(message.count == 12) // 4 (length prefix) + 8 (payload)
+        #expect(message.readUInt32(at: 0) == 8) // length field
+    }
+
+    @Test("Build transferRequest with download direction and nil fileSize omits size")
+    func testBuildTransferRequestDownloadNoSize() {
+        let message = MessageBuilder.transferRequestMessage(
+            direction: .download,
+            token: 42,
+            filename: "test.mp3"
+        )
+
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+
+        let parsed = MessageParser.parseTransferRequest(frame!.frame.payload)
+        #expect(parsed != nil)
+        #expect(parsed?.direction == .download)
+        #expect(parsed?.token == 42)
+        #expect(parsed?.filename == "test.mp3")
+        #expect(parsed?.fileSize == nil)
+    }
+
+    @Test("Build transferRequest with upload direction includes fileSize")
+    func testBuildTransferRequestUploadWithSize() {
+        let message = MessageBuilder.transferRequestMessage(
+            direction: .upload,
+            token: 42,
+            filename: "test.mp3",
+            fileSize: 1024
+        )
+
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+
+        let parsed = MessageParser.parseTransferRequest(frame!.frame.payload)
+        #expect(parsed != nil)
+        #expect(parsed?.direction == .upload)
+        #expect(parsed?.fileSize == 1024)
+    }
+
+    @Test("Build transferReply with allowed=false and no reason")
+    func testBuildTransferReplyDeniedNoReason() {
+        let message = MessageBuilder.transferReplyMessage(
+            token: 42,
+            allowed: false,
+            reason: nil
+        )
+
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+        #expect(frame?.frame.code == UInt32(PeerMessageCode.transferReply.rawValue))
+
+        // Payload: token(4) + allowed(1) = 5 bytes minimum
+        let payload = frame!.frame.payload
+        #expect(payload.readUInt32(at: 0) == 42)
+        #expect(payload.readBool(at: 4) == false)
+    }
+
+    @Test("Build transferReply with allowed=true and fileSize")
+    func testBuildTransferReplyAllowedWithSize() {
+        let message = MessageBuilder.transferReplyMessage(
+            token: 42,
+            allowed: true,
+            fileSize: 1024
+        )
+
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+
+        let payload = frame!.frame.payload
+        #expect(payload.readUInt32(at: 0) == 42)
+        #expect(payload.readBool(at: 4) == true)
+        #expect(payload.readUInt64(at: 5) == 1024)
+    }
+}
