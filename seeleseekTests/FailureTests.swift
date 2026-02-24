@@ -842,4 +842,754 @@ struct FailureTests {
         #expect(payload.readBool(at: 4) == true)
         #expect(payload.readUInt64(at: 5) == 1024)
     }
+
+    // MARK: - 12. Decompression Edge Cases
+
+    @Test("Decompression rejects data shorter than 7 bytes")
+    func testDecompressDataTooShort() {
+        #expect(throws: DecompressionError.self) {
+            _ = try ZlibDecompression.decompress(Data([0x78, 0x9C, 0x00, 0x01, 0x02]))
+        }
+        #expect(throws: DecompressionError.self) {
+            _ = try ZlibDecompression.decompress(Data())
+        }
+    }
+
+    @Test("Decompression with valid zlib header but garbage deflate data")
+    func testDecompressGarbageDeflate() {
+        // Valid zlib header (0x78 0x9C) + garbage + fake Adler32
+        var data = Data([0x78, 0x9C])
+        data.append(Data(repeating: 0xFF, count: 10))
+        data.append(Data([0x00, 0x00, 0x00, 0x00])) // fake checksum
+        #expect(throws: DecompressionError.self) {
+            _ = try ZlibDecompression.decompress(data)
+        }
+    }
+
+    @Test("Decompression with non-zlib header falls back to raw deflate")
+    func testDecompressNonZlibHeader() {
+        // CMF byte with method != 8 triggers raw deflate path
+        var data = Data([0x00, 0x00]) // method = 0, not 8
+        data.append(Data(repeating: 0xFF, count: 10))
+        data.append(Data([0x00, 0x00, 0x00, 0x00]))
+        // Raw deflate fallback is best-effort: may throw or decode garbage.
+        // The important thing is it doesn't crash and, if it throws, it's a DecompressionError.
+        do {
+            _ = try ZlibDecompression.decompress(data)
+            // Fallback decoded something — acceptable
+        } catch is DecompressionError {
+            // Expected failure path
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+
+    @Test("Decompression round-trip succeeds with valid data")
+    func testDecompressRoundTrip() throws {
+        // Build a shares reply (which compresses internally) and decompress the payload
+        let message = MessageBuilder.sharesReplyMessage(files: [
+            (directory: "Music", files: [
+                (filename: "song.mp3", size: 1024, bitrate: 320, duration: 180)
+            ])
+        ])
+
+        // Extract compressed payload (skip length prefix + code)
+        let frame = MessageParser.parseFrame(from: message)
+        #expect(frame != nil)
+
+        let compressedPayload = frame!.frame.payload
+        let decompressed = try ZlibDecompression.decompress(compressedPayload)
+        #expect(decompressed.count > compressedPayload.count)
+
+        // Verify decompressed data parses correctly
+        let parsed = MessageParser.parseSharesReply(decompressed)
+        #expect(parsed != nil)
+        #expect(parsed?.files.count == 1)
+    }
+
+    @Test("Raw deflate with garbage data throws")
+    func testRawDeflateGarbage() {
+        let garbage = Data(repeating: 0xAB, count: 20)
+        #expect(throws: DecompressionError.self) {
+            _ = try ZlibDecompression.decompressRawDeflate(garbage)
+        }
+    }
+
+    @Test("Raw deflate with empty data throws")
+    func testRawDeflateEmpty() {
+        #expect(throws: DecompressionError.self) {
+            _ = try ZlibDecompression.decompressRawDeflate(Data())
+        }
+    }
+
+    @Test("Decompression with exactly 7 bytes (minimum valid zlib)")
+    func testDecompressMinimumSize() {
+        // 2 header + 1 deflate + 4 checksum = 7 bytes minimum
+        let data = Data([0x78, 0x9C, 0x03, 0x00, 0x00, 0x00, 0x01])
+        // This is actually valid zlib for empty input
+        let result = try? ZlibDecompression.decompress(data)
+        // May or may not succeed depending on checksum, but shouldn't crash
+        _ = result
+    }
+
+    // MARK: - 13. SharesReply Parsing Failures
+
+    @Test("SharesReply with empty decompressed data")
+    func testSharesReplyEmpty() {
+        #expect(MessageParser.parseSharesReply(Data()) == nil)
+    }
+
+    @Test("SharesReply with dir count exceeding limit")
+    func testSharesReplyDirCountExceedsLimit() {
+        var payload = Data()
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseSharesReply(payload) == nil)
+    }
+
+    @Test("SharesReply with dir count but truncated dir name")
+    func testSharesReplyTruncatedDirName() {
+        var payload = Data()
+        payload.appendUInt32(1) // 1 directory
+        payload.appendUInt32(100) // dir name length = 100
+        // No actual dir name data
+        #expect(MessageParser.parseSharesReply(payload) == nil)
+    }
+
+    @Test("SharesReply with dir name + file count but truncated file entry")
+    func testSharesReplyTruncatedFile() {
+        var payload = Data()
+        payload.appendUInt32(1) // 1 directory
+        payload.appendString("Music")
+        payload.appendUInt32(1) // 1 file
+        payload.appendUInt8(1) // code byte
+        payload.appendUInt32(50) // filename length
+        // Truncated filename
+        #expect(MessageParser.parseSharesReply(payload) == nil)
+    }
+
+    @Test("SharesReply with file count exceeding limit")
+    func testSharesReplyFileCountExceedsLimit() {
+        var payload = Data()
+        payload.appendUInt32(1)
+        payload.appendString("Music")
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseSharesReply(payload) == nil)
+    }
+
+    @Test("SharesReply with zero dirs returns empty file list")
+    func testSharesReplyZeroDirs() {
+        var payload = Data()
+        payload.appendUInt32(0)
+        let result = MessageParser.parseSharesReply(payload)
+        #expect(result != nil)
+        #expect(result?.files.isEmpty == true)
+    }
+
+    @Test("SharesReply with valid public + corrupted private still returns public files")
+    func testSharesReplyCorruptedPrivate() {
+        var payload = Data()
+        // 1 directory with 1 file
+        payload.appendUInt32(1)
+        payload.appendString("Music")
+        payload.appendUInt32(1)
+        payload.appendUInt8(1) // code
+        payload.appendString("song.mp3")
+        payload.appendUInt64(1024)
+        payload.appendString("mp3")
+        payload.appendUInt32(0) // no attrs
+        // Unknown uint32
+        payload.appendUInt32(0)
+        // Private dirs: count = 2 but garbage follows
+        payload.appendUInt32(2)
+        payload.append(Data([0xFF, 0xFF]))
+
+        let result = MessageParser.parseSharesReply(payload)
+        #expect(result != nil)
+        #expect(result?.files.count == 1)
+        #expect(result?.files[0].filename == "Music\\song.mp3")
+    }
+
+    // MARK: - 14. FolderContentsReply Parsing Failures
+
+    @Test("FolderContentsReply with missing token")
+    func testFolderContentsReplyNoToken() {
+        #expect(MessageParser.parseFolderContentsReply(Data()) == nil)
+    }
+
+    @Test("FolderContentsReply with token but missing folder name")
+    func testFolderContentsReplyNoFolder() {
+        var payload = Data()
+        payload.appendUInt32(12345) // token
+        #expect(MessageParser.parseFolderContentsReply(payload) == nil)
+    }
+
+    @Test("FolderContentsReply with folder but missing folder count")
+    func testFolderContentsReplyNoFolderCount() {
+        var payload = Data()
+        payload.appendUInt32(12345)
+        payload.appendString("Music\\Album")
+        #expect(MessageParser.parseFolderContentsReply(payload) == nil)
+    }
+
+    @Test("FolderContentsReply with folder count exceeding limit")
+    func testFolderContentsReplyFolderCountExceedsLimit() {
+        var payload = Data()
+        payload.appendUInt32(12345)
+        payload.appendString("Music")
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseFolderContentsReply(payload) == nil)
+    }
+
+    @Test("FolderContentsReply with truncated file entry")
+    func testFolderContentsReplyTruncatedFile() {
+        var payload = Data()
+        payload.appendUInt32(12345)
+        payload.appendString("Music")
+        payload.appendUInt32(1) // 1 folder
+        payload.appendString("Music") // dir name
+        payload.appendUInt32(1) // 1 file
+        payload.appendUInt8(1) // code
+        payload.appendString("song.mp3") // filename
+        // Missing size (UInt64)
+
+        let result = MessageParser.parseFolderContentsReply(payload)
+        #expect(result != nil)
+        #expect(result?.files.isEmpty == true) // file parse broke, no files added
+    }
+
+    // MARK: - 15. UserInfoReply Parsing Failures
+
+    @Test("UserInfoReply with empty data")
+    func testUserInfoReplyEmpty() {
+        #expect(MessageParser.parseUserInfoReply(Data()) == nil)
+    }
+
+    @Test("UserInfoReply with description but no hasPicture flag")
+    func testUserInfoReplyNoPictureFlag() {
+        var payload = Data()
+        payload.appendString("Hello, I share music!")
+        #expect(MessageParser.parseUserInfoReply(payload) == nil)
+    }
+
+    @Test("UserInfoReply with hasPicture=true but missing picture length")
+    func testUserInfoReplyNoPictureLength() {
+        var payload = Data()
+        payload.appendString("Hello!")
+        payload.appendBool(true) // has picture
+        // No picture length
+        #expect(MessageParser.parseUserInfoReply(payload) == nil)
+    }
+
+    @Test("UserInfoReply with hasPicture=true but picture data truncated")
+    func testUserInfoReplyTruncatedPicture() {
+        var payload = Data()
+        payload.appendString("Hello!")
+        payload.appendBool(true)
+        payload.appendUInt32(1000) // claims 1000 bytes
+        payload.append(Data(repeating: 0xFF, count: 10)) // only 10 bytes
+        #expect(MessageParser.parseUserInfoReply(payload) == nil)
+    }
+
+    @Test("UserInfoReply with hasPicture=false succeeds without picture data")
+    func testUserInfoReplyNoPicture() {
+        var payload = Data()
+        payload.appendString("Hello!")
+        payload.appendBool(false) // no picture
+        payload.appendUInt32(100) // totalUploads
+        payload.appendUInt32(5) // queueSize
+        payload.appendBool(true) // hasFreeSlots
+
+        let result = MessageParser.parseUserInfoReply(payload)
+        #expect(result != nil)
+        #expect(result?.description == "Hello!")
+        #expect(result?.hasPicture == false)
+        #expect(result?.pictureData == nil)
+        #expect(result?.totalUploads == 100)
+        #expect(result?.hasFreeSlots == true)
+    }
+
+    @Test("UserInfoReply with all fields present but missing hasFreeSlots")
+    func testUserInfoReplyNoFreeSlots() {
+        var payload = Data()
+        payload.appendString("Hello!")
+        payload.appendBool(false)
+        payload.appendUInt32(100)
+        payload.appendUInt32(5)
+        // Missing hasFreeSlots
+        #expect(MessageParser.parseUserInfoReply(payload) == nil)
+    }
+
+    // MARK: - 16. TransferReply Parsing Failures
+
+    @Test("TransferReply with empty data")
+    func testTransferReplyEmpty() {
+        #expect(MessageParser.parseTransferReply(Data()) == nil)
+    }
+
+    @Test("TransferReply with token but no allowed flag")
+    func testTransferReplyNoAllowed() {
+        var payload = Data()
+        payload.appendUInt32(42)
+        #expect(MessageParser.parseTransferReply(payload) == nil)
+    }
+
+    @Test("TransferReply with allowed=true but no fileSize")
+    func testTransferReplyAllowedNoSize() {
+        var payload = Data()
+        payload.appendUInt32(42)
+        payload.appendBool(true)
+        // No fileSize - optional field
+
+        let result = MessageParser.parseTransferReply(payload)
+        #expect(result != nil)
+        #expect(result?.token == 42)
+        #expect(result?.allowed == true)
+        #expect(result?.fileSize == nil)
+    }
+
+    @Test("TransferReply with allowed=false and reason string")
+    func testTransferReplyDeniedWithReason() {
+        var payload = Data()
+        payload.appendUInt32(42)
+        payload.appendBool(false)
+        payload.appendString("Queued")
+
+        let result = MessageParser.parseTransferReply(payload)
+        #expect(result != nil)
+        #expect(result?.allowed == false)
+        #expect(result?.reason == "Queued")
+        #expect(result?.fileSize == nil)
+    }
+
+    // MARK: - 17. JoinRoom Parsing Failures
+
+    @Test("JoinRoom with missing room name")
+    func testJoinRoomNoRoomName() {
+        #expect(MessageParser.parseJoinRoom(Data()) == nil)
+    }
+
+    @Test("JoinRoom with room name but no user count")
+    func testJoinRoomNoUserCount() {
+        var payload = Data()
+        payload.appendString("room1")
+        #expect(MessageParser.parseJoinRoom(payload) == nil)
+    }
+
+    @Test("JoinRoom with user count exceeding limit")
+    func testJoinRoomUserCountExceedsLimit() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseJoinRoom(payload) == nil)
+    }
+
+    @Test("JoinRoom with users but status section overflow")
+    func testJoinRoomStatusSectionOverflow() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(2)
+        payload.appendString("user1")
+        payload.appendString("user2")
+        // Status section: count = 2, needs 8 bytes of data
+        payload.appendUInt32(2)
+        payload.appendUInt32(2) // status for user1
+        // Missing status for user2 (need 4 more bytes)
+
+        #expect(MessageParser.parseJoinRoom(payload) == nil)
+    }
+
+    @Test("JoinRoom with zero users succeeds")
+    func testJoinRoomZeroUsers() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(0) // no users
+
+        let result = MessageParser.parseJoinRoom(payload)
+        #expect(result != nil)
+        #expect(result?.roomName == "room1")
+        #expect(result?.users.isEmpty == true)
+    }
+
+    @Test("JoinRoom with status count exceeding limit")
+    func testJoinRoomStatusCountExceedsLimit() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(0) // 0 users
+        payload.appendUInt32(MessageParser.maxItemCount + 1) // status count exceeds
+        #expect(MessageParser.parseJoinRoom(payload) == nil)
+    }
+
+    // MARK: - 18. WatchUser Parsing Failures
+
+    @Test("WatchUser with missing username")
+    func testWatchUserNoUsername() {
+        #expect(MessageParser.parseWatchUser(Data()) == nil)
+    }
+
+    @Test("WatchUser with username but no exists flag")
+    func testWatchUserNoExists() {
+        var payload = Data()
+        payload.appendString("user1")
+        #expect(MessageParser.parseWatchUser(payload) == nil)
+    }
+
+    @Test("WatchUser with exists=false returns early with offline status")
+    func testWatchUserNotExists() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendBool(false)
+
+        let result = MessageParser.parseWatchUser(payload)
+        #expect(result != nil)
+        #expect(result?.username == "user1")
+        #expect(result?.exists == false)
+        #expect(result?.status == nil)
+    }
+
+    @Test("WatchUser with exists=true but missing status field")
+    func testWatchUserExistsNoStatus() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendBool(true)
+        // No status field
+        #expect(MessageParser.parseWatchUser(payload) == nil)
+    }
+
+    @Test("WatchUser with exists=true but truncated at dirs field")
+    func testWatchUserTruncatedAtDirs() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendBool(true)
+        payload.appendUInt32(2) // status (online)
+        payload.appendUInt32(100) // avgSpeed
+        payload.appendUInt32(50) // uploadNum
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(1000) // files
+        // Missing dirs
+        #expect(MessageParser.parseWatchUser(payload) == nil)
+    }
+
+    @Test("WatchUser with exists=true and all fields present")
+    func testWatchUserComplete() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendBool(true)
+        payload.appendUInt32(2) // online
+        payload.appendUInt32(100) // avgSpeed
+        payload.appendUInt32(50) // uploadNum
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(1000) // files
+        payload.appendUInt32(20) // dirs
+
+        let result = MessageParser.parseWatchUser(payload)
+        #expect(result != nil)
+        #expect(result?.exists == true)
+        #expect(result?.status == .online)
+        #expect(result?.avgSpeed == 100)
+        #expect(result?.files == 1000)
+        #expect(result?.dirs == 20)
+    }
+
+    // MARK: - 19. PossibleParents Parsing Failures
+
+    @Test("PossibleParents with missing count")
+    func testPossibleParentsNoCount() {
+        #expect(MessageParser.parsePossibleParents(Data()) == nil)
+    }
+
+    @Test("PossibleParents with count but truncated entries")
+    func testPossibleParentsTruncated() {
+        var payload = Data()
+        payload.appendUInt32(2) // 2 parents
+        payload.appendString("parent1")
+        payload.appendUInt32(0x0A0B0C0D) // IP
+        // Missing port for parent1
+        let result = MessageParser.parsePossibleParents(payload)
+        #expect(result != nil)
+        #expect(result?.isEmpty == true) // broke before completing first entry
+    }
+
+    @Test("PossibleParents with count exceeding limit")
+    func testPossibleParentsCountExceedsLimit() {
+        var payload = Data()
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parsePossibleParents(payload) == nil)
+    }
+
+    @Test("PossibleParents with zero count returns empty array")
+    func testPossibleParentsZero() {
+        var payload = Data()
+        payload.appendUInt32(0)
+        let result = MessageParser.parsePossibleParents(payload)
+        #expect(result != nil)
+        #expect(result?.isEmpty == true)
+    }
+
+    // MARK: - 20. Recommendations Parsing Failures
+
+    @Test("Recommendations with missing rec count")
+    func testRecommendationsNoCount() {
+        #expect(MessageParser.parseRecommendations(Data()) == nil)
+    }
+
+    @Test("Recommendations with rec count but truncated items")
+    func testRecommendationsTruncatedItems() {
+        var payload = Data()
+        payload.appendUInt32(2) // 2 recommendations
+        payload.appendString("jazz")
+        // Missing score for "jazz"
+
+        let result = MessageParser.parseRecommendations(payload)
+        // Recs truncated (loop breaks), then unrec count missing → returns with empty unrecs
+        #expect(result != nil)
+        #expect(result?.recommendations.isEmpty == true)
+    }
+
+    @Test("Recommendations with recs but missing unrec count returns recs only")
+    func testRecommendationsNoUnrecCount() {
+        var payload = Data()
+        payload.appendUInt32(1)
+        payload.appendString("jazz")
+        payload.appendInt32(10)
+        // No unrecommendation count
+
+        let result = MessageParser.parseRecommendations(payload)
+        #expect(result != nil)
+        #expect(result?.recommendations.count == 1)
+        #expect(result?.recommendations[0].item == "jazz")
+        #expect(result?.unrecommendations.isEmpty == true)
+    }
+
+    @Test("Recommendations with rec count exceeding limit")
+    func testRecommendationsCountExceedsLimit() {
+        var payload = Data()
+        payload.appendUInt32(MessageParser.maxItemCount + 1)
+        #expect(MessageParser.parseRecommendations(payload) == nil)
+    }
+
+    // MARK: - 21. UserInterests Parsing Failures
+
+    @Test("UserInterests with missing username")
+    func testUserInterestsNoUsername() {
+        #expect(MessageParser.parseUserInterests(Data()) == nil)
+    }
+
+    @Test("UserInterests with username + liked count but truncated likes")
+    func testUserInterestsTruncatedLikes() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(3) // 3 likes
+        payload.appendString("jazz")
+        // Only 1 of 3 likes, then hated count missing
+
+        #expect(MessageParser.parseUserInterests(payload) == nil)
+    }
+
+    @Test("UserInterests with likes parsed but missing hated count")
+    func testUserInterestsNoHatedCount() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(1)
+        payload.appendString("jazz")
+        // No hated count
+        #expect(MessageParser.parseUserInterests(payload) == nil)
+    }
+
+    // MARK: - 22. SimilarUsers Parsing Failures
+
+    @Test("SimilarUsers with missing user count")
+    func testSimilarUsersNoCount() {
+        #expect(MessageParser.parseSimilarUsers(Data()) == nil)
+    }
+
+    @Test("SimilarUsers with count but truncated entries")
+    func testSimilarUsersTruncated() {
+        var payload = Data()
+        payload.appendUInt32(2)
+        payload.appendString("user1")
+        // Missing rating for user1
+        let result = MessageParser.parseSimilarUsers(payload)
+        #expect(result != nil)
+        #expect(result?.isEmpty == true)
+    }
+
+    @Test("SimilarUsers with zero count returns empty")
+    func testSimilarUsersZero() {
+        var payload = Data()
+        payload.appendUInt32(0)
+        let result = MessageParser.parseSimilarUsers(payload)
+        #expect(result != nil)
+        #expect(result?.isEmpty == true)
+    }
+
+    // MARK: - 23. UserStats Parsing Failures
+
+    @Test("UserStats with missing username")
+    func testUserStatsNoUsername() {
+        #expect(MessageParser.parseGetUserStats(Data()) == nil)
+    }
+
+    @Test("UserStats with username but truncated stats")
+    func testUserStatsTruncated() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(100) // avgSpeed
+        // Missing uploadNum, unknown, files, dirs
+        #expect(MessageParser.parseGetUserStats(payload) == nil)
+    }
+
+    @Test("UserStats with all fields present")
+    func testUserStatsComplete() {
+        var payload = Data()
+        payload.appendString("user1")
+        payload.appendUInt32(100) // avgSpeed
+        payload.appendUInt32(50) // uploadNum
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(1000) // files
+        payload.appendUInt32(20) // dirs
+
+        let result = MessageParser.parseGetUserStats(payload)
+        #expect(result != nil)
+        #expect(result?.username == "user1")
+        #expect(result?.avgSpeed == 100)
+        #expect(result?.files == 1000)
+    }
+
+    // MARK: - 24. RoomTickerState Parsing Failures
+
+    @Test("RoomTickerState with missing room name")
+    func testRoomTickerStateNoRoom() {
+        #expect(MessageParser.parseRoomTickerState(Data()) == nil)
+    }
+
+    @Test("RoomTickerState with room but missing ticker count")
+    func testRoomTickerStateNoCount() {
+        var payload = Data()
+        payload.appendString("room1")
+        #expect(MessageParser.parseRoomTickerState(payload) == nil)
+    }
+
+    @Test("RoomTickerState with truncated ticker entries")
+    func testRoomTickerStateTruncated() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(2) // 2 tickers
+        payload.appendString("user1")
+        // Missing ticker string for user1
+
+        let result = MessageParser.parseRoomTickerState(payload)
+        #expect(result != nil)
+        #expect(result?.tickers.isEmpty == true)
+    }
+
+    @Test("RoomTickerState with zero tickers returns empty")
+    func testRoomTickerStateZero() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(0)
+
+        let result = MessageParser.parseRoomTickerState(payload)
+        #expect(result != nil)
+        #expect(result?.room == "room1")
+        #expect(result?.tickers.isEmpty == true)
+    }
+
+    // MARK: - 25. RoomMembers Parsing Failures
+
+    @Test("RoomMembers with missing room name")
+    func testRoomMembersNoRoom() {
+        #expect(MessageParser.parseRoomMembers(Data()) == nil)
+    }
+
+    @Test("RoomMembers with room but missing member count")
+    func testRoomMembersNoCount() {
+        var payload = Data()
+        payload.appendString("room1")
+        #expect(MessageParser.parseRoomMembers(payload) == nil)
+    }
+
+    @Test("RoomMembers with count but truncated member names")
+    func testRoomMembersTruncated() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(3)
+        payload.appendString("user1")
+        // Only 1 of 3 members
+
+        let result = MessageParser.parseRoomMembers(payload)
+        #expect(result != nil)
+        #expect(result?.members.count == 1) // parsed 1 before break
+    }
+
+    @Test("RoomMembers with zero count returns empty")
+    func testRoomMembersZero() {
+        var payload = Data()
+        payload.appendString("room1")
+        payload.appendUInt32(0)
+
+        let result = MessageParser.parseRoomMembers(payload)
+        #expect(result != nil)
+        #expect(result?.room == "room1")
+        #expect(result?.members.isEmpty == true)
+    }
+
+    // MARK: - 26. ExcludedSearchPhrases Parsing Failures
+
+    @Test("ExcludedSearchPhrases with missing count")
+    func testExcludedSearchPhrasesNoCount() {
+        #expect(MessageParser.parseExcludedSearchPhrases(Data()) == nil)
+    }
+
+    @Test("ExcludedSearchPhrases with count but truncated phrases")
+    func testExcludedSearchPhrasesTruncated() {
+        var payload = Data()
+        payload.appendUInt32(3)
+        payload.appendString("phrase1")
+        // Only 1 of 3 phrases
+
+        let result = MessageParser.parseExcludedSearchPhrases(payload)
+        #expect(result != nil)
+        #expect(result?.count == 1)
+    }
+
+    // MARK: - 27. DistributedSearch Parsing Failures
+
+    @Test("DistributedSearch with missing unknown field")
+    func testDistributedSearchNoUnknown() {
+        #expect(MessageParser.parseDistributedSearch(Data()) == nil)
+    }
+
+    @Test("DistributedSearch with unknown + username but missing token")
+    func testDistributedSearchNoToken() {
+        var payload = Data()
+        payload.appendUInt32(0) // unknown
+        payload.appendString("user1")
+        // No token
+        #expect(MessageParser.parseDistributedSearch(payload) == nil)
+    }
+
+    @Test("DistributedSearch with token but missing query")
+    func testDistributedSearchNoQuery() {
+        var payload = Data()
+        payload.appendUInt32(0)
+        payload.appendString("user1")
+        payload.appendUInt32(12345)
+        // No query
+        #expect(MessageParser.parseDistributedSearch(payload) == nil)
+    }
+
+    @Test("DistributedSearch with all fields present")
+    func testDistributedSearchComplete() {
+        var payload = Data()
+        payload.appendUInt32(0)
+        payload.appendString("searcher")
+        payload.appendUInt32(99999)
+        payload.appendString("beatles")
+
+        let result = MessageParser.parseDistributedSearch(payload)
+        #expect(result != nil)
+        #expect(result?.username == "searcher")
+        #expect(result?.token == 99999)
+        #expect(result?.query == "beatles")
+    }
 }
