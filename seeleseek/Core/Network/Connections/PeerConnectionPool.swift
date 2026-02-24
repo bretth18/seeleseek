@@ -152,7 +152,7 @@ final class PeerConnectionPool {
 
     /// Check if an IP address is valid for peer connections
     /// Rejects multicast, broadcast, loopback, and other reserved addresses
-    private func isValidPeerIP(_ ip: String) -> Bool {
+    static func isValidPeerIP(_ ip: String) -> Bool {
         // Parse IP address into octets
         let octets = ip.split(separator: ".").compactMap { UInt8($0) }
         guard octets.count == 4 else { return false }
@@ -204,7 +204,7 @@ final class PeerConnectionPool {
     ///   - isIndirect: If true, this is an indirect connection (responding to ConnectToPeer) - don't send PeerInit
     func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false) async throws -> PeerConnection {
         // Validate IP address before attempting connection
-        guard isValidPeerIP(ip) else {
+        guard Self.isValidPeerIP(ip) else {
             logger.error("Invalid peer IP address: \(ip) for \(username)")
             logger.error("Invalid peer IP address: \(ip) (multicast/reserved) for \(username)")
             throw PeerConnectionError.invalidAddress

@@ -38,7 +38,7 @@ final class ServerMessageHandler {
             return
         }
 
-        let payload = data.safeSubdata(in: 8..<Int(messageLength + 4)) ?? Data()
+        let payload = data.safeSubdata(in: 8..<(Int(messageLength) + 4)) ?? Data()
 
         switch code {
         case .login:
@@ -731,6 +731,7 @@ final class ServerMessageHandler {
         var offset = 0
 
         guard let parentCount = data.readUInt32(at: offset) else { return }
+        guard parentCount <= maxItemCount else { return }
         offset += 4
 
         logger.info("Received \(parentCount) possible distributed parents")
@@ -1116,6 +1117,7 @@ final class ServerMessageHandler {
         var offset = 0
 
         guard let count = data.readUInt32(at: offset) else { return }
+        guard count <= maxItemCount else { return }
         offset += 4
 
         var phrases: [String] = []
@@ -1179,6 +1181,7 @@ final class ServerMessageHandler {
 
         // Recommendations
         guard let recCount = data.readUInt32(at: offset) else { return }
+        guard recCount <= maxItemCount else { return }
         offset += 4
 
         var recommendations: [(item: String, score: Int32)] = []
@@ -1192,6 +1195,7 @@ final class ServerMessageHandler {
 
         // Unrecommendations
         guard let unrecCount = data.readUInt32(at: offset) else { return }
+        guard unrecCount <= maxItemCount else { return }
         offset += 4
 
         var unrecommendations: [(item: String, score: Int32)] = []
@@ -1212,6 +1216,7 @@ final class ServerMessageHandler {
 
         // Global recommendations (same format as personal recommendations)
         guard let recCount = data.readUInt32(at: offset) else { return }
+        guard recCount <= maxItemCount else { return }
         offset += 4
 
         var recommendations: [(item: String, score: Int32)] = []
@@ -1225,6 +1230,7 @@ final class ServerMessageHandler {
 
         // Unrecommendations
         guard let unrecCount = data.readUInt32(at: offset) else { return }
+        guard unrecCount <= maxItemCount else { return }
         offset += 4
 
         var unrecommendations: [(item: String, score: Int32)] = []
@@ -1248,6 +1254,7 @@ final class ServerMessageHandler {
 
         // Liked interests
         guard let likedCount = data.readUInt32(at: offset) else { return }
+        guard likedCount <= maxItemCount else { return }
         offset += 4
 
         var likes: [String] = []
@@ -1259,6 +1266,7 @@ final class ServerMessageHandler {
 
         // Hated interests
         guard let hatedCount = data.readUInt32(at: offset) else { return }
+        guard hatedCount <= maxItemCount else { return }
         offset += 4
 
         var hates: [String] = []
@@ -1276,6 +1284,7 @@ final class ServerMessageHandler {
         var offset = 0
 
         guard let userCount = data.readUInt32(at: offset) else { return }
+        guard userCount <= maxItemCount else { return }
         offset += 4
 
         var users: [(username: String, rating: UInt32)] = []
@@ -1298,6 +1307,7 @@ final class ServerMessageHandler {
         offset += itemLen
 
         guard let recCount = data.readUInt32(at: offset) else { return }
+        guard recCount <= maxItemCount else { return }
         offset += 4
 
         var recommendations: [(item: String, score: Int32)] = []
@@ -1320,6 +1330,7 @@ final class ServerMessageHandler {
         offset += itemLen
 
         guard let userCount = data.readUInt32(at: offset) else { return }
+        guard userCount <= maxItemCount else { return }
         offset += 4
 
         var users: [String] = []
@@ -1381,6 +1392,7 @@ final class ServerMessageHandler {
         var offset = 0
 
         guard let userCount = data.readUInt32(at: offset) else { return }
+        guard userCount <= maxItemCount else { return }
         offset += 4
 
         var users: [String] = []
@@ -1403,6 +1415,7 @@ final class ServerMessageHandler {
         offset += roomLen
 
         guard let tickerCount = data.readUInt32(at: offset) else { return }
+        guard tickerCount <= maxItemCount else { return }
         offset += 4
 
         var tickers: [(username: String, ticker: String)] = []
@@ -1462,6 +1475,7 @@ final class ServerMessageHandler {
         offset += roomLen
 
         guard let memberCount = data.readUInt32(at: offset) else { return }
+        guard memberCount <= maxItemCount else { return }
         offset += 4
 
         var members: [String] = []
@@ -1518,6 +1532,7 @@ final class ServerMessageHandler {
         offset += roomLen
 
         guard let operatorCount = data.readUInt32(at: offset) else { return }
+        guard operatorCount <= maxItemCount else { return }
         offset += 4
 
         var operators: [String] = []
