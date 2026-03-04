@@ -28,6 +28,7 @@ struct StandardStatusDot: View {
         Circle()
             .fill(statusColor)
             .frame(width: size, height: size)
+            .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: status)
     }
 }
 

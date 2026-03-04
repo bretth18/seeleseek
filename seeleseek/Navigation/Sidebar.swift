@@ -82,6 +82,7 @@ struct Sidebar: View {
                 Circle()
                     .fill(appState.connection.connectionStatus.color.opacity(0.8))
                     .frame(width: 8, height: 8)
+                    .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: appState.connection.connectionStatus)
 
                 if appState.connection.connectionStatus == .connected,
                    let username = appState.connection.username {
@@ -138,6 +139,7 @@ struct SidebarRow: View {
                 if badgeCount > 0 {
                     Text("\(badgeCount)")
                         .font(SeeleTypography.badgeText)
+                        .contentTransition(.numericText())
                         .foregroundStyle(item == .chat ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
                         .padding(.horizontal, SeeleSpacing.xs)
                         .padding(.vertical, SeeleSpacing.xxs)
@@ -145,6 +147,7 @@ struct SidebarRow: View {
                             item == .chat ? SeeleColors.accent : SeeleColors.surfaceElevated,
                             in: Capsule()
                         )
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, SeeleSpacing.sm)
@@ -159,6 +162,8 @@ struct SidebarRow: View {
             )
         }
         .buttonStyle(.plain)
+        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isSelected)
+        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: badgeCount)
     }
 }
 

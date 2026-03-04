@@ -19,6 +19,7 @@ struct StandardProgressBar: View {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                     .fill(color)
                     .frame(width: max(0, geometry.size.width * min(progress, 1.0)))
+                    .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: progress)
             }
         }
         .frame(height: SeeleSpacing.progressBarHeight)

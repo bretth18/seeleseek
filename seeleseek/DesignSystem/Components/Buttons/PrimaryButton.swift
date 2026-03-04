@@ -43,6 +43,7 @@ struct PrimaryButton: View {
         .buttonStyle(.plain)
         .disabled(isLoading)
         .opacity(isLoading ? 0.7 : 1.0)
+        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isLoading)
     }
 }
 

@@ -18,6 +18,7 @@ struct ProgressIndicator: View {
                     RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS, style: .continuous)
                         .fill(SeeleColors.accent)
                         .frame(width: geometry.size.width * min(max(progress, 0), 1))
+                        .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: progress)
                 }
             }
             .frame(height: SeeleSpacing.progressBarHeight)

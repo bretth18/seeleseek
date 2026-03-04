@@ -23,11 +23,15 @@ struct StandardEmptyState: View {
         self.action = action
     }
 
+    @State private var appeared = false
+
     var body: some View {
         VStack(spacing: SeeleSpacing.lg) {
             Image(systemName: icon)
                 .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
+                .scaleEffect(appeared ? 1.0 : 0.8)
+                .opacity(appeared ? 1.0 : 0.0)
 
             VStack(spacing: SeeleSpacing.sm) {
                 Text(title)
@@ -40,6 +44,8 @@ struct StandardEmptyState: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 300)
             }
+            .opacity(appeared ? 1.0 : 0.0)
+            .offset(y: appeared ? 0 : 6)
 
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
@@ -48,6 +54,14 @@ struct StandardEmptyState: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            withAnimation(.easeOut(duration: SeeleSpacing.animationSlow)) {
+                appeared = true
+            }
+        }
+        .onDisappear {
+            appeared = false
+        }
     }
 }
 

@@ -8,25 +8,29 @@ struct DownloadStatusIcon: View {
     var isHovered: Bool = false
 
     var body: some View {
-        switch status {
-        case .transferring:
-            Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: size))
-                .foregroundStyle(SeeleColors.accent)
-                .symbolEffect(.pulse)
-        case .queued, .waiting, .connecting:
-            Image(systemName: "clock.fill")
-                .font(.system(size: size))
-                .foregroundStyle(SeeleColors.warning)
-        case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: size))
-                .foregroundStyle(SeeleColors.success)
-        case .failed, .cancelled, nil:
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: size))
-                .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
+        Group {
+            switch status {
+            case .transferring:
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: size))
+                    .foregroundStyle(SeeleColors.accent)
+                    .symbolEffect(.pulse)
+            case .queued, .waiting, .connecting:
+                Image(systemName: "clock.fill")
+                    .font(.system(size: size))
+                    .foregroundStyle(SeeleColors.warning)
+            case .completed:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: size))
+                    .foregroundStyle(SeeleColors.success)
+            case .failed, .cancelled, nil:
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: size))
+                    .foregroundStyle(isHovered ? SeeleColors.accent : SeeleColors.textSecondary)
+            }
         }
+        .contentTransition(.symbolEffect(.replace))
+        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: status)
     }
 
     /// Returns appropriate help text for the current status

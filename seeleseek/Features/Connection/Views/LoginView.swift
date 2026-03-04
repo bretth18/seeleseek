@@ -68,6 +68,7 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity)
                         .background(SeeleColors.error.opacity(0.15))
                         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
 
                     PrimaryButton(
@@ -82,6 +83,7 @@ struct LoginView: View {
                     .disabled(!appState.connection.isLoginValid)
                 }
                 .frame(maxWidth: 320)
+                .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: appState.connection.errorMessage != nil)
             }
             .padding(SeeleSpacing.xxl)
             .cardStyle()

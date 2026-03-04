@@ -153,8 +153,10 @@ struct TransferRow: View {
                 Image(systemName: transfer.status.icon)
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(transfer.statusColor)
+                    .contentTransition(.symbolEffect(.replace))
             }
         }
+        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: transfer.status)
     }
 
     private func revealInFinder() {

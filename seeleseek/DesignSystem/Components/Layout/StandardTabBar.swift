@@ -41,6 +41,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
                 if badgeCount > 0 {
                     Text("\(badgeCount)")
                         .font(SeeleTypography.badgeText)
+                        .contentTransition(.numericText())
                         .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
                         .padding(.horizontal, SeeleSpacing.xs)
                         .padding(.vertical, SeeleSpacing.xxs)
@@ -48,6 +49,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
                             isSelected ? SeeleColors.accent : SeeleColors.surfaceElevated,
                             in: Capsule()
                         )
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)

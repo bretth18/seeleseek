@@ -8,11 +8,13 @@ struct UnreadCountBadge: View {
         if count > 0 {
             Text("\(count)")
                 .font(SeeleTypography.caption)
+                .contentTransition(.numericText())
                 .foregroundStyle(SeeleColors.textOnAccent)
                 .padding(.horizontal, SeeleSpacing.rowVertical)
                 .padding(.vertical, SeeleSpacing.xxs)
                 .background(SeeleColors.accent)
                 .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
         }
     }
 }

@@ -60,20 +60,21 @@ struct ConnectionBadge: View {
         .padding(.vertical, SeeleSpacing.xs)
         .background(status.color.opacity(0.15))
         .clipShape(Capsule())
+        .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: status)
     }
 
     @ViewBuilder
     private var statusIndicator: some View {
-        if status == .connecting {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .scaleEffect(0.4)
-                .tint(status.color)
-                .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
+        if status == .connecting || status == .reconnecting {
+            Image(systemName: status.icon)
+                .font(.system(size: SeeleSpacing.iconSizeSmall - 2, weight: .medium))
+                .foregroundStyle(status.color)
+                .symbolEffect(.rotate, isActive: true)
         } else {
             Image(systemName: status.icon)
                 .font(.system(size: SeeleSpacing.iconSizeSmall - 2, weight: .medium))
                 .foregroundStyle(status.color)
+                .contentTransition(.symbolEffect(.replace))
         }
     }
 }
