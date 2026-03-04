@@ -59,9 +59,6 @@ struct StandardEmptyState: View {
                 appeared = true
             }
         }
-        .onDisappear {
-            appeared = false
-        }
     }
 }
 

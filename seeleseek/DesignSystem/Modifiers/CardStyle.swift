@@ -28,7 +28,7 @@ struct HoverStyle: ViewModifier {
         content
             .background(isHovered ? SeeleColors.surfaceSecondary : .clear)
             .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(.easeInOut(duration: SeeleSpacing.animationFast)) {
                     isHovered = hovering
                 }
             }
