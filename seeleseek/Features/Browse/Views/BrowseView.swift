@@ -293,9 +293,13 @@ struct BrowseView: View {
                     .background(SeeleColors.surfaceSecondary)
                 }
 
+                StandardSearchField(text: $browseBinding.filterQuery, placeholder: "Filter files...")
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.xs)
+
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(browseState.visibleFlatTree) { item in
+                        ForEach(browseState.filteredFlatTree) { item in
                             FileTreeRow(
                                 file: item.file,
                                 depth: item.depth,

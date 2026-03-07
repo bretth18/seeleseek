@@ -114,7 +114,7 @@ struct SidebarRow: View {
         case .social:
             return appState.socialState.onlineBuddies.count
         case .wishlists:
-            return appState.wishlistState.items.count
+            return appState.wishlistState.unviewedResultCount
         default:
             return 0
         }
@@ -122,6 +122,9 @@ struct SidebarRow: View {
 
     var body: some View {
         Button {
+            if item == .wishlists {
+                appState.wishlistState.markResultsViewed()
+            }
             appState.sidebarSelection = item
         } label: {
             HStack(spacing: SeeleSpacing.sm) {
@@ -140,11 +143,11 @@ struct SidebarRow: View {
                     Text("\(badgeCount)")
                         .font(SeeleTypography.badgeText)
                         .contentTransition(.numericText())
-                        .foregroundStyle(item == .chat ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
+                        .foregroundStyle(item == .chat || item == .wishlists ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
                         .padding(.horizontal, SeeleSpacing.xs)
                         .padding(.vertical, SeeleSpacing.xxs)
                         .background(
-                            item == .chat ? SeeleColors.accent : SeeleColors.surfaceElevated,
+                            item == .chat || item == .wishlists ? SeeleColors.accent : SeeleColors.surfaceElevated,
                             in: Capsule()
                         )
                         .transition(.scale.combined(with: .opacity))

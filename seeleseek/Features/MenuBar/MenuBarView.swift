@@ -54,6 +54,18 @@ struct MenuBarView: View {
         .padding(.horizontal, SeeleSpacing.sm)
         .padding(.vertical, SeeleSpacing.xs)
 
+        if status == .connected {
+            HStack(spacing: SeeleSpacing.sm) {
+                Text("↓ \(ByteFormatter.formatSpeed(downSpeed))")
+                    .foregroundStyle(SeeleColors.info)
+                Text("↑ \(ByteFormatter.formatSpeed(upSpeed))")
+                    .foregroundStyle(SeeleColors.success)
+            }
+            .font(SeeleTypography.monoSmall)
+            .padding(.horizontal, SeeleSpacing.sm)
+            .padding(.vertical, SeeleSpacing.xxs)
+        }
+
         if activeDown > 0 || activeUp > 0 {
             Divider()
 
