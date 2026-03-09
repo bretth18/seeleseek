@@ -186,7 +186,11 @@ struct TransfersView: View {
                 subtitle: "Search for files and download them here"
             )
         } else {
-            transferList(transfers: transferState.downloads)
+            transferList(
+                transfers: transferState.downloads,
+                onMoveToTop: { transferState.moveDownloadToTop(id: $0) },
+                onMoveToBottom: { transferState.moveDownloadToBottom(id: $0) }
+            )
         }
     }
 
@@ -269,7 +273,11 @@ struct TransfersView: View {
         }
     }
 
-    private func transferList(transfers: [Transfer]) -> some View {
+    private func transferList(
+        transfers: [Transfer],
+        onMoveToTop: ((UUID) -> Void)? = nil,
+        onMoveToBottom: ((UUID) -> Void)? = nil
+    ) -> some View {
         ScrollView {
             LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                 ForEach(transfers) { transfer in
@@ -282,7 +290,9 @@ struct TransfersView: View {
                                 appState.downloadManager.retryFailedDownload(transferId: transfer.id)
                             }
                         },
-                        onRemove: { transferState.removeTransfer(id: transfer.id) }
+                        onRemove: { transferState.removeTransfer(id: transfer.id) },
+                        onMoveToTop: onMoveToTop.map { cb in { cb(transfer.id) } },
+                        onMoveToBottom: onMoveToBottom.map { cb in { cb(transfer.id) } }
                     )
                 }
             }

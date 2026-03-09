@@ -353,6 +353,22 @@ final class TransferState {
         }
     }
 
+    func moveDownload(from source: IndexSet, to destination: Int) {
+        downloads.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func moveDownloadToTop(id: UUID) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
+        let transfer = downloads.remove(at: index)
+        downloads.insert(transfer, at: 0)
+    }
+
+    func moveDownloadToBottom(id: UUID) {
+        guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
+        let transfer = downloads.remove(at: index)
+        downloads.append(transfer)
+    }
+
     func updateSpeeds() {
         totalDownloadSpeed = activeDownloads.reduce(0) { $0 + $1.speed }
         totalUploadSpeed = activeUploads.reduce(0) { $0 + $1.speed }

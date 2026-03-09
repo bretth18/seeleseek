@@ -7,6 +7,8 @@ struct TransferRow: View {
     let onCancel: () -> Void
     let onRetry: () -> Void
     let onRemove: () -> Void
+    var onMoveToTop: (() -> Void)? = nil
+    var onMoveToBottom: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var isPlaying = false
@@ -88,6 +90,7 @@ struct TransferRow: View {
                     IconButton(icon: isPlaying ? "pause.fill" : "play.fill") {
                         toggleAudioPreview()
                     }
+                    .accessibilityLabel(isPlaying ? "Pause preview" : "Play preview")
 
                     // Edit metadata button
                     IconButton(icon: "tag") {
@@ -95,6 +98,7 @@ struct TransferRow: View {
                             appState.metadataState.showEditor(for: path)
                         }
                     }
+                    .accessibilityLabel("Edit metadata")
                 }
 
                 // Reveal in Finder for completed downloads
@@ -102,22 +106,26 @@ struct TransferRow: View {
                     IconButton(icon: "folder") {
                         revealInFinder()
                     }
+                    .accessibilityLabel("Reveal in Finder")
                 }
 
                 if transfer.canCancel {
                     IconButton(icon: "xmark") {
                         onCancel()
                     }
+                    .accessibilityLabel("Cancel transfer")
                 }
                 if transfer.canRetry {
                     IconButton(icon: "arrow.clockwise") {
                         onRetry()
                     }
+                    .accessibilityLabel("Retry transfer")
                 }
                 if !transfer.isActive {
                     IconButton(icon: "trash") {
                         onRemove()
                     }
+                    .accessibilityLabel("Remove transfer")
                 }
             }
             .opacity(isHovered ? 1 : 0)
@@ -130,12 +138,44 @@ struct TransferRow: View {
                 isHovered = hovering
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(transferAccessibilityLabel)
         .contextMenu {
+            if let onMoveToTop, let onMoveToBottom,
+               transfer.status == .queued || transfer.status == .waiting {
+                Button {
+                    onMoveToTop()
+                } label: {
+                    Label("Move to Top", systemImage: "arrow.up.to.line")
+                }
+
+                Button {
+                    onMoveToBottom()
+                } label: {
+                    Label("Move to Bottom", systemImage: "arrow.down.to.line")
+                }
+
+                Divider()
+            }
+
             UserContextMenuItems(username: transfer.username)
         }
         .onDisappear {
             audioPlayer?.stop()
         }
+    }
+
+    private var transferAccessibilityLabel: String {
+        var parts = [transfer.displayFilename, "from \(transfer.username)", transfer.status.displayText]
+        if transfer.status == .transferring {
+            parts.append("\(Int(transfer.progress * 100))%")
+            parts.append(transfer.formattedSpeed)
+        } else if let error = transfer.error {
+            parts.append(error)
+        } else if let queuePosition = transfer.queuePosition {
+            parts.append("queue position \(queuePosition)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var statusIcon: some View {

@@ -224,7 +224,9 @@ struct BrowseView: View {
     @State private var showVisualizations = true
 
     private func fileTreeView(shares: UserShares) -> some View {
-        HSplitView {
+        @Bindable var browseBinding = appState.browseState
+
+        return HSplitView {
             VStack(spacing: 0) {
                 HStack {
                     Text("\(shares.username)'s files")

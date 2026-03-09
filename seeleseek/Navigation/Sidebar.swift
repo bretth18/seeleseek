@@ -95,6 +95,8 @@ struct Sidebar: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Connection status: \(appState.connection.connectionStatus.label)")
         }
     }
 }
@@ -165,6 +167,8 @@ struct SidebarRow: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(badgeCount > 0 ? "\(item.title), \(badgeCount)" : item.title)
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isSelected)
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: badgeCount)
     }

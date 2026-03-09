@@ -58,8 +58,10 @@ struct MenuBarView: View {
             HStack(spacing: SeeleSpacing.sm) {
                 Text("↓ \(ByteFormatter.formatSpeed(downSpeed))")
                     .foregroundStyle(SeeleColors.info)
+                    .accessibilityLabel("Download speed: \(ByteFormatter.formatSpeed(downSpeed))")
                 Text("↑ \(ByteFormatter.formatSpeed(upSpeed))")
                     .foregroundStyle(SeeleColors.success)
+                    .accessibilityLabel("Upload speed: \(ByteFormatter.formatSpeed(upSpeed))")
             }
             .font(SeeleTypography.monoSmall)
             .padding(.horizontal, SeeleSpacing.sm)

@@ -257,6 +257,24 @@ struct SearchView: View {
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
 
+                            // Selection mode toggle
+                            Button {
+                                if searchState.isSelectionMode {
+                                    searchState.isSelectionMode = false
+                                } else {
+                                    searchState.isSelectionMode = true
+                                }
+                            } label: {
+                                HStack(spacing: SeeleSpacing.xxs) {
+                                    Image(systemName: searchState.isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle")
+                                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                                    Text("Select")
+                                        .font(SeeleTypography.caption)
+                                }
+                                .foregroundStyle(searchState.isSelectionMode ? SeeleColors.accent : SeeleColors.textSecondary)
+                            }
+                            .buttonStyle(.plain)
+
                             Menu {
                                 ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
                                     Button {
@@ -291,14 +309,92 @@ struct SearchView: View {
             .background(SeeleColors.surface.opacity(0.3))
 
             // Results list
-            ScrollView {
-                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                    ForEach(searchState.filteredResults) { result in
-                        SearchResultRow(result: result)
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
+                        ForEach(searchState.filteredResults) { result in
+                            SearchResultRow(
+                                result: result,
+                                isSelectionMode: searchState.isSelectionMode,
+                                isSelected: searchState.selectedResults.contains(result.id),
+                                onToggleSelection: {
+                                    searchState.toggleSelection(result.id)
+                                }
+                            )
+                        }
                     }
+                    // Add bottom padding when action bar is visible
+                    .padding(.bottom, searchState.isSelectionMode ? 60 : 0)
+                }
+
+                // Floating action bar
+                if searchState.isSelectionMode {
+                    selectionActionBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
+    }
+
+    private var selectionActionBar: some View {
+        HStack(spacing: SeeleSpacing.md) {
+            Button {
+                searchState.selectAll()
+            } label: {
+                Text("Select All")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                searchState.deselectAll()
+            } label: {
+                Text("Deselect All")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text("\(searchState.selectedResults.count) selected")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+
+            Button {
+                downloadSelected()
+            } label: {
+                Text("Download Selected (\(searchState.selectedResults.count))")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textOnAccent)
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.sm)
+                    .background(searchState.selectedResults.isEmpty ? SeeleColors.textTertiary : SeeleColors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchState.selectedResults.isEmpty)
+        }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(
+            SeeleColors.surface
+                .shadow(.drop(color: .black.opacity(0.3), radius: 8, y: -2))
+        )
+    }
+
+    private func downloadSelected() {
+        let selectedIDs = searchState.selectedResults
+        let results = searchState.filteredResults.filter { selectedIDs.contains($0.id) }
+
+        for result in results {
+            if !appState.transferState.isFileQueued(filename: result.filename, username: result.username) {
+                appState.downloadManager.queueDownload(from: result)
+            }
+        }
+
+        searchState.isSelectionMode = false
     }
 
     private func performSearch() {
