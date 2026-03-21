@@ -35,6 +35,7 @@ final class BrowseState {
     // MARK: - UI State
     var expandedFolders: Set<UUID> = []
     var selectedFile: SharedFile?
+    var filterQuery: String = ""
 
     /// Target path to auto-expand after browse loads (e.g., "@@music\\Artist\\Album")
     private var targetPath: String?
@@ -61,6 +62,44 @@ final class BrowseState {
         var result: [FlatTreeItem] = []
         appendVisible(files: displayedFolders, depth: 0, to: &result)
         return result
+    }
+
+    /// Filtered flat tree: if filterQuery is non-empty, only items whose displayName
+    /// matches the query (case-insensitive) plus their ancestor directories are included.
+    var filteredFlatTree: [FlatTreeItem] {
+        let query = filterQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return visibleFlatTree }
+
+        let tree = visibleFlatTree
+
+        // Collect IDs of items that match the query
+        var matchingIDs: Set<UUID> = []
+        for item in tree where item.file.displayName.localizedCaseInsensitiveContains(query) {
+            matchingIDs.insert(item.id)
+        }
+
+        // Walk the flat tree to find ancestor directories that should be kept.
+        // We maintain a stack of (depth, id) for directories seen so far.
+        var ancestorStack: [(depth: Int, id: UUID)] = []
+        var keepIDs: Set<UUID> = matchingIDs
+
+        for item in tree {
+            // Pop entries from stack that are not ancestors of this item
+            while let last = ancestorStack.last, last.depth >= item.depth {
+                ancestorStack.removeLast()
+            }
+            if item.file.isDirectory {
+                ancestorStack.append((depth: item.depth, id: item.id))
+            }
+            if matchingIDs.contains(item.id) {
+                // Include all ancestors
+                for ancestor in ancestorStack {
+                    keepIDs.insert(ancestor.id)
+                }
+            }
+        }
+
+        return tree.filter { keepIDs.contains($0.id) }
     }
 
     private func appendVisible(files: [SharedFile], depth: Int, to result: inout [FlatTreeItem]) {

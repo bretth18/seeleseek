@@ -2,10 +2,23 @@ import SwiftUI
 
 struct SearchView: View {
     @Environment(\.appState) private var appState
+    @State private var showHistory = false
+    @FocusState private var isSearchFocused: Bool
 
     // Use shared searchState from AppState to persist callbacks
     private var searchState: SearchState {
         appState.searchState
+    }
+
+    /// History items filtered by current query text
+    private var filteredHistory: [String] {
+        let query = searchState.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            return searchState.searchHistory
+        }
+        return searchState.searchHistory.filter {
+            $0.localizedCaseInsensitiveContains(query)
+        }
     }
 
     var body: some View {
@@ -38,14 +51,33 @@ struct SearchView: View {
 
     private func searchBar(binding: Binding<String>) -> some View {
         HStack(spacing: SeeleSpacing.md) {
-            StandardSearchField(
-                text: binding,
-                placeholder: "Search or paste a music URL...",
-                isLoading: searchState.isResolvingURL,
-                onSubmit: performSearch
-            )
+            ZStack(alignment: .top) {
+                StandardSearchField(
+                    text: binding,
+                    placeholder: "Search or paste a music URL...",
+                    isLoading: searchState.isResolvingURL,
+                    onSubmit: {
+                        showHistory = false
+                        performSearch()
+                    }
+                )
+                .focused($isSearchFocused)
+                .onChange(of: isSearchFocused) { _, focused in
+                    showHistory = focused && !filteredHistory.isEmpty
+                }
+                .onChange(of: searchState.searchQuery) { _, _ in
+                    showHistory = isSearchFocused && !filteredHistory.isEmpty
+                }
+
+                if showHistory && !filteredHistory.isEmpty {
+                    searchHistoryDropdown(binding: binding)
+                        .offset(y: 40)
+                        .zIndex(10)
+                }
+            }
 
             Button {
+                showHistory = false
                 performSearch()
             } label: {
                 Text("Search")
@@ -61,6 +93,51 @@ struct SearchView: View {
         }
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface.opacity(0.5))
+    }
+
+    private func searchHistoryDropdown(binding: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(filteredHistory.prefix(10)), id: \.self) { item in
+                Button {
+                    binding.wrappedValue = item
+                    showHistory = false
+                    isSearchFocused = false
+                    performSearch()
+                } label: {
+                    HStack(spacing: SeeleSpacing.sm) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: SeeleSpacing.iconSizeSmall))
+                            .foregroundStyle(SeeleColors.textTertiary)
+
+                        Text(item)
+                            .font(SeeleTypography.body)
+                            .foregroundStyle(SeeleColors.textPrimary)
+                            .lineLimit(1)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, SeeleSpacing.md)
+                    .padding(.vertical, SeeleSpacing.sm)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(Color.clear)
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+            }
+        }
+        .background(SeeleColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                .stroke(SeeleColors.surfaceSecondary, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
     }
 
     private var searchTabs: some View {
@@ -180,6 +257,24 @@ struct SearchView: View {
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
 
+                            // Selection mode toggle
+                            Button {
+                                if searchState.isSelectionMode {
+                                    searchState.isSelectionMode = false
+                                } else {
+                                    searchState.isSelectionMode = true
+                                }
+                            } label: {
+                                HStack(spacing: SeeleSpacing.xxs) {
+                                    Image(systemName: searchState.isSelectionMode ? "checkmark.circle.fill" : "checkmark.circle")
+                                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                                    Text("Select")
+                                        .font(SeeleTypography.caption)
+                                }
+                                .foregroundStyle(searchState.isSelectionMode ? SeeleColors.accent : SeeleColors.textSecondary)
+                            }
+                            .buttonStyle(.plain)
+
                             Menu {
                                 ForEach(SearchState.SortOrder.allCases, id: \.self) { order in
                                     Button {
@@ -214,14 +309,92 @@ struct SearchView: View {
             .background(SeeleColors.surface.opacity(0.3))
 
             // Results list
-            ScrollView {
-                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                    ForEach(searchState.filteredResults) { result in
-                        SearchResultRow(result: result)
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
+                        ForEach(searchState.filteredResults) { result in
+                            SearchResultRow(
+                                result: result,
+                                isSelectionMode: searchState.isSelectionMode,
+                                isSelected: searchState.selectedResults.contains(result.id),
+                                onToggleSelection: {
+                                    searchState.toggleSelection(result.id)
+                                }
+                            )
+                        }
                     }
+                    // Add bottom padding when action bar is visible
+                    .padding(.bottom, searchState.isSelectionMode ? 60 : 0)
+                }
+
+                // Floating action bar
+                if searchState.isSelectionMode {
+                    selectionActionBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
+    }
+
+    private var selectionActionBar: some View {
+        HStack(spacing: SeeleSpacing.md) {
+            Button {
+                searchState.selectAll()
+            } label: {
+                Text("Select All")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                searchState.deselectAll()
+            } label: {
+                Text("Deselect All")
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            Text("\(searchState.selectedResults.count) selected")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+
+            Button {
+                downloadSelected()
+            } label: {
+                Text("Download Selected (\(searchState.selectedResults.count))")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textOnAccent)
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.sm)
+                    .background(searchState.selectedResults.isEmpty ? SeeleColors.textTertiary : SeeleColors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(searchState.selectedResults.isEmpty)
+        }
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
+        .background(
+            SeeleColors.surface
+                .shadow(.drop(color: .black.opacity(0.3), radius: 8, y: -2))
+        )
+    }
+
+    private func downloadSelected() {
+        let selectedIDs = searchState.selectedResults
+        let results = searchState.filteredResults.filter { selectedIDs.contains($0.id) }
+
+        for result in results {
+            if !appState.transferState.isFileQueued(filename: result.filename, username: result.username) {
+                appState.downloadManager.queueDownload(from: result)
+            }
+        }
+
+        searchState.isSelectionMode = false
     }
 
     private func performSearch() {

@@ -6,6 +6,9 @@ import AppKit
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelection: (() -> Void)? = nil
     @State private var isHovered = false
     @State private var artworkData: Data?
     @State private var isLoadingArtwork = false
@@ -25,6 +28,16 @@ struct SearchResultRow: View {
             isHovered = hovering
         }) {
             HStack(spacing: SeeleSpacing.md) {
+                // Selection checkbox
+                if isSelectionMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: SeeleSpacing.iconSize))
+                        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textTertiary)
+                        .onTapGesture {
+                            onToggleSelection?()
+                        }
+                }
+
                 // File type icon
                 fileIcon
 
@@ -122,6 +135,7 @@ struct SearchResultRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Browse \(result.username)'s files")
+                .accessibilityLabel("Browse \(result.username)'s files")
 
                 // Download button
                 Button {
@@ -134,8 +148,11 @@ struct SearchResultRow: View {
                 .buttonStyle(.plain)
                 .disabled(isQueued)
                 .help(downloadButtonHelp)
+                .accessibilityLabel(isQueued ? "Downloading" : "Download")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(searchResultAccessibilityLabel)
         .contextMenu {
             Button {
                 downloadFile()
@@ -303,6 +320,19 @@ struct SearchResultRow: View {
 
     private var downloadButtonIcon: some View {
         DownloadStatusIcon(status: downloadStatus, isHovered: isHovered)
+    }
+
+    private var searchResultAccessibilityLabel: String {
+        var parts = [result.displayFilename, "by \(result.username)", result.formattedSize]
+        if let bitrate = result.formattedBitrate {
+            parts.append(bitrate)
+        }
+        if result.freeSlots {
+            parts.append("free slot available")
+        } else {
+            parts.append("queue position \(result.queueLength)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var downloadButtonHelp: String {

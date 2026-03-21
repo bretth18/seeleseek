@@ -34,6 +34,9 @@ final class WishlistState {
     var items: [WishlistItem] = []
     var results: [UUID: [SearchResult]] = [:]
 
+    // MARK: - Badge
+    var unviewedResultCount: Int = 0
+
     // MARK: - Input
     var newQuery: String = ""
 
@@ -202,6 +205,7 @@ final class WishlistState {
         existing.append(contentsOf: results)
         self.results[itemId] = existing
 
+        unviewedResultCount += results.count
         logger.info("Wishlist results: +\(results.count) for item \(itemId) (total: \(existing.count))")
 
         // Update result count on the item
@@ -215,6 +219,10 @@ final class WishlistState {
                 )
             }
         }
+    }
+
+    func markResultsViewed() {
+        unviewedResultCount = 0
     }
 
     // MARK: - Scheduler

@@ -14,7 +14,7 @@ enum MessageBuilder {
         payload.appendString(password)
 
         // Client version
-        payload.appendUInt32(160)
+        payload.appendUInt32(169)
 
         // MD5 hash of username + password
         let hashInput = username + password

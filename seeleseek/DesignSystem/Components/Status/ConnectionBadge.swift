@@ -60,6 +60,8 @@ struct ConnectionBadge: View {
         .padding(.vertical, SeeleSpacing.xs)
         .background(status.color.opacity(0.15))
         .clipShape(Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Connection: \(status.label)")
         .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: status)
     }
 

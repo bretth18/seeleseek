@@ -29,7 +29,7 @@ struct ServerMessageRoundTripTests {
         let (pass, pLen) = msg.readString(at: o)!; o += pLen
         #expect(pass == "secret")
         let version = msg.readUInt32(at: o)!; o += 4
-        #expect(version == 160)
+        #expect(version == 169)
         // MD5 hash string
         let (hash, hLen) = msg.readString(at: o)!; o += hLen
         #expect(hash.count == 32) // MD5 hex = 32 chars

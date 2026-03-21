@@ -1,15 +1,25 @@
 import SwiftUI
+import AppIntents
 
 @main
 struct SeeleSeekApp: App {
-    @State private var appState = AppState()
+    @State private var appState: AppState
+
+    init() {
+        let state = AppState()
+        _appState = State(initialValue: state)
+        AppDependencyManager.shared.add(dependency: state)
+    }
 
     var body: some Scene {
         WindowGroup {
             MainView()
                 .environment(\.appState, appState)
                 .tint(SeeleColors.accent)
-                .task { appState.configure() }
+                .task {
+                    appState.configure()
+                    SeeleSeekShortcuts.updateAppShortcutParameters()
+                }
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)

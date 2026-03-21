@@ -113,6 +113,30 @@ final class SearchState {
         return nil
     }
 
+    // MARK: - Selection Mode
+    var selectedResults: Set<UUID> = []
+    var isSelectionMode: Bool = false {
+        didSet {
+            if !isSelectionMode { selectedResults.removeAll() }
+        }
+    }
+
+    func toggleSelection(_ id: UUID) {
+        if selectedResults.contains(id) {
+            selectedResults.remove(id)
+        } else {
+            selectedResults.insert(id)
+        }
+    }
+
+    func selectAll() {
+        selectedResults = Set(filteredResults.map(\.id))
+    }
+
+    func deselectAll() {
+        selectedResults.removeAll()
+    }
+
     // MARK: - Filters
     var filterMinBitrate: Int? = nil
     var filterMinSampleRate: Int? = nil

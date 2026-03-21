@@ -54,6 +54,20 @@ struct MenuBarView: View {
         .padding(.horizontal, SeeleSpacing.sm)
         .padding(.vertical, SeeleSpacing.xs)
 
+        if status == .connected {
+            HStack(spacing: SeeleSpacing.sm) {
+                Text("↓ \(ByteFormatter.formatSpeed(downSpeed))")
+                    .foregroundStyle(SeeleColors.info)
+                    .accessibilityLabel("Download speed: \(ByteFormatter.formatSpeed(downSpeed))")
+                Text("↑ \(ByteFormatter.formatSpeed(upSpeed))")
+                    .foregroundStyle(SeeleColors.success)
+                    .accessibilityLabel("Upload speed: \(ByteFormatter.formatSpeed(upSpeed))")
+            }
+            .font(SeeleTypography.monoSmall)
+            .padding(.horizontal, SeeleSpacing.sm)
+            .padding(.vertical, SeeleSpacing.xxs)
+        }
+
         if activeDown > 0 || activeUp > 0 {
             Divider()
 

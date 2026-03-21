@@ -27,6 +27,7 @@ struct PrivateChatContentView: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close chat with \(chat.username)")
             }
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surface)
@@ -140,11 +141,21 @@ struct MessageBubble: View {
                     .font(SeeleTypography.caption2)
                     .foregroundStyle(SeeleColors.textTertiary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(messageBubbleAccessibilityLabel)
 
             if !message.isOwn {
                 Spacer()
             }
         }
+    }
+
+    private var messageBubbleAccessibilityLabel: String {
+        if message.isSystem {
+            return "System: \(message.content), \(message.formattedTime)"
+        }
+        let sender = message.isOwn ? "You" : message.username
+        return "\(sender): \(message.content), \(message.formattedTime)"
     }
 }
 
@@ -190,6 +201,7 @@ struct MessageInput: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityLabel("Send message")
             }
             .padding(SeeleSpacing.md)
         }

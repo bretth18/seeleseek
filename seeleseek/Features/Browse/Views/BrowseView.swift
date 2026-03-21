@@ -224,7 +224,9 @@ struct BrowseView: View {
     @State private var showVisualizations = true
 
     private func fileTreeView(shares: UserShares) -> some View {
-        HSplitView {
+        @Bindable var browseBinding = appState.browseState
+
+        return HSplitView {
             VStack(spacing: 0) {
                 HStack {
                     Text("\(shares.username)'s files")
@@ -293,9 +295,13 @@ struct BrowseView: View {
                     .background(SeeleColors.surfaceSecondary)
                 }
 
+                StandardSearchField(text: $browseBinding.filterQuery, placeholder: "Filter files...")
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.xs)
+
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(browseState.visibleFlatTree) { item in
+                        ForEach(browseState.filteredFlatTree) { item in
                             FileTreeRow(
                                 file: item.file,
                                 depth: item.depth,
