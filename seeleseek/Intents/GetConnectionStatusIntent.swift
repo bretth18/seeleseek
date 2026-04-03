@@ -2,8 +2,8 @@ import AppIntents
 import SeeleseekCore
 
 struct GetConnectionStatusIntent: AppIntent {
-    static var title: LocalizedStringResource = "Get Connection Status"
-    static var description = IntentDescription("Check if SeeleSeek is connected to the SoulSeek network.")
+    static let title: LocalizedStringResource = "Get Connection Status"
+    static let description = IntentDescription("Check if SeeleSeek is connected to the SoulSeek network.")
 
     @Dependency
     var appState: AppState
@@ -19,5 +19,5 @@ struct GetConnectionStatusIntent: AppIntent {
         return .result(value: status)
     }
 
-    static var openAppWhenRun: Bool = false
+    static let openAppWhenRun: Bool = false
 }

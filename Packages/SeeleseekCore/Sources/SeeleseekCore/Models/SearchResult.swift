@@ -111,13 +111,6 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
         return ""
     }
 
-    public var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape"]
-        return audioExtensions.contains(fileExtension)
-    }
-
-    public var isLossless: Bool {
-        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape"]
-        return losslessExtensions.contains(fileExtension)
-    }
+    public var isAudioFile: Bool { FileTypes.isAudio(fileExtension) }
+    public var isLossless: Bool { FileTypes.isLossless(fileExtension) }
 }

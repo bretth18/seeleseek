@@ -145,7 +145,7 @@ struct PeerProtocolTests {
                         // Send back a SearchReply
                         Task {
                             try await Task.sleep(for: .milliseconds(100))
-                            let reply = buildSearchReplyMessage(token: token ?? 0)
+                            let reply = await buildSearchReplyMessage(token: token ?? 0)
                             connection.send(content: reply, completion: .contentProcessed { error in
                                 if let error = error {
                                     print("Test server send error: \(error)")
@@ -171,13 +171,6 @@ struct PeerProtocolTests {
             let peerInfo = PeerConnection.PeerInfo(username: "testserver", ip: "127.0.0.1", port: Int(port))
             let peerConnection = PeerConnection(peerInfo: peerInfo, token: 12345)
 
-            // Set up callback to receive results
-            await peerConnection.setOnSearchReply { token, results in
-                print("Received \(results.count) search results for token \(token)")
-                receivedResults = results
-                confirm()
-            }
-
             // Connect
             try? await peerConnection.connect()
             print("Connected to test server")
@@ -185,6 +178,17 @@ struct PeerProtocolTests {
             // Send PierceFirewall
             try? await peerConnection.sendPierceFirewall()
             print("Sent PierceFirewall")
+
+            // Consume events for results
+            Task {
+                for await event in peerConnection.events {
+                    if case .searchReply(let token, let results) = event {
+                        print("Received \(results.count) search results for token \(token)")
+                        receivedResults = results
+                        confirm()
+                    }
+                }
+            }
 
             // Wait for results
             try? await Task.sleep(for: .seconds(3))

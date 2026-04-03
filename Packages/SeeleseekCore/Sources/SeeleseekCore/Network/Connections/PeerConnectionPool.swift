@@ -55,25 +55,10 @@ public final class PeerConnectionPool {
     // Geographic distribution (when available)
     public private(set) var peerLocations: [PeerLocation] = []
 
-    // MARK: - Callbacks
+    // MARK: - Event Stream
 
-    public var onSearchResults: ((UInt32, [SearchResult]) -> Void)?  // (token, results)
-    public var onSharesReceived: ((String, [SharedFile]) -> Void)?
-    public var onTransferRequest: ((TransferRequest) -> Void)?
-    public var onIncomingConnectionMatched: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
-    public var onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
-    public var onPierceFirewall: ((UInt32, PeerConnection) async -> Void)?  // (token, connection)
-    public var onUploadDenied: ((String, String) -> Void)?  // (filename, reason)
-    public var onUploadFailed: ((String) -> Void)?  // filename
-    public var onQueueUpload: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection) - peer wants to download from us
-    public var onTransferResponse: ((UInt32, Bool, UInt64?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, connection)
-    public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection)
-    public var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
-    public var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
-    public var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
-    public var onSharesRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants to browse our shares
-    public var onUserInfoRequest: ((String, PeerConnection) async -> Void)?  // (username, connection) - peer wants our user info
-    public var onArtworkRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, filePath, connection) - SeeleSeek artwork preview
+    public nonisolated let events: AsyncStream<PeerPoolEvent>
+    private let eventContinuation: AsyncStream<PeerPoolEvent>.Continuation
 
     // MARK: - Configuration
 
@@ -147,6 +132,9 @@ public final class PeerConnectionPool {
     // MARK: - Initialization
 
     public init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: PeerPoolEvent.self)
+        self.events = stream
+        self.eventContinuation = continuation
         // Start speed tracking timer
         startSpeedTracking()
         // Start periodic cleanup of stale connections
@@ -231,9 +219,9 @@ public final class PeerConnectionPool {
         // can help with NAT hole punching
         let connection = PeerConnection(peerInfo: peerInfo, token: token, localPort: listenPort)
 
-        // Set up callbacks BEFORE connecting to avoid race condition where we
-        // start receiving data before callbacks are ready
-        await setupCallbacks(for: connection, username: username)
+        // Start consuming events BEFORE connecting to avoid missing early events
+        let outgoingId = "\(username)-\(token)"
+        consumeEvents(from: connection, username: username, connectionId: outgoingId, capturedIP: peerInfo.ip, isIncoming: false)
 
         try await connection.connect()
 
@@ -291,7 +279,7 @@ public final class PeerConnectionPool {
     }
 
     // Callback for registering user IPs (for country flags)
-    public var onUserIPDiscovered: ((String, String) -> Void)?
+    // onUserIPDiscovered replaced by PeerPoolEvent.userIPDiscovered
 
     /// Handle an incoming connection from the listener service
     public func handleIncomingConnection(_ nwConnection: NWConnection) async {
@@ -355,199 +343,8 @@ public final class PeerConnectionPool {
 
             let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 
-            // Set up ALL callbacks for the incoming connection - this is critical for receiving search results!
-            // Capture connectionId and peerIP to properly clean up THIS specific connection
             let capturedIP = peerIP ?? ""
-            await connection.setOnStateChanged { [weak self, connectionId, capturedIP] state in
-                guard let self else { return }
-                await MainActor.run {
-                    self.logger.info("Incoming connection \(connectionId) state changed: \(String(describing: state))")
-                    self.logger.debug("Connection \(connectionId) state: \(String(describing: state))")
-
-                    // Clean up disconnected connections using the captured connectionId
-                    if case .disconnected = state {
-                        self.decrementIPCounter(for: capturedIP)
-                        self.connections.removeValue(forKey: connectionId)
-                        self.activeConnections_.removeValue(forKey: connectionId)
-                        self.activeConnections = self.connections.count
-                        self.logger.info("Connection \(connectionId) removed (disconnected)")
-                    }
-                }
-            }
-
-            // IMPORTANT: Set up search reply callback so we receive search results
-            // Close connection after receiving results (like Nicotine+) to prevent accumulation
-            await connection.setOnSearchReply { [weak self, connectionId, capturedIP] token, results in
-                await self?.handleIncomingSearchReply(token: token, results: results, connectionId: connectionId, ip: capturedIP, connection: connection)
-            }
-
-            await connection.setOnSharesReceived { [weak self] files in
-                await MainActor.run {
-                    self?.onSharesReceived?("unknown", files)
-                }
-            }
-
-            await connection.setOnTransferRequest { [weak self] request in
-                await MainActor.run {
-                    self?.onTransferRequest?(request)
-                }
-            }
-
-            // CRITICAL: Set up username discovery callback to match incoming connections to pending downloads
-            await connection.setOnUsernameDiscovered { [weak self, connectionId, peerIP] username, token in
-                guard let self else { return }
-                await MainActor.run {
-                    self.logger.info("Username discovered on incoming connection: \(username) token=\(token)")
-                    self.logger.info("Incoming connection identified: \(username) token=\(token)")
-
-                    // Register IP for country flag lookup
-                    if let ip = peerIP {
-                        self.onUserIPDiscovered?(username, ip)
-                    }
-
-                    // Update the connection info with the real username
-                    if var existingInfo = self.connections[connectionId] {
-                        existingInfo = PeerConnectionInfo(
-                            id: connectionId,
-                            username: username,
-                            ip: existingInfo.ip,
-                            port: existingInfo.port,
-                            state: existingInfo.state,
-                            connectionType: existingInfo.connectionType,
-                            connectedAt: existingInfo.connectedAt
-                        )
-                        self.connections[connectionId] = existingInfo
-                    }
-
-                    // Check if this matches a pending connection (for downloads)
-                    if self.pendingConnections[token] != nil {
-                        self.logger.info("Matched incoming connection to pending download: \(username) token=\(token)")
-                        self.logger.info("Matched incoming connection to pending: \(username) token=\(token)")
-                        self.pendingConnections.removeValue(forKey: token)
-
-                        // Notify the download manager
-                        Task {
-                            await self.onIncomingConnectionMatched?(username, token, connection)
-                        }
-                    }
-                    // Note: Indirect browse connections are now handled via PierceFirewall callback
-                }
-            }
-
-            // Set up file transfer connection callback
-            await connection.setOnFileTransferConnection { [weak self] username, token, fileConnection in
-                guard let self else { return }
-                await MainActor.run {
-                    self.logger.debug("PeerConnectionPool: F connection callback invoked - username='\(username)' token=\(token)")
-                    self.logger.info("File transfer connection: \(username) token=\(token)")
-                }
-                let callback = await MainActor.run { self.onFileTransferConnection }
-                if let callback {
-                    await MainActor.run { self.logger.debug("PeerConnectionPool: Forwarding to NetworkClient...") }
-                    await callback(username, token, fileConnection)
-                    await MainActor.run { self.logger.debug("PeerConnectionPool: Forward complete") }
-                } else {
-                    await MainActor.run { self.logger.warning("PeerConnectionPool: onFileTransferConnection is nil!") }
-                }
-            }
-
-            // Set up PierceFirewall callback for indirect connections
-            await connection.setOnPierceFirewall { [weak self, connectionId, capturedIP] token in
-                guard let self else { return }
-                self.logger.debug("PierceFirewall from incoming connection, token=\(token)")
-                self.logger.info("PierceFirewall received: token=\(token)")
-                // Remove from pool tracking - caller takes ownership of this connection
-                // This prevents the cleanup timer from killing it while it's in use
-                await MainActor.run {
-                    self.incrementPierceFirewallCount()
-                    self.decrementIPCounter(for: capturedIP)
-                    self.connections.removeValue(forKey: connectionId)
-                    self.activeConnections_.removeValue(forKey: connectionId)
-                    self.activeConnections = self.connections.count
-                }
-                await self.onPierceFirewall?(token, connection)
-            }
-
-            // Set up upload denied/failed callbacks
-            await connection.setOnUploadDenied { [weak self] filename, reason in
-                await MainActor.run {
-                    self?.logger.warning("Upload denied: \(filename) - \(reason)")
-                    self?.onUploadDenied?(filename, reason)
-                }
-            }
-
-            await connection.setOnUploadFailed { [weak self] filename in
-                await MainActor.run {
-                    self?.logger.warning("Upload failed: \(filename)")
-                    self?.onUploadFailed?(filename)
-                }
-            }
-
-            // Set up QueueUpload callback for incoming connections (peer wants to download from us)
-            await connection.setOnQueueUpload { [weak self] peerUsername, filename in
-                guard let self else { return }
-                self.logger.info("QueueUpload from incoming connection \(peerUsername): \(filename)")
-                await self.onQueueUpload?(peerUsername, filename, connection)
-            }
-
-            // Set up TransferResponse callback for incoming connections
-            await connection.setOnTransferResponse { [weak self] token, allowed, filesize in
-                guard let self else { return }
-                self.logger.debug("TransferResponse from incoming: token=\(token) allowed=\(allowed)")
-                await self.onTransferResponse?(token, allowed, filesize, connection)
-            }
-
-            // Set up FolderContentsRequest callback for incoming connections
-            await connection.setOnFolderContentsRequest { [weak self] token, folder in
-                guard let self else { return }
-                let peerUsername = await connection.getPeerUsername()
-                self.logger.debug("FolderContentsRequest from incoming (\(peerUsername)): \(folder)")
-                await self.onFolderContentsRequest?(peerUsername, token, folder, connection)
-            }
-
-            // Set up FolderContentsResponse callback for incoming connections
-            await connection.setOnFolderContentsResponse { [weak self] token, folder, files in
-                await MainActor.run {
-                    self?.logger.debug("FolderContentsResponse from incoming: \(folder) with \(files.count) files")
-                    self?.onFolderContentsResponse?(token, folder, files)
-                }
-            }
-
-            // Set up PlaceInQueueRequest callback for incoming connections
-            await connection.setOnPlaceInQueueRequest { [weak self] peerUsername, filename in
-                guard let self else { return }
-                self.logger.debug("PlaceInQueueRequest from incoming (\(peerUsername)): \(filename)")
-                await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
-            }
-
-            await connection.setOnPlaceInQueueReply { [weak self] filename, position in
-                guard let self else { return }
-                let peerUsername = connection.peerInfo.username
-                await self.onPlaceInQueueReply?(peerUsername, filename, position)
-            }
-
-            // Set up SharesRequest callback for incoming connections (peer wants to browse us)
-            await connection.setOnSharesRequest { [weak self] conn in
-                guard let self else { return }
-                let peerUsername = await conn.getPeerUsername()
-                self.logger.info("SharesRequest from incoming (\(peerUsername)): peer wants to browse our shares")
-                await self.onSharesRequest?(peerUsername, conn)
-            }
-
-            // Set up UserInfoRequest callback for incoming connections (peer wants our user info)
-            await connection.setOnUserInfoRequest { [weak self] conn in
-                guard let self else { return }
-                let peerUsername = await conn.getPeerUsername()
-                self.logger.info("UserInfoRequest from incoming (\(peerUsername)): peer wants our user info")
-                await self.onUserInfoRequest?(peerUsername, conn)
-            }
-
-            // Set up ArtworkRequest callback (SeeleSeek extension)
-            await connection.setOnArtworkRequest { [weak self] token, filePath, conn in
-                guard let self else { return }
-                let peerUsername = await conn.getPeerUsername()
-                await self.onArtworkRequest?(peerUsername, token, filePath, conn)
-            }
+            consumeEvents(from: connection, username: "unknown", connectionId: connectionId, capturedIP: capturedIP, isIncoming: true)
 
             // Track the connection (username will be determined after handshake)
             let info = PeerConnectionInfo(
@@ -808,142 +605,153 @@ public final class PeerConnectionPool {
 
     // MARK: - Callbacks Setup
 
-    // MARK: - Search Reply Handlers (extracted for @MainActor isolation)
+    // MARK: - Event Stream Consumption
 
-    private func handleIncomingSearchReply(token: UInt32, results: [SearchResult], connectionId: String, ip: String, connection: PeerConnection) async {
-        logger.info("Search results: \(results.count) from incoming connection (token=\(token))")
-        onSearchResults?(token, results)
-        await connection.disconnect()
-        decrementIPCounter(for: ip)
-        connections.removeValue(forKey: connectionId)
-        activeConnections_.removeValue(forKey: connectionId)
-        activeConnections = connections.count
-    }
-
-    private func handleOutgoingSearchReply(token: UInt32, results: [SearchResult], username: String, connection: PeerConnection) async {
-        logger.info("Search results: \(results.count) from \(username) (token=\(token))")
-        if onSearchResults != nil {
-            logger.debug("PeerConnectionPool: Forwarding to NetworkClient callback...")
-            onSearchResults?(token, results)
-        } else {
-            logger.warning("PeerConnectionPool: onSearchResults callback is nil!")
-        }
-        await connection.disconnect()
-        if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-            connections.removeValue(forKey: key)
-            activeConnections_.removeValue(forKey: key)
-            activeConnections = connections.count
+    /// Consume events from a PeerConnection's AsyncStream and dispatch them as PeerPoolEvents.
+    /// Replaces the old setOn* callback pattern for Swift 6 concurrency safety.
+    private func consumeEvents(from connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) {
+        Task { [weak self] in
+            for await event in connection.events {
+                guard let self else { return }
+                self.handlePeerEvent(event, connection: connection, username: username, connectionId: connectionId, capturedIP: capturedIP, isIncoming: isIncoming)
+            }
         }
     }
 
-    private func setupCallbacks(for connection: PeerConnection, username: String) async {
-        logger.debug("Setting up callbacks for connection to \(username)")
-
-        await connection.setOnSearchReply { [weak self] token, results in
-            await self?.handleOutgoingSearchReply(token: token, results: results, username: username, connection: connection)
-        }
-
-        await connection.setOnSharesReceived { [weak self] files in
-            await MainActor.run {
-                self?.onSharesReceived?(username, files)
-            }
-        }
-
-        await connection.setOnTransferRequest { [weak self] request in
-            await MainActor.run {
-                self?.onTransferRequest?(request)
-            }
-        }
-
-        await connection.setOnUploadDenied { [weak self] filename, reason in
-            await MainActor.run {
-                self?.logger.warning("Upload denied: \(filename) - \(reason)")
-                self?.onUploadDenied?(filename, reason)
-            }
-        }
-
-        await connection.setOnUploadFailed { [weak self] filename in
-            await MainActor.run {
-                self?.logger.warning("Upload failed: \(filename)")
-                self?.onUploadFailed?(filename)
-            }
-        }
-
-        await connection.setOnQueueUpload { [weak self] peerUsername, filename in
-            guard let self else { return }
-            self.logger.info("QueueUpload from \(peerUsername): \(filename)")
-            await self.onQueueUpload?(peerUsername, filename, connection)
-        }
-
-        await connection.setOnTransferResponse { [weak self] token, allowed, filesize in
-            guard let self else { return }
-            self.logger.debug("TransferResponse: token=\(token) allowed=\(allowed)")
-            await self.onTransferResponse?(token, allowed, filesize, connection)
-        }
-
-        await connection.setOnFolderContentsRequest { [weak self] token, folder in
-            guard let self else { return }
-            self.logger.debug("FolderContentsRequest from \(username): \(folder)")
-            await self.onFolderContentsRequest?(username, token, folder, connection)
-        }
-
-        await connection.setOnFolderContentsResponse { [weak self] token, folder, files in
-            await MainActor.run {
-                self?.logger.debug("FolderContentsResponse: \(folder) with \(files.count) files")
-                self?.onFolderContentsResponse?(token, folder, files)
-            }
-        }
-
-        await connection.setOnPlaceInQueueRequest { [weak self] peerUsername, filename in
-            guard let self else { return }
-            self.logger.debug("PlaceInQueueRequest from \(peerUsername): \(filename)")
-            await self.onPlaceInQueueRequest?(peerUsername, filename, connection)
-        }
-
-        await connection.setOnPlaceInQueueReply { [weak self] filename, position in
-            guard let self else { return }
-            let peerUsername = connection.peerInfo.username
-            await self.onPlaceInQueueReply?(peerUsername, filename, position)
-        }
-
-        // Set up SharesRequest callback (peer wants to browse us)
-        await connection.setOnSharesRequest { [weak self] conn in
-            guard let self else { return }
-            self.logger.info("SharesRequest from \(username): peer wants to browse our shares")
-            await self.onSharesRequest?(username, conn)
-        }
-
-        // Set up UserInfoRequest callback (peer wants our user info)
-        await connection.setOnUserInfoRequest { [weak self] conn in
-            guard let self else { return }
-            self.logger.info("UserInfoRequest from \(username): peer wants our user info")
-            await self.onUserInfoRequest?(username, conn)
-        }
-
-        // Set up ArtworkRequest callback (SeeleSeek extension)
-        await connection.setOnArtworkRequest { [weak self] token, filePath, conn in
-            guard let self else { return }
-            await self.onArtworkRequest?(username, token, filePath, conn)
-        }
-
-        await connection.setOnStateChanged { [weak self] state in
-            await MainActor.run {
-                if let key = self?.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-                    self?.connections[key]?.state = state
-                    self?.logger.debug("Outgoing connection to \(username) state: \(String(describing: state))")
-
-                    // Clean up disconnected connections
+    private func handlePeerEvent(_ event: PeerConnectionEvent, connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) {
+        switch event {
+        case .stateChanged(let state):
+            if isIncoming {
+                if case .disconnected = state {
+                    decrementIPCounter(for: capturedIP)
+                    connections.removeValue(forKey: connectionId)
+                    activeConnections_.removeValue(forKey: connectionId)
+                    activeConnections = connections.count
+                }
+            } else {
+                if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+                    connections[key]?.state = state
                     if case .disconnected = state {
-                        self?.connections.removeValue(forKey: key)
-                        self?.activeConnections_.removeValue(forKey: key)
-                        self?.activeConnections = self?.connections.count ?? 0
-                        self?.logger.info("Connection to \(username) removed (disconnected)")
+                        connections.removeValue(forKey: key)
+                        activeConnections_.removeValue(forKey: key)
+                        activeConnections = connections.count
                     }
                 }
             }
-        }
 
-        logger.debug("Callbacks set up for \(username)")
+        case .searchReply(let token, let results):
+            logger.info("Search results: \(results.count) from \(username) (token=\(token))")
+            eventContinuation.yield(.searchResults(token: token, results: results))
+            // Close connection after results received
+            Task {
+                await connection.disconnect()
+                if isIncoming {
+                    self.decrementIPCounter(for: capturedIP)
+                    self.connections.removeValue(forKey: connectionId)
+                    self.activeConnections_.removeValue(forKey: connectionId)
+                } else if let key = self.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+                    self.connections.removeValue(forKey: key)
+                    self.activeConnections_.removeValue(forKey: key)
+                }
+                self.activeConnections = self.connections.count
+            }
+
+        case .sharesReceived(let files):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.sharesReceived(username: peerUsername, files: files))
+
+        case .transferRequest(let request):
+            eventContinuation.yield(.transferRequest(request))
+
+        case .usernameDiscovered(let discoveredUsername, let token):
+            logger.info("Username discovered: \(discoveredUsername) token=\(token)")
+
+            // Register IP for country flag lookup
+            if !capturedIP.isEmpty {
+                eventContinuation.yield(.userIPDiscovered(username: discoveredUsername, ip: capturedIP))
+            }
+
+            // Update the connection info
+            if var existingInfo = connections[connectionId] {
+                existingInfo = PeerConnectionInfo(
+                    id: connectionId,
+                    username: discoveredUsername,
+                    ip: existingInfo.ip,
+                    port: existingInfo.port,
+                    state: existingInfo.state,
+                    connectionType: existingInfo.connectionType,
+                    connectedAt: existingInfo.connectedAt
+                )
+                connections[connectionId] = existingInfo
+            }
+
+            // Check if this matches a pending connection (for downloads)
+            if pendingConnections[token] != nil {
+                logger.info("Matched incoming connection to pending: \(discoveredUsername) token=\(token)")
+                pendingConnections.removeValue(forKey: token)
+                eventContinuation.yield(.incomingConnectionMatched(username: discoveredUsername, token: token, connection: connection))
+            }
+
+        case .fileTransferConnection(let ftUsername, let token, let fileConnection):
+            logger.info("File transfer connection: \(ftUsername) token=\(token)")
+            eventContinuation.yield(.fileTransferConnection(username: ftUsername, token: token, connection: fileConnection))
+
+        case .pierceFirewall(let token):
+            logger.info("PierceFirewall received: token=\(token)")
+            incrementPierceFirewallCount()
+            decrementIPCounter(for: capturedIP)
+            connections.removeValue(forKey: connectionId)
+            activeConnections_.removeValue(forKey: connectionId)
+            activeConnections = connections.count
+            eventContinuation.yield(.pierceFirewall(token: token, connection: connection))
+
+        case .uploadDenied(let filename, let reason):
+            logger.warning("Upload denied: \(filename) - \(reason)")
+            eventContinuation.yield(.uploadDenied(filename: filename, reason: reason))
+
+        case .uploadFailed(let filename):
+            logger.warning("Upload failed: \(filename)")
+            eventContinuation.yield(.uploadFailed(filename: filename))
+
+        case .queueUpload(let peerUsername, let filename):
+            logger.info("QueueUpload from \(peerUsername): \(filename)")
+            eventContinuation.yield(.queueUpload(username: peerUsername, filename: filename, connection: connection))
+
+        case .transferResponse(let token, let allowed, let filesize):
+            eventContinuation.yield(.transferResponse(token: token, allowed: allowed, filesize: filesize, connection: connection))
+
+        case .folderContentsRequest(let token, let folder):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.folderContentsRequest(username: peerUsername, token: token, folder: folder, connection: connection))
+
+        case .folderContentsResponse(let token, let folder, let files):
+            eventContinuation.yield(.folderContentsResponse(token: token, folder: folder, files: files))
+
+        case .placeInQueueRequest(let peerUsername, let filename):
+            eventContinuation.yield(.placeInQueueRequest(username: peerUsername, filename: filename, connection: connection))
+
+        case .placeInQueueReply(let filename, let position):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.placeInQueueReply(username: peerUsername, filename: filename, position: position))
+
+        case .sharesRequest:
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.sharesRequest(username: peerUsername, connection: connection))
+
+        case .userInfoRequest:
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.userInfoRequest(username: peerUsername, connection: connection))
+
+        case .artworkRequest(let token, let filePath):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.artworkRequest(username: peerUsername, token: token, filePath: filePath, connection: connection))
+
+        case .artworkReply(let token, let imageData):
+            eventContinuation.yield(.artworkReply(token: token, imageData: imageData))
+
+        case .message:
+            break // Raw messages handled directly by consumers that own the connection
+        }
     }
 
     // MARK: - Analytics

@@ -175,14 +175,14 @@ struct BidirectionalTests {
         let peerInfo = PeerConnection.PeerInfo(username: "testserver", ip: "127.0.0.1", port: Int(port.rawValue))
         let peer = PeerConnection(peerInfo: peerInfo, token: 12345)
 
-        // Set callback BEFORE connecting
-        await peer.setOnSearchReply { token, results in
-            print("✅ Callback received! token=\(token), results=\(results.count)")
-            Task { await state.setReceived() }
-        }
-
-        await peer.setOnMessage { code, data in
-            print("📨 Generic message: code=\(code), \(data.count) bytes")
+        // Consume events
+        Task {
+            for await event in peer.events {
+                if case .searchReply(let token, let results) = event {
+                    print("✅ Event received! token=\(token), results=\(results.count)")
+                    await state.setReceived()
+                }
+            }
         }
 
         try await peer.connect()
@@ -224,13 +224,13 @@ struct BidirectionalTests {
                 let peerConnection = PeerConnection(connection: incomingConn, isIncoming: true)
                 await state.set(peerConnection)
 
-                await peerConnection.setOnSearchReply { token, results in
-                    print("✅ SEARCH REPLY RECEIVED! token=\(token), \(results.count) results")
-                    Task { await state.setResults(results) }
-                }
-
-                await peerConnection.setOnMessage { code, data in
-                    print("📨 Message received: code=\(code), \(data.count) bytes")
+                Task {
+                    for await event in peerConnection.events {
+                        if case .searchReply(let token, let results) = event {
+                            print("✅ SEARCH REPLY RECEIVED! token=\(token), \(results.count) results")
+                            await state.setResults(results)
+                        }
+                    }
                 }
 
                 try? await peerConnection.accept()
@@ -321,14 +321,19 @@ struct BidirectionalTests {
                 let peerConnection = PeerConnection(connection: incomingConn, isIncoming: true)
                 await state.set(peerConnection)
 
-                await peerConnection.setOnMessage { code, data in
-                    print("📨 Received message! code=\(code), \(data.count) bytes")
-                    Task { await state.setDataReceived() }
-                }
-
-                await peerConnection.setOnSearchReply { token, results in
-                    print("🔍 Received search reply! token=\(token), \(results.count) results")
-                    Task { await state.setDataReceived() }
+                Task {
+                    for await event in peerConnection.events {
+                        switch event {
+                        case .message(let code, let data):
+                            print("📨 Received message! code=\(code), \(data.count) bytes")
+                            await state.setDataReceived()
+                        case .searchReply(let token, let results):
+                            print("🔍 Received search reply! token=\(token), \(results.count) results")
+                            await state.setDataReceived()
+                        default:
+                            break
+                        }
+                    }
                 }
 
                 do {
@@ -413,10 +418,13 @@ struct BidirectionalTests {
 
         let listenerService = ListenerService()
 
-        // Set up callback BEFORE starting
-        await listenerService.setOnNewConnection { conn, obfuscated in
-            print("✅ ListenerService forwarded connection! obfuscated=\(obfuscated)")
-            Task { await connectionState.set(conn) }
+        // Consume connections from stream
+        Task {
+            for await (conn, obfuscated) in await listenerService.newConnections {
+                print("✅ ListenerService forwarded connection! obfuscated=\(obfuscated)")
+                await connectionState.set(conn)
+                break
+            }
         }
 
         let ports = try await listenerService.start()
@@ -436,6 +444,72 @@ struct BidirectionalTests {
         #expect(await connectionState.receivedConnection != nil, "Should have received the connection")
 
         testConn.cancel()
+        await listenerService.stop()
+    }
+
+    /// Test that ListenerService works correctly after stop + restart (port change scenario)
+    @Test("ListenerService works after stop and restart")
+    func listenerServiceReconnect() async throws {
+        actor ConnectionState {
+            var count = 0
+            func increment() { count += 1 }
+        }
+        let state = ConnectionState()
+        let listenerService = ListenerService()
+
+        // First session
+        let ports1 = try await listenerService.start()
+        let stream1 = await listenerService.newConnections
+
+        let consumer1 = Task {
+            for await _ in stream1 {
+                await state.increment()
+                break
+            }
+        }
+
+        let conn1 = NWConnection(
+            to: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: ports1.port)!),
+            using: .tcp
+        )
+        conn1.start(queue: .global())
+
+        for _ in 0..<50 {
+            try await Task.sleep(for: .milliseconds(100))
+            if await state.count == 1 { break }
+        }
+        #expect(await state.count == 1, "Should receive connection in first session")
+        conn1.cancel()
+        consumer1.cancel()
+
+        // Stop listener (simulates port change)
+        await listenerService.stop()
+
+        // Second session — fresh stream after stop
+        let ports2 = try await listenerService.start()
+        let stream2 = await listenerService.newConnections
+
+        let consumer2 = Task {
+            for await _ in stream2 {
+                await state.increment()
+                break
+            }
+        }
+
+        let conn2 = NWConnection(
+            to: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: ports2.port)!),
+            using: .tcp
+        )
+        conn2.start(queue: .global())
+
+        for _ in 0..<50 {
+            try await Task.sleep(for: .milliseconds(100))
+            if await state.count == 2 { break }
+        }
+        #expect(await state.count == 2, "Should receive connection in second session after restart")
+        conn2.cancel()
+        consumer2.cancel()
+
         await listenerService.stop()
     }
 }

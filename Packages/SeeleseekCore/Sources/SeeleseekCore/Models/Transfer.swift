@@ -28,30 +28,6 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         case failed
         case cancelled
         case waiting
-
-        public var icon: String {
-            switch self {
-            case .queued: "clock"
-            case .connecting: "arrow.triangle.2.circlepath"
-            case .transferring: "arrow.down"
-            case .completed: "checkmark.circle.fill"
-            case .failed: "exclamationmark.triangle.fill"
-            case .cancelled: "xmark.circle"
-            case .waiting: "hourglass"
-            }
-        }
-
-        public var displayText: String {
-            switch self {
-            case .queued: "Queued"
-            case .connecting: "Connecting to peer..."
-            case .transferring: "Transferring"
-            case .completed: "Completed"
-            case .failed: "Failed"
-            case .cancelled: "Cancelled"
-            case .waiting: "Waiting in remote queue"
-            }
-        }
     }
 
     public init(
@@ -102,11 +78,8 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         return parts[startIndex..<endIndex].joined(separator: " / ")
     }
 
-    /// Check if this is an audio file
     public var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg", "wma", "aiff", "alac"]
-        let ext = (displayFilename as NSString).pathExtension.lowercased()
-        return audioExtensions.contains(ext)
+        FileTypes.isAudio((displayFilename as NSString).pathExtension.lowercased())
     }
 
     public var progress: Double {

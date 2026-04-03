@@ -11,11 +11,14 @@ public actor ListenerService {
     private var listeningPort: UInt16 = 0
     private var obfuscatedPort: UInt16 = 0
 
-    // Callback for new connections
-    private var _onNewConnection: ((NWConnection, Bool) async -> Void)?
+    // Stream for new connections — recreated on each start() for clean reconnect lifecycle
+    public private(set) var newConnections: AsyncStream<(NWConnection, Bool)>
+    private var connectionContinuation: AsyncStream<(NWConnection, Bool)>.Continuation
 
-    public func setOnNewConnection(_ handler: @escaping (NWConnection, Bool) async -> Void) {
-        _onNewConnection = handler
+    public init() {
+        let (stream, continuation) = AsyncStream.makeStream(of: (NWConnection, Bool).self)
+        self.newConnections = stream
+        self.connectionContinuation = continuation
     }
 
     // MARK: - Port Configuration
@@ -71,6 +74,11 @@ public actor ListenerService {
         listener = nil
         listeningPort = 0
         obfuscatedPort = 0
+        // Finish the old stream and create a fresh one for next start()
+        connectionContinuation.finish()
+        let (stream, continuation) = AsyncStream.makeStream(of: (NWConnection, Bool).self)
+        newConnections = stream
+        connectionContinuation = continuation
         logger.info("Listener stopped")
     }
 
@@ -168,15 +176,9 @@ public actor ListenerService {
         obfuscatedListener.start(queue: .global(qos: .userInitiated))
     }
 
-    private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) async {
-        logger.info("New \(obfuscated ? "obfuscated " : "")connection from \(String(describing: connection.endpoint))")
+    private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) {
         logger.info("Incoming connection from \(String(describing: connection.endpoint)) (obfuscated: \(obfuscated))")
-
-        if _onNewConnection != nil {
-            await _onNewConnection?(connection, obfuscated)
-        } else {
-            logger.warning("No connection handler set!")
-        }
+        connectionContinuation.yield((connection, obfuscated))
     }
 
     // MARK: - Port Scanning

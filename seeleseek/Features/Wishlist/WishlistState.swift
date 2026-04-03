@@ -11,7 +11,7 @@ struct WishlistItem: Identifiable, Hashable, Sendable {
     var lastSearchedAt: Date?
     var resultCount: Int
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         query: String,
         createdAt: Date = Date(),

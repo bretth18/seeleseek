@@ -8,7 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A6120FB12F33E8AC00995D21 /* GRDB */; };
-		A6CORE0012F40000000000001 /* SeeleseekCore in Frameworks */ = {isa = PBXBuildFile; productRef = A6CORE0002F40000000000001 /* SeeleseekCore */; };
+		A67A0E4C2F806B8C00EBD9B2 /* SeeleseekCore in Frameworks */ = {isa = PBXBuildFile; productRef = A67A0E4B2F806B8C00EBD9B2 /* SeeleseekCore */; };
+		A6CORE0012F40000000000001 /* (null) in Frameworks */ = {isa = PBXBuildFile; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -59,7 +60,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */,
-				A6CORE0012F40000000000001 /* SeeleseekCore in Frameworks */,
+				A6CORE0012F40000000000001 /* (null) in Frameworks */,
+				A67A0E4C2F806B8C00EBD9B2 /* SeeleseekCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -121,7 +123,7 @@
 			name = seeleseek;
 			packageProductDependencies = (
 				A6120FB12F33E8AC00995D21 /* GRDB */,
-				A6CORE0002F40000000000001 /* SeeleseekCore */,
+				A67A0E4B2F806B8C00EBD9B2 /* SeeleseekCore */,
 			);
 			productName = seeleseek;
 			productReference = A61208182F32A89C00995D21 /* seeleseek.app */;
@@ -178,7 +180,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
-				A6CORE0032F40000000000001 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */,
+				A67A0E4A2F806B8C00EBD9B2 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A61208192F32A89C00995D21 /* Products */;
@@ -361,7 +363,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = seeleseek/seeleseek.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 94XUGF9CU7;
 				ENABLE_APP_SANDBOX = NO;
@@ -400,7 +402,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Debug;
@@ -412,7 +414,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = seeleseek/seeleseek.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 94XUGF9CU7;
 				ENABLE_APP_SANDBOX = NO;
@@ -451,7 +453,7 @@
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				XROS_DEPLOYMENT_TARGET = 26.2;
 			};
 			name = Release;
@@ -473,7 +475,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/seeleseek.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/seeleseek";
 			};
 			name = Debug;
@@ -495,7 +497,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/seeleseek.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/seeleseek";
 			};
 			name = Release;
@@ -533,7 +535,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A6CORE0032F40000000000001 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */ = {
+		A67A0E4A2F806B8C00EBD9B2 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/SeeleseekCore;
 		};
@@ -556,7 +558,7 @@
 			package = A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
-		A6CORE0002F40000000000001 /* SeeleseekCore */ = {
+		A67A0E4B2F806B8C00EBD9B2 /* SeeleseekCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SeeleseekCore;
 		};

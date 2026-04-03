@@ -126,8 +126,11 @@ struct NetworkTests {
         let listener = ListenerService()
         var incomingConnection: NWConnection?
 
-        await listener.setOnNewConnection { connection, _ in
-            incomingConnection = connection
+        Task {
+            for await (connection, _) in await listener.newConnections {
+                incomingConnection = connection
+                break
+            }
         }
 
         let ports = try await listener.start()
@@ -155,16 +158,19 @@ struct NetworkTests {
         let ports = try await listener.start()
 
         await confirmation("Receive PierceFirewall") { confirm in
-            await listener.setOnNewConnection { connection, _ in
-                connection.stateUpdateHandler = { state in
-                    if case .ready = state {
-                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, _ in
-                            receivedData = data
-                            confirm()
+            Task {
+                for await (connection, _) in await listener.newConnections {
+                    connection.stateUpdateHandler = { (state: NWConnection.State) in
+                        if case .ready = state {
+                            connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { data, _, _, _ in
+                                receivedData = data
+                                confirm()
+                            }
                         }
                     }
+                    connection.start(queue: .global())
+                    break
                 }
-                connection.start(queue: .global())
             }
 
             let peerInfo = PeerConnection.PeerInfo(username: "handshaketest", ip: "127.0.0.1", port: Int(ports.port))

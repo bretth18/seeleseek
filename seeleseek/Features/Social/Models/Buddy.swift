@@ -15,7 +15,7 @@ struct Buddy: Identifiable, Codable, Hashable, Sendable {
     var dateAdded: Date = Date()
     var lastSeen: Date?
 
-    init(
+    nonisolated init(
         username: String,
         status: BuddyStatus = .offline,
         isPrivileged: Bool = false,

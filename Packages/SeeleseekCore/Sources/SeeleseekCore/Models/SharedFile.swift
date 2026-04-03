@@ -52,51 +52,15 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
         return ""
     }
 
-    public var icon: String {
-        if isDirectory {
-            return "folder.fill"
-        }
-
-        if isAudioFile {
-            return "music.note"
-        } else if isImageFile {
-            return "photo"
-        } else if isVideoFile {
-            return "film"
-        } else if isArchiveFile {
-            return "archivebox"
-        }
-        return "doc"
-    }
-
     public nonisolated var displayFilename: String {
         displayName
     }
 
-    public nonisolated var isAudioFile: Bool {
-        let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape", "aif"]
-        return audioExtensions.contains(fileExtension)
-    }
-
-    public var isImageFile: Bool {
-        let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
-        return imageExtensions.contains(fileExtension)
-    }
-
-    public var isVideoFile: Bool {
-        let videoExtensions = ["mp4", "mkv", "avi", "mov", "wmv"]
-        return videoExtensions.contains(fileExtension)
-    }
-
-    public var isArchiveFile: Bool {
-        let archiveExtensions = ["zip", "rar", "7z", "tar", "gz"]
-        return archiveExtensions.contains(fileExtension)
-    }
-
-    public var isLossless: Bool {
-        let losslessExtensions = ["flac", "wav", "aiff", "alac", "ape", "aif"]
-        return losslessExtensions.contains(fileExtension)
-    }
+    public nonisolated var isAudioFile: Bool { FileTypes.isAudio(fileExtension) }
+    public var isImageFile: Bool { FileTypes.isImage(fileExtension) }
+    public var isVideoFile: Bool { FileTypes.isVideo(fileExtension) }
+    public var isArchiveFile: Bool { FileTypes.isArchive(fileExtension) }
+    public var isLossless: Bool { FileTypes.isLossless(fileExtension) }
 
     /// Recursively collect all non-directory files from a tree
     public static func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {

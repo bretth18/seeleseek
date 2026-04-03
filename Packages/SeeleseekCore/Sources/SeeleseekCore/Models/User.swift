@@ -36,11 +36,4 @@ public struct User: Identifiable, Hashable, Sendable {
         ByteFormatter.formatSpeed(Int64(averageSpeed))
     }
 
-    public var statusIcon: String {
-        switch status {
-        case .offline: "circle.slash"
-        case .away: "moon.fill"
-        case .online: "circle.fill"
-        }
-    }
 }

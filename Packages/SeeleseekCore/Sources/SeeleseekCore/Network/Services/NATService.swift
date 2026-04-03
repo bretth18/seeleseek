@@ -241,7 +241,9 @@ public actor NATService {
                                 if let location = self?.parseLocationHeader(from: response) {
                                     print("🔧 NAT: Gateway at: \(location)")
 
-                                    Task { [weak self] in
+                                    let taskConnection = connection
+                                    let taskContinuation = continuation
+                                    Task { @Sendable [weak self] in
                                         do {
                                             let gateway = try await self?.fetchGatewayInfo(from: location)
                                             if let gateway = gateway {
@@ -250,8 +252,8 @@ public actor NATService {
                                                     $0 = true
                                                     return true
                                                 }) else { return }
-                                                connection.cancel()
-                                                continuation.resume(returning: gateway)
+                                                taskConnection.cancel()
+                                                taskContinuation.resume(returning: gateway)
                                             }
                                         } catch {
                                             // Try next response

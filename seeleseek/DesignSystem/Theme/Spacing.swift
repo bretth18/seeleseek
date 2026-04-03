@@ -1,7 +1,7 @@
 import SwiftUI
 import SeeleseekCore
 
-enum SeeleSpacing {
+nonisolated enum SeeleSpacing {
     // MARK: - Base Scale
     static let xxs: CGFloat = 2
     static let xs: CGFloat = 4

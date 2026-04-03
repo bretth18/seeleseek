@@ -2,8 +2,8 @@ import AppIntents
 import SeeleseekCore
 
 struct SearchFilesIntent: AppIntent {
-    static var title: LocalizedStringResource = "Search Files"
-    static var description = IntentDescription("Search for files on the SoulSeek network. Returns results after waiting for responses.")
+    static let title: LocalizedStringResource = "Search Files"
+    static let description = IntentDescription("Search for files on the SoulSeek network. Returns results after waiting for responses.")
 
     @Parameter(title: "Query")
     var query: String
@@ -55,5 +55,5 @@ struct SearchFilesIntent: AppIntent {
         return .result(value: results)
     }
 
-    static var openAppWhenRun: Bool = false
+    static let openAppWhenRun: Bool = false
 }

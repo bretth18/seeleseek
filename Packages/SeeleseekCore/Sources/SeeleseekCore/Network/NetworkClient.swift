@@ -68,6 +68,10 @@ public final class NetworkClient {
     // User info cache (country codes, etc.)
     public let userInfoCache = UserInfoCache()
 
+    // Stream consumer tasks (cancelled on disconnect for clean reconnect)
+    private var listenerConsumerTask: Task<Void, Never>?
+    private var poolEventConsumerTask: Task<Void, Never>?
+
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
     // Uses (continuation, requestID) to prevent double-resume when same user is requested multiple times
     private var pendingPeerAddressRequests: [String: (continuation: CheckedContinuation<(ip: String, port: Int), Error>, requestID: UUID)] = [:]
@@ -79,131 +83,83 @@ public final class NetworkClient {
 
     public init() {
         logger.info("NetworkClient initializing...")
-        // Wire up peer connection pool callbacks to network client
-        peerConnectionPool.onSearchResults = { [weak self] token, results in
-            self?.logger.debug("NetworkClient: Received \(results.count) results for token \(token)")
-            if self?.onSearchResults != nil {
-                self?.logger.debug("NetworkClient: Forwarding to SearchState callback...")
-                self?.onSearchResults?(token, results)
-                self?.logger.debug("NetworkClient: Callback completed")
-            } else {
-                self?.logger.warning("NetworkClient: onSearchResults callback is nil!")
+
+        // Consume pool events via AsyncStream (replaces callback wiring)
+        poolEventConsumerTask = Task { [weak self] in
+            guard let self else { return }
+            for await event in self.peerConnectionPool.events {
+                self.handlePoolEvent(event)
             }
         }
 
-        // Wire up incoming connection matching for downloads
-        peerConnectionPool.onIncomingConnectionMatched = { [weak self] username, token, connection in
-            self?.logger.debug("NetworkClient: Incoming connection matched: \(username) token=\(token)")
-            await self?.onIncomingConnectionMatched?(username, token, connection)
-        }
+        logger.info("NetworkClient initialized")
+    }
 
-        // Wire up file transfer connections
-        peerConnectionPool.onFileTransferConnection = { [weak self] username, token, connection in
-            self?.logger.debug("NetworkClient: File transfer connection received - username='\(username)' token=\(token)")
-            if self?.onFileTransferConnection != nil {
-                self?.logger.debug("NetworkClient: Forwarding to DownloadManager...")
-                await self?.onFileTransferConnection?(username, token, connection)
-                self?.logger.debug("NetworkClient: Forward complete")
-            } else {
-                self?.logger.warning("NetworkClient: onFileTransferConnection callback is nil!")
+    private func handlePoolEvent(_ event: PeerPoolEvent) {
+        switch event {
+        case .searchResults(let token, let results):
+            onSearchResults?(token, results)
+
+        case .incomingConnectionMatched(let username, let token, let connection):
+            Task { await onIncomingConnectionMatched?(username, token, connection) }
+
+        case .fileTransferConnection(let username, let token, let connection):
+            Task { await onFileTransferConnection?(username, token, connection) }
+
+        case .pierceFirewall(let token, let connection):
+            if handlePierceFirewallForBrowse(token: token, connection: connection) { return }
+            Task { await onPierceFirewall?(token, connection) }
+
+        case .uploadDenied(let filename, let reason):
+            onUploadDenied?(filename, reason)
+
+        case .uploadFailed(let filename):
+            onUploadFailed?(filename)
+
+        case .queueUpload(let username, let filename, let connection):
+            Task { await onQueueUpload?(username, filename, connection) }
+
+        case .transferResponse(let token, let allowed, let filesize, let connection):
+            Task { await onTransferResponse?(token, allowed, filesize, connection) }
+
+        case .folderContentsRequest(let username, let token, let folder, let connection):
+            Task { await handleFolderContentsRequest(username: username, token: token, folder: folder, connection: connection) }
+
+        case .folderContentsResponse(let token, let folder, let files):
+            onFolderContentsResponse?(token, folder, files)
+
+        case .transferRequest(let request):
+            onTransferRequest?(request)
+
+        case .placeInQueueRequest(let username, let filename, let connection):
+            Task { await onPlaceInQueueRequest?(username, filename, connection) }
+
+        case .placeInQueueReply(let username, let filename, let position):
+            Task { await onPlaceInQueueReply?(username, filename, position) }
+
+        case .sharesRequest(let username, let connection):
+            Task { await handleSharesRequest(username: username, connection: connection) }
+
+        case .userInfoRequest(let username, let connection):
+            Task { await handleUserInfoRequest(username: username, connection: connection) }
+
+        case .artworkRequest(_, let token, let filePath, let connection):
+            Task { await handleArtworkRequest(token: token, filePath: filePath, connection: connection) }
+
+        case .sharesReceived(let username, let files):
+            logger.info("Received \(files.count) shared files from \(username) via pool")
+            if let continuation = pendingBrowseSharesContinuations.removeValue(forKey: username) {
+                continuation.resume(returning: files)
+            }
+
+        case .userIPDiscovered(let username, let ip):
+            userInfoCache.registerIP(ip, for: username)
+
+        case .artworkReply(let token, let imageData):
+            if let callback = artworkCallbacks.removeValue(forKey: token) {
+                callback(imageData.isEmpty ? nil : imageData)
             }
         }
-
-        // Wire up PierceFirewall for indirect connections
-        // First check if it matches a pending browse request, then delegate to DownloadManager
-        peerConnectionPool.onPierceFirewall = { [weak self] token, connection in
-            self?.logger.debug("NetworkClient: PierceFirewall token=\(token)")
-            // Check if this is for a pending browse request
-            if self?.handlePierceFirewallForBrowse(token: token, connection: connection) == true {
-                self?.logger.debug("NetworkClient: PierceFirewall handled as browse request")
-                return
-            }
-            // Otherwise, delegate to DownloadManager
-            await self?.onPierceFirewall?(token, connection)
-        }
-
-        // Wire up upload denied/failed
-        peerConnectionPool.onUploadDenied = { [weak self] filename, reason in
-            self?.logger.warning("NetworkClient: Upload denied: \(filename) - \(reason)")
-            self?.onUploadDenied?(filename, reason)
-        }
-
-        peerConnectionPool.onUploadFailed = { [weak self] filename in
-            self?.logger.warning("NetworkClient: Upload failed: \(filename)")
-            self?.onUploadFailed?(filename)
-        }
-
-        // Wire up QueueUpload for upload handling
-        peerConnectionPool.onQueueUpload = { [weak self] username, filename, connection in
-            self?.logger.info("NetworkClient: QueueUpload from \(username): \(filename)")
-            await self?.onQueueUpload?(username, filename, connection)
-        }
-
-        // Wire up TransferResponse for upload handling
-        peerConnectionPool.onTransferResponse = { [weak self] token, allowed, filesize, connection in
-            self?.logger.debug("NetworkClient: TransferResponse token=\(token) allowed=\(allowed)")
-            await self?.onTransferResponse?(token, allowed, filesize, connection)
-        }
-
-        // Wire up FolderContentsRequest for folder browsing
-        peerConnectionPool.onFolderContentsRequest = { [weak self] username, token, folder, connection in
-            self?.logger.debug("NetworkClient: FolderContentsRequest from \(username): \(folder)")
-            await self?.handleFolderContentsRequest(username: username, token: token, folder: folder, connection: connection)
-        }
-
-        // Wire up FolderContentsResponse for folder browsing
-        peerConnectionPool.onFolderContentsResponse = { [weak self] token, folder, files in
-            self?.logger.debug("NetworkClient: FolderContentsResponse: \(folder) with \(files.count) files")
-            self?.onFolderContentsResponse?(token, folder, files)
-        }
-
-        // Wire up pool-level TransferRequest (catches requests on connections not directly managed by DownloadManager)
-        peerConnectionPool.onTransferRequest = { [weak self] request in
-            self?.logger.debug("NetworkClient: Pool TransferRequest for \(request.filename) from \(request.username)")
-            self?.onTransferRequest?(request)
-        }
-
-        // Wire up PlaceInQueueRequest for queue position management
-        peerConnectionPool.onPlaceInQueueRequest = { [weak self] username, filename, connection in
-            self?.logger.debug("NetworkClient: PlaceInQueueRequest from \(username): \(filename)")
-            await self?.onPlaceInQueueRequest?(username, filename, connection)
-        }
-
-        // Wire up PlaceInQueueReply for download queue position updates
-        peerConnectionPool.onPlaceInQueueReply = { [weak self] username, filename, position in
-            self?.logger.debug("NetworkClient: PlaceInQueueReply from \(username): \(filename) pos=\(position)")
-            await self?.onPlaceInQueueReply?(username, filename, position)
-        }
-
-        // Wire up SharesRequest for when peers want to browse our shared files
-        peerConnectionPool.onSharesRequest = { [weak self] username, connection in
-            self?.logger.info("NetworkClient: SharesRequest from \(username) - sending our shares")
-            await self?.handleSharesRequest(username: username, connection: connection)
-        }
-
-        // Wire up UserInfoRequest for when peers want our user info
-        peerConnectionPool.onUserInfoRequest = { [weak self] username, connection in
-            self?.logger.info("NetworkClient: UserInfoRequest from \(username) - sending our user info")
-            await self?.handleUserInfoRequest(username: username, connection: connection)
-        }
-
-        // Wire up ArtworkRequest (SeeleSeek extension) for when peers want album art
-        peerConnectionPool.onArtworkRequest = { [weak self] username, token, filePath, connection in
-            self?.logger.info("NetworkClient: ArtworkRequest from \(username) for \(filePath)")
-            await self?.handleArtworkRequest(token: token, filePath: filePath, connection: connection)
-        }
-
-        // Wire up shares received through pool (for unsolicited shares or pool-routed browse)
-        peerConnectionPool.onSharesReceived = { [weak self] username, files in
-            self?.logger.info("NetworkClient: Received \(files.count) shared files from \(username) via pool")
-        }
-
-        // Wire up user IP discovery for country flags
-        peerConnectionPool.onUserIPDiscovered = { [weak self] username, ip in
-            self?.userInfoCache.registerIP(ip, for: username)
-        }
-
-        logger.info("NetworkClient initialized, callbacks wired")
     }
 
     // MARK: - Callbacks
@@ -341,15 +297,8 @@ public final class NetworkClient {
         logger.info("Starting connection to \(server):\(port) as \(username)")
 
         do {
-            // Step 1: Set up listener callback for incoming peer connections
-            await listenerService.setOnNewConnection { [weak self] connection, isObfuscated in
-                guard let self else { return }
-                logger.info("Incoming peer connection received (obfuscated: \(isObfuscated))")
-                self.logger.info("Incoming peer connection (obfuscated: \(isObfuscated))")
-                await self.peerConnectionPool.handleIncomingConnection(connection)
-            }
-
-            // Step 2: Start listener for incoming peer connections
+            // Step 1: Start listener for incoming peer connections
+            listenerConsumerTask?.cancel()
             logger.info("Starting listener...")
             let portDesc = preferredListenPort?.description ?? "auto"
             logger.info("Starting listener service (preferred port: \(portDesc))...")
@@ -359,6 +308,15 @@ public final class NetworkClient {
             peerConnectionPool.listenPort = ports.port  // For NAT traversal - bind outgoing connections to listen port
             logger.info("Listening on port \(self.listenPort)")
             logger.info("Listening on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
+
+            // Step 2: Consume incoming peer connections (after listener started, so we get the fresh stream)
+            let connectionStream = await listenerService.newConnections
+            listenerConsumerTask = Task { [weak self] in
+                guard let self else { return }
+                for await (connection, _) in connectionStream {
+                    await self.peerConnectionPool.handleIncomingConnection(connection)
+                }
+            }
 
             // Step 3: Connect to server FIRST (NAT runs in background)
             logger.info("Connecting to server...")
@@ -508,6 +466,9 @@ public final class NetworkClient {
 
         pingTask?.cancel()
         pingTask = nil
+
+        listenerConsumerTask?.cancel()
+        listenerConsumerTask = nil
 
         Task {
             await serverConnection?.disconnect()
@@ -1040,39 +1001,30 @@ public final class NetworkClient {
         try await connection.waitForPeerHandshake(timeout: .seconds(5))
         logger.debug("Browse: Handshake verified, setting up callback...")
 
-        // Set up callback BEFORE requesting shares
-        let sharesResumed = Mutex(false)
-        let receivedFiles = Mutex<[SharedFile]>([])
-
-        // Set up the callback first (outside the continuation to avoid race)
-        await connection.setOnSharesReceived { [self] files in
-            self.logger.debug("Browse: Callback received \(files.count) files from \(username)")
-            receivedFiles.withLock { $0 = files }
-            sharesResumed.withLock { $0 = true }
-        }
-
-        // Request shares
+        // Request shares and wait for response via pool event stream
         logger.debug("Browse: Requesting shares from \(username)...")
         try await connection.requestShares()
         logger.debug("Browse: Shares request sent, waiting for response...")
 
-        // Poll for response with timeout
-        let startTime = Date()
-        let timeoutSeconds: TimeInterval = 30
+        // Wait for sharesReceived event via pool stream (arrives in handlePoolEvent)
+        let files = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[SharedFile], Error>) in
+            pendingBrowseSharesContinuations[username] = continuation
 
-        while !sharesResumed.withLock({ $0 }) {
-            try await Task.sleep(for: .milliseconds(100))
-
-            if Date().timeIntervalSince(startTime) > timeoutSeconds {
-                logger.warning("Browse: Timeout waiting for shares from \(username)")
-                throw NetworkError.timeout
+            // Timeout after 30 seconds
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                if let cont = self?.pendingBrowseSharesContinuations.removeValue(forKey: username) {
+                    cont.resume(throwing: NetworkError.timeout)
+                }
             }
         }
 
-        let result = receivedFiles.withLock { $0 }
-        logger.debug("Browse: Got \(result.count) files from \(username)")
-        return result
+        logger.debug("Browse: Got \(files.count) files from \(username)")
+        return files
     }
+
+    /// Pending continuations for browse shares responses, keyed by username
+    private var pendingBrowseSharesContinuations: [String: CheckedContinuation<[SharedFile], Error>] = [:]
 
     // Pending browse state - tracks both waiting and received connections
     private struct PendingBrowseState {
@@ -1798,12 +1750,6 @@ public final class NetworkClient {
                 return
             }
 
-            // Set up artwork reply callback on this connection
-            await connection.setOnArtworkReply { [weak self] receivedToken, imageData in
-                guard let callback = self?.artworkCallbacks.removeValue(forKey: receivedToken) else { return }
-                callback(imageData.isEmpty ? nil : imageData)
-            }
-
             let request = MessageBuilder.artworkRequestMessage(token: token, filePath: filePath)
             do {
                 try await connection.send(request)
@@ -1814,10 +1760,11 @@ public final class NetworkClient {
                 return
             }
 
-            // Timeout: clean up after 10 seconds if no response (peer isn't SeeleSeek)
-            Task { [weak self] in
+            // Timeout: clean up after 10 seconds if no response
+            // The reply arrives via handlePoolEvent(.artworkReply) which calls artworkCallbacks
+            Task {
                 try? await Task.sleep(for: .seconds(10))
-                if let callback = self?.artworkCallbacks.removeValue(forKey: token) {
+                if let callback = self.artworkCallbacks.removeValue(forKey: token) {
                     callback(nil)
                 }
             }

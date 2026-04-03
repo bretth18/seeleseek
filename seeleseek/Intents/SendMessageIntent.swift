@@ -2,8 +2,8 @@ import AppIntents
 import SeeleseekCore
 
 struct SendRoomMessageIntent: AppIntent {
-    static var title: LocalizedStringResource = "Send Room Message"
-    static var description = IntentDescription("Send a message to a SoulSeek chat room.")
+    static let title: LocalizedStringResource = "Send Room Message"
+    static let description = IntentDescription("Send a message to a SoulSeek chat room.")
 
     @Parameter(title: "Room")
     var room: String
@@ -27,12 +27,12 @@ struct SendRoomMessageIntent: AppIntent {
         return .result()
     }
 
-    static var openAppWhenRun: Bool = false
+    static let openAppWhenRun: Bool = false
 }
 
 struct SendPrivateMessageIntent: AppIntent {
-    static var title: LocalizedStringResource = "Send Private Message"
-    static var description = IntentDescription("Send a private message to a SoulSeek user.")
+    static let title: LocalizedStringResource = "Send Private Message"
+    static let description = IntentDescription("Send a private message to a SoulSeek user.")
 
     @Parameter(title: "Username")
     var username: String
@@ -56,5 +56,5 @@ struct SendPrivateMessageIntent: AppIntent {
         return .result()
     }
 
-    static var openAppWhenRun: Bool = false
+    static let openAppWhenRun: Bool = false
 }

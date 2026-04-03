@@ -810,10 +810,15 @@ public final class ServerMessageHandler {
             // Store the connection to keep it alive
             distributedParentConnection = connection
 
-            // Set up message handling for distributed messages
+            // Consume distributed messages from the connection's event stream
             let parentUsername = username
-            await connection.setOnMessage { [weak self] code, payload in
-                await self?.handleDistributedMessage(code: code, payload: payload, parentUsername: parentUsername)
+            Task { [weak self] in
+                for await event in connection.events {
+                    guard let self else { return }
+                    if case .message(let code, let payload) = event {
+                        await self.handleDistributedMessage(code: code, payload: payload, parentUsername: parentUsername)
+                    }
+                }
             }
 
             // Tell server we have a parent now

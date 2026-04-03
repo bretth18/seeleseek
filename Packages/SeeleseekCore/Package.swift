@@ -16,10 +16,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "SeeleseekCore",
-            swiftSettings: [
-                .swiftLanguageMode(.v5)
-            ]
+            name: "SeeleseekCore"
         )
     ]
 )

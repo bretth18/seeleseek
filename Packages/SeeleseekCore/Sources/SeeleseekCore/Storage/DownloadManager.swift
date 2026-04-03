@@ -603,17 +603,11 @@ public final class DownloadManager {
         return true
     }
 
-    /// Set up callback for TransferRequest - must be called BEFORE sending QueueDownload
-    /// Uses filename-based matching to handle multiple concurrent downloads on same connection
+    /// TransferRequest routing is now handled centrally via the pool event stream.
+    /// All transfer requests arrive through NetworkClient.onTransferRequest → handlePoolTransferRequest.
+    /// This method is kept as a no-op to avoid changing all call sites.
     private func setupTransferRequestCallback(token: UInt32, connection: PeerConnection) async {
-        // Use a central callback that matches by filename instead of capturing a specific token
-        // This fixes the issue where multiple downloads on the same connection would overwrite callbacks
-        await connection.setOnTransferRequest { [weak self] request in
-            guard let self else { return }
-            // Find pending download by filename match
-            await self.handleTransferRequestByFilename(request: request, fallbackToken: token)
-        }
-        logger.debug("TransferRequest callback set up (filename-based matching, fallback token=\(token))")
+        logger.debug("TransferRequest routing via pool event stream (token=\(token))")
     }
 
     /// Handle TransferRequest by matching filename to pending downloads

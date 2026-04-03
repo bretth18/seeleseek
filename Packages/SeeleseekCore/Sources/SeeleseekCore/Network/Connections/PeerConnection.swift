@@ -78,126 +78,12 @@ public actor PeerConnection {
     // For incoming connections, we delay starting the receive loop until callbacks are configured
     private var autoStartReceiving = true
 
-    // Callbacks
-    private var _onStateChanged: (@Sendable (State) async -> Void)?
-    private var _onMessage: (@Sendable (UInt32, Data) async -> Void)?
-    private var _onSharesReceived: (@Sendable ([SharedFile]) async -> Void)?
-    private var _onSearchReply: (@Sendable (UInt32, [SearchResult]) async -> Void)?  // (token, results)
-    private var _onTransferRequest: (@Sendable (TransferRequest) async -> Void)?
-    // Per-token TransferRequest handlers for handling multiple concurrent downloads on same connection
-    private var _tokenTransferRequestHandlers: [UInt32: @Sendable (TransferRequest) async -> Void] = [:]
-    private var _onUsernameDiscovered: (@Sendable (String, UInt32) async -> Void)?  // (username, token)
-    private var _onFileTransferConnection: (@Sendable (String, UInt32, PeerConnection) async -> Void)?  // (username, token, self)
-    private var _onPierceFirewall: (@Sendable (UInt32) async -> Void)?  // token from indirect connection
-    private var _onUploadDenied: (@Sendable (String, String) async -> Void)?  // (filename, reason)
-    private var _onUploadFailed: (@Sendable (String) async -> Void)?  // filename
-    private var _onQueueUpload: (@Sendable (String, String) async -> Void)?  // (username, filename) - peer wants to download from us
-    private var _onTransferResponse: (@Sendable (UInt32, Bool, UInt64?) async -> Void)?  // (token, allowed, filesize?)
-    private var _onFolderContentsRequest: (@Sendable (UInt32, String) async -> Void)?  // (token, folder)
-    private var _onFolderContentsResponse: (@Sendable (UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
-    private var _onPlaceInQueueRequest: (@Sendable (String, String) async -> Void)?  // (username, filename) - peer asks for queue position
-    private var _onPlaceInQueueReply: (@Sendable (String, UInt32) async -> Void)?  // (filename, position)
-    private var _onSharesRequest: (@Sendable (PeerConnection) async -> Void)?  // Peer wants to browse our shares
-    private var _onUserInfoRequest: (@Sendable (PeerConnection) async -> Void)?  // Peer wants our user info
+    // AsyncStream for emitting events (replaces callbacks)
+    public nonisolated let events: AsyncStream<PeerConnectionEvent>
+    private let eventContinuation: AsyncStream<PeerConnectionEvent>.Continuation
 
     // SeeleSeek extension state
     private(set) var isSeeleSeekPeer = false
-    private var _onArtworkRequest: (@Sendable (UInt32, String, PeerConnection) async -> Void)?  // (token, filePath, connection)
-    private var _onArtworkReply: (@Sendable (UInt32, Data) async -> Void)?  // (token, imageData)
-
-    // Callback setters for external access
-    public func setOnStateChanged(_ handler: @Sendable @escaping (State) async -> Void) {
-        _onStateChanged = handler
-    }
-
-    public func setOnMessage(_ handler: @Sendable @escaping (UInt32, Data) async -> Void) {
-        _onMessage = handler
-    }
-
-    public func setOnSharesReceived(_ handler: @Sendable @escaping ([SharedFile]) async -> Void) {
-        _onSharesReceived = handler
-    }
-
-    public func setOnSearchReply(_ handler: @Sendable @escaping (UInt32, [SearchResult]) async -> Void) {
-        _onSearchReply = handler
-    }
-
-    public func setOnTransferRequest(_ handler: @Sendable @escaping (TransferRequest) async -> Void) {
-        _onTransferRequest = handler
-    }
-
-    /// Register a handler for a specific token's TransferRequest
-    /// This allows multiple concurrent downloads on the same connection without callback conflicts
-    public func setOnTransferRequestForToken(_ token: UInt32, handler: @Sendable @escaping (TransferRequest) async -> Void) {
-        _tokenTransferRequestHandlers[token] = handler
-        logger.debug("Registered TransferRequest handler for token \(token) (total handlers: \(self._tokenTransferRequestHandlers.count))")
-    }
-
-    /// Remove a per-token TransferRequest handler
-    public func removeTransferRequestHandlerForToken(_ token: UInt32) {
-        _tokenTransferRequestHandlers.removeValue(forKey: token)
-        logger.debug("Removed TransferRequest handler for token \(token) (remaining: \(self._tokenTransferRequestHandlers.count))")
-    }
-
-    public func setOnUsernameDiscovered(_ handler: @Sendable @escaping (String, UInt32) async -> Void) {
-        _onUsernameDiscovered = handler
-    }
-
-    public func setOnFileTransferConnection(_ handler: @Sendable @escaping (String, UInt32, PeerConnection) async -> Void) {
-        _onFileTransferConnection = handler
-    }
-
-    public func setOnPierceFirewall(_ handler: @Sendable @escaping (UInt32) async -> Void) {
-        _onPierceFirewall = handler
-    }
-
-    public func setOnUploadDenied(_ handler: @Sendable @escaping (String, String) async -> Void) {
-        _onUploadDenied = handler
-    }
-
-    public func setOnUploadFailed(_ handler: @Sendable @escaping (String) async -> Void) {
-        _onUploadFailed = handler
-    }
-
-    public func setOnQueueUpload(_ handler: @Sendable @escaping (String, String) async -> Void) {
-        _onQueueUpload = handler
-    }
-
-    public func setOnTransferResponse(_ handler: @Sendable @escaping (UInt32, Bool, UInt64?) async -> Void) {
-        _onTransferResponse = handler
-    }
-
-    public func setOnFolderContentsRequest(_ handler: @Sendable @escaping (UInt32, String) async -> Void) {
-        _onFolderContentsRequest = handler
-    }
-
-    public func setOnFolderContentsResponse(_ handler: @Sendable @escaping (UInt32, String, [SharedFile]) async -> Void) {
-        _onFolderContentsResponse = handler
-    }
-
-    public func setOnPlaceInQueueRequest(_ handler: @Sendable @escaping (String, String) async -> Void) {
-        _onPlaceInQueueRequest = handler
-    }
-
-    public func setOnPlaceInQueueReply(_ handler: @Sendable @escaping (String, UInt32) async -> Void) {
-        _onPlaceInQueueReply = handler
-    }
-
-    public func setOnSharesRequest(_ handler: @Sendable @escaping (PeerConnection) async -> Void) {
-        _onSharesRequest = handler
-    }
-
-    public func setOnUserInfoRequest(_ handler: @Sendable @escaping (PeerConnection) async -> Void) {
-        _onUserInfoRequest = handler
-    }
-
-    public func setOnArtworkRequest(_ handler: @Sendable @escaping (UInt32, String, PeerConnection) async -> Void) {
-        _onArtworkRequest = handler
-    }
-
-    public func setOnArtworkReply(_ handler: @Sendable @escaping (UInt32, Data) async -> Void) {
-        _onArtworkReply = handler
-    }
 
     /// Get the discovered peer username (from PeerInit message)
     public func getPeerUsername() -> String {
@@ -243,6 +129,9 @@ public actor PeerConnection {
     private var localPort: UInt16 = 0
 
     public init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0) {
+        let (stream, continuation) = AsyncStream.makeStream(of: PeerConnectionEvent.self)
+        self.events = stream
+        self.eventContinuation = continuation
         self._peerInfo = Mutex(peerInfo)
         self.connectionType = type
         self.token = token
@@ -251,6 +140,10 @@ public actor PeerConnection {
     }
 
     public init(connection: NWConnection, isIncoming: Bool = true, autoStartReceiving: Bool = true) {
+        let (stream, continuation) = AsyncStream.makeStream(of: PeerConnectionEvent.self)
+        self.events = stream
+        self.eventContinuation = continuation
+
         // For incoming connections, extract IP/port from the connection endpoint
         // This fixes the issue where peerInfo.ip and peerInfo.port were empty for incoming connections
         var extractedIP = ""
@@ -408,31 +301,8 @@ public actor PeerConnection {
     public func disconnect() {
         connection?.cancel()
         connection = nil
-        clearCallbacks()
         updateState(.disconnected)
-    }
-
-    /// Clear all callbacks to prevent memory leaks from closures holding strong references
-    private func clearCallbacks() {
-        _onStateChanged = nil
-        _onMessage = nil
-        _onSharesReceived = nil
-        _onSearchReply = nil
-        _onTransferRequest = nil
-        _tokenTransferRequestHandlers.removeAll()
-        _onUsernameDiscovered = nil
-        _onFileTransferConnection = nil
-        _onPierceFirewall = nil
-        _onUploadDenied = nil
-        _onUploadFailed = nil
-        _onQueueUpload = nil
-        _onTransferResponse = nil
-        _onFolderContentsRequest = nil
-        _onFolderContentsResponse = nil
-        _onPlaceInQueueRequest = nil
-        _onPlaceInQueueReply = nil
-        _onSharesRequest = nil
-        _onUserInfoRequest = nil
+        eventContinuation.finish()
     }
 
     /// Start the receive loop - call this after callbacks are configured for incoming connections
@@ -1118,8 +988,8 @@ public actor PeerConnection {
                 receiveBuffer.removeFirst(totalLength)
                 messagesReceived += 1
 
-                // Route to distributed message handler (connected via setOnMessage in ServerMessageHandler)
-                await _onMessage?(code, payload)
+                // Route to distributed message handler
+                eventContinuation.yield(.message(code: code, payload: payload))
             } else {
                 // Peer message with 4-byte code
                 // Minimum valid peer message: 4 bytes length + 4 bytes code = 8 bytes total, so length >= 4
@@ -1175,7 +1045,7 @@ public actor PeerConnection {
                     receiveBuffer.removeAll()
                 }
 
-                await _onPierceFirewall?(token)
+                eventContinuation.yield(.pierceFirewall(token: token))
             }
             handshakeComplete = true
             peerHandshakeReceived = true
@@ -1220,16 +1090,12 @@ public actor PeerConnection {
                         receiveBuffer.removeAll()
                     }
 
-                    if _onFileTransferConnection != nil {
-                        logger.debug("F connection callback is set, invoking...")
-                        await _onFileTransferConnection?(username, peerToken, self)
-                        logger.debug("F connection callback invoked")
-                    } else {
-                        logger.warning("F connection callback is nil!")
-                    }
+                    logger.debug("F connection detected, yielding fileTransferConnection event")
+                    eventContinuation.yield(.fileTransferConnection(username: username, token: peerToken, connection: self))
+                    logger.debug("F connection event yielded")
                 } else {
                     // Regular peer connection - notify the pool
-                    await _onUsernameDiscovered?(username, peerToken)
+                    eventContinuation.yield(.usernameDiscovered(username: username, token: peerToken))
                 }
             }
             handshakeComplete = true
@@ -1258,7 +1124,7 @@ public actor PeerConnection {
         switch code {
         case UInt32(PeerMessageCode.sharesRequest.rawValue):
             logger.info("[\(self.peerInfo.username)] Received SharesRequest - peer wants to browse us")
-            await handleSharesRequest()
+            handleSharesRequest()
 
         case UInt32(PeerMessageCode.sharesReply.rawValue):
             logger.debug("[\(self.peerInfo.username)] Routing to handleSharesReply...")
@@ -1301,48 +1167,36 @@ public actor PeerConnection {
             logger.debug("Received UploadQueueNotification (deprecated)")
 
         case UInt32(PeerMessageCode.userInfoRequest.rawValue):
-            await handleUserInfoRequest()
+            handleUserInfoRequest()
 
         // SeeleSeek extension codes
         case SeeleSeekPeerCode.handshake.rawValue:
             handleSeeleSeekHandshake(payload)
 
         case SeeleSeekPeerCode.artworkRequest.rawValue:
-            await handleArtworkRequest(payload)
+            handleArtworkRequest(payload)
 
         case SeeleSeekPeerCode.artworkReply.rawValue:
-            await handleArtworkReply(payload)
+            handleArtworkReply(payload)
 
         default:
             logger.debug("Unhandled peer message code: \(code)")
-            await _onMessage?(code, payload)
+            eventContinuation.yield(.message(code: code, payload: payload))
         }
     }
 
     /// Handle SharesRequest (code 4) - peer wants to browse our shared files
-    private func handleSharesRequest() async {
+    private func handleSharesRequest() {
         logger.info("Peer \(self.peerUsername) requested our shares")
-        logger.debug("[\(self.peerUsername)] Peer wants to browse our shares, invoking callback...")
-
-        // Delegate to callback which will send the shares
-        if let callback = _onSharesRequest {
-            await callback(self)
-        } else {
-            logger.warning("[\(self.peerUsername)] No onSharesRequest callback set!")
-        }
+        logger.debug("[\(self.peerUsername)] Peer wants to browse our shares, yielding event...")
+        eventContinuation.yield(.sharesRequest)
     }
 
     /// Handle UserInfoRequest (code 15) - peer wants our user info
-    private func handleUserInfoRequest() async {
+    private func handleUserInfoRequest() {
         logger.info("Peer \(self.peerUsername) requested our user info")
-        logger.debug("[\(self.peerUsername)] Peer wants our user info, invoking callback...")
-
-        // Delegate to callback which will send the user info
-        if let callback = _onUserInfoRequest {
-            await callback(self)
-        } else {
-            logger.warning("[\(self.peerUsername)] No onUserInfoRequest callback set!")
-        }
+        logger.debug("[\(self.peerUsername)] Peer wants our user info, yielding event...")
+        eventContinuation.yield(.userInfoRequest)
     }
 
     // MARK: - SeeleSeek Extension Handlers
@@ -1355,7 +1209,7 @@ public actor PeerConnection {
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
-    private func handleArtworkRequest(_ payload: Data) async {
+    private func handleArtworkRequest(_ payload: Data) {
         var offset = 0
         guard let token = payload.readUInt32(at: offset) else {
             logger.warning("[\(self.peerUsername)] ArtworkRequest: missing token")
@@ -1367,11 +1221,11 @@ public actor PeerConnection {
             return
         }
         logger.info("[\(self.peerUsername)] ArtworkRequest: token=\(token) file=\(filePath)")
-        await _onArtworkRequest?(token, filePath, self)
+        eventContinuation.yield(.artworkRequest(token: token, filePath: filePath))
     }
 
     /// Handle artwork reply (code 10002) — peer sent us album art.
-    private func handleArtworkReply(_ payload: Data) async {
+    private func handleArtworkReply(_ payload: Data) {
         var offset = 0
         guard let token = payload.readUInt32(at: offset) else {
             logger.warning("[\(self.peerUsername)] ArtworkReply: missing token")
@@ -1381,7 +1235,7 @@ public actor PeerConnection {
         // Remaining bytes are the image data
         let imageData = payload.count > offset ? Data(payload[offset...]) : Data()
         logger.info("[\(self.peerUsername)] ArtworkReply: token=\(token) imageSize=\(imageData.count)")
-        await _onArtworkReply?(token, imageData)
+        eventContinuation.yield(.artworkReply(token: token, imageData: imageData))
     }
 
     // MARK: - Standard Peer Message Handlers
@@ -1399,7 +1253,7 @@ public actor PeerConnection {
         } catch {
             logger.error("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
             // SharesReply is always zlib compressed per protocol - raw data cannot be parsed
-            await _onSharesReceived?([])
+            eventContinuation.yield(.sharesReceived([]))
             return
         }
 
@@ -1562,9 +1416,9 @@ public actor PeerConnection {
             }
         }
 
-        logger.debug("[\(self.peerInfo.username)] Parsed \(files.count) files (including private), callback set: \(self._onSharesReceived != nil)")
+        logger.debug("[\(self.peerInfo.username)] Parsed \(files.count) files (including private)")
         logger.info("Received \(files.count) shared files from \(self.peerInfo.username)")
-        await _onSharesReceived?(files)
+        eventContinuation.yield(.sharesReceived(files))
     }
 
     private func handleSearchReply(_ data: Data) async {
@@ -1625,15 +1479,9 @@ public actor PeerConnection {
         logger.info("[\(self.peerInfo.username)] Parsed \(results.count) search results from \(username) for token \(parsed.token)")
         logger.info("Parsed \(results.count) search results from \(username) for token \(parsed.token)")
 
-        if _onSearchReply != nil {
-            logger.debug("[\(self.peerInfo.username)] Invoking search reply callback for token \(parsed.token)...")
-            await _onSearchReply?(parsed.token, results)
-            logger.debug("[\(self.peerInfo.username)] Callback invoked successfully")
-            logger.info("Search results callback invoked for token \(parsed.token)")
-        } else {
-            logger.warning("[\(self.peerInfo.username)] No search reply callback set!")
-            logger.warning("No search reply callback set!")
-        }
+        logger.debug("[\(self.peerInfo.username)] Yielding search reply event for token \(parsed.token)...")
+        eventContinuation.yield(.searchReply(token: parsed.token, results: results))
+        logger.info("Search results event yielded for token \(parsed.token)")
     }
 
     private func handleUserInfoReply(_ data: Data) async {
@@ -1685,19 +1533,8 @@ public actor PeerConnection {
             username: peerInfo.username
         )
 
-        // Check for per-token handler first (for concurrent downloads on same connection)
-        if let tokenHandler = _tokenTransferRequestHandlers[parsed.token] {
-            logger.debug("Dispatching TransferRequest to per-token handler for token \(parsed.token)")
-            await tokenHandler(request)
-            // Remove the handler after use (one-shot callback)
-            _tokenTransferRequestHandlers.removeValue(forKey: parsed.token)
-        } else if let globalHandler = _onTransferRequest {
-            // Fall back to global handler
-            logger.debug("Dispatching TransferRequest to global handler")
-            await globalHandler(request)
-        } else {
-            logger.warning("No handler for TransferRequest token=\(parsed.token)")
-        }
+        logger.debug("Yielding TransferRequest event for token \(parsed.token)")
+        eventContinuation.yield(.transferRequest(request))
     }
 
     private func handleTransferReply(_ data: Data) async {
@@ -1723,7 +1560,7 @@ public actor PeerConnection {
             }
         }
 
-        await _onTransferResponse?(token, allowed, filesize)
+        eventContinuation.yield(.transferResponse(token: token, allowed: allowed, filesize: filesize))
     }
 
     private func handleQueueDownload(_ data: Data) async {
@@ -1732,21 +1569,21 @@ public actor PeerConnection {
         // but on outgoing connections the peer may send messages before their PeerInit
         let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
         logger.info("QueueUpload received from \(username): \(filename)")
-        await _onQueueUpload?(username, filename)
+        eventContinuation.yield(.queueUpload(username: username, filename: filename))
     }
 
     private func handlePlaceInQueue(_ data: Data) async {
         guard let (filename, len) = data.readString(at: 0) else { return }
         guard let place = data.readUInt32(at: len) else { return }
         logger.info("Queue position for \(filename): \(place)")
-        await _onPlaceInQueueReply?(filename, place)
+        eventContinuation.yield(.placeInQueueReply(filename: filename, position: place))
     }
 
     private func handleUploadFailed(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
         let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
         logger.warning("UploadFailed from \(username): \(filename)")
-        await _onUploadFailed?(filename)
+        eventContinuation.yield(.uploadFailed(filename: filename))
     }
 
     private func handleUploadDenied(_ data: Data) async {
@@ -1754,7 +1591,7 @@ public actor PeerConnection {
         let reason = data.readString(at: filenameLen)?.string ?? "Unknown reason"
         logger.warning("Upload denied for \(filename): \(reason)")
         logger.warning("UploadDenied: \(filename) - \(reason)")
-        await _onUploadDenied?(filename, reason)
+        eventContinuation.yield(.uploadDenied(filename: filename, reason: reason))
     }
 
     private func handleFolderContentsRequest(_ data: Data) async {
@@ -1767,14 +1604,14 @@ public actor PeerConnection {
 
         logger.info("Folder contents request: \(folder) token=\(token)")
         logger.info("FolderContentsRequest: \(folder) token=\(token)")
-        await _onFolderContentsRequest?(token, folder)
+        eventContinuation.yield(.folderContentsRequest(token: token, folder: folder))
     }
 
     private func handlePlaceInQueueRequest(_ data: Data) async {
         guard let (filename, _) = data.readString(at: 0) else { return }
         let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
         logger.info("PlaceInQueueRequest for: \(filename) from \(username)")
-        await _onPlaceInQueueRequest?(username, filename)
+        eventContinuation.yield(.placeInQueueRequest(username: username, filename: filename))
     }
 
     private func handleFolderContentsReply(_ data: Data) async {
@@ -1859,14 +1696,12 @@ public actor PeerConnection {
 
         logger.info("Received folder contents: \(folder) (\(files.count) files)")
         logger.info("FolderContentsReply: \(folder) with \(files.count) files")
-        await _onFolderContentsResponse?(token, folder, files)
+        eventContinuation.yield(.folderContentsResponse(token: token, folder: folder, files: files))
     }
 
     private func updateState(_ newState: State) {
         state = newState
-        Task {
-            await _onStateChanged?(newState)
-        }
+        eventContinuation.yield(.stateChanged(newState))
     }
 
     private func recordSent(_ bytes: Int) {

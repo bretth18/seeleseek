@@ -26,14 +26,18 @@ class ProtocolTest {
             var receivedResults: [SearchResult] = []
             let resultsContinuation = AsyncStream<[SearchResult]>.makeStream()
 
-            // Set up callback to receive results
-            await peerConnection.setOnSearchReply { token, results in
-                print("🧪 ✅ Received \(results.count) search results for token \(token)")
-                for result in results.prefix(3) {
-                    print("🧪   - \(result.filename) (\(result.formattedSize))")
+            // Consume events to receive results
+            Task {
+                for await event in peerConnection.events {
+                    if case .searchReply(let token, let results) = event {
+                        print("🧪 ✅ Received \(results.count) search results for token \(token)")
+                        for result in results.prefix(3) {
+                            print("🧪   - \(result.filename) (\(result.formattedSize))")
+                        }
+                        resultsContinuation.continuation.yield(results)
+                        resultsContinuation.continuation.finish()
+                    }
                 }
-                resultsContinuation.continuation.yield(results)
-                resultsContinuation.continuation.finish()
             }
 
             // Connect
