@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import SeeleseekCore
 
 /// World map visualization showing peer connection locations
 struct PeerWorldMap: View {

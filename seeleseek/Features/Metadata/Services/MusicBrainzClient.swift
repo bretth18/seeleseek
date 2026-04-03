@@ -1,5 +1,6 @@
 import Foundation
 import os
+import SeeleseekCore
 
 /// Client for MusicBrainz API to look up music metadata
 actor MusicBrainzClient {

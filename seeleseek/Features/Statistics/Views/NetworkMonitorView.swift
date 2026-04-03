@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import SeeleseekCore
 
 struct NetworkMonitorView: View {
     @Environment(\.appState) private var appState

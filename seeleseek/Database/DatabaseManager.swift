@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import os
+import SeeleseekCore
 
 /// Actor-based database coordinator for SQLite persistence via GRDB
 actor DatabaseManager {

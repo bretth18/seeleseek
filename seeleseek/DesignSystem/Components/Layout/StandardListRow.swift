@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent list row with hover support
 struct StandardListRow<Content: View>: View {

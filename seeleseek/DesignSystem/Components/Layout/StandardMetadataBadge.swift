@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent metadata badge for file info
 struct StandardMetadataBadge: View {

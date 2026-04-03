@@ -1,4 +1,5 @@
 import AppIntents
+import SeeleseekCore
 
 struct SendRoomMessageIntent: AppIntent {
     static var title: LocalizedStringResource = "Send Room Message"

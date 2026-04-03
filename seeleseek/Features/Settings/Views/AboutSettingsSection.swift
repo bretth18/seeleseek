@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct AboutSettingsSection: View {
     private let projectURL = URL(string: "https://github.com/bretth18/seeleseek")

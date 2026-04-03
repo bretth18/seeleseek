@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import SeeleseekCore
 
 /// Simple protocol test that can be triggered from the app
 class ProtocolTest {

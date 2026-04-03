@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 enum SeeleSpacing {
     // MARK: - Base Scale

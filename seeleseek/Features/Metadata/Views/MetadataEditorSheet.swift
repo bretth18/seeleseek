@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Sheet for editing file metadata with MusicBrainz integration
 struct MetadataEditorSheet: View {

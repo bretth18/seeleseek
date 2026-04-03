@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Real-time visualization of connected peers with activity indicators
 struct LivePeersView: View {

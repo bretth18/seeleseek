@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Real-time activity feed showing network events as they happen
 struct LiveActivityFeed: View {

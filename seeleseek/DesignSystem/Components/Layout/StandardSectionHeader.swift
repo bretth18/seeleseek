@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent section header for lists and content areas
 struct StandardSectionHeader: View {

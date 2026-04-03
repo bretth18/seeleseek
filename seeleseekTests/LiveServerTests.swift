@@ -1,6 +1,7 @@
 import Testing
 import Network
 import Foundation
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Live tests against the real SoulSeek server

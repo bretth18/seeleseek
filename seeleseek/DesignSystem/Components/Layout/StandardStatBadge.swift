@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent stat/metric badge
 struct StandardStatBadge: View {

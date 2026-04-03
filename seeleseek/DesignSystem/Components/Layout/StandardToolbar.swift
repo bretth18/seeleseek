@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent toolbar for view headers
 struct StandardToolbar<Leading: View, Center: View, Trailing: View>: View {

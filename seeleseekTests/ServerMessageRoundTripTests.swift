@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Round-trip every server message builder: build → read back code + all fields from wire-format Data.

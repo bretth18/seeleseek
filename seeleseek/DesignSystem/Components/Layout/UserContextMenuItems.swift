@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Reusable context menu items for user actions (View Profile, Browse Files, Send Message, Add Buddy)
 /// Used across TransferRow, HistoryRow, RoomUserListPanel, ChatView, SearchResultRow, etc.

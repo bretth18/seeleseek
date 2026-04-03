@@ -1,6 +1,7 @@
 import UserNotifications
 import AppKit
 import os
+import SeeleseekCore
 
 @MainActor
 final class NotificationService: NSObject, UNUserNotificationCenterDelegate {

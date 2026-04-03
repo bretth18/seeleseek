@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct PeerActivityHeatmap: View {
     let downloadHistory: [StatisticsState.TransferHistoryEntry]

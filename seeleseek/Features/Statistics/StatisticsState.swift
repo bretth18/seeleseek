@@ -1,8 +1,9 @@
 import SwiftUI
+import SeeleseekCore
 
 @Observable
 @MainActor
-final class StatisticsState {
+final class StatisticsState: StatisticsRecording {
     // MARK: - Network Statistics
     var totalDownloaded: UInt64 = 0
     var totalUploaded: UInt64 = 0

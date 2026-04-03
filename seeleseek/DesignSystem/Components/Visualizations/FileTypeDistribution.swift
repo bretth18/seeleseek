@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct FileTypeDistribution: View {
     let files: [SharedFile]

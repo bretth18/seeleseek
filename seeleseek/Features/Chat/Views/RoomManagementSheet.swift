@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct RoomManagementSheet: View {
     let room: ChatRoom

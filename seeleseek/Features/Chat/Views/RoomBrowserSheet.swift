@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct RoomBrowserSheet: View {
     @Bindable var chatState: ChatState

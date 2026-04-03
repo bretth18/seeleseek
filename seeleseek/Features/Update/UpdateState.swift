@@ -2,6 +2,7 @@ import Foundation
 import os
 #if os(macOS)
 import AppKit
+import SeeleseekCore
 #endif
 
 @MainActor

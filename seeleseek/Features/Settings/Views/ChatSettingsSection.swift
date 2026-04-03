@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct ChatSettingsSection: View {
     @Bindable var settings: SettingsState

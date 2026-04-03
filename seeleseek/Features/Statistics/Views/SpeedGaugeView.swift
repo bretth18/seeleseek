@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SpeedGaugeView: View {
     let title: String

@@ -1,6 +1,7 @@
 import SwiftUI
 import ServiceManagement
 import os
+import SeeleseekCore
 
 enum NotificationSound: String, CaseIterable {
     case `default` = "default"
@@ -70,7 +71,7 @@ enum DownloadFolderFormat: String, CaseIterable {
 
 @Observable
 @MainActor
-final class SettingsState {
+final class SettingsState: DownloadSettingsProviding {
     // MARK: - Keys (for UserDefaults fallback)
     private let listenPortKey = "settings.listenPort"
     private let enableUPnPKey = "settings.enableUPnP"

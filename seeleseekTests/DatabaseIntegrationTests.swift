@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import GRDB
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Test database CRUD operations with an in-memory GRDB database using the same migrations

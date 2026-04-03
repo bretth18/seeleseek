@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct Sidebar: View {
     @Environment(\.appState) private var appState

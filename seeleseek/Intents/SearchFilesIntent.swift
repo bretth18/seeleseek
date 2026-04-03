@@ -1,4 +1,5 @@
 import AppIntents
+import SeeleseekCore
 
 struct SearchFilesIntent: AppIntent {
     static var title: LocalizedStringResource = "Search Files"

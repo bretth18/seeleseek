@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Repository for Wishlist database operations
 struct WishlistRepository {

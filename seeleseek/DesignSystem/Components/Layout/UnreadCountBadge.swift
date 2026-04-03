@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Capsule badge showing an unread message count
 struct UnreadCountBadge: View {

@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Displays files as a treemap where size represents file size
 struct FileTreemap: View {

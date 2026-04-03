@@ -1,5 +1,6 @@
 import SwiftUI
 import os
+import SeeleseekCore
 
 @Observable
 @MainActor

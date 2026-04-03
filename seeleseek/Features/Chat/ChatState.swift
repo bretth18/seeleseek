@@ -1,5 +1,6 @@
 import SwiftUI
 import os
+import SeeleseekCore
 
 enum RoomListTab: String, CaseIterable {
     case all = "All"

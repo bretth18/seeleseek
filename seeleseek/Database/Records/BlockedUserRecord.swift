@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 struct BlockedUserRecord: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "blocked_users"

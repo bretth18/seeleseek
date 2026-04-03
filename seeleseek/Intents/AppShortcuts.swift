@@ -1,4 +1,5 @@
 import AppIntents
+import SeeleseekCore
 
 struct SeeleSeekShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {

@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SimilarUserRow: View {
     @Environment(\.appState) private var appState

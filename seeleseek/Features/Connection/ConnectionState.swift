@@ -67,6 +67,7 @@ final class ConnectionState {
 // MARK: - Credential Storage (Keychain-based)
 
 import Security
+import SeeleseekCore
 
 enum CredentialStorage {
     private static let service = "com.seeleseek.credentials"

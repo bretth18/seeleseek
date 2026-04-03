@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for wishlist entries
 struct WishlistRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

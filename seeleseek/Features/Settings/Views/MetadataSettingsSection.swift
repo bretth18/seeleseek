@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct MetadataSettingsSection: View {
     @Bindable var settings: SettingsState

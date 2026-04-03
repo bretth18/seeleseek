@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
+import SeeleseekCore
 #endif
 
 struct MyProfileView: View {

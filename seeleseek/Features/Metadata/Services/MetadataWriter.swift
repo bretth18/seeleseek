@@ -1,5 +1,6 @@
 import Foundation
 import os
+import SeeleseekCore
 
 /// Off-main-thread actor that handles all metadata writing to audio files.
 /// Supports MP3 (ID3v2.4), FLAC (Vorbis Comment + PICTURE), and AIF/AIFF (IFF + ID3v2.4).

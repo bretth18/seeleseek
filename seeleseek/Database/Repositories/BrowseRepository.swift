@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Repository for Browse cache database operations
 struct BrowseRepository {

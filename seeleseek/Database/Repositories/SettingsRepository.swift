@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Repository for Settings database operations
 struct SettingsRepository {

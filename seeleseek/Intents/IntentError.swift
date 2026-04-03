@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case notConnected

@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
+import SeeleseekCore
 #endif
 
 /// Cover art display with drag-and-drop, file picker, and MusicBrainz source indicator

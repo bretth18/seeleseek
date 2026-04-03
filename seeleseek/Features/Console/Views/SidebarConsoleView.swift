@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SidebarConsoleView: View {
     @State private var activityLog = ActivityLog.shared

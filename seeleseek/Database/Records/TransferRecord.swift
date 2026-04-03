@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for Transfer persistence
 struct TransferRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

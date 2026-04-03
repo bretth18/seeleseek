@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct ChatView: View {
     @Environment(\.appState) private var appState

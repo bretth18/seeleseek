@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Apple HIG-aligned empty state view
 /// Use for empty lists, no results, and placeholder content

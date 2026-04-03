@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct NotificationSettingsSection: View {
     @Bindable var settings: SettingsState

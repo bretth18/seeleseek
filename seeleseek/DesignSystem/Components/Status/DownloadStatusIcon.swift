@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Reusable download status icon that shows the current state of a file transfer.
 /// Used consistently across Search, Browse, and Transfers views.

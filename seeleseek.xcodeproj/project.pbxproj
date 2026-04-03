@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A6120FB12F33E8AC00995D21 /* GRDB */; };
+		A6CORE0012F40000000000001 /* SeeleseekCore in Frameworks */ = {isa = PBXBuildFile; productRef = A6CORE0002F40000000000001 /* SeeleseekCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */,
+				A6CORE0012F40000000000001 /* SeeleseekCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -119,6 +121,7 @@
 			name = seeleseek;
 			packageProductDependencies = (
 				A6120FB12F33E8AC00995D21 /* GRDB */,
+				A6CORE0002F40000000000001 /* SeeleseekCore */,
 			);
 			productName = seeleseek;
 			productReference = A61208182F32A89C00995D21 /* seeleseek.app */;
@@ -175,6 +178,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				A6CORE0032F40000000000001 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A61208192F32A89C00995D21 /* Products */;
@@ -528,6 +532,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		A6CORE0032F40000000000001 /* XCLocalSwiftPackageReference "Packages/SeeleseekCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SeeleseekCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -544,6 +555,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A6120FB02F33E8AC00995D21 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		A6CORE0002F40000000000001 /* SeeleseekCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SeeleseekCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

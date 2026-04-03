@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct ConnectionRingView: View {
     let active: Int

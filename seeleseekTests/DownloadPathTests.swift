@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+@testable import SeeleseekCore
 @testable import seeleseek
 
 @Suite("Download Path Resolution Tests")

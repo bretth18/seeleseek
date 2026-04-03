@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 import AVFoundation
 #if os(macOS)
 import AppKit
+import SeeleseekCore
 #endif
 
 /// State management for metadata enrichment

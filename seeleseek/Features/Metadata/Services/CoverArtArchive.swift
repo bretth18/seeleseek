@@ -4,6 +4,7 @@ import os
 import AppKit
 #else
 import UIKit
+import SeeleseekCore
 #endif
 
 /// Client for Cover Art Archive API to fetch album artwork

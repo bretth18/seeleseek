@@ -1,5 +1,6 @@
 import Foundation
 import os
+import SeeleseekCore
 
 actor GitHubUpdateClient {
     private let logger = Logger(subsystem: "com.seeleseek", category: "GitHubUpdateClient")

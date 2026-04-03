@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SpeedBadge: View {
     let bytesPerSecond: Int64

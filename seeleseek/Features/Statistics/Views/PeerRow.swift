@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct PeerRow: View {
     let peer: PeerConnectionPool.PeerConnectionInfo

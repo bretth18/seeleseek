@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for settings key-value store
 struct SettingRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

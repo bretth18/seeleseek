@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct BrowseTabButton: View {
     let browse: UserShares

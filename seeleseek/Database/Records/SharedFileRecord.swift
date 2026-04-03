@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for SharedFile (hierarchical file tree) persistence
 struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

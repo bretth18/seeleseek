@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 /// Configuration for leech detection and response
 struct LeechSettings: Codable, Sendable {

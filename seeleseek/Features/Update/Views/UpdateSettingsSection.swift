@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct UpdateSettingsSection: View {
     @Bindable var updateState: UpdateState

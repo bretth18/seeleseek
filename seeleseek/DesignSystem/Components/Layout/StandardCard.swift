@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent card container for grouped content
 struct StandardCard<Content: View>: View {

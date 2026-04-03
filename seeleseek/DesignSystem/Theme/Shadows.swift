@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 enum SeeleShadows {
     static let card = Shadow(

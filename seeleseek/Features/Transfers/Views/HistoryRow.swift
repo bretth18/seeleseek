@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import SeeleseekCore
 
 struct HistoryRow: View {
     @Environment(\.appState) private var appState

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for persisted private messages
 struct PrivateMessageRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

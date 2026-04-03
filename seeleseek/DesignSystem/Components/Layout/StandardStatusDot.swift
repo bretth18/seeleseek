@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent status indicator dot
 struct StandardStatusDot: View {

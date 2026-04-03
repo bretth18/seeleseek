@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Repository for Transfer database operations
 struct TransferRepository {

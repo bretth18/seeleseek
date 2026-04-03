@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// MusicBrainz recording search results list with score badges
 struct RecordingSearchResults: View {

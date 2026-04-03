@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SharesVisualizationPanel: View {
     let shares: UserShares

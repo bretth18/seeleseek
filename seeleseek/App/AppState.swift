@@ -1,5 +1,6 @@
 import SwiftUI
 import os
+import SeeleseekCore
 
 @Observable
 @MainActor
@@ -56,7 +57,9 @@ final class AppState {
                 }
             }
 
-            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings)
+            let metadataReader = MetadataReader()
+            _networkClient!.metadataReader = metadataReader
+            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
             uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
 
             // Wire upload permission checker to SocialState (blocklist + leech detection)
@@ -131,6 +134,9 @@ final class AppState {
 
         // Sync launch-at-login state from system (user may toggle in System Settings)
         settings.syncLaunchAtLoginState()
+
+        // Register activity logger with the package
+        ActivityLogger.shared = ActivityLog.shared
 
         // Configure notifications
         NotificationService.shared.settings = settings

@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SizeComparisonBars: View {
     let items: [(label: String, size: UInt64)]

@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import SeeleseekCore
 
 /// Real-time visualization of search activity - both outgoing and incoming
 struct SearchActivityView: View {

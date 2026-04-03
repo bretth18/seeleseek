@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 nonisolated struct GitHubRelease: Codable, Sendable {
     let tagName: String

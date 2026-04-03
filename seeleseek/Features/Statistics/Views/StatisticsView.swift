@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import SeeleseekCore
 
 struct StatisticsView: View {
     @Environment(\.appState) private var appState

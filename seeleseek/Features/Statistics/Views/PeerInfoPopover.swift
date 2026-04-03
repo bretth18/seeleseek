@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct PeerInfoPopover: View {
     let peer: PeerConnectionPool.PeerConnectionInfo

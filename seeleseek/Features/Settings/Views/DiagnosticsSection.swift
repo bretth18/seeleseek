@@ -1,6 +1,7 @@
 import SwiftUI
 import Network
 import Synchronization
+import SeeleseekCore
 
 struct DiagnosticsSection: View {
     @Environment(\.appState) private var appState

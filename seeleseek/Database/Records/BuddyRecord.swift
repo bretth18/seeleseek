@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for buddy list entries
 struct BuddyRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

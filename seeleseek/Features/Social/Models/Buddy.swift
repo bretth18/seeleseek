@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 /// Represents a user in the buddy list
 struct Buddy: Identifiable, Codable, Hashable, Sendable {

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import SeeleseekCore
 
 /// Resolves music streaming URLs (Spotify, Apple Music, YouTube, SoundCloud, Bandcamp)
 /// into artist + title pairs for searching on SoulSeek.

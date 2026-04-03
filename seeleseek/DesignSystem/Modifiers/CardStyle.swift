@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct CardStyle: ViewModifier {
     let padding: EdgeInsets

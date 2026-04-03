@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Flow layout for tag-style content that wraps to next line
 struct FlowLayout: Layout {

@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 enum SeeleTypography {
     // MARK: - Headings (Fixed sizes for consistency)

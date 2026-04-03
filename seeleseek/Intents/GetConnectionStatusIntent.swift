@@ -1,4 +1,5 @@
 import AppIntents
+import SeeleseekCore
 
 struct GetConnectionStatusIntent: AppIntent {
     static var title: LocalizedStringResource = "Get Connection Status"

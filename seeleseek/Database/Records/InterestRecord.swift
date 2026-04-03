@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Type of interest (like or hate)
 enum InterestType: String, Codable, Sendable {

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for UserShares (browse cache) persistence
 struct UserSharesRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

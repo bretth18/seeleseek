@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct ProgressIndicator: View {
     let progress: Double

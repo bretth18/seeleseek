@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import SeeleseekCore
 
 /// Database record for SearchQuery persistence
 struct SearchQueryRecord: Codable, FetchableRecord, PersistableRecord, Sendable {

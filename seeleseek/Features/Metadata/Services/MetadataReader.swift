@@ -1,17 +1,11 @@
 import AVFoundation
 import AppKit
 import os
-
-/// Basic audio metadata extracted from file tags (ID3, Vorbis Comment, etc.)
-struct AudioFileMetadata {
-    var artist: String?
-    var album: String?
-    var title: String?
-}
+import SeeleseekCore
 
 /// Off-main-thread actor for reading metadata (especially artwork) from audio files.
 /// Supports MP3 (ID3v2), FLAC (Vorbis Comment + PICTURE), and AIF/AIFF.
-actor MetadataReader {
+actor MetadataReader: MetadataReading {
     private let logger = Logger(subsystem: "com.seeleseek", category: "MetadataReader")
 
     /// Extract artist, album, and title metadata from an audio file.

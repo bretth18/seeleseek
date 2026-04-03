@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 // MARK: - Peer Node
 

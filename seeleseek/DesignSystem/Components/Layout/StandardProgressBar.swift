@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Consistent progress bar
 struct StandardProgressBar: View {

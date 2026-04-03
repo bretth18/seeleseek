@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 /// User profile information retrieved from peer
 struct UserProfile: Identifiable, Sendable {

@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Visual representation of connected peers as a network graph
 struct NetworkTopologyView: View {

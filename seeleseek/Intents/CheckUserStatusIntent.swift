@@ -1,4 +1,5 @@
 import AppIntents
+import SeeleseekCore
 
 struct CheckUserStatusIntent: AppIntent {
     static var title: LocalizedStringResource = "Check User Status"

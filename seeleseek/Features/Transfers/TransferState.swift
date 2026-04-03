@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import os
+import SeeleseekCore
 
 /// Represents a completed transfer in history
 struct TransferHistoryItem: Identifiable, Sendable {
@@ -91,7 +92,7 @@ struct TransferHistoryItem: Identifiable, Sendable {
 
 @Observable
 @MainActor
-final class TransferState {
+final class TransferState: TransferTracking {
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
         didSet { rebuildDownloadIndex() }

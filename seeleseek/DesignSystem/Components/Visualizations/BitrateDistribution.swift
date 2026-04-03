@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct BitrateDistribution: View {
     let files: [SharedFile]

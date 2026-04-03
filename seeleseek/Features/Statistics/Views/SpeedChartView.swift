@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import SeeleseekCore
 
 struct SpeedChartView: View {
     let samples: [StatisticsState.SpeedSample]

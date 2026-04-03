@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import SeeleseekCore
 
 // MARK: - Private Chat Content View
 

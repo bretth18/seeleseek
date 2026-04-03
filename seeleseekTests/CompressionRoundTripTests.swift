@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Compression
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Test zlib compression round-trips for the 3 compressed message types:

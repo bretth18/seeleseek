@@ -1,5 +1,6 @@
 import SwiftUI
 import AppIntents
+import SeeleseekCore
 
 @main
 struct SeeleSeekApp: App {

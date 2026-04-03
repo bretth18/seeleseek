@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct GeneralSettingsSection: View {
     @Bindable var settings: SettingsState

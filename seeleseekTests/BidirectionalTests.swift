@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Network
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Tests to verify bidirectional TCP communication works

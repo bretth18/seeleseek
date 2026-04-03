@@ -1,8 +1,9 @@
 import SwiftUI
+import SeeleseekCore
 
 @Observable
 @MainActor
-final class ActivityLog {
+final class ActivityLog: ActivityLogging {
     static let shared = ActivityLog()
 
     private(set) var events: [ActivityEvent] = []

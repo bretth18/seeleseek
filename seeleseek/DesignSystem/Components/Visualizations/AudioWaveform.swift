@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 /// Animated audio waveform visualization (decorative)
 struct AudioWaveform: View {

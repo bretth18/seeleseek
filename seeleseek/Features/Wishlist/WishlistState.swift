@@ -1,5 +1,6 @@
 import SwiftUI
 import os
+import SeeleseekCore
 
 /// Model representing a single wishlist entry
 struct WishlistItem: Identifiable, Hashable, Sendable {

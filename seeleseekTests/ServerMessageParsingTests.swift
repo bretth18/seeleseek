@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Test parsing of server messages by constructing raw payload Data and reading fields

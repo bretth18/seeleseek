@@ -1,6 +1,7 @@
 import Testing
 import Network
 import Foundation
+@testable import SeeleseekCore
 @testable import seeleseek
 
 /// Tests for the network layer - protocol encoding, message parsing, and local connections

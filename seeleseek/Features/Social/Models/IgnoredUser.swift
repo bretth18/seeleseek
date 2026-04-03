@@ -1,4 +1,5 @@
 import Foundation
+import SeeleseekCore
 
 struct IgnoredUser: Identifiable, Codable, Hashable, Sendable {
     var id: String { username.lowercased() }

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import AppKit
+@testable import SeeleseekCore
 @testable import seeleseek
 
 // MARK: - Message Builder Tests

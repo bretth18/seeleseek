@@ -1,6 +1,7 @@
 import SwiftUI
 #if os(macOS)
 import AppKit
+import SeeleseekCore
 #endif
 
 struct SearchResultRow: View {

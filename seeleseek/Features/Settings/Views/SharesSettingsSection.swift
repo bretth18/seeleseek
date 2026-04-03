@@ -1,4 +1,5 @@
 import SwiftUI
+import SeeleseekCore
 
 struct SharesSettingsSection: View {
     @Bindable var settings: SettingsState
