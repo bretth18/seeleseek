@@ -38,13 +38,17 @@ If you encounter any bugs or have feature requests, please open an issue on the 
 ## Development
 
 ### Prerequisites
-- Xcode 15+ (Swift 6.x)
+- Xcode 16+ (Swift 6)
+
+### Architecture
+The core networking and protocol implementation lives in a local Swift Package at `Packages/SeeleseekCore/`. The app target imports this package and adds UI-specific extensions.
+
+- **SeeleseekCore** — Protocol encoding/decoding, server/peer connections, download/upload management, models
+- **seeleseek** — SwiftUI app, feature states, design system, database layer
 
 ### Setup
 1. Clone the repository.
-2. Open `seeleseek.xcodeproj`.
-
-
+2. Open `seeleseek.xcodeproj` (the local package resolves automatically).
 
 ### Build
 Run `xcodebuild` or use Xcode.

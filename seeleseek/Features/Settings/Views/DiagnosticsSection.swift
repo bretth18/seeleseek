@@ -326,7 +326,15 @@ struct DiagnosticsSection: View {
                     getnameinfo(addr, socklen_t(ptr!.pointee.ai_addrlen),
                                &hostname, socklen_t(hostname.count),
                                nil, 0, NI_NUMERICHOST)
-                    addresses.append(String(cString: hostname))
+                    // Convert [CChar] (Int8) to [UInt8] and decode as UTF-8, truncating at the first null terminator
+                    if let nulIndex = hostname.firstIndex(of: 0) {
+                        let prefix = hostname.prefix(upTo: nulIndex)
+                        let bytes = prefix.map { UInt8(bitPattern: $0) }
+                        addresses.append(String(decoding: bytes, as: UTF8.self))
+                    } else {
+                        let bytes = hostname.map { UInt8(bitPattern: $0) }
+                        addresses.append(String(decoding: bytes, as: UTF8.self))
+                    }
                 }
                 ptr = ptr?.pointee.ai_next
             }
