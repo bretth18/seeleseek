@@ -1318,7 +1318,7 @@ public final class DownloadManager {
 
         let downloadDir = getDownloadDirectory()
 
-        Task.detached { [metadataReader, logger, weak self] in
+        Task.detached { [metadataReader, logger, transferState = self.transferState] in
             guard let metadataReader,
                   let metadata = await metadataReader.extractAudioMetadata(from: currentPath) else {
                 return
@@ -1373,7 +1373,7 @@ public final class DownloadManager {
 
                 // Update the transfer's localPath on the main actor
                 await MainActor.run {
-                    self?.transferState?.updateTransfer(id: transferId) { t in
+                    transferState?.updateTransfer(id: transferId) { t in
                         t.localPath = newPath
                     }
                 }
