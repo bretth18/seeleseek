@@ -79,56 +79,56 @@ public actor PeerConnection {
     private var autoStartReceiving = true
 
     // Callbacks
-    private var _onStateChanged: ((State) async -> Void)?
-    private var _onMessage: ((UInt32, Data) async -> Void)?
-    private var _onSharesReceived: (([SharedFile]) async -> Void)?
-    private var _onSearchReply: ((UInt32, [SearchResult]) async -> Void)?  // (token, results)
-    private var _onTransferRequest: ((TransferRequest) async -> Void)?
+    private var _onStateChanged: (@Sendable (State) async -> Void)?
+    private var _onMessage: (@Sendable (UInt32, Data) async -> Void)?
+    private var _onSharesReceived: (@Sendable ([SharedFile]) async -> Void)?
+    private var _onSearchReply: (@Sendable (UInt32, [SearchResult]) async -> Void)?  // (token, results)
+    private var _onTransferRequest: (@Sendable (TransferRequest) async -> Void)?
     // Per-token TransferRequest handlers for handling multiple concurrent downloads on same connection
-    private var _tokenTransferRequestHandlers: [UInt32: (TransferRequest) async -> Void] = [:]
-    private var _onUsernameDiscovered: ((String, UInt32) async -> Void)?  // (username, token)
-    private var _onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, self)
-    private var _onPierceFirewall: ((UInt32) async -> Void)?  // token from indirect connection
-    private var _onUploadDenied: ((String, String) async -> Void)?  // (filename, reason)
-    private var _onUploadFailed: ((String) async -> Void)?  // filename
-    private var _onQueueUpload: ((String, String) async -> Void)?  // (username, filename) - peer wants to download from us
-    private var _onTransferResponse: ((UInt32, Bool, UInt64?) async -> Void)?  // (token, allowed, filesize?)
-    private var _onFolderContentsRequest: ((UInt32, String) async -> Void)?  // (token, folder)
-    private var _onFolderContentsResponse: ((UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
-    private var _onPlaceInQueueRequest: ((String, String) async -> Void)?  // (username, filename) - peer asks for queue position
-    private var _onPlaceInQueueReply: ((String, UInt32) async -> Void)?  // (filename, position)
-    private var _onSharesRequest: ((PeerConnection) async -> Void)?  // Peer wants to browse our shares
-    private var _onUserInfoRequest: ((PeerConnection) async -> Void)?  // Peer wants our user info
+    private var _tokenTransferRequestHandlers: [UInt32: @Sendable (TransferRequest) async -> Void] = [:]
+    private var _onUsernameDiscovered: (@Sendable (String, UInt32) async -> Void)?  // (username, token)
+    private var _onFileTransferConnection: (@Sendable (String, UInt32, PeerConnection) async -> Void)?  // (username, token, self)
+    private var _onPierceFirewall: (@Sendable (UInt32) async -> Void)?  // token from indirect connection
+    private var _onUploadDenied: (@Sendable (String, String) async -> Void)?  // (filename, reason)
+    private var _onUploadFailed: (@Sendable (String) async -> Void)?  // filename
+    private var _onQueueUpload: (@Sendable (String, String) async -> Void)?  // (username, filename) - peer wants to download from us
+    private var _onTransferResponse: (@Sendable (UInt32, Bool, UInt64?) async -> Void)?  // (token, allowed, filesize?)
+    private var _onFolderContentsRequest: (@Sendable (UInt32, String) async -> Void)?  // (token, folder)
+    private var _onFolderContentsResponse: (@Sendable (UInt32, String, [SharedFile]) async -> Void)?  // (token, folder, files)
+    private var _onPlaceInQueueRequest: (@Sendable (String, String) async -> Void)?  // (username, filename) - peer asks for queue position
+    private var _onPlaceInQueueReply: (@Sendable (String, UInt32) async -> Void)?  // (filename, position)
+    private var _onSharesRequest: (@Sendable (PeerConnection) async -> Void)?  // Peer wants to browse our shares
+    private var _onUserInfoRequest: (@Sendable (PeerConnection) async -> Void)?  // Peer wants our user info
 
     // SeeleSeek extension state
     private(set) var isSeeleSeekPeer = false
-    private var _onArtworkRequest: ((UInt32, String, PeerConnection) async -> Void)?  // (token, filePath, connection)
-    private var _onArtworkReply: ((UInt32, Data) async -> Void)?  // (token, imageData)
+    private var _onArtworkRequest: (@Sendable (UInt32, String, PeerConnection) async -> Void)?  // (token, filePath, connection)
+    private var _onArtworkReply: (@Sendable (UInt32, Data) async -> Void)?  // (token, imageData)
 
     // Callback setters for external access
-    public func setOnStateChanged(_ handler: @escaping (State) async -> Void) {
+    public func setOnStateChanged(_ handler: @Sendable @escaping (State) async -> Void) {
         _onStateChanged = handler
     }
 
-    public func setOnMessage(_ handler: @escaping (UInt32, Data) async -> Void) {
+    public func setOnMessage(_ handler: @Sendable @escaping (UInt32, Data) async -> Void) {
         _onMessage = handler
     }
 
-    public func setOnSharesReceived(_ handler: @escaping ([SharedFile]) async -> Void) {
+    public func setOnSharesReceived(_ handler: @Sendable @escaping ([SharedFile]) async -> Void) {
         _onSharesReceived = handler
     }
 
-    public func setOnSearchReply(_ handler: @escaping (UInt32, [SearchResult]) async -> Void) {
+    public func setOnSearchReply(_ handler: @Sendable @escaping (UInt32, [SearchResult]) async -> Void) {
         _onSearchReply = handler
     }
 
-    public func setOnTransferRequest(_ handler: @escaping (TransferRequest) async -> Void) {
+    public func setOnTransferRequest(_ handler: @Sendable @escaping (TransferRequest) async -> Void) {
         _onTransferRequest = handler
     }
 
     /// Register a handler for a specific token's TransferRequest
     /// This allows multiple concurrent downloads on the same connection without callback conflicts
-    public func setOnTransferRequestForToken(_ token: UInt32, handler: @escaping (TransferRequest) async -> Void) {
+    public func setOnTransferRequestForToken(_ token: UInt32, handler: @Sendable @escaping (TransferRequest) async -> Void) {
         _tokenTransferRequestHandlers[token] = handler
         logger.debug("Registered TransferRequest handler for token \(token) (total handlers: \(self._tokenTransferRequestHandlers.count))")
     }
@@ -139,63 +139,63 @@ public actor PeerConnection {
         logger.debug("Removed TransferRequest handler for token \(token) (remaining: \(self._tokenTransferRequestHandlers.count))")
     }
 
-    public func setOnUsernameDiscovered(_ handler: @escaping (String, UInt32) async -> Void) {
+    public func setOnUsernameDiscovered(_ handler: @Sendable @escaping (String, UInt32) async -> Void) {
         _onUsernameDiscovered = handler
     }
 
-    public func setOnFileTransferConnection(_ handler: @escaping (String, UInt32, PeerConnection) async -> Void) {
+    public func setOnFileTransferConnection(_ handler: @Sendable @escaping (String, UInt32, PeerConnection) async -> Void) {
         _onFileTransferConnection = handler
     }
 
-    public func setOnPierceFirewall(_ handler: @escaping (UInt32) async -> Void) {
+    public func setOnPierceFirewall(_ handler: @Sendable @escaping (UInt32) async -> Void) {
         _onPierceFirewall = handler
     }
 
-    public func setOnUploadDenied(_ handler: @escaping (String, String) async -> Void) {
+    public func setOnUploadDenied(_ handler: @Sendable @escaping (String, String) async -> Void) {
         _onUploadDenied = handler
     }
 
-    public func setOnUploadFailed(_ handler: @escaping (String) async -> Void) {
+    public func setOnUploadFailed(_ handler: @Sendable @escaping (String) async -> Void) {
         _onUploadFailed = handler
     }
 
-    public func setOnQueueUpload(_ handler: @escaping (String, String) async -> Void) {
+    public func setOnQueueUpload(_ handler: @Sendable @escaping (String, String) async -> Void) {
         _onQueueUpload = handler
     }
 
-    public func setOnTransferResponse(_ handler: @escaping (UInt32, Bool, UInt64?) async -> Void) {
+    public func setOnTransferResponse(_ handler: @Sendable @escaping (UInt32, Bool, UInt64?) async -> Void) {
         _onTransferResponse = handler
     }
 
-    public func setOnFolderContentsRequest(_ handler: @escaping (UInt32, String) async -> Void) {
+    public func setOnFolderContentsRequest(_ handler: @Sendable @escaping (UInt32, String) async -> Void) {
         _onFolderContentsRequest = handler
     }
 
-    public func setOnFolderContentsResponse(_ handler: @escaping (UInt32, String, [SharedFile]) async -> Void) {
+    public func setOnFolderContentsResponse(_ handler: @Sendable @escaping (UInt32, String, [SharedFile]) async -> Void) {
         _onFolderContentsResponse = handler
     }
 
-    public func setOnPlaceInQueueRequest(_ handler: @escaping (String, String) async -> Void) {
+    public func setOnPlaceInQueueRequest(_ handler: @Sendable @escaping (String, String) async -> Void) {
         _onPlaceInQueueRequest = handler
     }
 
-    public func setOnPlaceInQueueReply(_ handler: @escaping (String, UInt32) async -> Void) {
+    public func setOnPlaceInQueueReply(_ handler: @Sendable @escaping (String, UInt32) async -> Void) {
         _onPlaceInQueueReply = handler
     }
 
-    public func setOnSharesRequest(_ handler: @escaping (PeerConnection) async -> Void) {
+    public func setOnSharesRequest(_ handler: @Sendable @escaping (PeerConnection) async -> Void) {
         _onSharesRequest = handler
     }
 
-    public func setOnUserInfoRequest(_ handler: @escaping (PeerConnection) async -> Void) {
+    public func setOnUserInfoRequest(_ handler: @Sendable @escaping (PeerConnection) async -> Void) {
         _onUserInfoRequest = handler
     }
 
-    public func setOnArtworkRequest(_ handler: @escaping (UInt32, String, PeerConnection) async -> Void) {
+    public func setOnArtworkRequest(_ handler: @Sendable @escaping (UInt32, String, PeerConnection) async -> Void) {
         _onArtworkRequest = handler
     }
 
-    public func setOnArtworkReply(_ handler: @escaping (UInt32, Data) async -> Void) {
+    public func setOnArtworkReply(_ handler: @Sendable @escaping (UInt32, Data) async -> Void) {
         _onArtworkReply = handler
     }
 

@@ -251,10 +251,10 @@ public final class NetworkClient {
     public var onItemSimilarUsers: ((String, [String]) -> Void)?  // (item, users)
 
     // Profile data provider - returns (description, picture) for UserInfoResponse
-    public var profileDataProvider: (() -> (description: String, picture: Data?))?
+    public var profileDataProvider: ( () -> (description: String, picture: Data?))?
 
     // Search response filter - returns (respondToSearches, minQueryLength, maxResults)
-    public var searchResponseFilter: (() -> (enabled: Bool, minQueryLength: Int, maxResults: Int))?
+    public var searchResponseFilter: ( () -> (enabled: Bool, minQueryLength: Int, maxResults: Int))?
 
     // User stats & privileges callbacks
     private var userStatusHandlers: [(String, UserStatus, Bool) -> Void] = []

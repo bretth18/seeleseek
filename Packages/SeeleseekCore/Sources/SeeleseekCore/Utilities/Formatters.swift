@@ -97,7 +97,7 @@ public enum DateTimeFormatters {
         return formatter
     }()
 
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+    private nonisolated(unsafe) static let relativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter

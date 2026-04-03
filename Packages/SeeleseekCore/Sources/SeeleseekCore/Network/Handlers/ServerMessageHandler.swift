@@ -701,7 +701,7 @@ public final class ServerMessageHandler {
         }
     }
 
-    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @Sendable @escaping () async throws -> T) async throws -> T {
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
                 do {

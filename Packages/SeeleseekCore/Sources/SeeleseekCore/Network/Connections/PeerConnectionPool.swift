@@ -378,21 +378,7 @@ public final class PeerConnectionPool {
             // IMPORTANT: Set up search reply callback so we receive search results
             // Close connection after receiving results (like Nicotine+) to prevent accumulation
             await connection.setOnSearchReply { [weak self, connectionId, capturedIP] token, results in
-                await MainActor.run {
-                    self?.logger.info("Search results: \(results.count) from incoming connection (token=\(token))")
-                    self?.logger.info("Received \(results.count) search results from incoming connection")
-                    self?.onSearchResults?(token, results)
-                }
-                // Close connection after results received to prevent accumulation
-                Task {
-                    await connection.disconnect()
-                    await MainActor.run {
-                        self?.decrementIPCounter(for: capturedIP)
-                        self?.connections.removeValue(forKey: connectionId)
-                        self?.activeConnections_.removeValue(forKey: connectionId)
-                        self?.activeConnections = self?.connections.count ?? 0
-                    }
-                }
+                await self?.handleIncomingSearchReply(token: token, results: results, connectionId: connectionId, ip: capturedIP, connection: connection)
             }
 
             await connection.setOnSharesReceived { [weak self] files in
@@ -450,18 +436,18 @@ public final class PeerConnectionPool {
 
             // Set up file transfer connection callback
             await connection.setOnFileTransferConnection { [weak self] username, token, fileConnection in
-                guard let self else {
-                    // self is nil, cannot log
-                    return
+                guard let self else { return }
+                await MainActor.run {
+                    self.logger.debug("PeerConnectionPool: F connection callback invoked - username='\(username)' token=\(token)")
+                    self.logger.info("File transfer connection: \(username) token=\(token)")
                 }
-                self.logger.debug("PeerConnectionPool: F connection callback invoked - username='\(username)' token=\(token)")
-                self.logger.info("File transfer connection: \(username) token=\(token)")
-                if self.onFileTransferConnection != nil {
-                    self.logger.debug("PeerConnectionPool: Forwarding to NetworkClient...")
-                    await self.onFileTransferConnection?(username, token, fileConnection)
-                    self.logger.debug("PeerConnectionPool: Forward complete")
+                let callback = await MainActor.run { self.onFileTransferConnection }
+                if let callback {
+                    await MainActor.run { self.logger.debug("PeerConnectionPool: Forwarding to NetworkClient...") }
+                    await callback(username, token, fileConnection)
+                    await MainActor.run { self.logger.debug("PeerConnectionPool: Forward complete") }
                 } else {
-                    self.logger.warning("PeerConnectionPool: onFileTransferConnection is nil!")
+                    await MainActor.run { self.logger.warning("PeerConnectionPool: onFileTransferConnection is nil!") }
                 }
             }
 
@@ -822,32 +808,39 @@ public final class PeerConnectionPool {
 
     // MARK: - Callbacks Setup
 
+    // MARK: - Search Reply Handlers (extracted for @MainActor isolation)
+
+    private func handleIncomingSearchReply(token: UInt32, results: [SearchResult], connectionId: String, ip: String, connection: PeerConnection) async {
+        logger.info("Search results: \(results.count) from incoming connection (token=\(token))")
+        onSearchResults?(token, results)
+        await connection.disconnect()
+        decrementIPCounter(for: ip)
+        connections.removeValue(forKey: connectionId)
+        activeConnections_.removeValue(forKey: connectionId)
+        activeConnections = connections.count
+    }
+
+    private func handleOutgoingSearchReply(token: UInt32, results: [SearchResult], username: String, connection: PeerConnection) async {
+        logger.info("Search results: \(results.count) from \(username) (token=\(token))")
+        if onSearchResults != nil {
+            logger.debug("PeerConnectionPool: Forwarding to NetworkClient callback...")
+            onSearchResults?(token, results)
+        } else {
+            logger.warning("PeerConnectionPool: onSearchResults callback is nil!")
+        }
+        await connection.disconnect()
+        if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+            connections.removeValue(forKey: key)
+            activeConnections_.removeValue(forKey: key)
+            activeConnections = connections.count
+        }
+    }
+
     private func setupCallbacks(for connection: PeerConnection, username: String) async {
         logger.debug("Setting up callbacks for connection to \(username)")
 
         await connection.setOnSearchReply { [weak self] token, results in
-            self?.logger.debug("PeerConnectionPool: Received search reply callback for \(username) - \(results.count) results, token=\(token)")
-            await MainActor.run {
-                self?.logger.info("Search results: \(results.count) from \(username) (token=\(token))")
-                if self?.onSearchResults != nil {
-                    self?.logger.debug("PeerConnectionPool: Forwarding to NetworkClient callback...")
-                    self?.onSearchResults?(token, results)
-                } else {
-                    self?.logger.warning("PeerConnectionPool: onSearchResults callback is nil!")
-                }
-            }
-            // Close connection after receiving search results
-            Task {
-                await connection.disconnect()
-                await MainActor.run {
-                    // Find and remove this connection by username prefix
-                    if let key = self?.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-                        self?.connections.removeValue(forKey: key)
-                        self?.activeConnections_.removeValue(forKey: key)
-                        self?.activeConnections = self?.connections.count ?? 0
-                    }
-                }
-            }
+            await self?.handleOutgoingSearchReply(token: token, results: results, username: username, connection: connection)
         }
 
         await connection.setOnSharesReceived { [weak self] files in

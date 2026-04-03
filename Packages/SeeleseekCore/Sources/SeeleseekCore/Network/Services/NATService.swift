@@ -288,15 +288,17 @@ public actor NATService {
             connection.start(queue: .global())
 
             // Timeout after 1.5 seconds
-            Task {
+            let timeoutConnection = connection
+            let timeoutContinuation = continuation
+            Task { @Sendable in
                 try? await Task.sleep(for: .milliseconds(1500))
                 guard didComplete.withLock({
                     guard !$0 else { return false }
                     $0 = true
                     return true
                 }) else { return }
-                connection.cancel()
-                continuation.resume(throwing: NATError.discoveryTimeout)
+                timeoutConnection.cancel()
+                timeoutContinuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }
@@ -472,15 +474,17 @@ public actor NATService {
 
             connection.start(queue: .global())
 
-            Task {
+            let timeoutConnection = connection
+            let timeoutContinuation = continuation
+            Task { @Sendable in
                 try? await Task.sleep(for: .seconds(1))
                 guard didComplete.withLock({
                     guard !$0 else { return false }
                     $0 = true
                     return true
                 }) else { return }
-                connection.cancel()
-                continuation.resume(throwing: NATError.discoveryTimeout)
+                timeoutConnection.cancel()
+                timeoutContinuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }
@@ -544,15 +548,17 @@ public actor NATService {
 
             connection.start(queue: .global())
 
-            Task {
+            let timeoutConnection = connection
+            let timeoutContinuation = continuation
+            Task { @Sendable in
                 try? await Task.sleep(for: .seconds(1))
                 guard didComplete.withLock({
                     guard !$0 else { return false }
                     $0 = true
                     return true
                 }) else { return }
-                connection.cancel()
-                continuation.resume(throwing: NATError.discoveryTimeout)
+                timeoutConnection.cancel()
+                timeoutContinuation.resume(throwing: NATError.discoveryTimeout)
             }
         }
     }
