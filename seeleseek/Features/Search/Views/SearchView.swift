@@ -5,7 +5,12 @@ struct SearchView: View {
     @Environment(\.appState) private var appState
     @State private var showHistory = false
     @State private var highlightedIndex: Int? = nil
+    @State private var hoveredIndex: Int? = nil
     @FocusState private var isSearchFocused: Bool
+
+    /// What the dropdown row should render as highlighted. Hover wins only when
+    /// the mouse is actually over a row; otherwise keyboard-driven highlight.
+    private var visibleHighlight: Int? { hoveredIndex ?? highlightedIndex }
 
     // Use shared searchState from AppState to persist callbacks
     private var searchState: SearchState {
@@ -59,13 +64,13 @@ struct SearchView: View {
                     placeholder: "Search or paste a music URL...",
                     isLoading: searchState.isResolvingURL,
                     onSubmit: {
-                        if showHistory, let i = highlightedIndex,
+                        if showHistory, let i = visibleHighlight,
                            i >= 0, i < filteredHistory.count {
-                            let item = filteredHistory[i]
-                            binding.wrappedValue = item
+                            binding.wrappedValue = filteredHistory[i]
                         }
                         showHistory = false
                         highlightedIndex = nil
+                        hoveredIndex = nil
                         performSearch()
                     }
                 )
@@ -149,14 +154,15 @@ struct SearchView: View {
                     .padding(.horizontal, SeeleSpacing.md)
                     .padding(.vertical, SeeleSpacing.sm)
                     .contentShape(Rectangle())
-                    .background(highlightedIndex == index ? SeeleColors.surfaceSecondary : Color.clear)
+                    .background(visibleHighlight == index ? SeeleColors.surfaceSecondary : Color.clear)
                 }
                 .buttonStyle(.plain)
                 .onHover { hovering in
                     if hovering {
-                        highlightedIndex = index
+                        hoveredIndex = index
                         NSCursor.pointingHand.push()
                     } else {
+                        if hoveredIndex == index { hoveredIndex = nil }
                         NSCursor.pop()
                     }
                 }
