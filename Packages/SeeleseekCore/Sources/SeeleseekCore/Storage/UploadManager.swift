@@ -533,45 +533,24 @@ public final class UploadManager {
             port: nwPort
         )
 
-        let params = NWParameters.tcp
-        let connection = NWConnection(to: endpoint, using: params)
+        let listenPort = networkClient.listenPort
+        let bindPort: UInt16? = listenPort > 0 ? listenPort : nil
 
-        // Wait for connection
-        let hasResumed = Mutex(false)
-        let connected: Bool = await withCheckedContinuation { continuation in
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    guard hasResumed.withLock({
-                        guard !$0 else { return false }
-                        $0 = true
-                        return true
-                    }) else { return }
-                    continuation.resume(returning: true)
-                case .failed, .cancelled:
-                    guard hasResumed.withLock({
-                        guard !$0 else { return false }
-                        $0 = true
-                        return true
-                    }) else { return }
-                    continuation.resume(returning: false)
-                default:
-                    break
-                }
-            }
-            connection.start(queue: .global(qos: .userInitiated))
+        var attemptResult = await Self.attemptFileConnect(to: endpoint, bindTo: bindPort)
+        if case .bindFailed = attemptResult, bindPort != nil {
+            logger.warning("Bound F connect to \(ip):\(port) failed (bind); retrying unbound")
+            attemptResult = await Self.attemptFileConnect(to: endpoint, bindTo: nil)
+        }
 
-            // Timeout
-            Task {
-                try? await Task.sleep(for: .seconds(30))
-                guard hasResumed.withLock({
-                    guard !$0 else { return false }
-                    $0 = true
-                    return true
-                }) else { return }
-                connection.cancel()
-                continuation.resume(returning: false)
-            }
+        let connected: Bool
+        let connection: NWConnection
+        switch attemptResult {
+        case .ready(let conn):
+            connected = true
+            connection = conn
+        case .failed(let conn), .bindFailed(let conn):
+            connected = false
+            connection = conn
         }
 
         guard connected else {

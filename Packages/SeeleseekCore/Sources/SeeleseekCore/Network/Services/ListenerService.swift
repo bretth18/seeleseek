@@ -8,6 +8,7 @@ public actor ListenerService {
     private let logger = Logger(subsystem: "com.seeleseek", category: "ListenerService")
 
     private var listener: NWListener?
+    private var obfuscatedListener: NWListener?
     private var listeningPort: UInt16 = 0
     private var obfuscatedPort: UInt16 = 0
 
@@ -32,6 +33,10 @@ public actor ListenerService {
     public var port: UInt16 { listeningPort }
     public var obfuscated: UInt16 { obfuscatedPort }
 
+    /// True iff the obfuscated listener is currently retained and running.
+    /// Exposed for regression tests of the retention fix.
+    internal var obfuscatedListenerIsActive: Bool { obfuscatedListener != nil }
+
     public func start(preferredPort: UInt16? = nil) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
         logger.info("ListenerService.start() called")
 
@@ -52,14 +57,22 @@ public actor ListenerService {
                 listeningPort = port
                 obfuscatedPort = port + Self.obfuscatedPortOffset
 
-                // Also start obfuscated listener
-                try? await startObfuscatedListener(on: obfuscatedPort)
+                do {
+                    try await startObfuscatedListener(on: obfuscatedPort)
+                } catch {
+                    // Obfuscated port unavailable for this pair — tear down the
+                    // main listener and try the next port.
+                    logger.debug("Obfuscated port \(self.obfuscatedPort) unavailable: \(error.localizedDescription); trying next pair")
+                    listener?.cancel()
+                    listener = nil
+                    listeningPort = 0
+                    obfuscatedPort = 0
+                    continue
+                }
 
                 logger.info("Listening on port \(port) (obfuscated: \(self.obfuscatedPort))")
-                logger.info("Listener started on port \(port) (obfuscated: \(self.obfuscatedPort))")
                 return (port, obfuscatedPort)
             } catch {
-                logger.debug("Port \(port) unavailable: \(error.localizedDescription)")
                 logger.debug("Port \(port) unavailable: \(error.localizedDescription)")
                 continue
             }
@@ -72,6 +85,8 @@ public actor ListenerService {
     public func stop() {
         listener?.cancel()
         listener = nil
+        obfuscatedListener?.cancel()
+        obfuscatedListener = nil
         listeningPort = 0
         obfuscatedPort = 0
         // Finish the old stream and create a fresh one for next start()
@@ -165,15 +180,53 @@ public actor ListenerService {
             port: nwPort
         )
 
-        let obfuscatedListener = try NWListener(using: parameters)
+        let newListener = try NWListener(using: parameters)
+        let hasResumed = Mutex(false)
 
-        obfuscatedListener.newConnectionHandler = { [weak self] connection in
-            Task {
-                await self?.handleNewConnection(connection, obfuscated: true)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            newListener.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready:
+                    guard hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    }) else { return }
+                    continuation.resume()
+                case .failed(let error):
+                    let shouldResume = hasResumed.withLock({
+                        guard !$0 else { return false }
+                        $0 = true
+                        return true
+                    })
+                    if shouldResume {
+                        continuation.resume(throwing: error)
+                    } else {
+                        Task { [weak self] in
+                            await self?.handleObfuscatedListenerFailure(error)
+                        }
+                    }
+                default:
+                    break
+                }
             }
+
+            newListener.newConnectionHandler = { [weak self] connection in
+                Task {
+                    await self?.handleNewConnection(connection, obfuscated: true)
+                }
+            }
+
+            newListener.start(queue: .global(qos: .userInitiated))
         }
 
-        obfuscatedListener.start(queue: .global(qos: .userInitiated))
+        self.obfuscatedListener = newListener
+    }
+
+    private func handleObfuscatedListenerFailure(_ error: Error) {
+        logger.error("Obfuscated listener failed: \(error.localizedDescription)")
+        obfuscatedListener?.cancel()
+        obfuscatedListener = nil
     }
 
     private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) {

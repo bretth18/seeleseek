@@ -74,7 +74,34 @@ public final class NetworkClient {
 
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
     // Uses (continuation, requestID) to prevent double-resume when same user is requested multiple times
-    private var pendingPeerAddressRequests: [String: (continuation: CheckedContinuation<(ip: String, port: Int), Error>, requestID: UUID)] = [:]
+    private var pendingPeerAddressRequests: [String: [(continuation: CheckedContinuation<(ip: String, port: Int), Error>, requestID: UUID)]] = [:]
+
+    /// Test-only: register a waiter without kicking off a server round-trip.
+    /// Used to exercise the multi-waiter / timeout path independently of a
+    /// live connection.
+    internal func _awaitPeerAddressWaiter(
+        for username: String,
+        timeout: Duration
+    ) async throws -> (ip: String, port: Int) {
+        let requestID = UUID()
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingPeerAddressRequests[username, default: []].append(
+                (continuation: continuation, requestID: requestID)
+            )
+            Task {
+                try? await Task.sleep(for: timeout)
+                guard var waiters = self.pendingPeerAddressRequests[username] else { return }
+                guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }
+                let waiter = waiters.remove(at: idx)
+                if waiters.isEmpty {
+                    self.pendingPeerAddressRequests.removeValue(forKey: username)
+                } else {
+                    self.pendingPeerAddressRequests[username] = waiters
+                }
+                waiter.continuation.resume(throwing: NetworkError.timeout)
+            }
+        }
+    }
 
     // MARK: - Pending Status Requests (for checking if user is online before browse/download)
     private var pendingStatusRequests: [String: CheckedContinuation<(status: UserStatus, privileged: Bool), Never>] = [:]
@@ -840,10 +867,11 @@ public final class NetworkClient {
     public func handlePeerAddressResponse(username: String, ip: String, port: Int) {
         logger.debug("handlePeerAddressResponse: \(username) @ \(ip):\(port)")
 
-        // Check for pending internal request (browse/folder)
-        if let pending = pendingPeerAddressRequests.removeValue(forKey: username) {
-            logger.debug("Resuming pending getPeerAddress continuation (requestID: \(pending.requestID))")
-            pending.continuation.resume(returning: (ip, port))
+        if let waiters = pendingPeerAddressRequests.removeValue(forKey: username) {
+            logger.debug("Resuming \(waiters.count) pending getPeerAddress continuation(s) for \(username)")
+            for waiter in waiters {
+                waiter.continuation.resume(returning: (ip, port))
+            }
         }
 
         // Call all registered handlers (multi-listener pattern)
@@ -868,47 +896,39 @@ public final class NetworkClient {
     /// Request peer address and wait for response (concurrent-safe)
     /// Can be called from multiple places concurrently - each request gets its own continuation
     public func getPeerAddress(for username: String, timeout: Duration = .seconds(10)) async throws -> (ip: String, port: Int) {
-        // Check if there's already a pending request for this user
-        if pendingPeerAddressRequests[username] != nil {
-            // Another request is in flight - wait a bit and try to get existing connection
-            try await Task.sleep(for: .milliseconds(500))
-            if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
-                let info = existingConnection.peerInfo
-                return (info.ip, info.port)
-            }
-        }
-
-        // Generate unique request ID to prevent double-resume when same user is requested multiple times
         let requestID = UUID()
+        let alreadyInFlight = (pendingPeerAddressRequests[username]?.isEmpty == false)
 
         return try await withCheckedThrowingContinuation { continuation in
-            // Register pending request with unique ID
-            pendingPeerAddressRequests[username] = (continuation: continuation, requestID: requestID)
+            pendingPeerAddressRequests[username, default: []].append(
+                (continuation: continuation, requestID: requestID)
+            )
 
-            // Request the peer address
-            Task {
-                do {
-                    try await self.getUserAddress(username)
-                } catch {
-                    // Remove and resume with error if request fails AND this is still our request
-                    if let pending = self.pendingPeerAddressRequests[username],
-                       pending.requestID == requestID {
-                        self.pendingPeerAddressRequests.removeValue(forKey: username)
-                        continuation.resume(throwing: error)
+            if !alreadyInFlight {
+                Task {
+                    do {
+                        try await self.getUserAddress(username)
+                    } catch {
+                        if let waiters = self.pendingPeerAddressRequests.removeValue(forKey: username) {
+                            for waiter in waiters {
+                                waiter.continuation.resume(throwing: error)
+                            }
+                        }
                     }
                 }
             }
 
-            // Timeout
             Task {
                 try? await Task.sleep(for: timeout)
-                // Remove and resume with timeout if still pending AND this is still our request
-                // This check prevents double-resume when a new request replaced our continuation
-                if let pending = self.pendingPeerAddressRequests[username],
-                   pending.requestID == requestID {
+                guard var waiters = self.pendingPeerAddressRequests[username] else { return }
+                guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }
+                let waiter = waiters.remove(at: idx)
+                if waiters.isEmpty {
                     self.pendingPeerAddressRequests.removeValue(forKey: username)
-                    continuation.resume(throwing: NetworkError.timeout)
+                } else {
+                    self.pendingPeerAddressRequests[username] = waiters
                 }
+                waiter.continuation.resume(throwing: NetworkError.timeout)
             }
         }
     }
