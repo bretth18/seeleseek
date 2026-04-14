@@ -221,6 +221,7 @@ public actor NATService {
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
                 switch state {
                 case .ready:
                     // Send the M-SEARCH request
@@ -238,23 +239,21 @@ public actor NATService {
                             if let data = data, let response = String(data: data, encoding: .utf8) {
                                 print("🔧 NAT: SSDP response (\(data.count) bytes)")
 
-                                if let location = self?.parseLocationHeader(from: response) {
+                                if let location = self.parseLocationHeader(from: response) {
                                     print("🔧 NAT: Gateway at: \(location)")
 
                                     let taskConnection = connection
                                     let taskContinuation = continuation
-                                    Task { @Sendable [weak self] in
+                                    Task { @Sendable in
                                         do {
-                                            let gateway = try await self?.fetchGatewayInfo(from: location)
-                                            if let gateway = gateway {
-                                                guard didComplete.withLock({
-                                                    guard !$0 else { return false }
-                                                    $0 = true
-                                                    return true
-                                                }) else { return }
-                                                taskConnection.cancel()
-                                                taskContinuation.resume(returning: gateway)
-                                            }
+                                            let gateway = try await self.fetchGatewayInfo(from: location)
+                                            guard didComplete.withLock({
+                                                guard !$0 else { return false }
+                                                $0 = true
+                                                return true
+                                            }) else { return }
+                                            taskConnection.cancel()
+                                            taskContinuation.resume(returning: gateway)
                                         } catch {
                                             // Try next response
                                             receiveNext()
@@ -647,12 +646,13 @@ public actor NATService {
                 let addrFamily = interface.ifa_addr.pointee.sa_family
 
                 if addrFamily == UInt8(AF_INET) {
-                    let name = String(cString: interface.ifa_name)
+                    let name = String(validatingCString: interface.ifa_name) ?? ""
                     if name == "en0" || name == "en1" {
                         var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                         getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
                                    &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
-                        address = String(cString: hostname)
+                        let bytes = hostname.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
+                        address = String(decoding: bytes, as: UTF8.self)
                     }
                 }
             }

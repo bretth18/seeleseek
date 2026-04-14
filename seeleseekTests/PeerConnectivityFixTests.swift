@@ -186,6 +186,37 @@ struct PeerConnectivityFixTests {
         if case .ipv6 = host {} else { Issue.record("expected IPv6 bind for IPv6 remote") }
     }
 
+    // MARK: - Per-IP counter key symmetry
+
+    @Test("canonicalIP strips port from host:port endpoints")
+    func canonicalIPStripsPort() {
+        let e1 = NWEndpoint.hostPort(host: .ipv4(.init("192.168.1.5")!), port: 54321)
+        let e2 = NWEndpoint.hostPort(host: .ipv4(.init("192.168.1.5")!), port: 65000)
+        let k1 = PeerConnectionPool.canonicalIP(from: e1)
+        let k2 = PeerConnectionPool.canonicalIP(from: e2)
+        // Original bug: increment used "192.168.1.5", decrement used the
+        // String(describing:) form which included the port. Symmetry requires
+        // both endpoints (same host, different ports) to map to the same key.
+        #expect(k1 == k2)
+        #expect(k1 == "192.168.1.5")
+        #expect(!k1.contains(":"))
+    }
+
+    @Test("canonicalIP handles IPv6 endpoints")
+    func canonicalIPIPv6() {
+        let e = NWEndpoint.hostPort(host: .ipv6(.init("::1")!), port: 1234)
+        let key = PeerConnectionPool.canonicalIP(from: e)
+        #expect(!key.isEmpty)
+        #expect(!key.hasSuffix(":1234"))
+    }
+
+    @Test("canonicalIP handles named hosts")
+    func canonicalIPNamedHost() {
+        let e = NWEndpoint.hostPort(host: .name("example.com", nil), port: 80)
+        let key = PeerConnectionPool.canonicalIP(from: e)
+        #expect(key == "example.com")
+    }
+
     @Test("isBindFailure recognises EADDRINUSE / EADDRNOTAVAIL only")
     func bindFailureDetection() {
         #expect(PeerConnection.isBindFailure(NWError.posix(.EADDRINUSE)) == true)

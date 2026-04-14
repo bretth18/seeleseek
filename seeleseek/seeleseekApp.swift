@@ -103,6 +103,7 @@ struct SeeleSeekApp: App {
             UpdatePromptSheet(updateState: appState.updateState)
                 .environment(\.appState, appState)
         }
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
 
