@@ -3,6 +3,9 @@ import SeeleseekCore
 
 struct MainView: View {
     @Environment(\.appState) private var appState
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         Group {
@@ -13,6 +16,18 @@ struct MainView: View {
             #endif
         }
         .preferredColorScheme(.dark)
+        #if os(macOS)
+        .onChange(of: appState.updateState.showUpdatePrompt) { _, show in
+            if show { openWindow(id: "update-prompt") }
+        }
+        .task {
+            // Catch the case where checkForUpdate() already flipped the flag
+            // before onChange had a chance to install.
+            if appState.updateState.showUpdatePrompt {
+                openWindow(id: "update-prompt")
+            }
+        }
+        #endif
         .alert("Server Message", isPresented: Binding(
             get: { appState.showAdminMessageAlert },
             set: { appState.showAdminMessageAlert = $0 }

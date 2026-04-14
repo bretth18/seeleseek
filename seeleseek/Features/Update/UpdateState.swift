@@ -28,6 +28,12 @@ final class UpdateState {
     // UserDefaults keys
     private let lastCheckKey = "update.lastCheckDate"
     private let autoCheckKey = "update.autoCheckEnabled"
+    private let skippedVersionKey = "update.skippedVersion"
+
+    /// Whether the launch prompt sheet should be shown. Separate from
+    /// `updateAvailable` so Settings can show update info without auto-popping
+    /// the sheet, and so "Skip this version" suppresses future prompts.
+    var showUpdatePrompt: Bool = false
 
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
@@ -60,7 +66,9 @@ final class UpdateState {
         }
 
         do {
-            let result = try await updateClient.fetchLatestRelease(currentVersion: "\(currentVersion).\(currentBuild)")
+            let currentFull = "\(currentVersion).\(currentBuild)"
+            logger.info("Update check: current=\(currentFull) skipped=\(self.skippedVersion ?? "<none>")")
+            let result = try await updateClient.fetchLatestRelease(currentVersion: currentFull)
 
             updateAvailable = result.isNewer
             latestVersion = result.release.tagName
@@ -74,8 +82,15 @@ final class UpdateState {
                 latestPkgURL = url
             }
 
+            logger.info("Update check: latest=\(result.release.tagName) isNewer=\(result.isNewer) pkg=\(result.pkgAsset?.browserDownloadUrl ?? "<none>")")
+
             if !result.isNewer {
                 logger.info("App is up to date")
+            } else if latestVersion == skippedVersion {
+                logger.info("Update \(self.latestVersion ?? "?") available but user skipped it")
+            } else {
+                logger.info("Update available — opening prompt window")
+                showUpdatePrompt = true
             }
         } catch {
             logger.error("Update check failed: \(error.localizedDescription)")
@@ -116,6 +131,20 @@ final class UpdateState {
         }
     }
 
+    var skippedVersion: String? {
+        get { UserDefaults.standard.string(forKey: skippedVersionKey) }
+        set { UserDefaults.standard.set(newValue, forKey: skippedVersionKey) }
+    }
+
+    func skipCurrentVersion() {
+        skippedVersion = latestVersion
+        showUpdatePrompt = false
+    }
+
+    func remindLater() {
+        showUpdatePrompt = false
+    }
+
     func dismissUpdate() {
         updateAvailable = false
         latestVersion = nil
@@ -127,15 +156,9 @@ final class UpdateState {
 
     func checkOnLaunch() {
         guard autoCheckEnabled else { return }
-
-        let lastCheck = UserDefaults.standard.double(forKey: lastCheckKey)
-        let lastCheckDate = Date(timeIntervalSince1970: lastCheck)
-        let hoursSinceLastCheck = Date().timeIntervalSince(lastCheckDate) / 3600
-
-        guard lastCheck == 0 || hoursSinceLastCheck >= 24 else { return }
-
-        Task {
-            await checkForUpdate()
-        }
+        // Always check on launch — the 24h cooldown was for polling during a
+        // long-running session, which we don't do. If an update exists and
+        // wasn't skipped, the prompt window opens.
+        Task { await checkForUpdate() }
     }
 }
