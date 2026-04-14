@@ -18,8 +18,12 @@ struct SeeleSeekApp: App {
                 .environment(\.appState, appState)
                 .tint(SeeleColors.accent)
                 .task {
-                    appState.configure()
-                    SeeleSeekShortcuts.updateAppShortcutParameters()
+                    if DemoDataSeeder.isEnabled {
+                        DemoDataSeeder.seed(into: appState)
+                    } else {
+                        appState.configure()
+                        SeeleSeekShortcuts.updateAppShortcutParameters()
+                    }
                 }
         }
         #if os(macOS)

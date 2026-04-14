@@ -20,12 +20,20 @@
 			remoteGlobalIDString = A61208172F32A89C00995D21;
 			remoteInfo = seeleseek;
 		};
+		A6UITEST0B2F40000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A61208102F32A89C00995D21 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A61208172F32A89C00995D21;
+			remoteInfo = seeleseek;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A61208182F32A89C00995D21 /* seeleseek.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = seeleseek.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A6TESTS002F32CDA700995D21 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		A6TESTS042F32CDA700995D21 /* seeleseekTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = seeleseekTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A6UITEST092F40000000000001 /* seeleseekUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = seeleseekUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -52,6 +60,11 @@
 			path = seeleseekTests;
 			sourceTree = "<group>";
 		};
+		A6UITEST012F40000000000001 /* seeleseekUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = seeleseekUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,6 +85,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A6UITEST042F40000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -80,6 +100,7 @@
 			children = (
 				A612081A2F32A89C00995D21 /* seeleseek */,
 				A6TESTS052F32CDA700995D21 /* seeleseekTests */,
+				A6UITEST012F40000000000001 /* seeleseekUITests */,
 				A6TESTS092F32CDA700995D21 /* Frameworks */,
 				A61208192F32A89C00995D21 /* Products */,
 			);
@@ -90,6 +111,7 @@
 			children = (
 				A61208182F32A89C00995D21 /* seeleseek.app */,
 				A6TESTS042F32CDA700995D21 /* seeleseekTests.xctest */,
+				A6UITEST092F40000000000001 /* seeleseekUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -150,6 +172,27 @@
 			productReference = A6TESTS042F32CDA700995D21 /* seeleseekTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A6UITEST022F40000000000001 /* seeleseekUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A6UITEST062F40000000000001 /* Build configuration list for PBXNativeTarget "seeleseekUITests" */;
+			buildPhases = (
+				A6UITEST032F40000000000001 /* Sources */,
+				A6UITEST042F40000000000001 /* Frameworks */,
+				A6UITEST052F40000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A6UITEST0A2F40000000000001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A6UITEST012F40000000000001 /* seeleseekUITests */,
+			);
+			name = seeleseekUITests;
+			productName = seeleseekUITests;
+			productReference = A6UITEST092F40000000000001 /* seeleseekUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -164,6 +207,10 @@
 						CreatedOnToolsVersion = 26.2;
 					};
 					A6TESTS072F32CDA700995D21 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = A61208172F32A89C00995D21;
+					};
+					A6UITEST022F40000000000001 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = A61208172F32A89C00995D21;
 					};
@@ -189,6 +236,7 @@
 			targets = (
 				A61208172F32A89C00995D21 /* seeleseek */,
 				A6TESTS072F32CDA700995D21 /* seeleseekTests */,
+				A6UITEST022F40000000000001 /* seeleseekUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -202,6 +250,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A6TESTS0C2F32CDA700995D21 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A6UITEST052F40000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -225,6 +280,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A6UITEST032F40000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -232,6 +294,11 @@
 			isa = PBXTargetDependency;
 			target = A61208172F32A89C00995D21 /* seeleseek */;
 			targetProxy = A6TESTS032F32CDA700995D21 /* PBXContainerItemProxy */;
+		};
+		A6UITEST0A2F40000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A61208172F32A89C00995D21 /* seeleseek */;
+			targetProxy = A6UITEST0B2F40000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -502,6 +569,48 @@
 			};
 			name = Release;
 		};
+		A6UITEST072F40000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 94XUGF9CU7;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = computerdata.seeleseekUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = seeleseek;
+			};
+			name = Debug;
+		};
+		A6UITEST082F40000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 94XUGF9CU7;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = computerdata.seeleseekUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = seeleseek;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -528,6 +637,15 @@
 			buildConfigurations = (
 				A6TESTS0D2F32CDA700995D21 /* Debug */,
 				A6TESTS0E2F32CDA700995D21 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A6UITEST062F40000000000001 /* Build configuration list for PBXNativeTarget "seeleseekUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A6UITEST072F40000000000001 /* Debug */,
+				A6UITEST082F40000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

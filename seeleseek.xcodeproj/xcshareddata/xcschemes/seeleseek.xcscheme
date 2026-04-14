@@ -29,6 +29,13 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "SOURCE_ROOT"
+            value = "$(SOURCE_ROOT)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO"
@@ -38,6 +45,17 @@
                BlueprintIdentifier = "A6TESTS072F32CDA700995D21"
                BuildableName = "seeleseekTests.xctest"
                BlueprintName = "seeleseekTests"
+               ReferencedContainer = "container:seeleseek.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A6UITEST022F40000000000001"
+               BuildableName = "seeleseekUITests.xctest"
+               BlueprintName = "seeleseekUITests"
                ReferencedContainer = "container:seeleseek.xcodeproj">
             </BuildableReference>
          </TestableReference>
