@@ -598,9 +598,9 @@ public final class NetworkClient {
 
     private func setupNATInBackground() async {
         // Check if UPnP/NAT-PMP is enabled in settings
-        let enableNAT = UserDefaults.standard.object(forKey: "settings.enableUPnP") == nil
+        let enableNAT = UserDefaults.standard.object(forKey: "settingsEnableUPnP") == nil
             ? true  // Default to enabled
-            : UserDefaults.standard.bool(forKey: "settings.enableUPnP")
+            : UserDefaults.standard.bool(forKey: "settingsEnableUPnP")
 
         if !enableNAT {
             logger.info("NAT: Port mapping disabled in settings")

@@ -490,8 +490,12 @@ public final class UploadManager {
         } else {
             pendingAddressLookups[username] = entries
             // Re-request address for remaining entries (server only sends one response per request)
-            Task {
-                try? await networkClient?.getUserAddress(username)
+            Task { [weak self] in
+                do {
+                    try await self?.networkClient?.getUserAddress(username)
+                } catch {
+                    self?.logger.warning("getUserAddress(\(username)) failed: \(error.localizedDescription)")
+                }
             }
         }
 

@@ -406,15 +406,23 @@ public final class DownloadManager {
             do {
                 await setupTransferRequestCallback(token: token, connection: existingConnection)
                 try await existingConnection.queueDownload(filename: pending.filename)
-                try? await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
+                do {
+                    try await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
+                } catch {
+                    logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+                }
                 logger.info("Sent QueueDownload for \(pending.filename)")
 
                 // Also queue additional downloads on the same connection
                 for (extraToken, extraPending) in additionalEntries {
                     pendingDownloads[extraToken]?.peerConnection = existingConnection
                     await setupTransferRequestCallback(token: extraToken, connection: existingConnection)
-                    try? await existingConnection.queueDownload(filename: extraPending.filename)
-                    try? await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                    do {
+                        try await existingConnection.queueDownload(filename: extraPending.filename)
+                        try await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                    } catch {
+                        logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
+                    }
                     logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
                 }
 
@@ -524,15 +532,23 @@ public final class DownloadManager {
 
             await setupTransferRequestCallback(token: token, connection: connection)
             try await connection.queueDownload(filename: pending.filename)
-            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            do {
+                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            } catch {
+                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+            }
             logger.info("Sent QueueDownload for \(pending.filename)")
 
             // Also queue additional downloads on the same connection
             for (extraToken, extraPending) in additionalEntries {
                 pendingDownloads[extraToken]?.peerConnection = connection
                 await setupTransferRequestCallback(token: extraToken, connection: connection)
-                try? await connection.queueDownload(filename: extraPending.filename)
-                try? await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                do {
+                    try await connection.queueDownload(filename: extraPending.filename)
+                    try await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                } catch {
+                    logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
+                }
                 logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
             }
 
@@ -1464,7 +1480,11 @@ public final class DownloadManager {
             await setupTransferRequestCallback(token: token, connection: connection)
 
             try await connection.queueDownload(filename: pending.filename)
-            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            do {
+                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            } catch {
+                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+            }
             logger.info("Sent QueueDownload via indirect connection")
 
             await waitForTransferResponse(token: token)

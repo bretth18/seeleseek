@@ -26,9 +26,9 @@ final class UpdateState {
     var downloadedPkgURL: URL?
 
     // UserDefaults keys
-    private let lastCheckKey = "update.lastCheckDate"
-    private let autoCheckKey = "update.autoCheckEnabled"
-    private let skippedVersionKey = "update.skippedVersion"
+    private let lastCheckKey = "updateLastCheckDate"
+    private let autoCheckKey = "updateAutoCheckEnabled"
+    private let skippedVersionKey = "updateSkippedVersion"
 
     /// Whether the launch prompt sheet should be shown. Separate from
     /// `updateAvailable` so Settings can show update info without auto-popping
