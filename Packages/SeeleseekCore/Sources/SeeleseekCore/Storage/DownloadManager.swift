@@ -406,15 +406,23 @@ public final class DownloadManager {
             do {
                 await setupTransferRequestCallback(token: token, connection: existingConnection)
                 try await existingConnection.queueDownload(filename: pending.filename)
-                try? await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
+                do {
+                    try await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
+                } catch {
+                    logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+                }
                 logger.info("Sent QueueDownload for \(pending.filename)")
 
                 // Also queue additional downloads on the same connection
                 for (extraToken, extraPending) in additionalEntries {
                     pendingDownloads[extraToken]?.peerConnection = existingConnection
                     await setupTransferRequestCallback(token: extraToken, connection: existingConnection)
-                    try? await existingConnection.queueDownload(filename: extraPending.filename)
-                    try? await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                    do {
+                        try await existingConnection.queueDownload(filename: extraPending.filename)
+                        try await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                    } catch {
+                        logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
+                    }
                     logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
                 }
 
@@ -524,15 +532,23 @@ public final class DownloadManager {
 
             await setupTransferRequestCallback(token: token, connection: connection)
             try await connection.queueDownload(filename: pending.filename)
-            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            do {
+                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            } catch {
+                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+            }
             logger.info("Sent QueueDownload for \(pending.filename)")
 
             // Also queue additional downloads on the same connection
             for (extraToken, extraPending) in additionalEntries {
                 pendingDownloads[extraToken]?.peerConnection = connection
                 await setupTransferRequestCallback(token: extraToken, connection: connection)
-                try? await connection.queueDownload(filename: extraPending.filename)
-                try? await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                do {
+                    try await connection.queueDownload(filename: extraPending.filename)
+                    try await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
+                } catch {
+                    logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
+                }
                 logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
             }
 
@@ -610,36 +626,53 @@ public final class DownloadManager {
         logger.debug("TransferRequest routing via pool event stream (token=\(token))")
     }
 
-    /// Handle TransferRequest by matching filename to pending downloads
-    /// This supports multiple concurrent downloads on the same connection
-    private func handleTransferRequestByFilename(request: TransferRequest, fallbackToken: UInt32) async {
-        // Try to find matching pending download by filename
-        let matchingEntry = pendingDownloads.first { (_, pending) in
-            pending.filename == request.filename
+    private func matchPendingDownload(for request: TransferRequest) -> UInt32? {
+        let (token, ambiguous) = Self.matchPendingDownload(request: request, pending: pendingDownloads)
+        if ambiguous {
+            logger.warning("Refusing ambiguous TransferRequest match for filename \(request.filename)")
         }
+        return token
+    }
 
-        if let (token, _) = matchingEntry {
-            logger.debug("Matched TransferRequest to pending download by filename: \(request.filename)")
+    /// Token → (username, filename) → filename-only (only when unambiguous).
+    /// Reused connections can arrive with empty `request.username`, so a
+    /// filename-only fallback is retained — but ambiguous cases return `nil`
+    /// rather than guess. `ambiguous` is true when the fallback refused to match.
+    static func matchPendingDownload(
+        request: TransferRequest,
+        pending: [UInt32: PendingDownload]
+    ) -> (token: UInt32?, ambiguous: Bool) {
+        if pending[request.token] != nil {
+            return (request.token, false)
+        }
+        if let (token, _) = pending.first(where: { (_, p) in
+            p.username == request.username && p.filename == request.filename
+        }) {
+            return (token, false)
+        }
+        let filenameMatches = pending.filter { (_, p) in p.filename == request.filename }
+        if filenameMatches.count == 1 {
+            return (filenameMatches.first?.key, false)
+        }
+        return (nil, filenameMatches.count > 1)
+    }
+
+    private func handleTransferRequestByFilename(request: TransferRequest, fallbackToken: UInt32) async {
+        if let token = matchPendingDownload(for: request) {
+            logger.debug("Matched TransferRequest to pending download: user=\(request.username) file=\(request.filename)")
             await handleTransferRequest(token: token, request: request)
         } else {
-            // Fall back to the original token if no filename match
-            logger.debug("No filename match for TransferRequest, using fallback token=\(fallbackToken)")
+            logger.debug("No match for TransferRequest, using fallback token=\(fallbackToken)")
             await handleTransferRequest(token: fallbackToken, request: request)
         }
     }
 
-    /// Handle TransferRequest arriving via pool-level callback (from connections not directly managed by us,
-    /// e.g. stale direct connections left over when PierceFirewall won the race)
     private func handlePoolTransferRequest(_ request: TransferRequest) async {
-        let matchingEntry = pendingDownloads.first { (_, pending) in
-            pending.filename == request.filename
-        }
-
-        if let (token, _) = matchingEntry {
-            logger.info("Pool TransferRequest matched pending download: \(request.filename)")
+        if let token = matchPendingDownload(for: request) {
+            logger.info("Pool TransferRequest matched pending download: user=\(request.username) file=\(request.filename)")
             await handleTransferRequest(token: token, request: request)
         } else {
-            logger.debug("Pool TransferRequest: no matching pending download for \(request.filename)")
+            logger.debug("Pool TransferRequest: no matching pending download for user=\(request.username) file=\(request.filename)")
         }
     }
 
@@ -806,28 +839,9 @@ public final class DownloadManager {
                 port: nwPort
             )
 
-            let params = NWParameters.tcp
-            let connection = NWConnection(to: endpoint, using: params)
-
-            // Wait for connection
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.stateUpdateHandler = { [weak connection] state in
-                    switch state {
-                    case .ready:
-                        connection?.stateUpdateHandler = nil
-                        continuation.resume()
-                    case .failed(let error):
-                        connection?.stateUpdateHandler = nil
-                        continuation.resume(throwing: error)
-                    case .cancelled:
-                        connection?.stateUpdateHandler = nil
-                        continuation.resume(throwing: DownloadError.connectionCancelled)
-                    default:
-                        break
-                    }
-                }
-                connection.start(queue: .global(qos: .userInitiated))
-            }
+            let listenPort = networkClient?.listenPort ?? 0
+            let bindPort: UInt16? = listenPort > 0 ? listenPort : nil
+            let connection = try await openFileConnectionWithRetry(to: endpoint, bindTo: bindPort)
 
             logger.info("Outgoing F connection established to \(username)")
 
@@ -904,6 +918,49 @@ public final class DownloadManager {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
             // Don't mark as failed yet - the timeout will handle that
         }
+    }
+
+    /// Open an outbound F-connection bound to `localPort`; retry unbound once
+    /// if the OS refuses the bind.
+    private func openFileConnectionWithRetry(
+        to endpoint: NWEndpoint,
+        bindTo localPort: UInt16?
+    ) async throws -> NWConnection {
+        do {
+            return try await openFileConnectionOnce(to: endpoint, bindTo: localPort)
+        } catch let error where PeerConnection.isBindFailure(error) {
+            guard localPort != nil else { throw error }
+            logger.warning("Bound F connect failed (\(error.localizedDescription)); retrying unbound")
+            return try await openFileConnectionOnce(to: endpoint, bindTo: nil)
+        }
+    }
+
+    private func openFileConnectionOnce(
+        to endpoint: NWEndpoint,
+        bindTo localPort: UInt16?
+    ) async throws -> NWConnection {
+        let params = PeerConnection.makeOutboundParameters(bindTo: localPort, remoteEndpoint: endpoint)
+        let connection = NWConnection(to: endpoint, using: params)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.stateUpdateHandler = { [weak connection] state in
+                switch state {
+                case .ready:
+                    connection?.stateUpdateHandler = nil
+                    continuation.resume()
+                case .failed(let error):
+                    connection?.stateUpdateHandler = nil
+                    continuation.resume(throwing: error)
+                case .cancelled:
+                    connection?.stateUpdateHandler = nil
+                    continuation.resume(throwing: DownloadError.connectionCancelled)
+                default:
+                    break
+                }
+            }
+            connection.start(queue: .global(qos: .userInitiated))
+        }
+        return connection
     }
 
     private func sendData(connection: NWConnection, data: Data) async throws {
@@ -1423,7 +1480,11 @@ public final class DownloadManager {
             await setupTransferRequestCallback(token: token, connection: connection)
 
             try await connection.queueDownload(filename: pending.filename)
-            try? await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            do {
+                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            } catch {
+                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+            }
             logger.info("Sent QueueDownload via indirect connection")
 
             await waitForTransferResponse(token: token)

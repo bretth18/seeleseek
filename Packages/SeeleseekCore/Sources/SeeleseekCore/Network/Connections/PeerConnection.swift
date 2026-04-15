@@ -190,9 +190,6 @@ public actor PeerConnection {
     public func connect() async throws {
         guard case .disconnected = state else { return }
 
-        updateState(.connecting)
-        connectContinuationResumed = false
-
         // Validate port range (must be valid UInt16 and non-zero)
         guard peerInfo.port > 0, peerInfo.port <= Int(UInt16.max),
               let nwPort = NWEndpoint.Port(rawValue: UInt16(peerInfo.port)) else {
@@ -205,18 +202,32 @@ public actor PeerConnection {
             port: nwPort
         )
 
-        // Use simple TCP parameters - minimal configuration for maximum compatibility
-        let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        if let tcpOptions = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-            tcpOptions.noDelay = true
-        }
+        // Bind outgoing to the listen port so peers see the same NAT mapping they
+        // reach us on. Fall back unbound if the OS refuses the bind.
+        let desiredLocalPort: UInt16? = localPort > 0 ? localPort : nil
 
+        do {
+            try await performConnect(to: endpoint, bindTo: desiredLocalPort)
+        } catch let error where Self.isBindFailure(error) {
+            guard desiredLocalPort != nil else { throw error }
+            logger.warning("Bound connect to \(self.peerInfo.ip):\(self.peerInfo.port) failed (\(error.localizedDescription)); retrying without local-port bind")
+            connection?.cancel()
+            connection = nil
+            updateState(.disconnected)
+            try await performConnect(to: endpoint, bindTo: nil)
+        }
+    }
+
+    private func performConnect(to endpoint: NWEndpoint, bindTo localPort: UInt16?) async throws {
+        updateState(.connecting)
+        connectContinuationResumed = false
+
+        let params = Self.makeOutboundParameters(bindTo: localPort, remoteEndpoint: endpoint)
         let conn = NWConnection(to: endpoint, using: params)
-        logger.debug("Creating TCP connection to \(self.peerInfo.ip):\(self.peerInfo.port)")
+        logger.debug("Creating TCP connection to \(self.peerInfo.ip):\(self.peerInfo.port) (localPort=\(localPort ?? 0))")
         connection = conn
 
-        return try await withTaskCancellationHandler {
+        try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 conn.stateUpdateHandler = { [weak self] newState in
                     guard let self else { return }
@@ -224,14 +235,44 @@ public actor PeerConnection {
                         await self.handleConnectionState(newState, continuation: continuation)
                     }
                 }
-
                 conn.start(queue: .global(qos: .userInitiated))
             }
         } onCancel: {
-            // Cancel the NWConnection when the task is cancelled (e.g., due to timeout)
             logger.debug("Task cancelled, stopping NWConnection to \(self.peerInfo.ip):\(self.peerInfo.port)...")
             conn.cancel()
         }
+    }
+
+    /// TCP parameters optionally bound to `localPort` for NAT port-reuse.
+    /// Local address family matches the remote endpoint.
+    public nonisolated static func makeOutboundParameters(
+        bindTo localPort: UInt16?,
+        remoteEndpoint: NWEndpoint
+    ) -> NWParameters {
+        let params = NWParameters.tcp
+        params.allowLocalEndpointReuse = true
+        if let tcpOptions = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true
+        }
+        if let localPort, let nwLocalPort = NWEndpoint.Port(rawValue: localPort) {
+            let localHost: NWEndpoint.Host
+            if case .hostPort(let host, _) = remoteEndpoint, case .ipv6 = host {
+                localHost = .ipv6(.any)
+            } else {
+                localHost = .ipv4(.any)
+            }
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(host: localHost, port: nwLocalPort)
+        }
+        return params
+    }
+
+    /// True if the OS refused the local bind — caller should retry unbound.
+    public nonisolated static func isBindFailure(_ error: Error) -> Bool {
+        guard let nwError = error as? NWError else { return false }
+        if case .posix(let code) = nwError {
+            return code == .EADDRINUSE || code == .EADDRNOTAVAIL
+        }
+        return false
     }
 
     public func accept() async throws {

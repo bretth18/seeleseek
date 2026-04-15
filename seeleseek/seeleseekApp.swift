@@ -99,6 +99,14 @@ struct SeeleSeekApp: App {
         #endif
 
         #if os(macOS)
+        Window("Update Available", id: "update-prompt") {
+            UpdatePromptSheet(updateState: appState.updateState)
+                .environment(\.appState, appState)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
+
         Settings {
             SettingsView()
                 .environment(\.appState, appState)

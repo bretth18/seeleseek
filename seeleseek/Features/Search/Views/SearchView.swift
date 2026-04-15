@@ -4,7 +4,13 @@ import SeeleseekCore
 struct SearchView: View {
     @Environment(\.appState) private var appState
     @State private var showHistory = false
+    @State private var highlightedIndex: Int? = nil
+    @State private var hoveredIndex: Int? = nil
     @FocusState private var isSearchFocused: Bool
+
+    /// What the dropdown row should render as highlighted. Hover wins only when
+    /// the mouse is actually over a row; otherwise keyboard-driven highlight.
+    private var visibleHighlight: Int? { hoveredIndex ?? highlightedIndex }
 
     // Use shared searchState from AppState to persist callbacks
     private var searchState: SearchState {
@@ -26,8 +32,8 @@ struct SearchView: View {
         @Bindable var state = appState
         VStack(spacing: 0) {
             searchBar(binding: $state.searchState.searchQuery)
+                .zIndex(10)
 
-            // Search tabs
             if !searchState.searches.isEmpty {
                 searchTabs
             }
@@ -58,16 +64,43 @@ struct SearchView: View {
                     placeholder: "Search or paste a music URL...",
                     isLoading: searchState.isResolvingURL,
                     onSubmit: {
+                        if showHistory, let i = visibleHighlight,
+                           i >= 0, i < filteredHistory.count {
+                            binding.wrappedValue = filteredHistory[i]
+                        }
                         showHistory = false
+                        highlightedIndex = nil
+                        hoveredIndex = nil
                         performSearch()
                     }
                 )
                 .focused($isSearchFocused)
                 .onChange(of: isSearchFocused) { _, focused in
                     showHistory = focused && !filteredHistory.isEmpty
+                    if !focused { highlightedIndex = nil }
                 }
                 .onChange(of: searchState.searchQuery) { _, _ in
                     showHistory = isSearchFocused && !filteredHistory.isEmpty
+                    highlightedIndex = nil
+                }
+                .onKeyPress(.downArrow) {
+                    guard showHistory, !filteredHistory.isEmpty else { return .ignored }
+                    let last = min(filteredHistory.count, 10) - 1
+                    highlightedIndex = min((highlightedIndex ?? -1) + 1, last)
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    guard showHistory, !filteredHistory.isEmpty else { return .ignored }
+                    if let i = highlightedIndex {
+                        highlightedIndex = i > 0 ? i - 1 : nil
+                    }
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard showHistory else { return .ignored }
+                    showHistory = false
+                    highlightedIndex = nil
+                    return .handled
                 }
 
                 if showHistory && !filteredHistory.isEmpty {
@@ -98,10 +131,11 @@ struct SearchView: View {
 
     private func searchHistoryDropdown(binding: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(filteredHistory.prefix(10)), id: \.self) { item in
+            ForEach(Array(filteredHistory.prefix(10).enumerated()), id: \.element) { index, item in
                 Button {
                     binding.wrappedValue = item
                     showHistory = false
+                    highlightedIndex = nil
                     isSearchFocused = false
                     performSearch()
                 } label: {
@@ -120,13 +154,15 @@ struct SearchView: View {
                     .padding(.horizontal, SeeleSpacing.md)
                     .padding(.vertical, SeeleSpacing.sm)
                     .contentShape(Rectangle())
+                    .background(visibleHighlight == index ? SeeleColors.surfaceSecondary : Color.clear)
                 }
                 .buttonStyle(.plain)
-                .background(Color.clear)
                 .onHover { hovering in
                     if hovering {
+                        hoveredIndex = index
                         NSCursor.pointingHand.push()
                     } else {
+                        if hoveredIndex == index { hoveredIndex = nil }
                         NSCursor.pop()
                     }
                 }

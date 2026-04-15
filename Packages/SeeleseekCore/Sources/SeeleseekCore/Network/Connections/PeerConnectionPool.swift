@@ -291,23 +291,11 @@ public final class PeerConnectionPool {
             return
         }
 
-        // Extract IP from endpoint for per-IP limit check
-        var peerIP: String?
-        if case .hostPort(let host, _) = nwConnection.endpoint {
-            switch host {
-            case .ipv4(let addr):
-                peerIP = "\(addr)"
-            case .ipv6(let addr):
-                peerIP = "\(addr)"
-            case .name(let name, _):
-                peerIP = name
-            @unknown default:
-                break
-            }
-        }
+        let peerIP = Self.canonicalIP(from: nwConnection.endpoint)
 
         // Enforce per-IP connection limit to prevent single peer from exhausting resources
-        if let ip = peerIP {
+        if !peerIP.isEmpty {
+            let ip = peerIP
             let currentCount = connectionsPerIP[ip] ?? 0
             if currentCount >= maxConnectionsPerIP {
                 logger.warning("Per-IP limit reached (\(self.maxConnectionsPerIP)) for \(ip), rejecting connection")
@@ -343,14 +331,13 @@ public final class PeerConnectionPool {
 
             let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 
-            let capturedIP = peerIP ?? ""
+            let capturedIP = peerIP
             consumeEvents(from: connection, username: "unknown", connectionId: connectionId, capturedIP: capturedIP, isIncoming: true)
 
-            // Track the connection (username will be determined after handshake)
             let info = PeerConnectionInfo(
                 id: connectionId,
                 username: "unknown",
-                ip: String(describing: nwConnection.endpoint),
+                ip: capturedIP,
                 port: 0,
                 state: .connected,
                 connectionType: .peer,
@@ -535,6 +522,18 @@ public final class PeerConnectionPool {
 
         if !toRemove.isEmpty {
             logger.info("Cleaned up \(toRemove.count) stale connections, \(self.activeConnections) active")
+        }
+    }
+
+    /// Bare host string for use as the per-IP connection-count key.
+    /// Must be used symmetrically by increment and decrement sites.
+    static func canonicalIP(from endpoint: NWEndpoint) -> String {
+        guard case .hostPort(let host, _) = endpoint else { return "" }
+        switch host {
+        case .ipv4(let addr): return "\(addr)"
+        case .ipv6(let addr): return "\(addr)"
+        case .name(let name, _): return name
+        @unknown default: return ""
         }
     }
 

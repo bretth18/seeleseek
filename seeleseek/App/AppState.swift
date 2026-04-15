@@ -31,81 +31,81 @@ final class AppState {
     var isDatabaseReady = false
     private let logger = Logger(subsystem: "com.seeleseek", category: "AppState")
 
-    // MARK: - Network Client (lazy to avoid creation in previews/default env)
+    // MARK: - Network Client
+    // Lazy to avoid creation in previews / default environment values, but the
+    // wiring itself lives in wireNetworkClient() so it isn't buried inside the
+    // accessor and can't be partially executed under early concurrent access.
     private var _networkClient: NetworkClient?
     var networkClient: NetworkClient {
-        if _networkClient == nil {
-            _networkClient = NetworkClient()
-            // Set up callbacks when client is first accessed
-            searchState.settings = settings
-            searchState.setupCallbacks(client: _networkClient!)
-            chatState.setupCallbacks(client: _networkClient!)
-            browseState.configure(networkClient: _networkClient!)
-            socialState.setupCallbacks(client: _networkClient!)
-            wishlistState.setupCallbacks(client: _networkClient!)
+        if let client = _networkClient { return client }
+        let client = NetworkClient()
+        _networkClient = client
+        wireNetworkClient(client)
+        return client
+    }
 
-            // Override search results callback to route wishlist tokens
-            let originalSearchCallback = _networkClient!.onSearchResults
-            _networkClient!.onSearchResults = { [weak self] token, results in
-                guard let self else { return }
-                let isWishlist = self.wishlistState.isWishlistToken(token)
-                self.logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
-                if isWishlist {
-                    self.wishlistState.handleSearchResults(token: token, results: results)
-                } else {
-                    originalSearchCallback?(token, results)
-                }
-            }
+    private func wireNetworkClient(_ client: NetworkClient) {
+        searchState.settings = settings
+        searchState.setupCallbacks(client: client)
+        chatState.setupCallbacks(client: client)
+        browseState.configure(networkClient: client)
+        socialState.setupCallbacks(client: client)
+        wishlistState.setupCallbacks(client: client)
 
-            let metadataReader = MetadataReader()
-            _networkClient!.metadataReader = metadataReader
-            downloadManager.configure(networkClient: _networkClient!, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
-            uploadManager.configure(networkClient: _networkClient!, transferState: transferState, shareManager: _networkClient!.shareManager, statisticsState: statisticsState)
-
-            // Wire upload permission checker to SocialState (blocklist + leech detection)
-            uploadManager.uploadPermissionChecker = { [weak self] username in
-                guard let self else { return true }
-                // Request stats so leech detection runs on next QueueUpload
-                Task { try? await self.networkClient.getUserStats(username) }
-                return self.socialState.shouldAllowUpload(to: username)
-            }
-
-            // Leech detection: only check users who are trying to download from us
-            _networkClient!.addUserStatsHandler { [weak self] username, _, _, files, dirs in
-                guard let self else { return }
-                // Only check if this user has queued or active uploads
-                let hasQueuedUpload = self.uploadManager.queuedUploads.contains { $0.username == username }
-                    || self.uploadManager.activeUploadCount > 0
-                if hasQueuedUpload {
-                    self.socialState.checkForLeech(username: username, files: files, folders: dirs)
-                }
-            }
-
-            // Set up admin message callback
-            _networkClient!.onAdminMessage = { [weak self] message in
-                Task { @MainActor in
-                    guard let self else { return }
-                    let adminMessage = AdminMessage(message: message)
-                    self.adminMessages.append(adminMessage)
-                    self.latestAdminMessage = adminMessage
-                    self.showAdminMessageAlert = true
-                    self.logger.info("Received admin message: \(message)")
-                }
-            }
-
-            // Wire search response filter from settings
-            _networkClient!.searchResponseFilter = { [weak self] in
-                guard let settings = self?.settings else {
-                    return (enabled: true, minQueryLength: 3, maxResults: 50)
-                }
-                return (
-                    enabled: settings.respondToSearches,
-                    minQueryLength: settings.minSearchQueryLength,
-                    maxResults: settings.maxSearchResponseResults
-                )
+        // Route wishlist tokens before falling through to regular search results.
+        let originalSearchCallback = client.onSearchResults
+        client.onSearchResults = { [weak self] token, results in
+            guard let self else { return }
+            let isWishlist = self.wishlistState.isWishlistToken(token)
+            self.logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
+            if isWishlist {
+                self.wishlistState.handleSearchResults(token: token, results: results)
+            } else {
+                originalSearchCallback?(token, results)
             }
         }
-        return _networkClient!
+
+        let metadataReader = MetadataReader()
+        client.metadataReader = metadataReader
+        downloadManager.configure(networkClient: client, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
+        uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
+
+        uploadManager.uploadPermissionChecker = { [weak self] username in
+            guard let self else { return true }
+            Task { try? await self.networkClient.getUserStats(username) }
+            return self.socialState.shouldAllowUpload(to: username)
+        }
+
+        client.addUserStatsHandler { [weak self] username, _, _, files, dirs in
+            guard let self else { return }
+            let hasQueuedUpload = self.uploadManager.queuedUploads.contains { $0.username == username }
+                || self.uploadManager.activeUploadCount > 0
+            if hasQueuedUpload {
+                self.socialState.checkForLeech(username: username, files: files, folders: dirs)
+            }
+        }
+
+        client.onAdminMessage = { [weak self] message in
+            Task { @MainActor in
+                guard let self else { return }
+                let adminMessage = AdminMessage(message: message)
+                self.adminMessages.append(adminMessage)
+                self.latestAdminMessage = adminMessage
+                self.showAdminMessageAlert = true
+                self.logger.info("Received admin message: \(message)")
+            }
+        }
+
+        client.searchResponseFilter = { [weak self] in
+            guard let settings = self?.settings else {
+                return (enabled: true, minQueryLength: 3, maxResults: 50)
+            }
+            return (
+                enabled: settings.respondToSearches,
+                minQueryLength: settings.minSearchQueryLength,
+                maxResults: settings.maxSearchResponseResults
+            )
+        }
     }
 
     // MARK: - Download Manager
@@ -128,6 +128,11 @@ final class AppState {
 
         // Migrate UserDefaults from sandboxed container if needed (v1.0.5 → v1.0.6)
         migrateUserDefaultsFromContainer()
+
+        // Migrate dotted UserDefaults keys to camelCase (v1.0.11 → v1.0.12).
+        // Copies old → new (does not delete) so the legacy DB migration below
+        // can still find the old keys for users who never opened pre-DB builds.
+        Self.migrateLegacyDottedDefaults()
 
         // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
@@ -208,6 +213,45 @@ final class AppState {
         } catch {
             logger.error("UserDefaults migration failed: \(error.localizedDescription)")
         }
+    }
+
+    /// One-shot rename of legacy dotted UserDefaults keys to camelCase. Copies
+    /// values forward; old keys are not deleted so the DB seeder above still
+    /// finds them on first launch after the v1.0.5 → v1.0.6 unsandboxing.
+    static func migrateLegacyDottedDefaults() {
+        let migrationDoneKey = "didMigrateDottedDefaults"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: migrationDoneKey) else { return }
+
+        let pairs: [(old: String, new: String)] = [
+            ("settings.listenPort",            "settingsListenPort"),
+            ("settings.enableUPnP",            "settingsEnableUPnP"),
+            ("settings.maxDownloadSlots",      "settingsMaxDownloadSlots"),
+            ("settings.maxUploadSlots",        "settingsMaxUploadSlots"),
+            ("settings.uploadSpeedLimit",      "settingsUploadSpeedLimit"),
+            ("settings.downloadSpeedLimit",    "settingsDownloadSpeedLimit"),
+            ("settings.maxSearchResults",      "settingsMaxSearchResults"),
+            ("settings.downloadLocation",      "settingsDownloadLocation"),
+            ("settings.incompleteLocation",    "settingsIncompleteLocation"),
+            ("settings.downloadFolderFormat",  "settingsDownloadFolderFormat"),
+            ("settings.downloadFolderTemplate","settingsDownloadFolderTemplate"),
+            ("settings.launchAtLogin",         "settingsLaunchAtLogin"),
+            ("settings.showInMenuBar",         "settingsShowInMenuBar"),
+            ("settings.notifyDownloads",       "settingsNotifyDownloads"),
+            ("settings.notifyUploads",         "settingsNotifyUploads"),
+            ("settings.notifyPrivateMessages", "settingsNotifyPrivateMessages"),
+            ("settings.notifyOnlyInBackground","settingsNotifyOnlyInBackground"),
+            ("settings.notificationSoundName", "settingsNotificationSoundName"),
+            ("update.lastCheckDate",           "updateLastCheckDate"),
+            ("update.autoCheckEnabled",        "updateAutoCheckEnabled"),
+            ("update.skippedVersion",          "updateSkippedVersion")
+        ]
+        for (old, new) in pairs where defaults.object(forKey: new) == nil {
+            if let value = defaults.object(forKey: old) {
+                defaults.set(value, forKey: new)
+            }
+        }
+        defaults.set(true, forKey: migrationDoneKey)
     }
 
     /// Migrate UserDefaults from the sandboxed container plist to the standard location.
