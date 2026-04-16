@@ -33,7 +33,7 @@ public struct User: Identifiable, Hashable, Sendable {
     }
 
     public var formattedSpeed: String {
-        ByteFormatter.formatSpeed(Int64(averageSpeed))
+        averageSpeed.formattedSpeed
     }
 
 }

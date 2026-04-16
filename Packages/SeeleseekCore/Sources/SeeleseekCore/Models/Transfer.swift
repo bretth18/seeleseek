@@ -88,11 +88,11 @@ public struct Transfer: Identifiable, Hashable, Sendable {
     }
 
     public var formattedProgress: String {
-        "\(ByteFormatter.format(Int64(bytesTransferred))) / \(ByteFormatter.format(Int64(size)))"
+        "\(bytesTransferred.formattedBytes) / \(size.formattedBytes)"
     }
 
     public var formattedSpeed: String {
-        ByteFormatter.formatSpeed(speed)
+        speed.formattedSpeed
     }
 
     public var isActive: Bool {

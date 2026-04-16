@@ -96,7 +96,7 @@ struct RoomUserListPanel: View {
                 }
 
                 if let stats {
-                    Text("\(ByteFormatter.formatSpeed(stats.speed)) · \(NumberFormatters.format(stats.files)) files")
+                    Text("\(stats.speed.formattedSpeed) · \(stats.files.formatted()) files")
                         .font(.system(size: 9))
                         .foregroundStyle(SeeleColors.textTertiary)
                         .lineLimit(1)

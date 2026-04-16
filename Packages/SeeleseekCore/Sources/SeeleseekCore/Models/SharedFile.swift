@@ -41,7 +41,7 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
     }
 
     public var formattedSize: String {
-        ByteFormatter.format(Int64(size))
+        size.formattedBytes
     }
 
     public nonisolated var fileExtension: String {

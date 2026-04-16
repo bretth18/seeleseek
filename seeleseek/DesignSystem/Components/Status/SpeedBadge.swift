@@ -28,7 +28,7 @@ struct SpeedBadge: View {
         HStack(spacing: SeeleSpacing.xxs) {
             Image(systemName: direction.icon)
                 .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-            Text(ByteFormatter.formatSpeed(bytesPerSecond))
+            Text(bytesPerSecond.formattedSpeed)
                 .font(SeeleTypography.monoSmall)
         }
         .foregroundStyle(direction.color)

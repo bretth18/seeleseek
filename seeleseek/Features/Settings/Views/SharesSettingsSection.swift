@@ -17,7 +17,7 @@ struct SharesSettingsSection: View {
             HStack(spacing: SeeleSpacing.md) {
                 statItem(icon: "folder.fill", value: "\(shareManager.totalFolders)", label: "Folders", color: SeeleColors.warning)
                 statItem(icon: "doc.fill", value: "\(shareManager.totalFiles)", label: "Files", color: SeeleColors.accent)
-                statItem(icon: "externaldrive.fill", value: ByteFormatter.format(Int64(shareManager.totalSize)), label: "Size", color: SeeleColors.info)
+                statItem(icon: "externaldrive.fill", value: shareManager.totalSize.formattedBytes, label: "Size", color: SeeleColors.info)
                 Spacer()
             }
 
@@ -148,7 +148,7 @@ struct SharedFolderRow: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textSecondary)
 
-            Text(ByteFormatter.format(Int64(folder.totalSize)))
+            Text(folder.totalSize.formattedBytes)
                 .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textTertiary)
 

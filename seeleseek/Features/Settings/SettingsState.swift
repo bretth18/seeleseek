@@ -91,6 +91,12 @@ final class SettingsState: DownloadSettingsProviding {
     private let notifyPrivateMessagesKey = "settingsNotifyPrivateMessages"
     private let notifyOnlyInBackgroundKey = "settingsNotifyOnlyInBackground"
     private let notificationSoundNameKey = "settingsNotificationSoundName"
+    private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
+    private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
+
+    /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
+    /// created by "streaming-service" apps that queue uploads en masse without sharing.
+    static let defaultBlockedUsernamePatterns: [String] = ["slsk_*"]
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -273,6 +279,39 @@ final class SettingsState: DownloadSettingsProviding {
     var showOnlineStatus: Bool = true
     var allowBrowsing: Bool = true
 
+    /// When true, peers whose usernames match any pattern in `blockedUsernamePatterns`
+    /// have their upload requests silently rejected.
+    var blockLeechPatternsEnabled: Bool = true {
+        didSet {
+            recomputeActiveBlockedPatterns()
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
+    /// Glob-style patterns (`*` wildcard) matched case-insensitively against incoming
+    /// upload-request usernames. Example: `slsk_*` blocks any user whose name starts
+    /// with `slsk_`.
+    var blockedUsernamePatterns: [String] = SettingsState.defaultBlockedUsernamePatterns {
+        didSet {
+            recomputeActiveBlockedPatterns()
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
+    /// Precompiled, filter-ready pattern set consumed by the peer/upload checkers.
+    /// Empty when blocking is disabled OR the user's list contains only blank entries.
+    /// Readers short-circuit on `.isEmpty` — no closure or string work on the hot path.
+    private(set) var activeBlockedPatterns: [UsernamePatternMatcher.Compiled] =
+        UsernamePatternMatcher.compile(SettingsState.defaultBlockedUsernamePatterns)
+
+    private func recomputeActiveBlockedPatterns() {
+        activeBlockedPatterns = blockLeechPatternsEnabled
+            ? UsernamePatternMatcher.compile(blockedUsernamePatterns)
+            : []
+    }
+
     // MARK: - Actions
     func addSharedFolder(_ url: URL) {
         if !sharedFolders.contains(url) {
@@ -319,6 +358,8 @@ final class SettingsState: DownloadSettingsProviding {
         notifyOnlyInBackground = false
         showOnlineStatus = true
         allowBrowsing = true
+        blockLeechPatternsEnabled = true
+        blockedUsernamePatterns = SettingsState.defaultBlockedUsernamePatterns
         save()
     }
 
@@ -354,6 +395,8 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
         UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
         UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
+        UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
+        UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
 
         // Save to database asynchronously
         Task {
@@ -445,6 +488,12 @@ final class SettingsState: DownloadSettingsProviding {
            let sound = NotificationSound(rawValue: soundRaw) {
             selectedNotificationSound = sound
         }
+        if UserDefaults.standard.object(forKey: blockLeechPatternsEnabledKey) != nil {
+            blockLeechPatternsEnabled = UserDefaults.standard.bool(forKey: blockLeechPatternsEnabledKey)
+        }
+        if let patterns = UserDefaults.standard.stringArray(forKey: blockedUsernamePatternsKey) {
+            blockedUsernamePatterns = patterns
+        }
     }
 
     /// Load settings from database (called after DB initialization)
@@ -497,13 +546,13 @@ extension SettingsState {
         if uploadSpeedLimit == 0 {
             return "Unlimited"
         }
-        return ByteFormatter.formatSpeed(Int64(uploadSpeedLimit * 1024))
+        return Int64(uploadSpeedLimit * 1024).formattedSpeed
     }
 
     var formattedDownloadLimit: String {
         if downloadSpeedLimit == 0 {
             return "Unlimited"
         }
-        return ByteFormatter.formatSpeed(Int64(downloadSpeedLimit * 1024))
+        return Int64(downloadSpeedLimit * 1024).formattedSpeed
     }
 }

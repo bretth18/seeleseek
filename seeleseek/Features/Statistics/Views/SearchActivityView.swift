@@ -174,7 +174,7 @@ struct SearchEventRow: View {
     }
 
     private func formatTime(_ date: Date) -> String {
-        DateTimeFormatters.formatRelative(date)
+        date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated))
     }
 }
 
@@ -221,7 +221,7 @@ struct IncomingSearchRow: View {
     }
 
     private func formatTime(_ date: Date) -> String {
-        DateTimeFormatters.formatRelative(date)
+        date.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated))
     }
 }
 

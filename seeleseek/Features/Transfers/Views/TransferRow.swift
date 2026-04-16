@@ -73,7 +73,7 @@ struct TransferRow: View {
                         .font(SeeleTypography.monoSmall)
                         .foregroundStyle(SeeleColors.textSecondary)
                 } else {
-                    Text(ByteFormatter.format(Int64(transfer.size)))
+                    Text(transfer.size.formattedBytes)
                         .font(SeeleTypography.monoSmall)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }

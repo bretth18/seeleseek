@@ -1,0 +1,156 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+:root {
+	--ss-bg: hsl(0 0% 0%);
+	--ss-fg: hsl(0 0% 96%);
+	--ss-muted: hsl(0 0% 6%);
+	--ss-muted-fg: hsl(0 0% 55%);
+	--ss-card: hsl(0 0% 6%);
+	--ss-card-fg: hsl(0 0% 96%);
+	--ss-popover: hsl(0 0% 6%);
+	--ss-popover-fg: hsl(0 0% 96%);
+	--ss-border: hsl(0 0% 10%);
+	--ss-input: hsl(0 0% 10%);
+	--ss-primary: hsl(0 0% 96%);
+	--ss-primary-fg: hsl(0 0% 5%);
+	--ss-secondary: hsl(0 0% 12%);
+	--ss-secondary-fg: hsl(0 0% 96%);
+	--ss-accent: hsl(340 100% 52%);
+	--ss-accent-fg: hsl(0 0% 100%);
+	--ss-destructive: hsl(0 84% 60%);
+	--ss-destructive-fg: hsl(0 0% 96%);
+	--ss-ring: hsl(340 100% 52%);
+	--ss-divider: hsl(0 0% 13%);
+	--ss-tertiary-fg: hsl(0 0% 36%);
+}
+
+@theme inline {
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+
+	--color-background: var(--ss-bg);
+	--color-foreground: var(--ss-fg);
+	--color-muted: var(--ss-muted);
+	--color-muted-foreground: var(--ss-muted-fg);
+	--color-card: var(--ss-card);
+	--color-card-foreground: var(--ss-card-fg);
+	--color-popover: var(--ss-popover);
+	--color-popover-foreground: var(--ss-popover-fg);
+	--color-border: var(--ss-border);
+	--color-input: var(--ss-input);
+	--color-primary: var(--ss-primary);
+	--color-primary-foreground: var(--ss-primary-fg);
+	--color-secondary: var(--ss-secondary);
+	--color-secondary-foreground: var(--ss-secondary-fg);
+	--color-accent: var(--ss-accent);
+	--color-accent-foreground: var(--ss-accent-fg);
+	--color-destructive: var(--ss-destructive);
+	--color-destructive-foreground: var(--ss-destructive-fg);
+	--color-ring: var(--ss-ring);
+	--color-divider: var(--ss-divider);
+	--color-tertiary-foreground: var(--ss-tertiary-fg);
+	--radius: 0rem;
+}
+
+@layer base {
+	* {
+		@apply border-border;
+	}
+	html,
+	body {
+		@apply m-0 p-0;
+		overflow-x: hidden;
+	}
+	html {
+		scroll-behavior: smooth;
+		color-scheme: dark;
+	}
+	body {
+		@apply bg-background text-foreground font-sans antialiased;
+		font-weight: 400;
+		letter-spacing: -0.01em;
+		-webkit-font-smoothing: antialiased;
+	}
+	h1,
+	h2,
+	h3,
+	h4 {
+		font-weight: 700;
+		letter-spacing: -0.03em;
+	}
+	::selection {
+		background: var(--ss-accent);
+		color: var(--ss-accent-fg);
+	}
+}
+
+/* Prose customizations for docs — match LE's sharp, bordered look */
+.prose {
+	--tw-prose-body: var(--ss-fg);
+	--tw-prose-headings: var(--ss-fg);
+	--tw-prose-lead: var(--ss-muted-fg);
+	--tw-prose-links: var(--ss-accent);
+	--tw-prose-bold: var(--ss-fg);
+	--tw-prose-counters: var(--ss-muted-fg);
+	--tw-prose-bullets: var(--ss-border);
+	--tw-prose-hr: var(--ss-border);
+	--tw-prose-quotes: var(--ss-fg);
+	--tw-prose-quote-borders: var(--ss-accent);
+	--tw-prose-captions: var(--ss-muted-fg);
+	--tw-prose-code: var(--ss-fg);
+	--tw-prose-pre-code: var(--ss-fg);
+	--tw-prose-pre-bg: var(--ss-muted);
+	--tw-prose-th-borders: var(--ss-border);
+	--tw-prose-td-borders: var(--ss-border);
+}
+
+.prose :where(code):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+	@apply bg-muted px-1.5 py-0.5 text-sm font-medium font-mono before:content-none after:content-none;
+	border-radius: 0;
+}
+
+.prose :where(pre):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+	@apply border border-border bg-muted;
+	border-radius: 0;
+}
+
+.prose :where(a):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+	@apply font-medium no-underline hover:underline;
+	color: var(--ss-accent);
+}
+
+.prose :where(h1, h2, h3, h4):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+	letter-spacing: -0.03em;
+}
+
+@keyframes marquee-horizontal {
+	0% {
+		transform: translateX(0);
+	}
+	100% {
+		transform: translateX(calc(-100% / var(--repeat-count)));
+	}
+}
+@keyframes marquee-vertical {
+	0% {
+		transform: translateY(0);
+	}
+	100% {
+		transform: translateY(calc(-100% / var(--repeat-count)));
+	}
+}
+.marquee-content {
+	display: flex;
+	width: max-content;
+	will-change: transform;
+}
+.pause-on-hover:hover {
+	animation-play-state: paused;
+}
+
+/* Dither canvas — crisp pixel look */
+.dither-canvas canvas {
+	image-rendering: pixelated;
+}

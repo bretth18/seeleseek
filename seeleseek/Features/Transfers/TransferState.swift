@@ -66,11 +66,11 @@ struct TransferHistoryItem: Identifiable, Sendable {
     }
 
     var formattedSize: String {
-        ByteFormatter.format(size)
+        size.formattedBytes
     }
 
     var formattedSpeed: String {
-        ByteFormatter.formatSpeed(Int64(averageSpeed))
+        averageSpeed.formattedSpeed
     }
 
     var formattedDuration: String {

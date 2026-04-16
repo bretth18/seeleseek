@@ -63,7 +63,7 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
     }
 
     public var formattedSize: String {
-        ByteFormatter.format(Int64(size))
+        size.formattedBytes
     }
 
     public var formattedDuration: String? {
@@ -82,7 +82,7 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
     }
 
     public var formattedSpeed: String {
-        ByteFormatter.formatSpeed(Int64(uploadSpeed))
+        uploadSpeed.formattedSpeed
     }
 
     public var formattedSampleRate: String? {

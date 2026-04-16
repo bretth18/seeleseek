@@ -81,7 +81,7 @@ struct StatisticsView: View {
 
                 HStack(spacing: SeeleSpacing.lg) {
                     VStack(alignment: .trailing) {
-                        Text("↓ \(ByteFormatter.format(Int64(downloaded)))")
+                        Text("↓ \(downloaded.formattedBytes)")
                             .font(SeeleTypography.headline)
                             .foregroundStyle(SeeleColors.success)
                         Text("Downloaded")
@@ -90,7 +90,7 @@ struct StatisticsView: View {
                     }
 
                     VStack(alignment: .trailing) {
-                        Text("↑ \(ByteFormatter.format(Int64(uploaded)))")
+                        Text("↑ \(uploaded.formattedBytes)")
                             .font(SeeleTypography.headline)
                             .foregroundStyle(SeeleColors.accent)
                         Text("Uploaded")

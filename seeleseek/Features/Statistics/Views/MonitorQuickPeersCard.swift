@@ -53,7 +53,7 @@ struct QuickPeerRow: View {
 
             Spacer()
 
-            Text(ByteFormatter.format(Int64(peer.bytesReceived + peer.bytesSent)))
+            Text((peer.bytesReceived + peer.bytesSent).formattedBytes)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textSecondary)
         }

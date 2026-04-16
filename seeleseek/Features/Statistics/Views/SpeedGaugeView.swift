@@ -36,7 +36,7 @@ struct SpeedGaugeView: View {
 
                 // Speed text
                 VStack(spacing: 0) {
-                    Text(ByteFormatter.formatSpeed(Int64(currentSpeed)))
+                    Text(currentSpeed.formattedSpeed)
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }

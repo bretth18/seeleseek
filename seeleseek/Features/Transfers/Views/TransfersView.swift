@@ -125,7 +125,7 @@ struct TransfersView: View {
                 Text(label)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
-                Text(ByteFormatter.formatSpeed(speed))
+                Text(speed.formattedSpeed)
                     .font(SeeleTypography.mono)
                     .foregroundStyle(SeeleColors.textPrimary)
             }
@@ -222,13 +222,13 @@ struct TransfersView: View {
                     statItem(
                         icon: "arrow.down",
                         label: "Downloaded",
-                        value: ByteFormatter.format(transferState.totalDownloaded),
+                        value: transferState.totalDownloaded.formattedBytes,
                         color: SeeleColors.info
                     )
                     statItem(
                         icon: "arrow.up",
                         label: "Uploaded",
-                        value: ByteFormatter.format(transferState.totalUploaded),
+                        value: transferState.totalUploaded.formattedBytes,
                         color: SeeleColors.success
                     )
                     Spacer()

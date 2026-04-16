@@ -142,7 +142,7 @@ struct TreemapCell: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
 
-                    Text(ByteFormatter.format(Int64(file.size)))
+                    Text(file.size.formattedBytes)
                         .font(SeeleTypography.caption2)
                         .foregroundStyle(.white.opacity(0.8))
                 }

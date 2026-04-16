@@ -54,7 +54,7 @@ struct PeerWorldMap: View {
             HStack(spacing: SeeleSpacing.xl) {
                 StatPill(label: "Active", value: "\(appState.networkClient.peerConnectionPool.activeConnections)", color: SeeleColors.success)
                 StatPill(label: "Total", value: "\(appState.networkClient.peerConnectionPool.totalConnections)", color: SeeleColors.info)
-                StatPill(label: "Speed", value: ByteFormatter.formatSpeed(Int64(appState.networkClient.peerConnectionPool.currentDownloadSpeed + appState.networkClient.peerConnectionPool.currentUploadSpeed)), color: SeeleColors.accent)
+                StatPill(label: "Speed", value: (appState.networkClient.peerConnectionPool.currentDownloadSpeed + appState.networkClient.peerConnectionPool.currentUploadSpeed).formattedSpeed, color: SeeleColors.accent)
             }
         }
         .padding(SeeleSpacing.lg)
