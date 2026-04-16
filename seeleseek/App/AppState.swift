@@ -72,12 +72,20 @@ final class AppState {
 
         uploadManager.uploadPermissionChecker = { [weak self] username in
             guard let self else { return true }
-            if self.settings.blockLeechPatternsEnabled,
-               UsernamePatternMatcher.matches(username, anyOf: self.settings.blockedUsernamePatterns) {
+            let patterns = self.settings.activeBlockedPatterns
+            if !patterns.isEmpty,
+               UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
                 return false
             }
             Task { try? await self.networkClient.getUserStats(username) }
             return self.socialState.shouldAllowUpload(to: username)
+        }
+
+        client.peerConnectionPool.peerPermissionChecker = { [weak self] username in
+            guard let self else { return true }
+            let patterns = self.settings.activeBlockedPatterns
+            guard !patterns.isEmpty else { return true }
+            return !UsernamePatternMatcher.matches(username, anyOfCompiled: patterns)
         }
 
         client.addUserStatsHandler { [weak self] username, _, _, files, dirs in

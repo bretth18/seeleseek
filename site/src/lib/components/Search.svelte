@@ -1,73 +1,73 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+import { onMount } from 'svelte';
 
-	let dialog: HTMLDialogElement;
-	let searchInput: HTMLInputElement;
-	let resultsContainer: HTMLDivElement;
-	let pagefind: any = null;
+let dialog: HTMLDialogElement;
+let searchInput: HTMLInputElement;
+let resultsContainer: HTMLDivElement;
+let pagefind: any = null;
 
-	onMount(() => {
-		function handleKeydown(e: KeyboardEvent) {
-			if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-				e.preventDefault();
-				dialog.showModal();
-				searchInput?.focus();
-			}
-		}
-
-		document.addEventListener('keydown', handleKeydown);
-		return () => document.removeEventListener('keydown', handleKeydown);
-	});
-
-	async function loadPagefind() {
-		if (pagefind) return pagefind;
-		try {
-			const url = '/pagefind/pagefind.js';
-			pagefind = await import(/* @vite-ignore */ url);
-			return pagefind;
-		} catch {
-			return null;
+onMount(() => {
+	function handleKeydown(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+			e.preventDefault();
+			dialog.showModal();
+			searchInput?.focus();
 		}
 	}
 
-	async function handleSearch() {
-		if (!searchInput?.value) {
-			if (resultsContainer) resultsContainer.innerHTML = '';
-			return;
-		}
+	document.addEventListener('keydown', handleKeydown);
+	return () => document.removeEventListener('keydown', handleKeydown);
+});
 
-		const pf = await loadPagefind();
-		if (!pf) {
-			if (resultsContainer) {
-				resultsContainer.innerHTML =
-					'<p class="px-4 py-8 text-center text-xs font-mono text-muted-foreground">search index not available. run a build first.</p>';
-			}
-			return;
-		}
+async function loadPagefind() {
+	if (pagefind) return pagefind;
+	try {
+		const url = '/pagefind/pagefind.js';
+		pagefind = await import(/* @vite-ignore */ url);
+		return pagefind;
+	} catch {
+		return null;
+	}
+}
 
-		const search = await pf.search(searchInput.value);
-		const results = await Promise.all(
-			search.results.slice(0, 8).map((r: { data: () => Promise<unknown> }) => r.data())
-		);
+async function handleSearch() {
+	if (!searchInput?.value) {
+		if (resultsContainer) resultsContainer.innerHTML = '';
+		return;
+	}
 
+	const pf = await loadPagefind();
+	if (!pf) {
 		if (resultsContainer) {
-			if (results.length === 0) {
-				resultsContainer.innerHTML =
-					'<p class="px-4 py-8 text-center text-xs font-mono text-muted-foreground">no results.</p>';
-			} else {
-				resultsContainer.innerHTML = results
-					.map(
-						(r: any) => `
+			resultsContainer.innerHTML =
+				'<p class="px-4 py-8 text-center text-xs font-mono text-muted-foreground">search index not available. run a build first.</p>';
+		}
+		return;
+	}
+
+	const search = await pf.search(searchInput.value);
+	const results = await Promise.all(
+		search.results.slice(0, 8).map((r: { data: () => Promise<unknown> }) => r.data())
+	);
+
+	if (resultsContainer) {
+		if (results.length === 0) {
+			resultsContainer.innerHTML =
+				'<p class="px-4 py-8 text-center text-xs font-mono text-muted-foreground">no results.</p>';
+		} else {
+			resultsContainer.innerHTML = results
+				.map(
+					(r: any) => `
 					<a href="${r.url}" class="block px-4 py-3 hover:bg-muted transition-colors no-underline" onclick="this.closest('dialog').close()">
 						<div class="text-sm font-medium text-foreground">${r.meta?.title || r.url}</div>
 						<div class="mt-0.5 text-xs text-muted-foreground line-clamp-2 font-mono tracking-tighter">${r.excerpt}</div>
 					</a>
 				`
-					)
-					.join('');
-			}
+				)
+				.join('');
 		}
 	}
+}
 </script>
 
 <button

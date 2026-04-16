@@ -1,7 +1,7 @@
 <script lang="ts">
-	import DocLayout from '$lib/components/DocLayout.svelte';
+import DocLayout from '$lib/components/DocLayout.svelte';
 
-	let { data } = $props();
+let { data } = $props();
 </script>
 
 <DocLayout title={data.meta.title} description={data.meta.description}>

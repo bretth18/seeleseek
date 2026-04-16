@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
+import { getAdjacentPages, getDocPages } from '$lib/utils/docs';
 import { parseFrontmatter, renderMarkdown } from '$lib/utils/markdown';
-import { getDocPages, getAdjacentPages } from '$lib/utils/docs';
 import type { PageLoad } from './$types';
 
 const modules = import.meta.glob('/src/content/docs/**/*.md', {

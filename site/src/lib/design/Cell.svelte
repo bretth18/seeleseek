@@ -1,30 +1,26 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+import type { Snippet } from 'svelte';
 
-	interface Props {
-		href?: string;
-		external?: boolean;
-		pad?: 'sm' | 'md' | 'lg';
-		class?: string;
-		children: Snippet;
-	}
+interface Props {
+	href?: string;
+	external?: boolean;
+	pad?: 'sm' | 'md' | 'lg';
+	class?: string;
+	children: Snippet;
+}
 
-	let {
-		href,
-		external = false,
-		pad = 'md',
-		class: className = '',
-		children
-	}: Props = $props();
+let { href, external = false, pad = 'md', class: className = '', children }: Props = $props();
 
-	const padding = $derived({
+const padding = $derived(
+	{
 		sm: 'p-5 md:p-6',
 		md: 'p-6 md:p-8',
 		lg: 'p-6 md:p-10 lg:p-16'
-	}[pad]);
+	}[pad]
+);
 
-	const base = $derived(`${padding} ${className}`);
-	const interactive = 'group hover:bg-foreground/[0.02] transition-colors';
+const base = $derived(`${padding} ${className}`);
+const interactive = 'group hover:bg-foreground/[0.02] transition-colors';
 </script>
 
 {#if href}

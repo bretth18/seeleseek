@@ -7,6 +7,7 @@ public enum PeerConnectionError: Error, LocalizedError {
     case invalidAddress
     case timeout
     case connectionFailed(String)
+    case blockedByPolicy
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ public enum PeerConnectionError: Error, LocalizedError {
             return "Connection timed out"
         case .connectionFailed(let reason):
             return "Connection failed: \(reason)"
+        case .blockedByPolicy:
+            return "Peer blocked by local policy"
         }
     }
 }
@@ -65,6 +68,11 @@ public final class PeerConnectionPool {
     public let maxConnections = 50
     public let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
     public let connectionTimeout: TimeInterval = 60
+
+    /// If set and returns false for a peer username, the connection is silently refused
+    /// (outbound) or dropped before any messages flow (inbound PeerInit). Used to block
+    /// bot accounts by username pattern.
+    public var peerPermissionChecker: ((String) -> Bool)?
 
     // SECURITY: Rate limiting configuration
     private let rateLimitWindow: TimeInterval = 60  // 1 minute window
@@ -207,6 +215,18 @@ public final class PeerConnectionPool {
     ///   - token: Connection token
     ///   - isIndirect: If true, this is an indirect connection (responding to ConnectToPeer) - don't send PeerInit
     public func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false) async throws -> PeerConnection {
+        // Reject outbound dials to blocked usernames (e.g. bot patterns like `slsk_*`).
+        // Most outbound connections here are server-instructed ConnectToPeer responses,
+        // which are effectively remote-initiated — we have no reason to dial a blocked user.
+        if let checker = peerPermissionChecker, !checker(username) {
+            logger.info("Skipping outbound connection to \(username): matches block pattern")
+            ActivityLogger.shared?.logInfo(
+                "Blocked outbound peer: \(username)",
+                detail: "\(ip) — matches block pattern"
+            )
+            throw PeerConnectionError.blockedByPolicy
+        }
+
         // Validate IP address before attempting connection
         guard Self.isValidPeerIP(ip) else {
             logger.error("Invalid peer IP address: \(ip) for \(username)")
@@ -664,6 +684,23 @@ public final class PeerConnectionPool {
 
         case .usernameDiscovered(let discoveredUsername, let token):
             logger.info("Username discovered: \(discoveredUsername) token=\(token)")
+
+            // Reject inbound peers whose username matches a user-configured block pattern.
+            // Fires only for PeerInit (remote-initiated direct connections); PierceFirewall
+            // connections get their username via setPeerUsername and never hit this path.
+            if let checker = peerPermissionChecker, !checker(discoveredUsername) {
+                logger.info("Dropping inbound peer connection: \(discoveredUsername) matches block pattern")
+                ActivityLogger.shared?.logInfo(
+                    "Blocked inbound peer: \(discoveredUsername)",
+                    detail: capturedIP.isEmpty ? "matches block pattern" : "\(capturedIP) — matches block pattern"
+                )
+                decrementIPCounter(for: capturedIP)
+                connections.removeValue(forKey: connectionId)
+                activeConnections_.removeValue(forKey: connectionId)
+                activeConnections = connections.count
+                Task { await connection.disconnect() }
+                return
+            }
 
             // Register IP for country flag lookup
             if !capturedIP.isEmpty {

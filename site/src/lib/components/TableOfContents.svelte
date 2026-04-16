@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { TocEntry } from '$lib/utils/toc';
+import type { TocEntry } from '$lib/utils/toc';
 
-	let { entries }: { entries: TocEntry[] } = $props();
+let { entries }: { entries: TocEntry[] } = $props();
 </script>
 
 {#if entries.length > 0}

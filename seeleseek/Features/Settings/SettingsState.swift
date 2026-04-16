@@ -283,6 +283,7 @@ final class SettingsState: DownloadSettingsProviding {
     /// have their upload requests silently rejected.
     var blockLeechPatternsEnabled: Bool = true {
         didSet {
+            recomputeActiveBlockedPatterns()
             guard !isLoading else { return }
             save()
         }
@@ -293,9 +294,22 @@ final class SettingsState: DownloadSettingsProviding {
     /// with `slsk_`.
     var blockedUsernamePatterns: [String] = SettingsState.defaultBlockedUsernamePatterns {
         didSet {
+            recomputeActiveBlockedPatterns()
             guard !isLoading else { return }
             save()
         }
+    }
+
+    /// Precompiled, filter-ready pattern set consumed by the peer/upload checkers.
+    /// Empty when blocking is disabled OR the user's list contains only blank entries.
+    /// Readers short-circuit on `.isEmpty` — no closure or string work on the hot path.
+    private(set) var activeBlockedPatterns: [UsernamePatternMatcher.Compiled] =
+        UsernamePatternMatcher.compile(SettingsState.defaultBlockedUsernamePatterns)
+
+    private func recomputeActiveBlockedPatterns() {
+        activeBlockedPatterns = blockLeechPatternsEnabled
+            ? UsernamePatternMatcher.compile(blockedUsernamePatterns)
+            : []
     }
 
     // MARK: - Actions

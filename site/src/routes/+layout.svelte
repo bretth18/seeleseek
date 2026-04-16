@@ -1,23 +1,24 @@
 <script lang="ts">
-	import './layout.css';
-	import Search from '$lib/components/Search.svelte';
-	import { page } from '$app/state';
+import './layout.css';
+import { page } from '$app/state';
+import Search from '$lib/components/Search.svelte';
+import { DOWNLOAD_URL } from '$lib/seo';
 
-	let { children } = $props();
+let { children } = $props();
 
-	let pathname = $derived(page.url.pathname);
-	const isDocs = $derived(pathname.startsWith('/docs'));
-	let menuOpen = $state(false);
+let pathname = $derived(page.url.pathname);
+const isDocs = $derived(pathname.startsWith('/docs'));
+let menuOpen = $state(false);
 
-	$effect(() => {
-		pathname;
-		menuOpen = false;
-	});
+$effect(() => {
+	pathname;
+	menuOpen = false;
+});
 
-	const navLinks = [
-		{ href: '/docs/guide/getting-started', label: 'Docs', match: '/docs' },
-		{ href: 'https://github.com/bretth18/seeleseek', label: 'GitHub', external: true }
-	];
+const navLinks = [
+	{ href: '/docs/guide/getting-started', label: 'Docs', match: '/docs' },
+	{ href: 'https://github.com/bretth18/seeleseek', label: 'GitHub', external: true }
+];
 </script>
 
 <svelte:head>
@@ -52,7 +53,7 @@
 			<div class="hidden sm:flex items-center gap-4">
 				<Search />
 				<a
-					href="/#download"
+					href={DOWNLOAD_URL}
 					class="text-sm font-bold text-accent hover:text-accent/60 transition-colors tracking-tight"
 				>
 					Download ↓
@@ -78,7 +79,7 @@
 				<div class="px-5 py-3 flex flex-col gap-2 text-sm">
 					<a href="/docs/guide/getting-started" class="text-foreground/60 hover:text-foreground">Docs</a>
 					<a href="https://github.com/bretth18/seeleseek" class="text-foreground/60 hover:text-foreground">GitHub</a>
-					<a href="/#download" class="text-accent">Download ↓</a>
+					<a href={DOWNLOAD_URL} class="text-accent">Download ↓</a>
 				</div>
 			</div>
 		{/if}

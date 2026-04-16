@@ -1,4 +1,4 @@
-import { parseFrontmatter, type DocFrontmatter } from './markdown';
+import { parseFrontmatter } from './markdown';
 
 export interface DocPage {
 	slug: string;

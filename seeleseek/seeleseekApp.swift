@@ -110,6 +110,7 @@ struct SeeleSeekApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
+        .commandsRemoved()
 
         Settings {
             SettingsView()

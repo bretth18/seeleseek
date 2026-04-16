@@ -12,9 +12,7 @@ interface DitherResponse {
 	cutoff: number;
 }
 
-function getRGBAArrayBuffer(
-	color: [number, number, number, number],
-): Uint8ClampedArray {
+function getRGBAArrayBuffer(color: [number, number, number, number]): Uint8ClampedArray {
 	const buffer = new Uint8ClampedArray(4);
 	for (let i = 0; i < 4; ++i) {
 		buffer[i] = color[i];
@@ -27,7 +25,7 @@ function dither(
 	scaleFactor: number,
 	cutoff: number,
 	blackRGBA: [number, number, number, number],
-	whiteRGBA: [number, number, number, number],
+	whiteRGBA: [number, number, number, number]
 ): ImageData {
 	// console.log("Worker: Starting dither process", {
 	// 	width: imageData.width,
@@ -38,10 +36,7 @@ function dither(
 
 	const blackRGBABuffer = getRGBAArrayBuffer(blackRGBA);
 	const whiteRGBABuffer = getRGBAArrayBuffer(whiteRGBA);
-	const output = new ImageData(
-		imageData.width * scaleFactor,
-		imageData.height * scaleFactor,
-	);
+	const output = new ImageData(imageData.width * scaleFactor, imageData.height * scaleFactor);
 
 	// Convert to grayscale
 	for (let i = 0; i < imageData.data.length; i += 4) {
@@ -49,16 +44,14 @@ function dither(
 			imageData.data[i + 1] =
 			imageData.data[i + 2] =
 				Math.floor(
-					imageData.data[i] * 0.3 +
-						imageData.data[i + 1] * 0.59 +
-						imageData.data[i + 2] * 0.11,
+					imageData.data[i] * 0.3 + imageData.data[i + 1] * 0.59 + imageData.data[i + 2] * 0.11
 				);
 	}
 
 	const slidingErrorWindow: Float32Array[] = [
 		new Float32Array(imageData.width),
 		new Float32Array(imageData.width),
-		new Float32Array(imageData.width),
+		new Float32Array(imageData.width)
 	];
 	const offsets: [number, number][] = [
 		[1, 0],
@@ -66,7 +59,7 @@ function dither(
 		[-1, 1],
 		[0, 1],
 		[1, 1],
-		[0, 2],
+		[0, 2]
 	];
 
 	for (let y = 0, limY = imageData.height; y < limY; ++y) {
@@ -88,8 +81,7 @@ function dither(
 			const rgba = monoValue === 0 ? blackRGBABuffer : whiteRGBABuffer;
 
 			for (let scaleY = 0; scaleY < scaleFactor; ++scaleY) {
-				let pixelOffset =
-					((y * scaleFactor + scaleY) * output.width + x * scaleFactor) * 4;
+				let pixelOffset = ((y * scaleFactor + scaleY) * output.width + x * scaleFactor) * 4;
 				for (let scaleX = 0; scaleX < scaleFactor; ++scaleX) {
 					output.data[pixelOffset] = rgba[0];
 					output.data[pixelOffset + 1] = rgba[1];
@@ -100,7 +92,8 @@ function dither(
 			}
 		}
 
-		slidingErrorWindow.push(slidingErrorWindow.shift()!);
+		const shifted = slidingErrorWindow.shift();
+		if (shifted) slidingErrorWindow.push(shifted);
 		slidingErrorWindow[2].fill(0, 0, slidingErrorWindow[2].length);
 	}
 
@@ -119,13 +112,13 @@ self.onmessage = (e: MessageEvent<DitherMessage>) => {
 		e.data.pixelSize,
 		e.data.cutoff,
 		e.data.blackRGBA,
-		e.data.whiteRGBA,
+		e.data.whiteRGBA
 	);
 
 	const reply: DitherResponse = {
 		imageData: result,
 		pixelSize: e.data.pixelSize,
-		cutoff: e.data.cutoff,
+		cutoff: e.data.cutoff
 	};
 
 	self.postMessage(reply);

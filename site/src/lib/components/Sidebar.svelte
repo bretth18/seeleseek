@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import type { DocSection } from '$lib/utils/docs';
+import { page } from '$app/state';
+import type { DocSection } from '$lib/utils/docs';
 
-	let { sections }: { sections: DocSection[] } = $props();
+let { sections }: { sections: DocSection[] } = $props();
 
-	function isActive(slug: string): boolean {
-		return page.url.pathname === `/docs/${slug}`;
-	}
+function isActive(slug: string): boolean {
+	return page.url.pathname === `/docs/${slug}`;
+}
 </script>
 
 <nav class="w-56 shrink-0" aria-label="Documentation">

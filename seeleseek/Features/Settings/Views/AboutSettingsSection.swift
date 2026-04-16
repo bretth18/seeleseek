@@ -4,6 +4,7 @@ import SeeleseekCore
 struct AboutSettingsSection: View {
     private let projectURL = URL(string: "https://github.com/bretth18/seeleseek")
     private let licenseURL = URL(string: "https://github.com/bretth18/seeleseek/blob/main/LICENSE")
+    private let homepageURL = URL(string: "https://seeleseek.net")
 
     private var appName: String {
         if let displayName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, !displayName.isEmpty {
@@ -75,6 +76,15 @@ struct AboutSettingsSection: View {
                     if let projectURL {
                         Link(destination: projectURL) {
                             Label("GitHub", systemImage: "link")
+                                .font(SeeleTypography.body)
+                                .foregroundStyle(SeeleColors.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    
+                    if let homepageURL {
+                        Link(destination: homepageURL) {
+                            Label("Homepage", systemImage: "link")
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.accent)
                         }

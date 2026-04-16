@@ -26,7 +26,8 @@
 }
 
 @theme inline {
-	--font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', ui-sans-serif, system-ui, sans-serif;
+	--font-sans:
+		-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', ui-sans-serif, system-ui, sans-serif;
 	--font-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
 
 	--color-background: var(--ss-bg);
@@ -57,7 +58,8 @@
 	* {
 		@apply border-border;
 	}
-	html, body {
+	html,
+	body {
 		@apply m-0 p-0;
 		overflow-x: hidden;
 	}
@@ -71,7 +73,10 @@
 		letter-spacing: -0.01em;
 		-webkit-font-smoothing: antialiased;
 	}
-	h1, h2, h3, h4 {
+	h1,
+	h2,
+	h3,
+	h4 {
 		font-weight: 700;
 		letter-spacing: -0.03em;
 	}
@@ -121,23 +126,31 @@
 }
 
 @keyframes marquee-horizontal {
-	0% { transform: translateX(0); }
-	100% { transform: translateX(calc(-100% / var(--repeat-count))); }
+	0% {
+		transform: translateX(0);
+	}
+	100% {
+		transform: translateX(calc(-100% / var(--repeat-count)));
+	}
 }
 @keyframes marquee-vertical {
-	0% { transform: translateY(0); }
-	100% { transform: translateY(calc(-100% / var(--repeat-count))); }
+	0% {
+		transform: translateY(0);
+	}
+	100% {
+		transform: translateY(calc(-100% / var(--repeat-count)));
+	}
 }
 .marquee-content {
 	display: flex;
 	width: max-content;
 	will-change: transform;
 }
-.pause-on-hover:hover { animation-play-state: paused; }
+.pause-on-hover:hover {
+	animation-play-state: paused;
+}
 
 /* Dither canvas — crisp pixel look */
 .dither-canvas canvas {
 	image-rendering: pixelated;
-	image-rendering: crisp-edges;
 }
-

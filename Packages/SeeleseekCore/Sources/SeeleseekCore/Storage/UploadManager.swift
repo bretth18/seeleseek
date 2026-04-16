@@ -257,6 +257,10 @@ public final class UploadManager {
         // Check if upload is allowed (blocklist + leech detection)
         if let checker = uploadPermissionChecker, !checker(username) {
             logger.info("Upload denied for \(username): blocked or leech")
+            ActivityLogger.shared?.logInfo(
+                "Denied upload request from \(username)",
+                detail: filename
+            )
             do {
                 try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
             } catch {
