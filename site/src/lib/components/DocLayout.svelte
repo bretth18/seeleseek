@@ -10,6 +10,7 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { Seo } from '$lib/seo';
 
 	let {
 		title,
@@ -22,10 +23,7 @@
 	} = $props();
 </script>
 
-<svelte:head>
-	<title>{title} — seeleseek docs</title>
-	<meta name="description" content={description} />
-</svelte:head>
+<Seo title={`${title} · docs`} {description} type="article" />
 
 <article class="prose prose-invert max-w-none" data-pagefind-body>
 	<p class="text-xs font-mono text-muted-foreground tracking-tighter not-prose mb-2">

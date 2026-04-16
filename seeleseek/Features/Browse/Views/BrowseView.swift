@@ -234,7 +234,7 @@ struct BrowseView: View {
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
 
-                    Text("(\(shares.totalFiles) files, \(ByteFormatter.format(Int64(shares.totalSize))))")
+                    Text("(\(shares.totalFiles) files, \(shares.totalSize.formattedBytes))")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
 

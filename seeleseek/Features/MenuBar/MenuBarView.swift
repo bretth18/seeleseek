@@ -57,12 +57,12 @@ struct MenuBarView: View {
 
         if status == .connected {
             HStack(spacing: SeeleSpacing.sm) {
-                Text("↓ \(ByteFormatter.formatSpeed(downSpeed))")
+                Text("↓ \(downSpeed.formattedSpeed)")
                     .foregroundStyle(SeeleColors.info)
-                    .accessibilityLabel("Download speed: \(ByteFormatter.formatSpeed(downSpeed))")
-                Text("↑ \(ByteFormatter.formatSpeed(upSpeed))")
+                    .accessibilityLabel("Download speed: \(downSpeed.formattedSpeed)")
+                Text("↑ \(upSpeed.formattedSpeed)")
                     .foregroundStyle(SeeleColors.success)
-                    .accessibilityLabel("Upload speed: \(ByteFormatter.formatSpeed(upSpeed))")
+                    .accessibilityLabel("Upload speed: \(upSpeed.formattedSpeed)")
             }
             .font(SeeleTypography.monoSmall)
             .padding(.horizontal, SeeleSpacing.sm)
@@ -82,7 +82,7 @@ struct MenuBarView: View {
                         .font(SeeleTypography.body)
                     Spacer()
                     if downSpeed > 0 {
-                        Text(ByteFormatter.formatSpeed(downSpeed))
+                        Text(downSpeed.formattedSpeed)
                             .font(SeeleTypography.monoSmall)
                             .foregroundStyle(SeeleColors.info)
                     }
@@ -100,7 +100,7 @@ struct MenuBarView: View {
                         .font(SeeleTypography.body)
                     Spacer()
                     if upSpeed > 0 {
-                        Text(ByteFormatter.formatSpeed(upSpeed))
+                        Text(upSpeed.formattedSpeed)
                             .font(SeeleTypography.monoSmall)
                             .foregroundStyle(SeeleColors.success)
                     }

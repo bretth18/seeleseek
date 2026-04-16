@@ -105,7 +105,7 @@ struct ActivityEventRow: View {
     }
 
     private func formatTime(_ date: Date) -> String {
-        DateTimeFormatters.formatTime(date)
+        date.formatted(date: .omitted, time: .shortened)
     }
 }
 

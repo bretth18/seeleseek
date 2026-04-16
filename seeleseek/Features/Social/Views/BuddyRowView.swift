@@ -120,11 +120,11 @@ struct BuddyRowView: View {
     }
 
     private func formatNumber(_ value: UInt32) -> String {
-        NumberFormatters.format(value)
+        value.formatted()
     }
 
     private func formatSpeed(_ bytesPerSecond: UInt32) -> String {
-        ByteFormatter.formatSpeed(bytesPerSecond)
+        bytesPerSecond.formattedSpeed
     }
 
     private func countryFlag(for code: String) -> String {

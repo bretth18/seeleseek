@@ -48,12 +48,12 @@ struct PeerInfoPopover: View {
                 DetailRow(label: "Port", value: "\(peer.port)")
 
                 if let connectedAt = peer.connectedAt {
-                    DetailRow(label: "Connected", value: DateTimeFormatters.formatTime(connectedAt))
-                    DetailRow(label: "Duration", value: DateTimeFormatters.formatDurationSince(connectedAt))
+                    DetailRow(label: "Connected", value: connectedAt.formatted(date: .omitted, time: .shortened))
+                    DetailRow(label: "Duration", value: connectedAt.durationSinceNow)
                 }
 
                 if let lastActivity = peer.lastActivity {
-                    DetailRow(label: "Last Activity", value: DateTimeFormatters.formatTime(lastActivity))
+                    DetailRow(label: "Last Activity", value: lastActivity.formatted(date: .omitted, time: .shortened))
                 }
             }
 
@@ -71,7 +71,7 @@ struct PeerInfoPopover: View {
                         Text("Downloaded")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
-                        Text(ByteFormatter.format(Int64(peer.bytesReceived)))
+                        Text(peer.bytesReceived.formattedBytes)
                             .font(SeeleTypography.headline)
                             .foregroundStyle(SeeleColors.success)
                     }
@@ -80,14 +80,14 @@ struct PeerInfoPopover: View {
                         Text("Uploaded")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
-                        Text(ByteFormatter.format(Int64(peer.bytesSent)))
+                        Text(peer.bytesSent.formattedBytes)
                             .font(SeeleTypography.headline)
                             .foregroundStyle(SeeleColors.accent)
                     }
                 }
 
                 if peer.currentSpeed > 0 {
-                    DetailRow(label: "Current Speed", value: ByteFormatter.formatSpeed(Int64(peer.currentSpeed)))
+                    DetailRow(label: "Current Speed", value: peer.currentSpeed.formattedSpeed)
                 }
             }
 

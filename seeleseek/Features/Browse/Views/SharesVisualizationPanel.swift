@@ -119,8 +119,8 @@ struct SharesVisualizationPanel: View {
             ], spacing: SeeleSpacing.md) {
                 StatCard(title: "Files", value: "\(shares.totalFiles)", icon: "doc.fill", color: SeeleColors.accent)
                 StatCard(title: "Folders", value: "\(shares.folders.count)", icon: "folder.fill", color: SeeleColors.warning)
-                StatCard(title: "Total Size", value: ByteFormatter.format(Int64(shares.totalSize)), icon: "externaldrive.fill", color: SeeleColors.info)
-                StatCard(title: "Avg Size", value: ByteFormatter.format(Int64(shares.totalSize / UInt64(max(shares.totalFiles, 1)))), icon: "chart.bar.fill", color: SeeleColors.success)
+                StatCard(title: "Total Size", value: shares.totalSize.formattedBytes, icon: "externaldrive.fill", color: SeeleColors.info)
+                StatCard(title: "Avg Size", value: (shares.totalSize / UInt64(max(shares.totalFiles, 1))).formattedBytes, icon: "chart.bar.fill", color: SeeleColors.success)
             }
         }
     }

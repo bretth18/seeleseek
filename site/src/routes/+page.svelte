@@ -2,12 +2,24 @@
 	import { Cell, Shot, typography } from '$lib/design';
 	import DitheredImage from '$lib/components/DitheredImage.svelte';
 	import { dither } from '$lib/design/tokens';
+	import { Seo, SITE_URL, SITE_NAME, SITE_DESCRIPTION } from '$lib/seo';
+
+	const jsonLd = {
+		'@context': 'https://schema.org',
+		'@type': 'SoftwareApplication',
+		name: SITE_NAME,
+		description: SITE_DESCRIPTION,
+		applicationCategory: 'MultimediaApplication',
+		operatingSystem: 'macOS 14+',
+		url: SITE_URL,
+		downloadUrl: `${SITE_URL}/#download`,
+		softwareVersion: '1.0',
+		offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+		author: { '@type': 'Person', name: 'Brett Henderson', url: 'https://github.com/bretth18' }
+	};
 </script>
 
-<svelte:head>
-	<title>seeleseek</title>
-	<meta name="description" content="A native Soulseek client for macOS. Built in SwiftUI." />
-</svelte:head>
+<Seo description={SITE_DESCRIPTION} {jsonLd} />
 
 <div class="flex-1 flex flex-col">
 

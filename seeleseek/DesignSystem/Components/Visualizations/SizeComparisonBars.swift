@@ -37,7 +37,7 @@ struct SizeComparisonBars: View {
                     }
                     .frame(height: 20)
 
-                    Text(ByteFormatter.format(Int64(item.size)))
+                    Text(item.size.formattedBytes)
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.textTertiary)
                         .frame(width: 80, alignment: .trailing)

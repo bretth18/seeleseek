@@ -90,10 +90,10 @@ struct PeerDetailPopover: View {
             .foregroundStyle(SeeleColors.textSecondary)
 
             HStack(spacing: SeeleSpacing.md) {
-                Label("↓ \(ByteFormatter.format(Int64(info.bytesReceived)))", systemImage: "arrow.down")
+                Label("↓ \(info.bytesReceived.formattedBytes)", systemImage: "arrow.down")
                     .foregroundStyle(SeeleColors.success)
 
-                Label("↑ \(ByteFormatter.format(Int64(info.bytesSent)))", systemImage: "arrow.up")
+                Label("↑ \(info.bytesSent.formattedBytes)", systemImage: "arrow.up")
                     .foregroundStyle(SeeleColors.accent)
             }
             .font(SeeleTypography.caption)

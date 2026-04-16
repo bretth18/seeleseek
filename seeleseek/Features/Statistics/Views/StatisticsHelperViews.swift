@@ -45,11 +45,11 @@ struct TransferHistoryRow: View {
 
             // Stats
             VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
-                Text(ByteFormatter.format(Int64(entry.size)))
+                Text(entry.size.formattedBytes)
                     .font(SeeleTypography.mono)
                     .foregroundStyle(SeeleColors.textSecondary)
 
-                Text(ByteFormatter.formatSpeed(Int64(entry.averageSpeed)))
+                Text(entry.averageSpeed.formattedSpeed)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
             }
@@ -66,6 +66,6 @@ struct TransferHistoryRow: View {
     }
 
     private func formatTime(_ date: Date) -> String {
-        DateTimeFormatters.formatTime(date)
+        date.formatted(date: .omitted, time: .shortened)
     }
 }

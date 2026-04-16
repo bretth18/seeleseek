@@ -59,7 +59,7 @@ struct MonitorBandwidthChartCard: View {
                 AxisMarks(position: .leading) { value in
                     AxisValueLabel {
                         if let speed = value.as(Double.self) {
-                            Text(ByteFormatter.formatSpeed(Int64(speed)))
+                            Text(speed.formattedSpeed)
                                 .font(SeeleTypography.caption2)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }

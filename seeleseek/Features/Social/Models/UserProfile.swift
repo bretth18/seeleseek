@@ -53,7 +53,7 @@ struct UserProfile: Identifiable, Sendable {
 
     /// Format speed for display (e.g., "1.5 MB/s")
     var formattedSpeed: String {
-        ByteCountFormatter.string(fromByteCount: Int64(averageSpeed), countStyle: .binary) + "/s"
+        averageSpeed.formattedSpeed
     }
 
     /// Format file count for display

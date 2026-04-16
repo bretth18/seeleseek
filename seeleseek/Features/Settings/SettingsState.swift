@@ -497,13 +497,13 @@ extension SettingsState {
         if uploadSpeedLimit == 0 {
             return "Unlimited"
         }
-        return ByteFormatter.formatSpeed(Int64(uploadSpeedLimit * 1024))
+        return Int64(uploadSpeedLimit * 1024).formattedSpeed
     }
 
     var formattedDownloadLimit: String {
         if downloadSpeedLimit == 0 {
             return "Unlimited"
         }
-        return ByteFormatter.formatSpeed(Int64(downloadSpeedLimit * 1024))
+        return Int64(downloadSpeedLimit * 1024).formattedSpeed
     }
 }

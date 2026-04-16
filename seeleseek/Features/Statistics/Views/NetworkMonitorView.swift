@@ -122,7 +122,7 @@ struct MonitorLiveStatsBadge: View {
                 Image(systemName: "arrow.down")
                     .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                     .foregroundStyle(SeeleColors.success)
-                Text(ByteFormatter.formatSpeed(Int64(downloadSpeed)))
+                Text(downloadSpeed.formattedSpeed)
                     .font(SeeleTypography.mono)
                     .foregroundStyle(SeeleColors.success)
             }
@@ -131,7 +131,7 @@ struct MonitorLiveStatsBadge: View {
                 Image(systemName: "arrow.up")
                     .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
                     .foregroundStyle(SeeleColors.accent)
-                Text(ByteFormatter.formatSpeed(Int64(uploadSpeed)))
+                Text(uploadSpeed.formattedSpeed)
                     .font(SeeleTypography.mono)
                     .foregroundStyle(SeeleColors.accent)
             }

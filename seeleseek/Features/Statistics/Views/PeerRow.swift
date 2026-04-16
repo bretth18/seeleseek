@@ -84,13 +84,13 @@ struct PeerRow: View {
             // Transfer stats
             HStack(spacing: SeeleSpacing.lg) {
                 VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
-                    Text("↓ \(ByteFormatter.format(Int64(peer.bytesReceived)))")
+                    Text("↓ \(peer.bytesReceived.formattedBytes)")
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.success)
                 }
 
                 VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
-                    Text("↑ \(ByteFormatter.format(Int64(peer.bytesSent)))")
+                    Text("↑ \(peer.bytesSent.formattedBytes)")
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.accent)
                 }

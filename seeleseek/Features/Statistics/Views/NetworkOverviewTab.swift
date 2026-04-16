@@ -22,7 +22,7 @@ struct NetworkOverviewTab: View {
 
                 MonitorMetricCard(
                     title: "Downloaded",
-                    value: ByteFormatter.format(Int64(peerPool.totalBytesReceived)),
+                    value: peerPool.totalBytesReceived.formattedBytes,
                     subtitle: "this session",
                     icon: "arrow.down.circle.fill",
                     color: SeeleColors.success
@@ -30,7 +30,7 @@ struct NetworkOverviewTab: View {
 
                 MonitorMetricCard(
                     title: "Uploaded",
-                    value: ByteFormatter.format(Int64(peerPool.totalBytesSent)),
+                    value: peerPool.totalBytesSent.formattedBytes,
                     subtitle: "this session",
                     icon: "arrow.up.circle.fill",
                     color: SeeleColors.accent

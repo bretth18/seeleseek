@@ -12,7 +12,10 @@ const config = {
 			return isExternalLibrary ? undefined : true;
 		}
 	},
-	kit: { adapter: adapter() }
+	kit: {
+		adapter: adapter(),
+		prerender: { handleMissingId: 'warn' }
+	}
 };
 
 export default config;
