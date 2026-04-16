@@ -11,8 +11,8 @@ All Soulseek protocol messages follow the same framing:
 
 ```
 ┌──────────────┬──────────────┬──────────────────┐
-│ Length (4B)   │ Code (4B)    │ Payload (N bytes) │
-│ uint32 LE    │ uint32 LE    │ varies            │
+│ Length (4B)  │ Code (4B)    │ Payload (N bytes)│
+│ uint32 LE    │ uint32 LE    │ varies           │
 └──────────────┴──────────────┴──────────────────┘
 ```
 

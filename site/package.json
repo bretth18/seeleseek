@@ -6,7 +6,8 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build && pagefind --site .svelte-kit/cloudflare",
-		"preview": "wrangler pages dev .svelte-kit/cloudflare --port 4173",
+		"preview": "wrangler dev --port 4173",
+		"deploy": "bun run build && wrangler deploy",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

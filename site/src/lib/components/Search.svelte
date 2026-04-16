@@ -56,14 +56,17 @@ async function handleSearch() {
 				'<p class="px-4 py-8 text-center text-xs font-mono text-muted-foreground">no results.</p>';
 		} else {
 			resultsContainer.innerHTML = results
-				.map(
-					(r: any) => `
-					<a href="${r.url}" class="block px-4 py-3 hover:bg-muted transition-colors no-underline" onclick="this.closest('dialog').close()">
-						<div class="text-sm font-medium text-foreground">${r.meta?.title || r.url}</div>
+				.map((r: any) => {
+					const url = String(r.url)
+						.replace(/\.html$/, '')
+						.replace(/\/index$/, '/');
+					return `
+					<a href="${url}" class="block px-4 py-3 hover:bg-muted transition-colors no-underline" onclick="this.closest('dialog').close()">
+						<div class="text-sm font-medium text-foreground">${r.meta?.title || url}</div>
 						<div class="mt-0.5 text-xs text-muted-foreground line-clamp-2 font-mono tracking-tighter">${r.excerpt}</div>
 					</a>
-				`
-				)
+				`;
+				})
 				.join('');
 		}
 	}

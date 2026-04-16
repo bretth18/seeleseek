@@ -21,9 +21,6 @@ const navLinks = [
 ];
 </script>
 
-<svelte:head>
-	<link rel="icon" type="image/png" href="/app-icon.png" />
-</svelte:head>
 
 <div class="flex min-h-dvh w-full flex-col">
 	<header class="border-b border-border bg-background">
