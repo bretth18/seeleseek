@@ -33,4 +33,4 @@ jobs:
 
     - name: Run Unit Tests
       run: |
-        xcodebuild -scheme seeleseek -destination 'platform=macOS' -skip-testing:seeleseekUITests test CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+        xcodebuild -scheme seeleseek -destination 'platform=macOS' -only-testing:seeleseekTests test CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
