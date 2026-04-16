@@ -11,6 +11,7 @@ struct PrivacySettingsSection: View {
 
     @State private var newBlockUsername: String = ""
     @State private var newBlockReason: String = ""
+    @State private var newPattern: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
@@ -35,9 +36,103 @@ struct PrivacySettingsSection: View {
             // MARK: - Blocklist
             blocklistSection
 
+            // MARK: - Pattern Blocks (auto-block bot accounts)
+            patternBlockSection
+
             // MARK: - Leech Detection
             leechDetectionSection
         }
+    }
+
+    // MARK: - Pattern Block Section
+
+    private var patternBlockSection: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+            HStack {
+                Text("Pattern Blocks")
+                    .font(SeeleTypography.title)
+                    .foregroundStyle(SeeleColors.textPrimary)
+
+                Spacer()
+
+                if settings.blockLeechPatternsEnabled && !settings.blockedUsernamePatterns.isEmpty {
+                    Text("\(settings.blockedUsernamePatterns.count) pattern\(settings.blockedUsernamePatterns.count == 1 ? "" : "s")")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+            }
+
+            settingsGroup("Auto-block Bot Accounts") {
+                settingsToggle("Reject uploads to matching usernames", isOn: $settings.blockLeechPatternsEnabled)
+
+                settingsRow {
+                    Text("Uploads from usernames matching any of these glob patterns (e.g. `slsk_*`) are silently denied. Matches are case-insensitive.")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                settingsRow {
+                    HStack(spacing: SeeleSpacing.sm) {
+                        TextField("Pattern (e.g. slsk_*)", text: $newPattern)
+                            .textFieldStyle(SeeleTextFieldStyle())
+                            .frame(maxWidth: 260)
+                            .onSubmit(addPattern)
+
+                        Button("Add", action: addPattern)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(trimmedNewPattern.isEmpty)
+                    }
+                }
+                .disabled(!settings.blockLeechPatternsEnabled)
+            }
+
+            if !settings.blockedUsernamePatterns.isEmpty {
+                settingsGroup("Active Patterns") {
+                    ForEach(settings.blockedUsernamePatterns, id: \.self) { pattern in
+                        patternRow(pattern)
+                    }
+                }
+                .opacity(settings.blockLeechPatternsEnabled ? 1 : 0.5)
+            }
+        }
+    }
+
+    private func patternRow(_ pattern: String) -> some View {
+        settingsRow {
+            HStack(spacing: SeeleSpacing.md) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.warning)
+
+                Text(pattern)
+                    .font(SeeleTypography.mono)
+                    .foregroundStyle(SeeleColors.textPrimary)
+
+                Spacer()
+
+                Button("Remove") {
+                    settings.blockedUsernamePatterns.removeAll { $0 == pattern }
+                }
+                .buttonStyle(.bordered)
+                .foregroundStyle(SeeleColors.error)
+            }
+        }
+    }
+
+    private var trimmedNewPattern: String {
+        newPattern.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func addPattern() {
+        let trimmed = trimmedNewPattern
+        guard !trimmed.isEmpty else { return }
+        guard !settings.blockedUsernamePatterns.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            newPattern = ""
+            return
+        }
+        settings.blockedUsernamePatterns.append(trimmed)
+        newPattern = ""
     }
 
     // MARK: - Blocklist Section

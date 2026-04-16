@@ -72,6 +72,10 @@ final class AppState {
 
         uploadManager.uploadPermissionChecker = { [weak self] username in
             guard let self else { return true }
+            if self.settings.blockLeechPatternsEnabled,
+               UsernamePatternMatcher.matches(username, anyOf: self.settings.blockedUsernamePatterns) {
+                return false
+            }
             Task { try? await self.networkClient.getUserStats(username) }
             return self.socialState.shouldAllowUpload(to: username)
         }

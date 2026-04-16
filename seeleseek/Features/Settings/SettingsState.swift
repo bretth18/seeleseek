@@ -91,6 +91,12 @@ final class SettingsState: DownloadSettingsProviding {
     private let notifyPrivateMessagesKey = "settingsNotifyPrivateMessages"
     private let notifyOnlyInBackgroundKey = "settingsNotifyOnlyInBackground"
     private let notificationSoundNameKey = "settingsNotificationSoundName"
+    private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
+    private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
+
+    /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
+    /// created by "streaming-service" apps that queue uploads en masse without sharing.
+    static let defaultBlockedUsernamePatterns: [String] = ["slsk_*"]
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
@@ -273,6 +279,25 @@ final class SettingsState: DownloadSettingsProviding {
     var showOnlineStatus: Bool = true
     var allowBrowsing: Bool = true
 
+    /// When true, peers whose usernames match any pattern in `blockedUsernamePatterns`
+    /// have their upload requests silently rejected.
+    var blockLeechPatternsEnabled: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
+    /// Glob-style patterns (`*` wildcard) matched case-insensitively against incoming
+    /// upload-request usernames. Example: `slsk_*` blocks any user whose name starts
+    /// with `slsk_`.
+    var blockedUsernamePatterns: [String] = SettingsState.defaultBlockedUsernamePatterns {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+
     // MARK: - Actions
     func addSharedFolder(_ url: URL) {
         if !sharedFolders.contains(url) {
@@ -319,6 +344,8 @@ final class SettingsState: DownloadSettingsProviding {
         notifyOnlyInBackground = false
         showOnlineStatus = true
         allowBrowsing = true
+        blockLeechPatternsEnabled = true
+        blockedUsernamePatterns = SettingsState.defaultBlockedUsernamePatterns
         save()
     }
 
@@ -354,6 +381,8 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
         UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
         UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
+        UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
+        UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
 
         // Save to database asynchronously
         Task {
@@ -444,6 +473,12 @@ final class SettingsState: DownloadSettingsProviding {
         if let soundRaw = UserDefaults.standard.string(forKey: notificationSoundNameKey),
            let sound = NotificationSound(rawValue: soundRaw) {
             selectedNotificationSound = sound
+        }
+        if UserDefaults.standard.object(forKey: blockLeechPatternsEnabledKey) != nil {
+            blockLeechPatternsEnabled = UserDefaults.standard.bool(forKey: blockLeechPatternsEnabledKey)
+        }
+        if let patterns = UserDefaults.standard.stringArray(forKey: blockedUsernamePatternsKey) {
+            blockedUsernamePatterns = patterns
         }
     }
 
