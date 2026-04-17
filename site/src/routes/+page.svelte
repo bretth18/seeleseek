@@ -131,11 +131,11 @@ const softwareLd = {
 	</section>
 
 	<!-- Bottom strip -->
-	<div class="grid grid-cols-3 min-h-[4.5rem]">
-		<Cell pad="sm" class="border-r border-border">
+	<div class="grid grid-cols-1 sm:grid-cols-3 sm:min-h-[4.5rem]">
+		<Cell pad="sm" class="border-b sm:border-b-0 sm:border-r border-border">
 			<span class="text-sm font-bold text-foreground/40">seeleseek</span>
 		</Cell>
-		<Cell pad="sm" href="https://github.com/bretth18/seeleseek" external class="border-r border-border">
+		<Cell pad="sm" href="https://github.com/bretth18/seeleseek" external class="border-b sm:border-b-0 sm:border-r border-border">
 			<span class="text-sm font-bold group-hover:text-accent transition-colors">GitHub</span>
 		</Cell>
 		<Cell pad="sm">
