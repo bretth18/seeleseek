@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = A6120FB12F33E8AC00995D21 /* GRDB */; };
 		A67A0E4C2F806B8C00EBD9B2 /* SeeleseekCore in Frameworks */ = {isa = PBXBuildFile; productRef = A67A0E4B2F806B8C00EBD9B2 /* SeeleseekCore */; };
-		A6CORE0012F40000000000001 /* (null) in Frameworks */ = {isa = PBXBuildFile; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,7 +72,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A6120FB22F33E8AC00995D21 /* GRDB in Frameworks */,
-				A6CORE0012F40000000000001 /* (null) in Frameworks */,
 				A67A0E4C2F806B8C00EBD9B2 /* SeeleseekCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -337,7 +335,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				DEAD_CODE_STRIPPING = YES;
+				DEAD_CODE_STRIPPING = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 94XUGF9CU7;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -431,7 +429,7 @@
 				CODE_SIGN_ENTITLEMENTS = seeleseek/seeleseek.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 13;
-				DEAD_CODE_STRIPPING = YES;
+				DEAD_CODE_STRIPPING = NO;
 				DEVELOPMENT_TEAM = 94XUGF9CU7;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;

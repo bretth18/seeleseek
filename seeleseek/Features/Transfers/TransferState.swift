@@ -120,6 +120,14 @@ final class TransferState: TransferTracking {
     var totalDownloaded: Int64 = 0
     var totalUploaded: Int64 = 0
 
+    // MARK: - Speed History (per-transfer ring buffer for sparklines)
+    /// 1-sample-per-second speed history, oldest → newest, capped at 30
+    /// entries (~30 seconds of context). Populated while the transfer is
+    /// active and left intact after completion so completed rows still
+    /// show their final curve.
+    private(set) var speedHistory: [UUID: [Int64]] = [:]
+    private static let speedHistoryLimit = 30
+
     // Speed update timer
     private var speedUpdateTimer: Timer?
     private let logger = Logger(subsystem: "com.seeleseek", category: "TransferState")
@@ -373,5 +381,27 @@ final class TransferState: TransferTracking {
     func updateSpeeds() {
         totalDownloadSpeed = activeDownloads.reduce(0) { $0 + $1.speed }
         totalUploadSpeed = activeUploads.reduce(0) { $0 + $1.speed }
+        sampleSpeedHistory()
+    }
+
+    /// Append the current speed reading for each active transfer to its
+    /// history buffer, capped at `speedHistoryLimit` entries. Called once
+    /// per second from the speed-update timer.
+    private func sampleSpeedHistory() {
+        for transfer in activeDownloads {
+            appendSample(transfer.speed, for: transfer.id)
+        }
+        for transfer in activeUploads {
+            appendSample(transfer.speed, for: transfer.id)
+        }
+    }
+
+    private func appendSample(_ value: Int64, for id: UUID) {
+        var samples = speedHistory[id] ?? []
+        samples.append(value)
+        if samples.count > Self.speedHistoryLimit {
+            samples.removeFirst(samples.count - Self.speedHistoryLimit)
+        }
+        speedHistory[id] = samples
     }
 }

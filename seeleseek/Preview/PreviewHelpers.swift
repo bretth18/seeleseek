@@ -196,4 +196,43 @@ struct DevicePreview<Content: View>: View {
             .preferredColorScheme(.dark)
     }
 }
+
+// MARK: - Design Variant Preview Chrome
+
+/// Wraps a stack of row variants with a section title and standard card
+/// styling. Used by the V2-row preview files to compare alternatives
+/// side-by-side under a consistent visual frame.
+struct DesignVariantSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+            Text(title)
+                .font(SeeleTypography.caption.weight(.semibold))
+                .foregroundStyle(SeeleColors.textSecondary)
+                .padding(.horizontal, SeeleSpacing.lg)
+
+            VStack(spacing: 0) { content() }
+                .background(SeeleColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD))
+                .padding(.horizontal, SeeleSpacing.lg)
+        }
+    }
+}
+
+// MARK: - Preview App State Modifier
+
+/// Injects a ready-to-use `AppState` into the environment for previews.
+/// Without this, views that read `@Environment(\.appState)` trigger the
+/// `@Entry` default constructor, which spins up timers, UserDefaults reads,
+/// and an HTTP update client — cost that compounds across re-evaluations
+/// and has been observed to hang the preview harness.
+extension View {
+    @MainActor
+    func previewAppState(_ state: AppState = PreviewData.connectedAppState) -> some View {
+        environment(\.appState, state)
+            .preferredColorScheme(.dark)
+    }
+}
 #endif
