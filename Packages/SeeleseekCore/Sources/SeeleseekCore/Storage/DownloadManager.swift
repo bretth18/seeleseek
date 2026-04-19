@@ -752,6 +752,12 @@ public final class DownloadManager {
             pendingFileTransfersByUser[pending.username, default: []].append(pendingTransfer)
             logger.info("Registered pending file transfer for \(pending.username): transferToken=\(request.token)")
 
+            // Earliest unambiguous signal the peer is responding. Drop
+            // any retry Task that may have been scheduled from a prior
+            // timeout/failure so it can't wake up and stomp this
+            // in-flight transfer back to `.queued` later.
+            cancelRetry(transferId: pending.transferId)
+
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
                 t.startTime = Date()
@@ -888,6 +894,12 @@ public final class DownloadManager {
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
+
+            // A retry may have been scheduled when the transfer first
+            // appeared to fail — cancel it before stomping the new
+            // `.completed` status, otherwise the retry Task will fire
+            // later and reset the row back to `.queued`.
+            cancelRetry(transferId: pending.transferId)
 
             // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
@@ -1603,6 +1615,7 @@ public final class DownloadManager {
                 )
 
                 let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
+                cancelRetry(transferId: pending.transferId)
                 transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .completed
                     t.bytesTransferred = pending.size
@@ -1711,6 +1724,8 @@ public final class DownloadManager {
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
+
+            cancelRetry(transferId: pending.transferId)
 
             // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
@@ -2407,14 +2422,39 @@ public final class DownloadManager {
 
             await MainActor.run {
                 self.pendingRetries.removeValue(forKey: transferId)
-                self.retryDownload(transferId: transferId, username: username, filename: filename, size: size, retryCount: retryCount + 1)
+
+                // Only proceed if the transfer is still in a failed
+                // state. Between schedule and wake, the original attempt
+                // may have completed (late data), transitioned into
+                // `.transferring`/`.connecting`, been `.cancelled` by
+                // the user, or been re-queued manually. In all those
+                // cases this scheduled retry is stale — firing it would
+                // stomp a good transfer back to `.queued` with
+                // `bytesTransferred = 0`.
+                guard let current = self.transferState?.getTransfer(id: transferId),
+                      current.status == .failed else {
+                    self.logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
+                    return
+                }
+
+                self.retryDownload(
+                    transferId: transferId,
+                    username: username,
+                    filename: filename,
+                    size: size,
+                    retryCount: retryCount + 1
+                )
             }
         }
 
         pendingRetries[transferId] = task
     }
 
-    /// Actually retry a download
+    /// Reset a previously-failed (or cancelled) transfer so another
+    /// `requestDownload` can re-run from byte zero. Callers MUST ensure
+    /// the transfer is eligible first — the scheduled-retry path checks
+    /// `.failed` before calling this; `retryFailedDownload` checks
+    /// `.failed || .cancelled`.
     private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
 
