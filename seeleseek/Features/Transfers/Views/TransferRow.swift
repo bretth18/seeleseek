@@ -1,8 +1,4 @@
 import SwiftUI
-import AVFoundation
-#if os(macOS)
-import AppKit
-#endif
 import SeeleseekCore
 
 // MARK: - Layout anchors
@@ -42,15 +38,21 @@ struct TransferRow: View {
     let onRemove: () -> Void
     var onMoveToTop: (() -> Void)? = nil
     var onMoveToBottom: (() -> Void)? = nil
-    /// Speed samples ordered oldest → newest. Only rendered while the
-    /// transfer is active; empty arrays show a faint baseline.
-    /// TODO: wire real history from `TransferState` (ring buffer of
-    /// `transfer.speed` sampled every ~1s during active transfers).
+    /// Speed samples ordered oldest → newest, sourced from
+    /// `TransferState.speedHistory` (1Hz ring buffer). Only rendered while
+    /// the transfer is active; empty arrays show a faint baseline.
     var speedHistory: [Int64] = []
 
     @State private var isHovered = false
-    @State private var isPlaying = false
-    @State private var audioPlayer: AVAudioPlayer?
+    @State private var preview = RowAudioPreview()
+
+    /// Live peer status from the app-wide peer-status cache. Populated
+    /// for any peer currently being watched — `TransferState` auto-watches
+    /// every peer in the transfer list so this resolves for strangers
+    /// too, not just buddies.
+    private var peerStatus: BuddyStatus? {
+        appState.socialState.peerStatus(for: transfer.username)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -58,8 +60,11 @@ struct TransferRow: View {
                 HStack(alignment: .top, spacing: SeeleSpacing.sm) {
                     TransferDirectionGlyph(transfer: transfer)
 
-                    TransferInfoColumn(transfer: transfer)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TransferInfoColumn(
+                        transfer: transfer,
+                        peerStatus: peerStatus
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     TransferMetadataColumn(
                         transfer: transfer,
@@ -69,12 +74,13 @@ struct TransferRow: View {
                     TransferActionCluster(
                         transfer: transfer,
                         isHovered: isHovered,
-                        isPlaying: isPlaying,
+                        isPlaying: preview.isPlaying,
                         onCancel: onCancel,
                         onRetry: onRetry,
                         onRemove: onRemove,
                         onReveal: revealInFinder,
-                        onTogglePreview: toggleAudioPreview
+                        onTogglePreview: toggleAudioPreview,
+                        onEditMetadata: openMetadataEditor
                     )
                 }
             }
@@ -85,7 +91,17 @@ struct TransferRow: View {
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .onDisappear { audioPlayer?.stop() }
+        .modifier(TransferRowAccessibilityActions(
+            transfer: transfer,
+            isPlaying: preview.isPlaying,
+            onCancel: onCancel,
+            onRetry: onRetry,
+            onRemove: onRemove,
+            onReveal: revealInFinder,
+            onTogglePreview: toggleAudioPreview,
+            onEditMetadata: openMetadataEditor
+        ))
+        .onDisappear { preview.stop() }
     }
 
     // MARK: - Context menu
@@ -107,15 +123,11 @@ struct TransferRow: View {
         if transfer.status == .completed, transfer.isAudioFile, transfer.localPath != nil {
             Button(action: toggleAudioPreview) {
                 Label(
-                    isPlaying ? "Stop Preview" : "Play Preview",
-                    systemImage: isPlaying ? "stop.fill" : "play.fill"
+                    preview.isPlaying ? "Stop Preview" : "Play Preview",
+                    systemImage: preview.isPlaying ? "stop.fill" : "play.fill"
                 )
             }
-            Button {
-                if let path = transfer.localPath {
-                    appState.metadataState.showEditor(for: path)
-                }
-            } label: {
+            Button(action: openMetadataEditor) {
                 Label("Edit Metadata", systemImage: "tag")
             }
         }
@@ -123,6 +135,13 @@ struct TransferRow: View {
         if transfer.status == .completed, transfer.localPath != nil {
             Button(action: revealInFinder) {
                 Label("Reveal in Finder", systemImage: "folder")
+            }
+            Divider()
+        }
+
+        if !transfer.isActive, transfer.status != .completed {
+            Button(role: .destructive, action: onRemove) {
+                Label("Remove from List", systemImage: "trash")
             }
             Divider()
         }
@@ -150,36 +169,65 @@ struct TransferRow: View {
     // MARK: - Actions
 
     private func revealInFinder() {
-        #if os(macOS)
         guard let path = transfer.localPath else { return }
-        NSWorkspace.shared.selectFile(
-            path.path,
-            inFileViewerRootedAtPath: path.deletingLastPathComponent().path
-        )
-        #endif
+        FileReveal.inFinder(path)
     }
 
     private func toggleAudioPreview() {
-        if isPlaying {
-            audioPlayer?.stop()
-            isPlaying = false
-            return
-        }
         guard let path = transfer.localPath else { return }
-        do {
-            let player = try AVAudioPlayer(contentsOf: path)
-            player.prepareToPlay()
-            player.play()
-            audioPlayer = player
-            isPlaying = true
+        preview.toggle(url: path)
+    }
 
-            // Auto-stop after 30s preview.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak player] in
-                player?.stop()
-                isPlaying = false
+    private func openMetadataEditor() {
+        guard let path = transfer.localPath else { return }
+        appState.metadataState.showEditor(for: path)
+    }
+}
+
+// MARK: - Accessibility actions
+//
+// Secondary actions (play, tag, reveal, remove) are hover-revealed for
+// sighted users. These entries surface them in the VoiceOver rotor so
+// assistive-tech users don't have to open the context menu.
+
+private struct TransferRowAccessibilityActions: ViewModifier {
+    let transfer: Transfer
+    let isPlaying: Bool
+    let onCancel: () -> Void
+    let onRetry: () -> Void
+    let onRemove: () -> Void
+    let onReveal: () -> Void
+    let onTogglePreview: () -> Void
+    let onEditMetadata: () -> Void
+
+    private var isCompletedAudio: Bool {
+        transfer.status == .completed && transfer.isAudioFile && transfer.localPath != nil
+    }
+    private var hasCompletedFile: Bool {
+        transfer.status == .completed && transfer.localPath != nil
+    }
+    private var canRemove: Bool {
+        !transfer.isActive && transfer.status != .completed
+    }
+
+    func body(content: Content) -> some View {
+        content.accessibilityActions {
+            if transfer.canCancel {
+                Button("Cancel", action: onCancel)
             }
-        } catch {
-            isPlaying = false
+            if transfer.canRetry {
+                Button("Retry", action: onRetry)
+            }
+            if isCompletedAudio {
+                Button(isPlaying ? "Stop preview" : "Play preview", action: onTogglePreview)
+                Button("Edit metadata", action: onEditMetadata)
+            }
+            if hasCompletedFile {
+                Button("Reveal in Finder", action: onReveal)
+            }
+            if canRemove {
+                Button("Remove from list", action: onRemove)
+            }
         }
     }
 }
@@ -190,25 +238,11 @@ private struct TransferDirectionGlyph: View {
     let transfer: Transfer
 
     var body: some View {
-        ZStack {
-            RoundedRectangle.badgeShape
-                .fill(transfer.statusColor.opacity(SeeleColors.alphaMedium))
-                .frame(
-                    width: SeeleSpacing.iconSizeXL,
-                    height: SeeleSpacing.iconSizeXL
-                )
-
-            if transfer.status == .connecting {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(SeeleSpacing.scaleSmall)
-                    .tint(transfer.statusColor)
-            } else {
-                Image(systemName: transfer.direction == .download ? "arrow.down" : "arrow.up")
-                    .font(.system(size: SeeleSpacing.iconSize, weight: .bold))
-                    .foregroundStyle(transfer.statusColor)
-            }
-        }
+        RowDirectionGlyph(
+            direction: transfer.direction == .download ? .download : .upload,
+            tint: transfer.statusColor,
+            isConnecting: transfer.status == .connecting
+        )
     }
 }
 
@@ -216,6 +250,7 @@ private struct TransferDirectionGlyph: View {
 
 private struct TransferInfoColumn: View {
     let transfer: Transfer
+    let peerStatus: BuddyStatus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -230,40 +265,66 @@ private struct TransferInfoColumn: View {
         }
     }
 
+    /// Whether we know the peer is offline. `.away` still serves files
+    /// (the user's just AFK) so it's not a failure reason. We only
+    /// surface this for stalled rows — an actively-transferring row's
+    /// liveness is self-evident.
+    private var peerIsOffline: Bool {
+        guard peerStatus == .offline else { return false }
+        return transfer.status == .failed
+            || transfer.status == .cancelled
+            || transfer.status == .waiting
+            || transfer.status == .queued
+    }
+
+    /// Detail shown to the right of the peer cluster. Only one of the
+    /// following renders, in priority order:
+    ///   1. Explicit "Peer offline/away" when the server told us so.
+    ///   2. `transfer.error` (e.g. "Upload failed on peer side").
+    ///   3. Folder path (for context on active/queued transfers).
+    ///   4. Retry count badge.
+    /// Wasteful 168pt outer peer-cell only kicks in for case 3 — where
+    /// cross-row folder-path alignment matters. Cases 1/2/4 use intrinsic
+    /// peer-cluster width so the detail butts up right after the username.
+    @ViewBuilder
     private var contextLine: some View {
-        HStack(spacing: 0) {
-            peerCell
-                .frame(width: TransferRowLayout.peerCellWidth, alignment: .leading)
-
-            if let folder = transfer.folderPath, !folder.isEmpty {
-                folderCell(folder)
-            } else if let error = transfer.error {
-                errorLabel(error)
-            } else if transfer.retryCount > 0 {
-                retryLabel
+        if peerIsOffline {
+            HStack(spacing: SeeleSpacing.md) {
+                peerCluster
+                offlineLabel
+                Spacer(minLength: 0)
             }
-
-            Spacer(minLength: 0)
+        } else if let error = transfer.error, !error.isEmpty {
+            HStack(spacing: SeeleSpacing.md) {
+                peerCluster
+                errorLabel(error)
+                Spacer(minLength: 0)
+            }
+        } else if let folder = transfer.folderPath, !folder.isEmpty {
+            HStack(spacing: 0) {
+                peerCluster
+                    .frame(width: TransferRowLayout.peerCellWidth, alignment: .leading)
+                folderCell(folder)
+                Spacer(minLength: 0)
+            }
+        } else if transfer.retryCount > 0 {
+            HStack(spacing: SeeleSpacing.md) {
+                peerCluster
+                retryLabel
+                Spacer(minLength: 0)
+            }
+        } else {
+            peerCluster
         }
     }
 
-    private var peerCell: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: transfer.direction == .download ? "arrow.down" : "arrow.up")
-                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .accessibilityHidden(true)
-
-                Text(transfer.username)
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(
+    private var peerCluster: some View {
+        HStack(spacing: SeeleSpacing.xs) {
+            PeerUsernameLabel(
+                iconName: transfer.direction == .download ? "arrow.down" : "arrow.up",
+                username: transfer.username,
                 width: TransferRowLayout.peerUsernameWidth,
-                alignment: .leading
+                peerStatus: peerStatus
             )
 
             if transfer.retryCount > 0, transfer.error != nil {
@@ -272,8 +333,20 @@ private struct TransferInfoColumn: View {
                     .foregroundStyle(SeeleColors.warning)
                     .monospacedDigit()
             }
+        }
+    }
 
-            Spacer(minLength: 0)
+    private var offlineLabel: some View {
+        HStack(spacing: SeeleSpacing.xs) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: SeeleSpacing.iconSizeXS))
+                .foregroundStyle(SeeleColors.error)
+                .accessibilityHidden(true)
+
+            Text("Peer offline")
+                .font(SeeleTypography.monoSmall)
+                .foregroundStyle(SeeleColors.error)
+                .lineLimit(1)
         }
     }
 
@@ -374,7 +447,7 @@ private struct TransferMetadataColumn: View {
         switch transfer.status {
         case .transferring:
             Text(transfer.formattedSpeed)
-                .font(SeeleTypography.monoSmall.weight(.semibold))
+                .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.accent)
                 .monospacedDigit()
                 .lineLimit(1)
@@ -383,33 +456,33 @@ private struct TransferMetadataColumn: View {
                 Image(systemName: "hourglass")
                     .font(.system(size: SeeleSpacing.iconSizeXS))
                 Text(queueLabel)
-                    .font(SeeleTypography.monoSmall.weight(.semibold))
+                    .font(SeeleTypography.monoSmall)
                     .monospacedDigit()
             }
             .foregroundStyle(SeeleColors.warning)
         case .connecting:
             Text("Connecting")
-                .font(SeeleTypography.monoSmall.weight(.semibold))
+                .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.info)
         case .queued:
             Text("Queued")
-                .font(SeeleTypography.monoSmall.weight(.semibold))
+                .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.warning)
         case .completed:
             HStack(spacing: SeeleSpacing.xxs) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: SeeleSpacing.iconSizeXS))
                 Text("Complete")
-                    .font(SeeleTypography.monoSmall.weight(.semibold))
+                    .font(SeeleTypography.monoSmall)
             }
             .foregroundStyle(SeeleColors.success)
         case .failed:
             Text("Failed")
-                .font(SeeleTypography.monoSmall.weight(.semibold))
+                .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.error)
         case .cancelled:
             Text("Cancelled")
-                .font(SeeleTypography.monoSmall.weight(.semibold))
+                .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.textTertiary)
         }
     }
@@ -451,11 +524,12 @@ private struct TransferActionCluster: View {
     let onRemove: () -> Void
     let onReveal: () -> Void
     let onTogglePreview: () -> Void
+    let onEditMetadata: () -> Void
 
-    /// Reserve width for up to two hover-revealed secondary icons. Enough
-    /// room for the audio-preview + reveal pair on completed audio files;
-    /// unused slots stay blank so the row doesn't reflow.
-    private static let secondaryActionCount: CGFloat = 2
+    /// Reserve width for up to three hover-revealed secondary icons:
+    /// play / tag / reveal on completed audio files. Unused slots stay
+    /// blank so the row doesn't reflow.
+    private static let secondaryActionCount: CGFloat = 3
     private var secondaryActionsWidth: CGFloat {
         SeeleSpacing.buttonHeight * Self.secondaryActionCount
             + SeeleSpacing.xxs * (Self.secondaryActionCount - 1)
@@ -473,28 +547,35 @@ private struct TransferActionCluster: View {
     }
 
     private var secondaryActions: some View {
+        // Hit-testing stays on even at opacity 0 so Tab focus (and, via
+        // `accessibilityAction` on the row, VoiceOver rotor) can reach
+        // these actions. The invisible focus ring is an accepted tradeoff.
         HStack(spacing: SeeleSpacing.xxs) {
             if transfer.status == .completed,
                transfer.isAudioFile,
                transfer.localPath != nil {
-                iconButton(
-                    isPlaying ? "pause.fill" : "play.fill",
+                RowIconButton(
+                    systemName: isPlaying ? "pause.fill" : "play.fill",
                     help: isPlaying ? "Pause preview" : "Play preview",
-                    tint: SeeleColors.textSecondary,
                     action: onTogglePreview
+                )
+
+                RowIconButton(
+                    systemName: "tag",
+                    help: "Edit metadata",
+                    action: onEditMetadata
                 )
             }
 
             if transfer.status == .completed, transfer.localPath != nil {
-                iconButton(
-                    "folder",
+                RowIconButton(
+                    systemName: "folder",
                     help: "Reveal in Finder",
-                    tint: SeeleColors.textSecondary,
                     action: onReveal
                 )
             } else if !transfer.isActive {
-                iconButton(
-                    "trash",
+                RowIconButton(
+                    systemName: "trash",
                     help: "Remove from list",
                     tint: SeeleColors.textTertiary,
                     action: onRemove
@@ -503,7 +584,6 @@ private struct TransferActionCluster: View {
         }
         .opacity(isHovered ? 1 : 0)
         .frame(width: secondaryActionsWidth, alignment: .trailing)
-        .allowsHitTesting(isHovered)
     }
 
     @ViewBuilder
@@ -559,33 +639,13 @@ private struct TransferActionCluster: View {
         .help(help)
         .accessibilityLabel(help)
     }
-
-    private func iconButton(
-        _ systemName: String,
-        help: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .regular))
-                .foregroundStyle(tint)
-                .frame(
-                    width: SeeleSpacing.buttonHeight,
-                    height: SeeleSpacing.buttonHeight
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
-    }
 }
 
 // MARK: - Progress hairline
 
 private struct TransferProgressHairline: View {
     let transfer: Transfer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { geo in
@@ -600,7 +660,10 @@ private struct TransferProgressHairline: View {
                         width: geo.size.width * transfer.progress,
                         height: SeeleSpacing.strokeMedium
                     )
-                    .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: transfer.progress)
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: SeeleSpacing.animationStandard),
+                        value: transfer.progress
+                    )
             }
         }
         .frame(height: SeeleSpacing.strokeMedium)
@@ -617,9 +680,13 @@ struct TransferSparkline: View {
     let values: [Int64]
     var tint: Color = .accentColor
 
+    /// Max samples rendered. Matches `TransferState.speedHistoryLimit` —
+    /// extra samples are silently dropped from the left.
+    static let sampleLimit = 30
+
     var body: some View {
         GeometryReader { geo in
-            let samples = values.suffix(30)
+            let samples = values.suffix(Self.sampleLimit)
             let maxV = max(samples.max() ?? 0, 1)
             let step = samples.count > 1 ? geo.size.width / CGFloat(samples.count - 1) : 0
 
@@ -640,7 +707,11 @@ struct TransferSparkline: View {
                     }
                     .stroke(
                         tint,
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+                        style: StrokeStyle(
+                            lineWidth: SeeleSpacing.strokeMedium,
+                            lineCap: .round,
+                            lineJoin: .round
+                        )
                     )
 
                     Path { path in
@@ -728,26 +799,22 @@ struct TransferSparkline: View {
     }
 
     return ScrollView {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             TransferRow(
                 transfer: downloading,
                 onCancel: {}, onRetry: {}, onRemove: {},
                 speedHistory: sparkDownloading
             )
-            Divider().opacity(0.25)
             TransferRow(
                 transfer: uploading,
                 onCancel: {}, onRetry: {}, onRemove: {},
                 speedHistory: sparkUploading
             )
-            Divider().opacity(0.25)
             TransferRow(transfer: queued, onCancel: {}, onRetry: {}, onRemove: {})
-            Divider().opacity(0.25)
             TransferRow(transfer: failed, onCancel: {}, onRetry: {}, onRemove: {})
-            Divider().opacity(0.25)
             TransferRow(transfer: done, onCancel: {}, onRetry: {}, onRemove: {})
         }
-        .background(SeeleColors.surface)
+        .background(SeeleColors.background)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD))
         .padding(SeeleSpacing.lg)
     }

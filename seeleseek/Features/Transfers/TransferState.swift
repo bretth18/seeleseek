@@ -90,9 +90,66 @@ struct TransferHistoryItem: Identifiable, Sendable {
     }
 }
 
+/// Informs an observer about peer-status lifecycle events so the app can
+/// subscribe to live online/offline updates while transfers exist.
+@MainActor
+protocol PeerWatching: AnyObject {
+    func watchPeer(_ username: String)
+    func unwatchPeer(_ username: String)
+}
+
 @Observable
 @MainActor
 final class TransferState: TransferTracking {
+    /// Peer-status observer (typically `SocialState`). Set once at app
+    /// startup. Notifications fire whenever a transfer is added or removed
+    /// so the watcher can subscribe/unsubscribe to live user status.
+    /// Assigning the watcher also back-fills watches for every peer in
+    /// the currently-loaded list — `loadPersisted()` typically runs
+    /// before the lazy `networkClient` is touched, and we don't want the
+    /// first wave of persisted transfers to come up with no live status.
+    weak var peerWatcher: (any PeerWatching)? {
+        didSet { reconcilePeerWatches() }
+    }
+
+    /// Usernames we currently hold a watch on. Prevents double-subscribing
+    /// the same user when both a download and upload exist for them, or
+    /// when `loadPersisted()` and `didSet` both try to back-fill.
+    private var watchedUsernames: Set<String> = []
+
+    private func reconcilePeerWatches() {
+        guard let peerWatcher else {
+            watchedUsernames.removeAll()
+            return
+        }
+        let desired = Set((downloads + uploads).map { $0.username })
+        for name in desired.subtracting(watchedUsernames) {
+            peerWatcher.watchPeer(name)
+        }
+        for name in watchedUsernames.subtracting(desired) {
+            peerWatcher.unwatchPeer(name)
+        }
+        watchedUsernames = desired
+    }
+
+    private func startWatch(_ username: String) {
+        guard let peerWatcher,
+              !username.isEmpty,
+              !watchedUsernames.contains(username) else { return }
+        peerWatcher.watchPeer(username)
+        watchedUsernames.insert(username)
+    }
+
+    private func stopWatch(_ username: String) {
+        guard let peerWatcher,
+              watchedUsernames.contains(username) else { return }
+        // Only release if no other transfer in the list still uses this peer.
+        let stillReferenced = downloads.contains(where: { $0.username == username })
+            || uploads.contains(where: { $0.username == username })
+        guard !stillReferenced else { return }
+        peerWatcher.unwatchPeer(username)
+        watchedUsernames.remove(username)
+    }
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
         didSet { rebuildDownloadIndex() }
@@ -189,6 +246,12 @@ final class TransferState: TransferTracking {
             uploads = persisted.filter { $0.direction == .upload }
             logger.info("Loaded \(self.downloads.count) downloads and \(self.uploads.count) uploads from database")
 
+            // Subscribe to status updates for every peer we just loaded
+            // so offline state is visible as soon as rows render. Safe to
+            // call even if `peerWatcher` is still nil — the didSet on
+            // assignment will back-fill.
+            reconcilePeerWatches()
+
             // Also load history
             await loadHistory()
         } catch {
@@ -282,11 +345,13 @@ final class TransferState: TransferTracking {
     func addDownload(_ transfer: Transfer) {
         downloads.insert(transfer, at: 0)
         persistTransfer(transfer)
+        startWatch(transfer.username)
     }
 
     func addUpload(_ transfer: Transfer) {
         uploads.insert(transfer, at: 0)
         persistTransfer(transfer)
+        startWatch(transfer.username)
     }
 
     func updateTransfer(id: UUID, update: (inout Transfer) -> Void) {
@@ -333,8 +398,14 @@ final class TransferState: TransferTracking {
     }
 
     func removeTransfer(id: UUID) {
+        let removedUsers = Set(
+            (downloads + uploads)
+                .filter { $0.id == id }
+                .map { $0.username }
+        )
         downloads.removeAll { $0.id == id }
         uploads.removeAll { $0.id == id }
+        for name in removedUsers { stopWatch(name) }
 
         // Remove from database
         Task {
@@ -343,8 +414,14 @@ final class TransferState: TransferTracking {
     }
 
     func clearCompleted() {
+        let removedUsers = Set(
+            (downloads + uploads)
+                .filter { $0.status == .completed }
+                .map { $0.username }
+        )
         downloads.removeAll { $0.status == .completed }
         uploads.removeAll { $0.status == .completed }
+        for name in removedUsers { stopWatch(name) }
 
         // Clear from database
         Task {
@@ -353,8 +430,14 @@ final class TransferState: TransferTracking {
     }
 
     func clearFailed() {
+        let removedUsers = Set(
+            (downloads + uploads)
+                .filter { $0.status == .failed || $0.status == .cancelled }
+                .map { $0.username }
+        )
         downloads.removeAll { $0.status == .failed || $0.status == .cancelled }
         uploads.removeAll { $0.status == .failed || $0.status == .cancelled }
+        for name in removedUsers { stopWatch(name) }
 
         // Clear from database
         Task {

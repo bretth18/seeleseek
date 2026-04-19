@@ -46,6 +46,14 @@ struct SearchResultRow: View {
 
     private var isIgnored: Bool { appState.socialState.isIgnored(result.username) }
 
+    /// Live peer status from the app-wide peer-status cache. Populated
+    /// for any peer currently being watched (including transfer-list
+    /// peers); search-result rows will also pick up status if the same
+    /// peer later appears in a transfer.
+    private var peerStatus: BuddyStatus? {
+        appState.socialState.peerStatus(for: result.username)
+    }
+
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
             HStack(alignment: .top, spacing: SeeleSpacing.sm) {
@@ -70,6 +78,13 @@ struct SearchResultRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isQueued ? [] : .isButton)
+        .accessibilityActions {
+            if !isQueued, !isIgnored {
+                Button("Download", action: download)
+            }
+            Button("Browse folder", action: browseFolder)
+            Button("Browse \(result.username)", action: browseUser)
+        }
     }
 
     // MARK: - Selection checkbox
@@ -117,7 +132,7 @@ struct SearchResultRow: View {
                     .foregroundStyle(SeeleColors.warning)
                     .padding(SeeleSpacing.xxs)
                     .background(SeeleColors.surface, in: Circle())
-                    .offset(x: SeeleSpacing.xs - 1, y: SeeleSpacing.xs - 1)
+                    .offset(x: SeeleSpacing.xxs, y: SeeleSpacing.xxs)
             }
         }
     }
@@ -167,19 +182,12 @@ struct SearchResultRow: View {
         HStack(spacing: 0) {
             // Username sub-cell — fixed width so peer speed lands at the
             // same X on every row.
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .accessibilityHidden(true)
-
-                Text(result.username)
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(width: SearchResultRowLayout.peerUsernameWidth, alignment: .leading)
+            PeerUsernameLabel(
+                iconName: "arrow.up",
+                username: result.username,
+                width: SearchResultRowLayout.peerUsernameWidth,
+                peerStatus: peerStatus
+            )
 
             Text(peerSpeedText)
                 .font(SeeleTypography.monoSmall)
@@ -267,7 +275,7 @@ struct SearchResultRow: View {
     private func statCell(width: CGFloat, text: String, color: Color) -> some View {
         Text(text.isEmpty ? "—" : text)
             .font(SeeleTypography.monoSmall)
-            .foregroundStyle(text.isEmpty ? SeeleColors.textTertiary.opacity(SeeleColors.alphaStrong) : color)
+            .foregroundStyle(text.isEmpty ? SeeleColors.textTertiary : color)
             .monospacedDigit()
             .lineLimit(1)
             .frame(width: width, alignment: .trailing)
@@ -340,26 +348,23 @@ struct SearchResultRow: View {
     }
 
     private var secondaryActions: some View {
+        // Hit-testing stays on even at opacity 0 so Tab focus (and, via
+        // `accessibilityAction` below, VoiceOver rotor) can reach these
+        // actions. The invisible focus ring is an accepted tradeoff.
         HStack(spacing: SeeleSpacing.xxs) {
-            iconButton("folder.badge.questionmark", help: "Browse this folder", action: browseFolder)
-            iconButton("person.crop.circle", help: "Browse \(result.username)'s files", action: browseUser)
+            RowIconButton(
+                systemName: "folder.badge.questionmark",
+                help: "Browse this folder",
+                action: browseFolder
+            )
+            RowIconButton(
+                systemName: "person.crop.circle",
+                help: "Browse \(result.username)'s files",
+                action: browseUser
+            )
         }
         .opacity(isHovered ? 1 : 0)
         .frame(width: secondaryActionsWidth, alignment: .trailing)
-        .allowsHitTesting(isHovered)
-    }
-
-    private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .regular))
-                .foregroundStyle(SeeleColors.textSecondary)
-                .frame(width: SeeleSpacing.buttonHeight, height: SeeleSpacing.buttonHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
     }
 
     private var primaryAction: some View {
@@ -648,13 +653,12 @@ enum QualityScale {
     ]
 
     return ScrollView {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             ForEach(samples) { result in
                 SearchResultRow(result: result)
-                Divider().opacity(0.25)
             }
         }
-        .background(SeeleColors.surface)
+        .background(SeeleColors.background)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD))
         .padding(SeeleSpacing.lg)
     }

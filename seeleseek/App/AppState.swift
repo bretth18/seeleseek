@@ -70,6 +70,11 @@ final class AppState {
         downloadManager.configure(networkClient: client, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
         uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
 
+        // Peer-status watcher — SocialState tracks live online/away/offline
+        // state for any peer currently in the transfer list (not just
+        // buddies), so rows can surface offline state even for strangers.
+        transferState.peerWatcher = socialState
+
         uploadManager.uploadPermissionChecker = { [weak self] username in
             guard let self else { return true }
             let patterns = self.settings.activeBlockedPatterns

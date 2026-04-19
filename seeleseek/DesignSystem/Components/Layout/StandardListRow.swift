@@ -6,6 +6,7 @@ struct StandardListRow<Content: View>: View {
     let content: Content
     let onHoverChanged: ((Bool) -> Void)?
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(@ViewBuilder content: () -> Content) {
         self.onHoverChanged = nil
@@ -23,7 +24,10 @@ struct StandardListRow<Content: View>: View {
             .padding(.vertical, SeeleSpacing.md)
             .background(isHovered ? SeeleColors.surfaceSecondary : SeeleColors.surface)
             .onHover { hovering in
-                withAnimation(.easeInOut(duration: 0.1)) {
+                let animation: Animation? = reduceMotion
+                    ? nil
+                    : .easeInOut(duration: SeeleSpacing.animationFast)
+                withAnimation(animation) {
                     isHovered = hovering
                 }
                 onHoverChanged?(hovering)

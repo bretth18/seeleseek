@@ -126,6 +126,9 @@ struct LoginView: View {
                 )
                 // Resume all retriable downloads from previous session
                 appState.downloadManager.resumeDownloadsOnConnect()
+                // Re-send peer-status watches (earlier attempts made
+                // during the connecting phase may have been dropped).
+                appState.socialState.resubscribeWatchedPeers()
             case .disconnected:
                 appState.connection.setDisconnected()
             case .connecting:

@@ -4,12 +4,22 @@ import SeeleseekCore
 
 @Observable
 @MainActor
-final class SocialState {
+final class SocialState: PeerWatching {
     // MARK: - Buddy List
     var buddies: [Buddy] = []
     var selectedBuddy: String?
     var buddySearchQuery: String = ""
     var showAddBuddySheet = false
+
+    // MARK: - Peer Status (live status for any watched user, buddy or not)
+    /// Last-known status for every peer the app is currently watching.
+    /// Shared by transfer rows, search rows, etc. so non-buddy peers can
+    /// still surface an online/away/offline indicator.
+    private(set) var peerStatuses: [String: BuddyStatus] = [:]
+    /// Reference count per peer — the app may watch a peer because of a
+    /// queued download *and* an upload simultaneously. We unwatch only
+    /// when the last subscriber releases.
+    private var peerWatchRefCounts: [String: Int] = [:]
 
     // MARK: - Blocklist
     var blockedUsers: [BlockedUser] = []
@@ -92,6 +102,89 @@ final class SocialState {
         detectedLeeches.contains(username)
     }
 
+    // MARK: - Peer Status
+
+    /// Last known status for `username`, if the app has received one.
+    /// Prefers the live `peerStatuses` cache, falls back to the buddy list
+    /// (persisted-last-seen) so buddies still carry a status before the
+    /// first live update arrives.
+    func peerStatus(for username: String) -> BuddyStatus? {
+        if let status = peerStatuses[username] { return status }
+        return buddies.first(where: { $0.username == username })?.status
+    }
+
+    /// Begin watching `username` for live status updates. Ref-counted —
+    /// callers must pair each call with `unwatchPeer`. Buddies don't need
+    /// `watchUser` (the server auto-pushes), but we still issue an
+    /// explicit `getUserStatus` to pull a fresh reading into the cache.
+    func watchPeer(_ username: String) {
+        guard !username.isEmpty else { return }
+        let count = (peerWatchRefCounts[username] ?? 0) + 1
+        peerWatchRefCounts[username] = count
+        guard count == 1 else { return }   // already subscribed
+        let isBuddy = buddies.contains(where: { $0.username == username })
+        Task { [weak self] in
+            guard let self, let client = self.networkClient else { return }
+            do {
+                if !isBuddy {
+                    try await client.watchUser(username)
+                }
+                // Pull a status immediately rather than waiting for the
+                // server to push one — ensures rows for failed persisted
+                // transfers reflect offline state as soon as we connect.
+                try await client.getUserStatus(username)
+            } catch {
+                self.logger.error("watchPeer(\(username)) failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Re-send `watchUser` + `getUserStatus` for every currently-held
+    /// peer subscription. Call this when the server connection has just
+    /// come up: earlier subscribe attempts made while disconnected
+    /// silently fail, and the server doesn't remember them across
+    /// reconnects.
+    func resubscribeWatchedPeers() {
+        let peers = Array(peerWatchRefCounts.keys)
+        guard !peers.isEmpty else { return }
+        Task { [weak self] in
+            guard let self, let client = self.networkClient else { return }
+            for peer in peers {
+                let isBuddy = self.buddies.contains(where: { $0.username == peer })
+                do {
+                    if !isBuddy {
+                        try await client.watchUser(peer)
+                    }
+                    try await client.getUserStatus(peer)
+                } catch {
+                    self.logger.error("resubscribeWatchedPeers(\(peer)) failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Release one watch on `username`. When the refcount hits zero the
+    /// server subscription is torn down.
+    func unwatchPeer(_ username: String) {
+        guard !username.isEmpty else { return }
+        let count = (peerWatchRefCounts[username] ?? 0) - 1
+        if count <= 0 {
+            peerWatchRefCounts.removeValue(forKey: username)
+            peerStatuses.removeValue(forKey: username)
+            if buddies.contains(where: { $0.username == username }) { return }
+            Task { [weak self] in
+                guard let self, let client = self.networkClient else { return }
+                do {
+                    try await client.unwatchUser(username)
+                } catch {
+                    self.logger.error("unwatchPeer(\(username)) failed: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            peerWatchRefCounts[username] = count
+        }
+    }
+
     // MARK: - Setup
 
     func setupCallbacks(client: NetworkClient) {
@@ -101,10 +194,13 @@ final class SocialState {
         // User status updates (for watched users / buddies)
         client.addUserStatusHandler { [weak self] username, status, privileged in
             guard let self else { return }
+            let buddyStatus = BuddyStatus(from: status)
+            // Record live status for any watched peer (buddy or not)
+            self.peerStatuses[username] = buddyStatus
             self.updateBuddyStatus(username: username, status: status, privileged: privileged)
             // Also update viewing profile if this is the user we're looking at
             if self.viewingProfile?.username == username {
-                self.viewingProfile?.status = BuddyStatus(from: status)
+                self.viewingProfile?.status = buddyStatus
                 self.viewingProfile?.isPrivileged = privileged
             }
         }
