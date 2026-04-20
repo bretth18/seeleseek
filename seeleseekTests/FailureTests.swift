@@ -359,7 +359,7 @@ struct FailureTests {
         #expect(MessageParser.parseRoomList(payload) == nil)
     }
 
-    @Test("Mismatch: 5 room names but only 2 user counts uses min")
+    @Test("5 room names but only 2 user counts: remaining rooms default to 0")
     func testRoomListMismatchedCounts() {
         var payload = Data()
         payload.appendUInt32(5)
@@ -374,11 +374,13 @@ struct FailureTests {
 
         let result = MessageParser.parseRoomList(payload)
         #expect(result != nil)
-        #expect(result?.count == 2)
-        #expect(result?[0].name == "room1")
-        #expect(result?[0].userCount == 10)
-        #expect(result?[1].name == "room2")
-        #expect(result?[1].userCount == 20)
+        let rooms = result?.publicRooms ?? []
+        // All 5 rooms are returned; the last 3 get userCount = 0 because the
+        // counts array ran out (matching the inline handler's behaviour).
+        #expect(rooms.count == 5)
+        #expect(rooms[0] == MessageParser.RoomListEntry(name: "room1", userCount: 10))
+        #expect(rooms[1] == MessageParser.RoomListEntry(name: "room2", userCount: 20))
+        #expect(rooms[2].userCount == 0)
     }
 
     @Test("Room count = 0 returns empty array")
@@ -389,7 +391,7 @@ struct FailureTests {
 
         let result = MessageParser.parseRoomList(payload)
         #expect(result != nil)
-        #expect(result?.isEmpty == true)
+        #expect(result?.publicRooms.isEmpty == true)
     }
 
     @Test("Room name with length field pointing past end of data")
@@ -641,6 +643,25 @@ struct FailureTests {
         #expect(MessageParser.parseConnectToPeer(payload) == nil)
     }
 
+    @Test("ConnectToPeer happy path round-trips all fields")
+    func testConnectToPeerRoundTrip() {
+        var payload = Data()
+        payload.appendString("musicfan42")
+        payload.appendString("P")
+        payload.appendUInt32(0x0A0B0C0D) // 10.11.12.13
+        payload.appendUInt32(2234)
+        payload.appendUInt32(0xDEADBEEF)
+        payload.appendBool(true) // privileged
+
+        let info = MessageParser.parseConnectToPeer(payload)
+        #expect(info?.username == "musicfan42")
+        #expect(info?.connectionType == "P")
+        #expect(info?.ip == "10.11.12.13")
+        #expect(info?.port == 2234)
+        #expect(info?.token == 0xDEADBEEF)
+        #expect(info?.privileged == true)
+    }
+
     // MARK: - 8. Private Message Parsing Failures
 
     @Test("Private message with missing message ID")
@@ -666,18 +687,19 @@ struct FailureTests {
         #expect(MessageParser.parsePrivateMessage(payload) == nil)
     }
 
-    @Test("Private message with all fields but missing isAdmin byte defaults to false")
-    func testPrivateMessageNoAdminByte() {
+    @Test("Private message with missing new-message byte defaults to live (true)")
+    func testPrivateMessageNoNewMessageByte() {
         var payload = Data()
         payload.appendUInt32(1)
         payload.appendUInt32(1704067200)
         payload.appendString("sender")
         payload.appendString("Hello!")
-        // No isAdmin byte
+        // No trailing isNewMessage byte — spec doesn't require it server-side;
+        // absence means live delivery (the common case).
 
         let result = MessageParser.parsePrivateMessage(payload)
         #expect(result != nil)
-        #expect(result?.isAdmin == false)
+        #expect(result?.isNewMessage == true)
     }
 
     // MARK: - 9. Chat Room Message Parsing Failures
@@ -1281,6 +1303,7 @@ struct FailureTests {
         payload.appendUInt32(0) // unknown
         payload.appendUInt32(1000) // files
         payload.appendUInt32(20) // dirs
+        payload.appendString("DE") // country code (online/away only)
 
         let result = MessageParser.parseWatchUser(payload)
         #expect(result != nil)
@@ -1289,6 +1312,24 @@ struct FailureTests {
         #expect(result?.avgSpeed == 100)
         #expect(result?.files == 1000)
         #expect(result?.dirs == 20)
+        #expect(result?.countryCode == "DE")
+    }
+
+    @Test("WatchUser with offline status omits country code")
+    func testWatchUserOfflineNoCountry() {
+        var payload = Data()
+        payload.appendString("sleeper")
+        payload.appendBool(true)
+        payload.appendUInt32(0) // offline
+        payload.appendUInt32(0); payload.appendUInt32(0)
+        payload.appendUInt32(0) // unknown
+        payload.appendUInt32(0); payload.appendUInt32(0)
+        // No country code since offline.
+
+        let result = MessageParser.parseWatchUser(payload)
+        #expect(result?.exists == true)
+        #expect(result?.status == .offline)
+        #expect(result?.countryCode == nil)
     }
 
     // MARK: - 19. PossibleParents Parsing Failures
@@ -2565,10 +2606,10 @@ struct FailureTests {
 
         let result = MessageParser.parseRoomList(payload)
         #expect(result != nil)
-        #expect(result?.count == 0)
+        #expect(result?.publicRooms.count == 0)
     }
 
-    @Test("RoomList more rooms than user counts uses minimum")
+    @Test("RoomList more rooms than user counts: missing counts default to 0")
     func testRoomListMoreRoomsThanUserCounts() {
         var payload = Data()
         payload.appendUInt32(3)  // 3 rooms
@@ -2581,7 +2622,8 @@ struct FailureTests {
 
         let result = MessageParser.parseRoomList(payload)
         #expect(result != nil)
-        // Uses min(roomNames, userCounts) — should return 2
-        #expect(result?.count == 2)
+        // All 3 rooms returned; third one gets userCount = 0.
+        #expect(result?.publicRooms.count == 3)
+        #expect(result?.publicRooms[2].userCount == 0)
     }
 }

@@ -753,8 +753,8 @@ public final class PeerConnectionPool {
             logger.info("QueueUpload from \(peerUsername): \(filename)")
             eventContinuation.yield(.queueUpload(username: peerUsername, filename: filename, connection: connection))
 
-        case .transferResponse(let token, let allowed, let filesize):
-            eventContinuation.yield(.transferResponse(token: token, allowed: allowed, filesize: filesize, connection: connection))
+        case .transferResponse(let token, let allowed, let filesize, let reason):
+            eventContinuation.yield(.transferResponse(token: token, allowed: allowed, filesize: filesize, reason: reason, connection: connection))
 
         case .folderContentsRequest(let token, let folder):
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
@@ -777,6 +777,10 @@ public final class PeerConnectionPool {
         case .userInfoRequest:
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
             eventContinuation.yield(.userInfoRequest(username: peerUsername, connection: connection))
+
+        case .userInfoReply(let info):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            eventContinuation.yield(.userInfoReply(username: peerUsername, info: info))
 
         case .artworkRequest(let token, let filePath):
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username

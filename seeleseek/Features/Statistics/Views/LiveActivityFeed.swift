@@ -110,6 +110,7 @@ struct ActivityEventRow: View {
                 UserContextMenuItems(
                     username: username,
                     showAddBuddy: true,
+                    showBlock: true,
                     navigateOnBrowse: true,
                     navigateOnMessage: true
                 )

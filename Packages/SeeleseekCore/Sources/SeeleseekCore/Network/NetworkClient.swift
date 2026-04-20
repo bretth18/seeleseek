@@ -146,8 +146,8 @@ public final class NetworkClient {
         case .queueUpload(let username, let filename, let connection):
             Task { await onQueueUpload?(username, filename, connection) }
 
-        case .transferResponse(let token, let allowed, let filesize, let connection):
-            Task { await onTransferResponse?(token, allowed, filesize, connection) }
+        case .transferResponse(let token, let allowed, let filesize, let reason, let connection):
+            Task { await onTransferResponse?(token, allowed, filesize, reason, connection) }
 
         case .folderContentsRequest(let username, let token, let folder, let connection):
             Task { await handleFolderContentsRequest(username: username, token: token, folder: folder, connection: connection) }
@@ -169,6 +169,9 @@ public final class NetworkClient {
 
         case .userInfoRequest(let username, let connection):
             Task { await handleUserInfoRequest(username: username, connection: connection) }
+
+        case .userInfoReply(let username, let info):
+            handleUserInfoReplyEvent(username: username, info: info)
 
         case .artworkRequest(_, let token, let filePath, let connection):
             Task { await handleArtworkRequest(token: token, filePath: filePath, connection: connection) }
@@ -218,7 +221,7 @@ public final class NetworkClient {
     public var onUploadDenied: ((String, String) -> Void)?  // (filename, reason)
     public var onUploadFailed: ((String) -> Void)?  // filename
     public var onQueueUpload: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection) - peer wants to download from us
-    public var onTransferResponse: ((UInt32, Bool, UInt64?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, connection)
+    public var onTransferResponse: ((UInt32, Bool, UInt64?, String?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, reason?, connection)
     public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     public var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
     public var onTransferRequest: ((TransferRequest) -> Void)?  // Pool-level TransferRequest (for connections not directly managed by DownloadManager)
@@ -1748,6 +1751,139 @@ public final class NetworkClient {
         } catch {
             logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - User Info Fetching (outbound)
+
+    /// Session-long cache of parsed UserInfoReply data, keyed by username.
+    /// Populated whenever a reply arrives (either solicited via fetchUserInfo
+    /// or unsolicited from any peer connection).
+    private var userInfoReplyCache: [String: MessageParser.UserInfoReplyInfo] = [:]
+
+    /// In-flight fetch Tasks keyed by username, so concurrent callers for the
+    /// same user share one network round-trip.
+    private var userInfoInFlight: [String: Task<MessageParser.UserInfoReplyInfo, Error>] = [:]
+
+    /// Continuations awaiting a UserInfoReply from a specific peer. Resumed
+    /// when the pool event arrives or when the timeout task fires.
+    private var userInfoReplyContinuations: [String: CheckedContinuation<MessageParser.UserInfoReplyInfo, Error>] = [:]
+
+    /// Multi-listener handlers invoked for every incoming UserInfoReply
+    /// (solicited or unsolicited). App code should subscribe once per state.
+    private var userInfoReplyHandlers: [(String, MessageParser.UserInfoReplyInfo) -> Void] = []
+
+    /// Register a handler for incoming UserInfoReply events. Multiple handlers supported.
+    public func addUserInfoHandler(_ handler: @escaping (String, MessageParser.UserInfoReplyInfo) -> Void) {
+        userInfoReplyHandlers.append(handler)
+        logger.debug("NetworkClient: Added user info handler (total: \(self.userInfoReplyHandlers.count))")
+    }
+
+    /// Fetch user info (description, picture, upload stats) from a peer.
+    /// Establishes a P connection if one isn't already open, sends UserInfoRequest,
+    /// and awaits the reply. Results are cached for the session and concurrent
+    /// callers for the same user are coalesced into one round-trip.
+    @discardableResult
+    public func fetchUserInfo(from username: String) async throws -> MessageParser.UserInfoReplyInfo {
+        if let cached = userInfoReplyCache[username] {
+            return cached
+        }
+        if let inFlight = userInfoInFlight[username] {
+            return try await inFlight.value
+        }
+        let task = Task<MessageParser.UserInfoReplyInfo, Error> { [weak self] in
+            guard let self else { throw NetworkError.notConnected }
+            defer { self.userInfoInFlight[username] = nil }
+
+            let connection = try await self.establishPeerConnection(for: username)
+            try await connection.requestUserInfo()
+
+            // Wait for the reply via a per-user continuation, with a hard timeout.
+            return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<MessageParser.UserInfoReplyInfo, Error>) in
+                self.userInfoReplyContinuations[username] = cont
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(15))
+                    if let waiter = self?.userInfoReplyContinuations.removeValue(forKey: username) {
+                        waiter.resume(throwing: NetworkError.timeout)
+                    }
+                }
+            }
+        }
+        userInfoInFlight[username] = task
+        let info = try await task.value
+        userInfoReplyCache[username] = info
+        return info
+    }
+
+    /// Invalidate the cached user info for a user (next fetch will re-request).
+    public func invalidateUserInfoCache(for username: String) {
+        userInfoReplyCache.removeValue(forKey: username)
+    }
+
+    private func handleUserInfoReplyEvent(username: String, info: MessageParser.UserInfoReplyInfo) {
+        userInfoReplyCache[username] = info
+        if let cont = userInfoReplyContinuations.removeValue(forKey: username) {
+            cont.resume(returning: info)
+        }
+        for handler in userInfoReplyHandlers {
+            handler(username, info)
+        }
+    }
+
+    // MARK: - Peer Connection Establishment
+
+    /// Get an existing P peer connection to the user, or open a new one via the
+    /// standard ConnectToPeer + direct/indirect race flow used by browseUser.
+    /// Used by both browseUser and fetchUserInfo so the peer-connect dance lives
+    /// in one place.
+    private func establishPeerConnection(for username: String) async throws -> PeerConnection {
+        guard isConnected else {
+            throw NetworkError.notConnected
+        }
+
+        if let existing = await peerConnectionPool.getConnectionForUser(username) {
+            return existing
+        }
+
+        let token = UInt32.random(in: 0...UInt32.max)
+        registerPendingBrowse(token: token, username: username, timeout: 30)
+        await sendConnectToPeer(token: token, username: username, connectionType: "P")
+
+        let (ip, port) = try await getPeerAddress(for: username)
+
+        var connection: PeerConnection
+        var isIndirect = false
+        do {
+            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
+                group.addTask {
+                    let conn = try await self.peerConnectionPool.connect(
+                        to: username, ip: ip, port: port, token: token
+                    )
+                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                    return conn
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(10))
+                    throw NetworkError.timeout
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+            cancelPendingBrowse(token: token)
+        } catch {
+            if let staleConn = await peerConnectionPool.getConnectionForUser(username) {
+                await staleConn.disconnect()
+            }
+            connection = try await waitForPendingBrowse(token: token)
+            isIndirect = true
+        }
+
+        if isIndirect {
+            await connection.resumeReceivingForPeerConnection()
+        }
+
+        try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        return connection
     }
 
     // MARK: - SeeleSeek Artwork Request Handling

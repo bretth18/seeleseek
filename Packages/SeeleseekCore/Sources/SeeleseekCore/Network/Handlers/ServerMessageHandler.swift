@@ -186,198 +186,59 @@ public final class ServerMessageHandler {
     // MARK: - Message Handlers
 
     private func handleLogin(_ data: Data) {
-        var offset = 0
-
-        // Success byte
-        guard let success = data.readByte(at: offset) else {
-            logger.error("Failed to read login success byte")
+        guard let result = MessageParser.parseLoginResponse(data) else {
+            logger.error("Failed to parse login response")
             return
         }
-        offset += 1
 
-        logger.info("Login response: success=\(success)")
-
-        if success == 1 {
-            // Login successful
-            // Read greeting message
-            var greeting = ""
-            if let (greetingStr, bytesConsumed) = data.readString(at: offset) {
-                offset += bytesConsumed
-                greeting = greetingStr
-                logger.info("Login greeting: \(greeting)")
-            }
-
-            // Read IP address - this is critical for debugging
-            if let ip = data.readUInt32(at: offset) {
-                offset += 4
-                let ipStr = self.ipString(from: ip)
-                logger.info("Server reports our IP: \(ipStr)")
-                logger.info("Peers will connect to: \(ipStr):\(self.client?.listenPort ?? 0)")
-                logger.info("Server reports IP: \(ipStr)")
-            }
-
+        switch result {
+        case .success(let greeting, let ip, _):
+            logger.info("Login response: success")
+            logger.info("Login greeting: \(greeting)")
+            logger.info("Server reports our IP: \(ip)")
+            logger.info("Peers will connect to: \(ip):\(self.client?.listenPort ?? 0)")
             client?.setLoggedIn(true, message: greeting)
             ActivityLogger.shared?.logConnectionSuccess(username: client?.username ?? "unknown", server: "server.slsknet.org")
-        } else {
-            // Login failed - read reason
-            if let (reason, _) = data.readString(at: offset) {
-                logger.error("Login failed: \(reason)")
-                client?.setLoggedIn(false, message: reason)
-                ActivityLogger.shared?.logConnectionFailed(reason: reason)
-            } else {
-                logger.error("Login failed: Unknown error")
-                client?.setLoggedIn(false, message: "Unknown error")
-                ActivityLogger.shared?.logConnectionFailed(reason: "Unknown error")
-            }
+
+        case .failure(let reason):
+            logger.error("Login failed: \(reason)")
+            client?.setLoggedIn(false, message: reason)
+            ActivityLogger.shared?.logConnectionFailed(reason: reason)
         }
     }
 
     private func handleRoomList(_ data: Data) {
-        var offset = 0
-
-        // Parse public rooms: names then counts
-        let publicRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
-
-        // Parse owned private rooms: names then counts
-        let ownedPrivateRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
-            .map { ChatRoom(name: $0.name, users: $0.users, isPrivate: true) }
-
-        // Parse member-of private rooms: names then counts
-        let memberPrivateRooms = parseRoomNamesAndCounts(data: data, offset: &offset)
-            .map { ChatRoom(name: $0.name, users: $0.users, isPrivate: true) }
-
-        // Parse operated private room names (just names, no counts)
-        var operatedNames: [String] = []
-        if let opCount = data.readUInt32(at: offset) {
-            guard opCount <= maxItemCount else { return }
-            offset += 4
-            for _ in 0..<opCount {
-                guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
-                operatedNames.append(name)
-                offset += bytesConsumed
-            }
+        guard let info = MessageParser.parseRoomList(data) else {
+            logger.warning("Failed to parse RoomList")
+            return
         }
 
-        // Send full room list if handler exists, otherwise fall back to legacy
+        let publicRooms = info.publicRooms.map { chatRoom(from: $0) }
+        let ownedPrivate = info.ownedPrivate.map { chatRoom(from: $0, isPrivate: true) }
+        let memberPrivate = info.memberPrivate.map { chatRoom(from: $0, isPrivate: true) }
+
         if let fullHandler = client?.onRoomListFull {
-            fullHandler(publicRooms, ownedPrivateRooms, memberPrivateRooms, operatedNames)
+            fullHandler(publicRooms, ownedPrivate, memberPrivate, info.operatedPrivate)
         } else {
             client?.onRoomList?(publicRooms)
         }
     }
 
-    /// Parse a sequence of room names followed by their user counts
-    private func parseRoomNamesAndCounts(data: Data, offset: inout Int) -> [ChatRoom] {
-        guard let roomCount = data.readUInt32(at: offset) else { return [] }
-        guard roomCount <= maxItemCount else { return [] }
-        offset += 4
-
-        var roomNames: [String] = []
-        for _ in 0..<roomCount {
-            guard let (name, bytesConsumed) = data.readString(at: offset) else { break }
-            roomNames.append(name)
-            offset += bytesConsumed
-        }
-
-        guard let countCount = data.readUInt32(at: offset) else { return roomNames.map { ChatRoom(name: $0) } }
-        guard countCount <= maxItemCount else { return roomNames.map { ChatRoom(name: $0) } }
-        offset += 4
-
-        var userCounts: [UInt32] = []
-        for _ in 0..<countCount {
-            guard let count = data.readUInt32(at: offset) else { break }
-            userCounts.append(count)
-            offset += 4
-        }
-
-        return roomNames.enumerated().map { (index, name) in
-            let userCount = index < userCounts.count ? Int(userCounts[index]) : 0
-            let placeholderUsers = Array(repeating: "", count: userCount)
-            return ChatRoom(name: name, users: placeholderUsers)
-        }
+    /// ChatRoom only carries a name + users array; we surface user *count* by
+    /// seeding empty placeholder strings (the full user list arrives on
+    /// JoinRoom). Matches the previous legacy behaviour.
+    private func chatRoom(from entry: MessageParser.RoomListEntry, isPrivate: Bool = false) -> ChatRoom {
+        let placeholders = Array(repeating: "", count: Int(entry.userCount))
+        return ChatRoom(name: entry.name, users: placeholders, isPrivate: isPrivate)
     }
 
     private func handleJoinRoom(_ data: Data) {
-        var offset = 0
-
-        // Room name
-        guard let (roomName, bytesConsumed) = data.readString(at: offset) else { return }
-        offset += bytesConsumed
-
-        // Number of users
-        guard let userCount = data.readUInt32(at: offset) else { return }
-        guard userCount <= maxItemCount else { return }
-        offset += 4
-
-        // User names
-        var users: [String] = []
-        for _ in 0..<userCount {
-            guard let (username, userBytesConsumed) = data.readString(at: offset) else { break }
-            users.append(username)
-            offset += userBytesConsumed
+        guard let info = MessageParser.parseJoinRoom(data) else {
+            logger.warning("Failed to parse JoinRoom")
+            return
         }
-
-        // Skip statuses (uint32 per user)
-        if let statusCount = data.readUInt32(at: offset) {
-            guard statusCount <= maxItemCount else { return }
-            offset += 4
-            let bytesToSkip = Int(statusCount) * 4
-            guard offset + bytesToSkip <= data.count else { return }
-            offset += bytesToSkip
-        }
-
-        // Skip user stats (avgspeed uint32, uploadnum uint64, files uint32, dirs uint32 = 20 bytes per user)
-        if let statsCount = data.readUInt32(at: offset) {
-            guard statsCount <= maxItemCount else { return }
-            offset += 4
-            let bytesToSkip = Int(statsCount) * 20
-            guard offset + bytesToSkip <= data.count else { return }
-            offset += bytesToSkip
-        }
-
-        // Skip slotsfull (uint32 per user)
-        if let slotsCount = data.readUInt32(at: offset) {
-            guard slotsCount <= maxItemCount else { return }
-            offset += 4
-            let bytesToSkip = Int(slotsCount) * 4
-            guard offset + bytesToSkip <= data.count else { return }
-            offset += bytesToSkip
-        }
-
-        // Skip countries (string per user)
-        if let countryCount = data.readUInt32(at: offset) {
-            guard countryCount <= maxItemCount else { return }
-            offset += 4
-            for _ in 0..<countryCount {
-                guard let (_, countryLen) = data.readString(at: offset) else { break }
-                offset += countryLen
-            }
-        }
-
-        // Private room data (if present at end)
-        var owner: String? = nil
-        var operators: [String] = []
-
-        if offset < data.count {
-            if let (ownerName, ownerLen) = data.readString(at: offset) {
-                owner = ownerName.isEmpty ? nil : ownerName
-                offset += ownerLen
-
-                // Operator count + names
-                if let opCount = data.readUInt32(at: offset) {
-                    guard opCount <= maxItemCount else { return }
-                    offset += 4
-                    for _ in 0..<opCount {
-                        guard let (opName, opLen) = data.readString(at: offset) else { break }
-                        operators.append(opName)
-                        offset += opLen
-                    }
-                }
-            }
-        }
-
-        client?.onRoomJoined?(roomName, users, owner, operators)
-        ActivityLogger.shared?.logRoomJoined(room: roomName, userCount: users.count)
+        client?.onRoomJoined?(info.roomName, info.users, info.owner, info.operators)
+        ActivityLogger.shared?.logRoomJoined(room: info.roomName, userCount: info.users.count)
     }
 
     private func handleLeaveRoom(_ data: Data) {
@@ -387,23 +248,13 @@ public final class ServerMessageHandler {
     }
 
     private func handleSayInRoom(_ data: Data) {
-        var offset = 0
-
-        guard let (roomName, roomBytes) = data.readString(at: offset) else { return }
-        offset += roomBytes
-
-        guard let (username, userBytes) = data.readString(at: offset) else { return }
-        offset += userBytes
-
-        guard let (message, _) = data.readString(at: offset) else { return }
-
+        guard let info = MessageParser.parseSayInChatRoom(data) else { return }
         let chatMessage = ChatMessage(
-            username: username,
-            content: message,
-            isOwn: username == client?.username
+            username: info.username,
+            content: info.message,
+            isOwn: info.username == client?.username
         )
-
-        client?.onRoomMessage?(roomName, chatMessage)
+        client?.onRoomMessage?(info.roomName, chatMessage)
     }
 
     private func handleUserJoinedRoom(_ data: Data) {
@@ -429,41 +280,23 @@ public final class ServerMessageHandler {
     }
 
     private func handlePrivateMessage(_ data: Data) {
-        var offset = 0
-
-        // Message ID
-        guard let messageId = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        // Timestamp
-        guard let timestamp = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
-        offset += bytesConsumed
-
-        guard let (message, messageLen) = data.readString(at: offset) else { return }
-        offset += messageLen
-
-        // isNewMessage: true = real-time message, false = offline/buffered message
-        let isNewMessage = data.readBool(at: offset) ?? true
+        guard let info = MessageParser.parsePrivateMessage(data) else { return }
 
         let chatMessage = ChatMessage(
             id: UUID(),
-            messageId: messageId,
-            timestamp: Date(timeIntervalSince1970: TimeInterval(timestamp)),
-            username: username,
-            content: message,
+            messageId: info.id,
+            timestamp: Date(timeIntervalSince1970: TimeInterval(info.timestamp)),
+            username: info.username,
+            content: info.message,
             isSystem: false,
             isOwn: false,
-            isNewMessage: isNewMessage
+            isNewMessage: info.isNewMessage
         )
 
-        client?.onPrivateMessage?(username, chatMessage)
+        client?.onPrivateMessage?(info.username, chatMessage)
 
-        // Send acknowledgment
         Task {
-            await acknowledgePrivateMessage(messageId)
+            await acknowledgePrivateMessage(info.id)
         }
     }
 
@@ -492,67 +325,39 @@ public final class ServerMessageHandler {
     }
 
     private func handleWatchUser(_ data: Data) {
-        var offset = 0
+        guard let info = MessageParser.parseWatchUser(data) else { return }
 
-        guard let (username, usernameLen) = data.readString(at: offset) else { return }
-        offset += usernameLen
-
-        guard let exists = data.readBool(at: offset) else { return }
-        offset += 1
-
-        guard exists else {
-            // User does not exist; treat as offline and not privileged.
+        guard info.exists else {
             Task { @MainActor in
-                self.client?.handleUserStatusResponse(username: username, status: .offline, privileged: false)
+                self.client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: false)
             }
             return
         }
 
-        guard let statusRaw = data.readUInt32(at: offset) else { return }
-        offset += 4
-        guard let avgSpeed = data.readUInt32(at: offset) else { return }
-        offset += 4
-        guard let uploadNum = data.readUInt32(at: offset) else { return }
-        offset += 4
-        guard data.readUInt32(at: offset) != nil else { return }  // Unknown field per protocol
-        offset += 4
-        guard let files = data.readUInt32(at: offset) else { return }
-        offset += 4
-        guard let dirs = data.readUInt32(at: offset) else { return }
-        offset += 4
+        let status = info.status ?? .offline
+        let avgSpeed = info.avgSpeed ?? 0
+        let uploadNum = info.uploadNum ?? 0
+        let files = info.files ?? 0
+        let dirs = info.dirs ?? 0
 
-        let status = UserStatus(rawValue: statusRaw) ?? .offline
-
-        // Initial watch response includes status + stats; status updates continue via code 7.
         Task { @MainActor in
-            self.client?.handleUserStatusResponse(username: username, status: status, privileged: false)
-            self.client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
+            self.client?.handleUserStatusResponse(username: info.username, status: status, privileged: false)
+            self.client?.dispatchUserStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
         }
 
-        if status == .away || status == .online, let (countryCode, _) = data.readString(at: offset) {
-            logger.debug("WatchUser country for \(username): \(countryCode)")
+        if let country = info.countryCode {
+            logger.debug("WatchUser country for \(info.username): \(country)")
+            // Seed the geoip cache so the flag lights up immediately instead of
+            // round-tripping through an IP → country lookup.
+            client?.userInfoCache.seedCountry(country, for: info.username)
         }
     }
 
     private func handleGetUserStatus(_ data: Data) {
-        var offset = 0
-
-        guard let (username, bytesConsumed) = data.readString(at: offset) else { return }
-        offset += bytesConsumed
-
-        guard let statusRaw = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        // Read privileged flag if present
-        let privileged = data.readUInt8(at: offset).map { $0 != 0 } ?? false
-
-        let status = UserStatus(rawValue: statusRaw) ?? .offline
-
-        logger.info("User \(username) status: \(status.description), privileged: \(privileged)")
-
-        // Dispatch to handler (handles both pending status checks and external callback)
+        guard let info = MessageParser.parseGetUserStatus(data) else { return }
+        logger.info("User \(info.username) status: \(info.status.description), privileged: \(info.privileged)")
         Task { @MainActor in
-            self.client?.handleUserStatusResponse(username: username, status: status, privileged: privileged)
+            self.client?.handleUserStatusResponse(username: info.username, status: info.status, privileged: info.privileged)
         }
     }
 
@@ -568,34 +373,15 @@ public final class ServerMessageHandler {
     private var isProcessingQueue = false
 
     private func handleConnectToPeer(_ data: Data) {
-        var offset = 0
+        guard let info = MessageParser.parseConnectToPeer(data) else { return }
 
-        guard let (username, usernameLen) = data.readString(at: offset) else {
-            return
-        }
-        offset += usernameLen
-
-        guard let (connectionType, typeLen) = data.readString(at: offset) else {
-            return
-        }
-        offset += typeLen
-
-        guard let ip = data.readUInt32(at: offset) else {
-            return
-        }
-        offset += 4
-
-        guard let port = data.readUInt32(at: offset) else {
-            return
-        }
-        offset += 4
-
-        guard let token = data.readUInt32(at: offset) else {
-            return
-        }
+        let username = info.username
+        let ipAddress = info.ip
+        let port = info.port
+        let token = info.token
+        let connectionType = info.connectionType
 
         connectToPeerCount += 1
-        let ipAddress = ipString(from: ip)
 
         // Update the pool's counter for diagnostics UI
         client?.peerConnectionPool.incrementConnectToPeerCount()
@@ -728,29 +514,13 @@ public final class ServerMessageHandler {
     // MARK: - Distributed Network Handlers
 
     private func handlePossibleParents(_ data: Data) {
-        var offset = 0
+        guard let parsed = MessageParser.parsePossibleParents(data) else { return }
 
-        guard let parentCount = data.readUInt32(at: offset) else { return }
-        guard parentCount <= maxItemCount else { return }
-        offset += 4
+        logger.info("Received \(parsed.count) possible distributed parents")
 
-        logger.info("Received \(parentCount) possible distributed parents")
-
-        var parents: [(username: String, ip: String, port: Int)] = []
-
-        for i in 0..<parentCount {
-            guard let (username, usernameLen) = data.readString(at: offset) else { break }
-            offset += usernameLen
-
-            guard let ip = data.readUInt32(at: offset) else { break }
-            offset += 4
-
-            guard let port = data.readUInt32(at: offset) else { break }
-            offset += 4
-
-            let ipStr = ipString(from: ip)
-            parents.append((username: username, ip: ipStr, port: Int(port)))
-            logger.debug("Parent \(i+1): \(username) at \(ipStr):\(port)")
+        let parents: [(username: String, ip: String, port: Int)] = parsed.enumerated().map { i, p in
+            logger.debug("Parent \(i+1): \(p.username) at \(p.ip):\(p.port)")
+            return (username: p.username, ip: p.ip, port: Int(p.port))
         }
 
         // Skip if we already have a parent
@@ -939,22 +709,11 @@ public final class ServerMessageHandler {
     }
 
     private func handleDistributedSearch(_ data: Data) {
-        var offset = 0
-
-        // uint32 unknown
-        guard let unknown = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        // string username (who is searching)
-        guard let (username, usernameLen) = data.readString(at: offset) else { return }
-        offset += usernameLen
-
-        // uint32 token
-        guard let token = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        // string query
-        guard let (query, _) = data.readString(at: offset) else { return }
+        guard let info = MessageParser.parseDistributedSearch(data) else { return }
+        let unknown = info.unknown
+        let username = info.username
+        let token = info.token
+        let query = info.query
 
         logger.debug("Distributed search from \(username): '\(query)' token=\(token)")
 
@@ -1119,19 +878,7 @@ public final class ServerMessageHandler {
     // MARK: - Excluded Search Phrases
 
     private func handleExcludedSearchPhrases(_ data: Data) {
-        var offset = 0
-
-        guard let count = data.readUInt32(at: offset) else { return }
-        guard count <= maxItemCount else { return }
-        offset += 4
-
-        var phrases: [String] = []
-        for _ in 0..<count {
-            guard let (phrase, phraseLen) = data.readString(at: offset) else { break }
-            phrases.append(phrase)
-            offset += phraseLen
-        }
-
+        guard let phrases = MessageParser.parseExcludedSearchPhrases(data) else { return }
         logger.info("Received \(phrases.count) excluded search phrases")
         client?.onExcludedSearchPhrases?(phrases)
     }
@@ -1182,125 +929,30 @@ public final class ServerMessageHandler {
     // MARK: - User Interests & Recommendations
 
     private func handleRecommendations(_ data: Data) {
-        var offset = 0
-
-        // Recommendations
-        guard let recCount = data.readUInt32(at: offset) else { return }
-        guard recCount <= maxItemCount else { return }
-        offset += 4
-
-        var recommendations: [(item: String, score: Int32)] = []
-        for _ in 0..<recCount {
-            guard let (item, itemLen) = data.readString(at: offset) else { break }
-            offset += itemLen
-            guard let score = data.readInt32(at: offset) else { break }
-            offset += 4
-            recommendations.append((item, score))
-        }
-
-        // Unrecommendations
-        guard let unrecCount = data.readUInt32(at: offset) else { return }
-        guard unrecCount <= maxItemCount else { return }
-        offset += 4
-
-        var unrecommendations: [(item: String, score: Int32)] = []
-        for _ in 0..<unrecCount {
-            guard let (item, itemLen) = data.readString(at: offset) else { break }
-            offset += itemLen
-            guard let score = data.readInt32(at: offset) else { break }
-            offset += 4
-            unrecommendations.append((item, score))
-        }
-
+        guard let info = MessageParser.parseRecommendations(data) else { return }
+        let recommendations = info.recommendations.map { (item: $0.item, score: $0.score) }
+        let unrecommendations = info.unrecommendations.map { (item: $0.item, score: $0.score) }
         logger.info("Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
         client?.onRecommendations?(recommendations, unrecommendations)
     }
 
     private func handleGlobalRecommendations(_ data: Data) {
-        var offset = 0
-
-        // Global recommendations (same format as personal recommendations)
-        guard let recCount = data.readUInt32(at: offset) else { return }
-        guard recCount <= maxItemCount else { return }
-        offset += 4
-
-        var recommendations: [(item: String, score: Int32)] = []
-        for _ in 0..<recCount {
-            guard let (item, itemLen) = data.readString(at: offset) else { break }
-            offset += itemLen
-            guard let score = data.readInt32(at: offset) else { break }
-            offset += 4
-            recommendations.append((item, score))
-        }
-
-        // Unrecommendations
-        guard let unrecCount = data.readUInt32(at: offset) else { return }
-        guard unrecCount <= maxItemCount else { return }
-        offset += 4
-
-        var unrecommendations: [(item: String, score: Int32)] = []
-        for _ in 0..<unrecCount {
-            guard let (item, itemLen) = data.readString(at: offset) else { break }
-            offset += itemLen
-            guard let score = data.readInt32(at: offset) else { break }
-            offset += 4
-            unrecommendations.append((item, score))
-        }
-
+        guard let info = MessageParser.parseRecommendations(data) else { return }
+        let recommendations = info.recommendations.map { (item: $0.item, score: $0.score) }
+        let unrecommendations = info.unrecommendations.map { (item: $0.item, score: $0.score) }
         logger.info("Global Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
         client?.onGlobalRecommendations?(recommendations, unrecommendations)
     }
 
     private func handleUserInterests(_ data: Data) {
-        var offset = 0
-
-        guard let (username, usernameLen) = data.readString(at: offset) else { return }
-        offset += usernameLen
-
-        // Liked interests
-        guard let likedCount = data.readUInt32(at: offset) else { return }
-        guard likedCount <= maxItemCount else { return }
-        offset += 4
-
-        var likes: [String] = []
-        for _ in 0..<likedCount {
-            guard let (interest, interestLen) = data.readString(at: offset) else { break }
-            likes.append(interest)
-            offset += interestLen
-        }
-
-        // Hated interests
-        guard let hatedCount = data.readUInt32(at: offset) else { return }
-        guard hatedCount <= maxItemCount else { return }
-        offset += 4
-
-        var hates: [String] = []
-        for _ in 0..<hatedCount {
-            guard let (interest, interestLen) = data.readString(at: offset) else { break }
-            hates.append(interest)
-            offset += interestLen
-        }
-
-        logger.info("User \(username) interests - likes: \(likes.count), hates: \(hates.count)")
-        client?.onUserInterests?(username, likes, hates)
+        guard let info = MessageParser.parseUserInterests(data) else { return }
+        logger.info("User \(info.username) interests - likes: \(info.likes.count), hates: \(info.hates.count)")
+        client?.onUserInterests?(info.username, info.likes, info.hates)
     }
 
     private func handleSimilarUsers(_ data: Data) {
-        var offset = 0
-
-        guard let userCount = data.readUInt32(at: offset) else { return }
-        guard userCount <= maxItemCount else { return }
-        offset += 4
-
-        var users: [(username: String, rating: UInt32)] = []
-        for _ in 0..<userCount {
-            guard let (username, usernameLen) = data.readString(at: offset) else { break }
-            offset += usernameLen
-            guard let rating = data.readUInt32(at: offset) else { break }
-            offset += 4
-            users.append((username, rating))
-        }
-
+        guard let parsed = MessageParser.parseSimilarUsers(data) else { return }
+        let users = parsed.map { (username: $0.username, rating: $0.rating) }
         logger.info("Similar users: \(users.count)")
         client?.onSimilarUsers?(users)
     }
@@ -1352,27 +1004,9 @@ public final class ServerMessageHandler {
     // MARK: - User Stats & Privileges
 
     private func handleGetUserStats(_ data: Data) {
-        var offset = 0
-
-        guard let (username, usernameLen) = data.readString(at: offset) else { return }
-        offset += usernameLen
-
-        guard let avgSpeed = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let uploadNum = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        // uint32 unknown (skip)
-        offset += 4
-
-        guard let files = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let dirs = data.readUInt32(at: offset) else { return }
-
-        logger.info("User stats for \(username): speed=\(avgSpeed), uploads=\(uploadNum), files=\(files), dirs=\(dirs)")
-        client?.dispatchUserStats(username: username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
+        guard let info = MessageParser.parseGetUserStats(data) else { return }
+        logger.info("User stats for \(info.username): speed=\(info.avgSpeed), uploads=\(info.uploadNum), files=\(info.files), dirs=\(info.dirs)")
+        client?.dispatchUserStats(username: info.username, avgSpeed: info.avgSpeed, uploadNum: UInt64(info.uploadNum), files: info.files, dirs: info.dirs)
     }
 
     private func handleCheckPrivileges(_ data: Data) {
@@ -1414,26 +1048,10 @@ public final class ServerMessageHandler {
     // MARK: - Room Tickers
 
     private func handleRoomTickerState(_ data: Data) {
-        var offset = 0
-
-        guard let (room, roomLen) = data.readString(at: offset) else { return }
-        offset += roomLen
-
-        guard let tickerCount = data.readUInt32(at: offset) else { return }
-        guard tickerCount <= maxItemCount else { return }
-        offset += 4
-
-        var tickers: [(username: String, ticker: String)] = []
-        for _ in 0..<tickerCount {
-            guard let (username, usernameLen) = data.readString(at: offset) else { break }
-            offset += usernameLen
-            guard let (ticker, tickerLen) = data.readString(at: offset) else { break }
-            offset += tickerLen
-            tickers.append((username, ticker))
-        }
-
-        logger.info("Room ticker state for \(room): \(tickers.count) tickers")
-        client?.onRoomTickerState?(room, tickers)
+        guard let info = MessageParser.parseRoomTickerState(data) else { return }
+        let tickers = info.tickers.map { (username: $0.username, ticker: $0.ticker) }
+        logger.info("Room ticker state for \(info.room): \(tickers.count) tickers")
+        client?.onRoomTickerState?(info.room, tickers)
     }
 
     private func handleRoomTickerAdd(_ data: Data) {
@@ -1474,24 +1092,9 @@ public final class ServerMessageHandler {
     // MARK: - Private Rooms
 
     private func handlePrivateRoomMembers(_ data: Data) {
-        var offset = 0
-
-        guard let (room, roomLen) = data.readString(at: offset) else { return }
-        offset += roomLen
-
-        guard let memberCount = data.readUInt32(at: offset) else { return }
-        guard memberCount <= maxItemCount else { return }
-        offset += 4
-
-        var members: [String] = []
-        for _ in 0..<memberCount {
-            guard let (username, usernameLen) = data.readString(at: offset) else { break }
-            members.append(username)
-            offset += usernameLen
-        }
-
-        logger.info("Private room \(room) members: \(members.count)")
-        client?.onPrivateRoomMembers?(room, members)
+        guard let info = MessageParser.parseRoomMembers(data) else { return }
+        logger.info("Private room \(info.room) members: \(info.members.count)")
+        client?.onPrivateRoomMembers?(info.room, info.members)
     }
 
     private func handlePrivateRoomAddMember(_ data: Data) {
@@ -1531,24 +1134,9 @@ public final class ServerMessageHandler {
     }
 
     private func handlePrivateRoomOperators(_ data: Data) {
-        var offset = 0
-
-        guard let (room, roomLen) = data.readString(at: offset) else { return }
-        offset += roomLen
-
-        guard let operatorCount = data.readUInt32(at: offset) else { return }
-        guard operatorCount <= maxItemCount else { return }
-        offset += 4
-
-        var operators: [String] = []
-        for _ in 0..<operatorCount {
-            guard let (username, usernameLen) = data.readString(at: offset) else { break }
-            operators.append(username)
-            offset += usernameLen
-        }
-
-        logger.info("Private room \(room) operators: \(operators.count)")
-        client?.onPrivateRoomOperators?(room, operators)
+        guard let info = MessageParser.parseRoomMembers(data) else { return }
+        logger.info("Private room \(info.room) operators: \(info.members.count)")
+        client?.onPrivateRoomOperators?(info.room, info.members)
     }
 
     private func handleCantConnectToPeer(_ data: Data) {

@@ -106,11 +106,11 @@ public final class UploadManager {
         }
 
         // Set up callback for TransferResponse (peer accepted/rejected our upload offer)
-        networkClient.onTransferResponse = { [weak self] token, allowed, filesize, connection in
+        networkClient.onTransferResponse = { [weak self] token, allowed, _, reason, connection in
             guard let self else { return }
             _ = await MainActor.run {
                 Task {
-                    await self.handleTransferResponse(token: token, allowed: allowed, connection: connection)
+                    await self.handleTransferResponse(token: token, allowed: allowed, reason: reason, connection: connection)
                 }
             }
         }
@@ -405,17 +405,18 @@ public final class UploadManager {
     }
 
     /// Handle TransferResponse from peer (they accepted or rejected our upload offer)
-    private func handleTransferResponse(token: UInt32, allowed: Bool, connection: PeerConnection) async {
+    private func handleTransferResponse(token: UInt32, allowed: Bool, reason: String?, connection: PeerConnection) async {
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.debug("No pending upload for token \(token)")
             return
         }
 
         if !allowed {
-            logger.warning("Peer rejected upload for \(pending.filename)")
+            let detail = reason ?? "Peer rejected transfer"
+            logger.warning("Peer rejected upload for \(pending.filename): \(detail)")
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
-                t.error = "Peer rejected transfer"
+                t.error = detail
             }
             return
         }
