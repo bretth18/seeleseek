@@ -430,7 +430,14 @@ struct PrivacySettingsSection: View {
 
                     Spacer()
                 }
-                .background(socialState.leechSettings.action == action ? SeeleColors.accent.opacity(0.1) : .clear)
+                .padding(.horizontal, SeeleSpacing.xs)
+                .padding(.vertical, SeeleSpacing.rowVertical)
+                .background(socialState.leechSettings.action == action ? SeeleColors.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous)
+                        .stroke(socialState.leechSettings.action == action ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
+                )
             }
         }
         .buttonStyle(.plain)

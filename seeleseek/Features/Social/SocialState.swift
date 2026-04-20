@@ -4,12 +4,25 @@ import SeeleseekCore
 
 @Observable
 @MainActor
-final class SocialState {
+final class SocialState: PeerWatching {
     // MARK: - Buddy List
     var buddies: [Buddy] = []
     var selectedBuddy: String?
     var buddySearchQuery: String = ""
     var showAddBuddySheet = false
+
+    // MARK: - Peer Status (live status for any watched user, buddy or not)
+    /// Single source of truth for `peerStatus(for:)`. Holds the last-known
+    /// status for every peer the app is currently watching, plus every
+    /// buddy (seeded from the persisted buddy list on load and on add).
+    /// `buddies[i].status` is a per-row mirror used by the buddy-list
+    /// views (sorting, filtering, persistence) — both fields are written
+    /// from the same MainActor handler so they cannot diverge.
+    private(set) var peerStatuses: [String: BuddyStatus] = [:]
+    /// Reference count per peer — the app may watch a peer because of a
+    /// queued download *and* an upload simultaneously. We unwatch only
+    /// when the last subscriber releases.
+    private var peerWatchRefCounts: [String: Int] = [:]
 
     // MARK: - Blocklist
     var blockedUsers: [BlockedUser] = []
@@ -92,6 +105,93 @@ final class SocialState {
         detectedLeeches.contains(username)
     }
 
+    // MARK: - Peer Status
+
+    /// Last known status for `username`, if the app has received one.
+    /// Reads only from `peerStatuses` — buddies are seeded into the cache
+    /// on load/add (and preserved across `unwatchPeer` for buddies), so
+    /// no fallback to the buddy list is needed.
+    func peerStatus(for username: String) -> BuddyStatus? {
+        peerStatuses[username]
+    }
+
+    /// Begin watching `username` for live status updates. Ref-counted —
+    /// callers must pair each call with `unwatchPeer`. Buddies don't need
+    /// `watchUser` (the server auto-pushes), but we still issue an
+    /// explicit `getUserStatus` to pull a fresh reading into the cache.
+    func watchPeer(_ username: String) {
+        guard !username.isEmpty else { return }
+        let count = (peerWatchRefCounts[username] ?? 0) + 1
+        peerWatchRefCounts[username] = count
+        guard count == 1 else { return }   // already subscribed
+        let isBuddy = buddies.contains(where: { $0.username == username })
+        Task { [weak self] in
+            guard let self, let client = self.networkClient else { return }
+            do {
+                if !isBuddy {
+                    try await client.watchUser(username)
+                }
+                // Pull a status immediately rather than waiting for the
+                // server to push one — ensures rows for failed persisted
+                // transfers reflect offline state as soon as we connect.
+                try await client.getUserStatus(username)
+            } catch {
+                self.logger.error("watchPeer(\(username)) failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Re-send `watchUser` + `getUserStatus` for every currently-held
+    /// peer subscription. Call this when the server connection has just
+    /// come up: earlier subscribe attempts made while disconnected
+    /// silently fail, and the server doesn't remember them across
+    /// reconnects.
+    func resubscribeWatchedPeers() {
+        let peers = Array(peerWatchRefCounts.keys)
+        guard !peers.isEmpty else { return }
+        Task { [weak self] in
+            guard let self, let client = self.networkClient else { return }
+            for peer in peers {
+                let isBuddy = self.buddies.contains(where: { $0.username == peer })
+                do {
+                    if !isBuddy {
+                        try await client.watchUser(peer)
+                    }
+                    try await client.getUserStatus(peer)
+                } catch {
+                    self.logger.error("resubscribeWatchedPeers(\(peer)) failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Release one watch on `username`. When the refcount hits zero the
+    /// server subscription is torn down. For buddies we keep the
+    /// `peerStatuses` entry around (it's seeded from the buddy list and
+    /// kept fresh by the auto-pushed buddy status updates) so the buddy's
+    /// row still shows a status after the last transfer goes away.
+    func unwatchPeer(_ username: String) {
+        guard !username.isEmpty else { return }
+        let count = (peerWatchRefCounts[username] ?? 0) - 1
+        if count <= 0 {
+            peerWatchRefCounts.removeValue(forKey: username)
+            let isBuddy = buddies.contains(where: { $0.username == username })
+            if !isBuddy {
+                peerStatuses.removeValue(forKey: username)
+                Task { [weak self] in
+                    guard let self, let client = self.networkClient else { return }
+                    do {
+                        try await client.unwatchUser(username)
+                    } catch {
+                        self.logger.error("unwatchPeer(\(username)) failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        } else {
+            peerWatchRefCounts[username] = count
+        }
+    }
+
     // MARK: - Setup
 
     func setupCallbacks(client: NetworkClient) {
@@ -101,10 +201,13 @@ final class SocialState {
         // User status updates (for watched users / buddies)
         client.addUserStatusHandler { [weak self] username, status, privileged in
             guard let self else { return }
+            let buddyStatus = BuddyStatus(from: status)
+            // Record live status for any watched peer (buddy or not)
+            self.peerStatuses[username] = buddyStatus
             self.updateBuddyStatus(username: username, status: status, privileged: privileged)
             // Also update viewing profile if this is the user we're looking at
             if self.viewingProfile?.username == username {
-                self.viewingProfile?.status = BuddyStatus(from: status)
+                self.viewingProfile?.status = buddyStatus
                 self.viewingProfile?.isPrivileged = privileged
             }
         }
@@ -166,6 +269,14 @@ final class SocialState {
             self?.privilegeTimeRemaining = timeLeft
         }
 
+        // Country-code resolutions: persist on the buddy record so the
+        // flag is available immediately on next launch (otherwise the
+        // GeoIP lookup has to run again the next time we hear the
+        // peer's IP). Also keeps the currently-viewed profile in sync.
+        client.userInfoCache.onCountryResolved = { [weak self] username, code in
+            self?.handleCountryResolved(username: username, countryCode: code)
+        }
+
         // Provide profile data for UserInfoResponse
         client.profileDataProvider = { [weak self] in
             let desc = self?.myDescription ?? ""
@@ -187,6 +298,21 @@ final class SocialState {
         do {
             // Load buddies from database
             buddies = try await SocialRepository.fetchBuddies()
+            // Seed peerStatuses with each buddy's persisted last-known
+            // status so `peerStatus(for:)` returns something for buddies
+            // before the first live status message arrives.
+            //
+            // Same idea for the country flag: push each buddy's
+            // persisted countryCode into the live UserInfoCache so all
+            // the row-level views (which read from the cache) light up
+            // immediately on launch instead of waiting for a fresh
+            // PeerAddress message to come in.
+            for buddy in buddies {
+                peerStatuses[buddy.username] = buddy.status
+                if let code = buddy.countryCode {
+                    networkClient?.userInfoCache.seedCountry(code, for: buddy.username)
+                }
+            }
             logger.info("Loaded \(self.buddies.count) buddies from database")
 
             // Load blocked users
@@ -242,6 +368,10 @@ final class SocialState {
 
         let buddy = Buddy(username: username)
         buddies.append(buddy)
+        // Seed the live cache so `peerStatus(for:)` returns something
+        // immediately; the watch/getUserStatus calls below will replace
+        // this with the real status as soon as the server responds.
+        peerStatuses[username] = buddy.status
 
         // Persist to database
         Task {
@@ -267,6 +397,12 @@ final class SocialState {
 
     func removeBuddy(_ username: String) async {
         buddies.removeAll { $0.username == username }
+        // Drop the seeded live-cache entry too — but only if no transfer
+        // is still holding a watch on this peer (otherwise the row's
+        // status indicator would go blank).
+        if peerWatchRefCounts[username] == nil {
+            peerStatuses.removeValue(forKey: username)
+        }
 
         // Remove from database
         Task {
@@ -318,6 +454,28 @@ final class SocialState {
             } catch {
                 logger.error("Failed to update buddy status in database: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Persist a freshly-resolved country code on the buddy record (if
+    /// the user is a buddy) and surface it on the currently-viewed
+    /// profile. Idempotent — does nothing when the value hasn't actually
+    /// changed, so we don't churn the DB on repeat resolutions.
+    private func handleCountryResolved(username: String, countryCode: String) {
+        if let index = buddies.firstIndex(where: { $0.username == username }),
+           buddies[index].countryCode != countryCode {
+            buddies[index].countryCode = countryCode
+            let snapshot = buddies[index]
+            Task {
+                do {
+                    try await SocialRepository.saveBuddy(snapshot)
+                } catch {
+                    logger.error("Failed to persist country for \(username): \(error.localizedDescription)")
+                }
+            }
+        }
+        if viewingProfile?.username == username {
+            viewingProfile?.countryCode = countryCode
         }
     }
 

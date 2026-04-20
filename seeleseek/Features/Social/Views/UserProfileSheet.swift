@@ -74,8 +74,8 @@ struct UserProfileSheet: View {
                             .foregroundStyle(SeeleColors.warning)
                     }
 
-                    if let code = profile.countryCode {
-                        Text(countryFlag(for: code))
+                    if let flag = resolvedCountryFlag {
+                        Text(flag)
                             .font(.system(size: SeeleSpacing.iconSize))
                     }
                 }
@@ -311,6 +311,17 @@ struct UserProfileSheet: View {
 
     private func countryFlag(for code: String) -> String {
         CountryFormatter.flag(for: code)
+    }
+
+    /// Live-best country flag for the profile's user. Prefers the
+    /// app-wide `UserInfoCache` (GeoIP-resolved from peer IPs — the
+    /// same source rows use, so the sheet never lags behind a row),
+    /// falls back to the persisted `profile.countryCode`. Returns nil
+    /// when neither source has resolved a country.
+    private var resolvedCountryFlag: String? {
+        let live = appState.networkClient.userInfoCache.flag(for: profile.username)
+        if !live.isEmpty { return live }
+        return profile.countryCode.map { CountryFormatter.flag(for: $0) }
     }
 }
 

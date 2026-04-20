@@ -35,7 +35,7 @@ enum DemoDataSeeder {
             "aphex twin selected ambient works"
         ]
 
-        var query = SearchQuery(
+        let query = SearchQuery(
             id: UUID(),
             query: "computer data healing flac",
             token: 0xDEAD_BEEF,
@@ -47,7 +47,7 @@ enum DemoDataSeeder {
         state.selectedSearchIndex = 0
         state.searchQuery = query.query
 
-        var second = SearchQuery(
+        let second = SearchQuery(
             id: UUID(),
             query: "radiohead ok computer",
             token: 0xCAFE_BABE,

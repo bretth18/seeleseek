@@ -19,6 +19,12 @@ public final class UserInfoCache {
     // GeoIP service
     private let geoIP = GeoIPService()
 
+    /// Fires whenever a country code is newly resolved (or seeded) for a
+    /// username. Lets app-layer state (e.g. SocialState) persist the
+    /// value alongside the buddy record so it survives a restart instead
+    /// of having to re-resolve the IP on every launch.
+    public var onCountryResolved: ((String, String) -> Void)?
+
     /// Register an IP address for a user (will trigger async country lookup)
     public func registerIP(_ ip: String, for username: String) {
         guard !ip.isEmpty, !username.isEmpty else { return }
@@ -40,12 +46,32 @@ public final class UserInfoCache {
                     self.countries[username] = countryCode
                     self.pendingLookups.remove(username)
                     self.logger.debug("Resolved country for \(username): \(countryCode)")
+                    self.onCountryResolved?(username, countryCode)
                 }
             } else {
                 _ = await MainActor.run {
                     self.pendingLookups.remove(username)
                 }
             }
+        }
+    }
+
+    /// Pre-populate the cache with a country code we already know (e.g.
+    /// a buddy's persisted `countryCode` loaded from the DB). No GeoIP
+    /// lookup runs and `onCountryResolved` does NOT fire — we already
+    /// know the value, no need to round-trip through the persistence
+    /// callback.
+    ///
+    /// Skips the write when an entry already exists, so a stale
+    /// persisted country won't be re-resolved within the same session
+    /// (e.g. a buddy who relocated). Acceptable today: clear() on logout
+    /// drops the cache, and the next `registerIP` after a fresh login
+    /// will overwrite. Revisit if buddy churn proves to outlast a
+    /// session.
+    public func seedCountry(_ code: String, for username: String) {
+        guard !username.isEmpty, !code.isEmpty else { return }
+        if countries[username] == nil {
+            countries[username] = code
         }
     }
 

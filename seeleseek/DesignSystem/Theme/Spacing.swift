@@ -22,6 +22,7 @@ nonisolated enum SeeleSpacing {
     static let dividerSpacing: CGFloat = 1   // Gap for divider lines between items
 
     // MARK: - Icon Sizes
+    static let iconSizeXXS: CGFloat = 8      // Overlay glyphs (e.g. private lock on a file icon)
     static let iconSizeXS: CGFloat = 10
     static let iconSizeSmall: CGFloat = 14
     static let iconSize: CGFloat = 16

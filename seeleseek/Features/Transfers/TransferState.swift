@@ -90,9 +90,55 @@ struct TransferHistoryItem: Identifiable, Sendable {
     }
 }
 
+/// Informs an observer about peer-status lifecycle events so the app can
+/// subscribe to live online/offline updates while transfers exist.
+@MainActor
+protocol PeerWatching: AnyObject {
+    func watchPeer(_ username: String)
+    func unwatchPeer(_ username: String)
+}
+
 @Observable
 @MainActor
 final class TransferState: TransferTracking {
+    /// Peer-status observer (typically `SocialState`). Set once at app
+    /// startup. Notifications fire whenever a transfer is added or removed
+    /// so the watcher can subscribe/unsubscribe to live user status.
+    /// Assigning the watcher also back-fills watches for every peer in
+    /// the currently-loaded list — `loadPersisted()` typically runs
+    /// before the lazy `networkClient` is touched, and we don't want the
+    /// first wave of persisted transfers to come up with no live status.
+    weak var peerWatcher: (any PeerWatching)? {
+        didSet { reconcilePeerWatches() }
+    }
+
+    /// Usernames we currently hold a watch on. Prevents double-subscribing
+    /// the same user when both a download and upload exist for them, or
+    /// when `loadPersisted()` and `didSet` both try to back-fill.
+    private var watchedUsernames: Set<String> = []
+
+    private func reconcilePeerWatches() {
+        guard let peerWatcher else {
+            watchedUsernames.removeAll()
+            return
+        }
+        let desired = Set((downloads + uploads).map { $0.username })
+        for name in desired.subtracting(watchedUsernames) {
+            peerWatcher.watchPeer(name)
+        }
+        for name in watchedUsernames.subtracting(desired) {
+            peerWatcher.unwatchPeer(name)
+        }
+        watchedUsernames = desired
+    }
+
+    private func startWatch(_ username: String) {
+        guard let peerWatcher,
+              !username.isEmpty,
+              !watchedUsernames.contains(username) else { return }
+        peerWatcher.watchPeer(username)
+        watchedUsernames.insert(username)
+    }
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
         didSet { rebuildDownloadIndex() }
@@ -119,6 +165,16 @@ final class TransferState: TransferTracking {
     var totalUploadSpeed: Int64 = 0
     var totalDownloaded: Int64 = 0
     var totalUploaded: Int64 = 0
+
+    // MARK: - Speed History (per-transfer ring buffer for sparklines)
+    /// 1-sample-per-second speed history, oldest → newest, capped at 30
+    /// entries (~30 seconds of context). Populated while the transfer is
+    /// active and retained after completion so completed rows still show
+    /// their final curve. Pruned in the removal paths
+    /// (`removeTransfer` / `clearCompleted` / `clearFailed`) so the dict
+    /// doesn't grow unboundedly with the lifetime cumulative transfer count.
+    private(set) var speedHistory: [UUID: [Int64]] = [:]
+    private static let speedHistoryLimit = 30
 
     // Speed update timer
     private var speedUpdateTimer: Timer?
@@ -180,6 +236,12 @@ final class TransferState: TransferTracking {
             downloads = persisted.filter { $0.direction == .download }
             uploads = persisted.filter { $0.direction == .upload }
             logger.info("Loaded \(self.downloads.count) downloads and \(self.uploads.count) uploads from database")
+
+            // Subscribe to status updates for every peer we just loaded
+            // so offline state is visible as soon as rows render. Safe to
+            // call even if `peerWatcher` is still nil — the didSet on
+            // assignment will back-fill.
+            reconcilePeerWatches()
 
             // Also load history
             await loadHistory()
@@ -274,11 +336,13 @@ final class TransferState: TransferTracking {
     func addDownload(_ transfer: Transfer) {
         downloads.insert(transfer, at: 0)
         persistTransfer(transfer)
+        startWatch(transfer.username)
     }
 
     func addUpload(_ transfer: Transfer) {
         uploads.insert(transfer, at: 0)
         persistTransfer(transfer)
+        startWatch(transfer.username)
     }
 
     func updateTransfer(id: UUID, update: (inout Transfer) -> Void) {
@@ -327,6 +391,8 @@ final class TransferState: TransferTracking {
     func removeTransfer(id: UUID) {
         downloads.removeAll { $0.id == id }
         uploads.removeAll { $0.id == id }
+        speedHistory.removeValue(forKey: id)
+        reconcilePeerWatches()
 
         // Remove from database
         Task {
@@ -335,8 +401,13 @@ final class TransferState: TransferTracking {
     }
 
     func clearCompleted() {
+        let removedIds = (downloads + uploads)
+            .filter { $0.status == .completed }
+            .map(\.id)
         downloads.removeAll { $0.status == .completed }
         uploads.removeAll { $0.status == .completed }
+        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        reconcilePeerWatches()
 
         // Clear from database
         Task {
@@ -345,8 +416,13 @@ final class TransferState: TransferTracking {
     }
 
     func clearFailed() {
+        let removedIds = (downloads + uploads)
+            .filter { $0.status == .failed || $0.status == .cancelled }
+            .map(\.id)
         downloads.removeAll { $0.status == .failed || $0.status == .cancelled }
         uploads.removeAll { $0.status == .failed || $0.status == .cancelled }
+        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        reconcilePeerWatches()
 
         // Clear from database
         Task {
@@ -373,5 +449,27 @@ final class TransferState: TransferTracking {
     func updateSpeeds() {
         totalDownloadSpeed = activeDownloads.reduce(0) { $0 + $1.speed }
         totalUploadSpeed = activeUploads.reduce(0) { $0 + $1.speed }
+        sampleSpeedHistory()
+    }
+
+    /// Append the current speed reading for each active transfer to its
+    /// history buffer, capped at `speedHistoryLimit` entries. Called once
+    /// per second from the speed-update timer.
+    private func sampleSpeedHistory() {
+        for transfer in activeDownloads {
+            appendSample(transfer.speed, for: transfer.id)
+        }
+        for transfer in activeUploads {
+            appendSample(transfer.speed, for: transfer.id)
+        }
+    }
+
+    private func appendSample(_ value: Int64, for id: UUID) {
+        var samples = speedHistory[id] ?? []
+        samples.append(value)
+        if samples.count > Self.speedHistoryLimit {
+            samples.removeFirst(samples.count - Self.speedHistoryLimit)
+        }
+        speedHistory[id] = samples
     }
 }

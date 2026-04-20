@@ -113,4 +113,6 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
 
     public var isAudioFile: Bool { FileTypes.isAudio(fileExtension) }
     public var isLossless: Bool { FileTypes.isLossless(fileExtension) }
+    public var isImageFile: Bool { FileTypes.isImage(fileExtension) }
+    public var isVideoFile: Bool { FileTypes.isVideo(fileExtension) }
 }

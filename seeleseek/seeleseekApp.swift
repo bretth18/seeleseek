@@ -9,7 +9,15 @@ struct SeeleSeekApp: App {
     init() {
         let state = AppState()
         _appState = State(initialValue: state)
-        AppDependencyManager.shared.add(dependency: state)
+        if !Self.isRunningInPreview {
+            AppDependencyManager.shared.add(dependency: state)
+        }
+    }
+
+    private static var isRunningInPreview: Bool {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+            || env["XCODE_RUNNING_FOR_PLAYGROUNDS"] == "1"
     }
 
     var body: some Scene {
@@ -18,6 +26,7 @@ struct SeeleSeekApp: App {
                 .environment(\.appState, appState)
                 .tint(SeeleColors.accent)
                 .task {
+                    if Self.isRunningInPreview { return }
                     if DemoDataSeeder.isEnabled {
                         DemoDataSeeder.seed(into: appState)
                     } else {

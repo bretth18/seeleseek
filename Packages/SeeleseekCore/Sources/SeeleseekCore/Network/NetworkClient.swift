@@ -477,6 +477,27 @@ public final class NetworkClient {
         performDisconnect()
     }
 
+    /// Like `disconnect()` but awaits the listener / NAT / server-connection
+    /// teardown before returning. Required for any flow that needs to
+    /// immediately reissue `connect()` (e.g. applying a new listen port) —
+    /// the sync path kicks teardown off in a fire-and-forget Task that
+    /// races a follow-up `start()` on the listenerService actor and can
+    /// leak the old listener while cancelling the new one.
+    public func disconnectAsync() async {
+        shouldAutoReconnect = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        performDisconnect()
+        // performDisconnect stores the teardown Task so callers who need
+        // to wait for socket-level cleanup can await it here.
+        await teardownTask?.value
+    }
+
+    /// Tracks the in-flight async teardown spawned by `performDisconnect`
+    /// so `disconnectAsync()` can await it. Kept as a property (not a
+    /// local) so any subsequent disconnect can also wait on prior cleanup.
+    private var teardownTask: Task<Void, Never>?
+
     /// Internal disconnect that preserves auto-reconnect eligibility
     private func performDisconnect() {
         logger.info("Disconnecting...")
@@ -497,10 +518,15 @@ public final class NetworkClient {
         listenerConsumerTask?.cancel()
         listenerConsumerTask = nil
 
-        Task {
-            await serverConnection?.disconnect()
-            serverConnection = nil
-
+        // Snapshot the previous teardown (if any) so the new teardown
+        // chains after it — otherwise rapid disconnect/reconnect cycles
+        // could interleave socket work on the listenerService actor.
+        let priorTeardown = teardownTask
+        let serverConn = serverConnection
+        serverConnection = nil
+        teardownTask = Task { [listenerService, natService] in
+            await priorTeardown?.value
+            await serverConn?.disconnect()
             await listenerService.stop()
             await natService.removeAllMappings()
         }

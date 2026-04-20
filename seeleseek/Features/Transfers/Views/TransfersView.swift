@@ -293,7 +293,8 @@ struct TransfersView: View {
                         },
                         onRemove: { transferState.removeTransfer(id: transfer.id) },
                         onMoveToTop: onMoveToTop.map { cb in { cb(transfer.id) } },
-                        onMoveToBottom: onMoveToBottom.map { cb in { cb(transfer.id) } }
+                        onMoveToBottom: onMoveToBottom.map { cb in { cb(transfer.id) } },
+                        speedHistory: transferState.speedHistory[transfer.id] ?? []
                     )
                 }
             }

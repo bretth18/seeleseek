@@ -105,9 +105,13 @@ struct MainView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        // Show login when disconnected OR when there's a login error (so user can retry)
-        if appState.connection.connectionStatus == .disconnected ||
-           appState.connection.connectionStatus == .error {
+        // Show login when disconnected OR when there's a login error (so user can retry).
+        // `isReapplyingSettings` suppresses the flash when something like a port
+        // change is intentionally bouncing the connection — the user should keep
+        // seeing whatever they were looking at, not the login screen.
+        if (appState.connection.connectionStatus == .disconnected ||
+            appState.connection.connectionStatus == .error) &&
+           !appState.connection.isReapplyingSettings {
             LoginView()
         } else {
             switch appState.sidebarSelection {

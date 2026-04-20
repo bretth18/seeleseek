@@ -752,6 +752,12 @@ public final class DownloadManager {
             pendingFileTransfersByUser[pending.username, default: []].append(pendingTransfer)
             logger.info("Registered pending file transfer for \(pending.username): transferToken=\(request.token)")
 
+            // Earliest unambiguous signal the peer is responding. Drop
+            // any retry Task that may have been scheduled from a prior
+            // timeout/failure so it can't wake up and stomp this
+            // in-flight transfer back to `.queued` later.
+            cancelRetry(transferId: pending.transferId)
+
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
                 t.startTime = Date()
@@ -888,6 +894,12 @@ public final class DownloadManager {
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
+
+            // A retry may have been scheduled when the transfer first
+            // appeared to fail — cancel it before stomping the new
+            // `.completed` status, otherwise the retry Task will fire
+            // later and reset the row back to `.queued`.
+            cancelRetry(transferId: pending.transferId)
 
             // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
@@ -1603,6 +1615,14 @@ public final class DownloadManager {
                 )
 
                 let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
+                cancelRetry(transferId: pending.transferId)
+                // Drop the corresponding pendingDownloads entry too —
+                // otherwise a late peer message (UploadFailed /
+                // UploadDenied) finds the stale entry by filename and
+                // tries to re-queue an already-finished transfer. The
+                // other completion paths already do this; the
+                // incoming-F path was the missing one.
+                pendingDownloads.removeValue(forKey: pending.downloadToken)
                 transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .completed
                     t.bytesTransferred = pending.size
@@ -1711,6 +1731,8 @@ public final class DownloadManager {
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
+
+            cancelRetry(transferId: pending.transferId)
 
             // Mark as completed with local path for Finder reveal
             transferState.updateTransfer(id: pending.transferId) { t in
@@ -2278,6 +2300,17 @@ public final class DownloadManager {
             return
         }
 
+        // Ignore late "denied" messages for transfers we already finished /
+        // cancelled. Without this, a stray message arriving after success
+        // would mark a `.completed` row as `.failed` (and kick off the
+        // retry chain). Just clean the stale pendingDownloads entry.
+        if let current = transferState?.getTransfer(id: pending.transferId),
+           !current.status.isLiveDownloadAttempt {
+            logger.info("Ignoring late upload-denied for \(filename): transfer is .\(String(describing: current.status))")
+            pendingDownloads.removeValue(forKey: token)
+            return
+        }
+
         logger.warning("Download denied for \(filename): \(reason)")
 
         transferState?.updateTransfer(id: pending.transferId) { t in
@@ -2295,6 +2328,18 @@ public final class DownloadManager {
         // Find pending download by filename
         guard let (token, pending) = pendingDownloads.first(where: { $0.value.filename == filename }) else {
             logger.debug("No pending download for failed file: \(filename)")
+            return
+        }
+
+        // Same protection as handleUploadDenied above: a late "upload
+        // failed" message for an already-completed transfer would
+        // otherwise delete the local file (see the resume branch below)
+        // and reset the transfer to `.queued` with bytes=0, kicking
+        // off a fresh retry. Drop the stale message.
+        if let current = transferState?.getTransfer(id: pending.transferId),
+           !current.status.isLiveDownloadAttempt {
+            logger.info("Ignoring late upload-failed for \(filename): transfer is .\(String(describing: current.status))")
+            pendingDownloads.removeValue(forKey: token)
             return
         }
 
@@ -2400,6 +2445,15 @@ public final class DownloadManager {
             t.error = "Retrying in \(Int(delay))s..."
         }
 
+        // Cancel any prior pending retry for this transfer first —
+        // assigning into `pendingRetries[...]` only drops the dict
+        // reference; without this the old Task keeps sleeping and
+        // could fire later (its `.failed` guard usually catches it,
+        // but we don't want the orphan around).
+        if let existing = pendingRetries.removeValue(forKey: transferId) {
+            existing.cancel()
+        }
+
         let task = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
 
@@ -2407,14 +2461,39 @@ public final class DownloadManager {
 
             await MainActor.run {
                 self.pendingRetries.removeValue(forKey: transferId)
-                self.retryDownload(transferId: transferId, username: username, filename: filename, size: size, retryCount: retryCount + 1)
+
+                // Only proceed if the transfer is still in a failed
+                // state. Between schedule and wake, the original attempt
+                // may have completed (late data), transitioned into
+                // `.transferring`/`.connecting`, been `.cancelled` by
+                // the user, or been re-queued manually. In all those
+                // cases this scheduled retry is stale — firing it would
+                // stomp a good transfer back to `.queued` with
+                // `bytesTransferred = 0`.
+                guard let current = self.transferState?.getTransfer(id: transferId),
+                      current.status == .failed else {
+                    self.logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
+                    return
+                }
+
+                self.retryDownload(
+                    transferId: transferId,
+                    username: username,
+                    filename: filename,
+                    size: size,
+                    retryCount: retryCount + 1
+                )
             }
         }
 
         pendingRetries[transferId] = task
     }
 
-    /// Actually retry a download
+    /// Reset a previously-failed (or cancelled) transfer so another
+    /// `requestDownload` can re-run from byte zero. Callers MUST ensure
+    /// the transfer is eligible first — the scheduled-retry path checks
+    /// `.failed` before calling this; `retryFailedDownload` checks
+    /// `.failed || .cancelled`.
     private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
 

@@ -28,6 +28,17 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         case failed
         case cancelled
         case waiting
+
+        /// True for statuses where an in-flight upload-side message
+        /// (`UploadDenied` / `UploadFailed`) is still relevant. Used to
+        /// drop late peer messages that would otherwise stomp a
+        /// `.completed` / `.cancelled` row.
+        public var isLiveDownloadAttempt: Bool {
+            switch self {
+            case .queued, .waiting, .connecting, .transferring: return true
+            case .completed, .failed, .cancelled: return false
+            }
+        }
     }
 
     public init(
@@ -75,7 +86,7 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         let startIndex = parts[0].hasPrefix("@@") ? 1 : 0
         let endIndex = parts.count - 1
         guard startIndex < endIndex else { return nil }
-        return parts[startIndex..<endIndex].joined(separator: " / ")
+        return parts[startIndex..<endIndex].joined(separator: "/")
     }
 
     public var isAudioFile: Bool {
