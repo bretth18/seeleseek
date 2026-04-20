@@ -758,36 +758,12 @@ public final class NetworkClient {
     private func syncNATDiagnostics() async {
         let gateway = await natService.gatewayAddress
         let mappings = await natService.activeMappings
-        let local = Self.localInterfaceIP()
+        let local = NATService.localInterfaceIP()
         await MainActor.run {
             self.natGateway = gateway
             self.natMappings = mappings
             self.localIP = local
         }
-    }
-
-    /// Best-effort lookup of the primary en0/en1 IPv4 address. nonisolated so
-    /// the NAT setup task can call it without hopping actors.
-    private nonisolated static func localInterfaceIP() -> String? {
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0 else { return nil }
-        defer { freeifaddrs(ifaddr) }
-
-        var ptr = ifaddr
-        while ptr != nil {
-            defer { ptr = ptr?.pointee.ifa_next }
-            guard let interface = ptr?.pointee,
-                  interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
-            let name = String(validatingCString: interface.ifa_name) ?? ""
-            guard name == "en0" || name == "en1" else { continue }
-
-            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
-                        &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
-            let bytes = hostname.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
-            return String(decoding: bytes, as: UTF8.self)
-        }
-        return nil
     }
 
     // MARK: - Message Receiving
