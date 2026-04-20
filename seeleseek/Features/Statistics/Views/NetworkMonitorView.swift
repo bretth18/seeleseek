@@ -1,11 +1,9 @@
 import SwiftUI
-import Combine
 import SeeleseekCore
 
 struct NetworkMonitorView: View {
     @Environment(\.appState) private var appState
     @State private var selectedTab: MonitorTab = .overview
-    @State private var refreshTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     private var peerPool: PeerConnectionPool {
         appState.networkClient.peerConnectionPool
@@ -15,14 +13,14 @@ struct NetworkMonitorView: View {
         case overview = "Overview"
         case peers = "Peers"
         case search = "Search"
-        case transfers = "Transfers"
+        case history = "History"
 
         var icon: String {
             switch self {
             case .overview: "gauge.with.dots.needle.bottom.50percent"
             case .peers: "person.2"
             case .search: "magnifyingglass"
-            case .transfers: "arrow.up.arrow.down"
+            case .history: "clock.arrow.circlepath"
             }
         }
     }
@@ -63,14 +61,11 @@ struct NetworkMonitorView: View {
                     MonitorPeersTab()
                 case .search:
                     MonitorSearchTab()
-                case .transfers:
-                    MonitorTransfersTab()
+                case .history:
+                    MonitorHistoryTab()
                 }
             }
             .background(SeeleColors.background)
-        }
-        .onReceive(refreshTimer) { _ in
-            // Force refresh
         }
     }
 }
@@ -155,9 +150,35 @@ struct MonitorLiveStatsBadge: View {
 // MARK: - Peers Tab
 
 struct MonitorPeersTab: View {
+    @Environment(\.appState) private var appState
+
+    private var peerPool: PeerConnectionPool {
+        appState.networkClient.peerConnectionPool
+    }
+
     var body: some View {
         VStack(spacing: SeeleSpacing.lg) {
-            PeerWorldMap()
+            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                HStack {
+                    Text("Network Topology")
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
+                    Spacer()
+                    Text("\(peerPool.activeConnections) active")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+
+                NetworkTopologyView(
+                    connections: Array(peerPool.connections.values),
+                    centerUsername: appState.connection.username ?? "You"
+                )
+                .frame(height: 320)
+            }
+            .padding(SeeleSpacing.lg)
+            .background(SeeleColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+
             LivePeersView()
         }
         .padding(SeeleSpacing.lg)
@@ -170,32 +191,6 @@ struct MonitorSearchTab: View {
     var body: some View {
         VStack(spacing: SeeleSpacing.lg) {
             SearchActivityView()
-        }
-        .padding(SeeleSpacing.lg)
-    }
-}
-
-// MARK: - Transfers Tab
-
-struct MonitorTransfersTab: View {
-    @Environment(\.appState) private var appState
-
-    var body: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-                Text("Active Transfers")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
-
-                Text("No active transfers")
-                    .font(SeeleTypography.subheadline)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, SeeleSpacing.xl)
-            }
-            .padding(SeeleSpacing.lg)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .padding(SeeleSpacing.lg)
     }

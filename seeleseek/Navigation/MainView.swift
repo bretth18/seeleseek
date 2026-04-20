@@ -131,8 +131,6 @@ struct MainView: View {
                 BrowseView()
             case .room:
                 ChatView()
-            case .statistics:
-                StatisticsView()
             case .networkMonitor:
                 NetworkMonitorView()
             case .settings:

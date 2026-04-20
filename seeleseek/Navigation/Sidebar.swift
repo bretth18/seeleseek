@@ -28,7 +28,6 @@ struct Sidebar: View {
                     }
 
                     sidebarSection("Monitor") {
-                        SidebarRow(item: .statistics)
                         SidebarRow(item: .networkMonitor)
                     }
 

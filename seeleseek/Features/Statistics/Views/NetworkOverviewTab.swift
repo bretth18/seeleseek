@@ -48,14 +48,8 @@ struct NetworkOverviewTab: View {
             // Bandwidth chart
             MonitorBandwidthChartCard()
 
-            // Bottom row
-            HStack(spacing: SeeleSpacing.lg) {
-                // Connection health
-                MonitorConnectionHealthCard()
-
-                // Quick peers list
-                MonitorQuickPeersCard()
-            }
+            // Connection health
+            MonitorConnectionHealthCard()
 
             // Activity feed
             LiveActivityFeed()

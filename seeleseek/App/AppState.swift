@@ -372,7 +372,6 @@ enum SidebarItem: Hashable, Identifiable {
     case social
     case user(String)
     case room(String)
-    case statistics
     case networkMonitor
     case settings
 
@@ -386,7 +385,6 @@ enum SidebarItem: Hashable, Identifiable {
         case .social: "social"
         case .user(let name): "user-\(name)"
         case .room(let name): "room-\(name)"
-        case .statistics: "statistics"
         case .networkMonitor: "networkMonitor"
         case .settings: "settings"
         }
@@ -402,8 +400,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .social: "Friends"
         case .user(let name): name
         case .room(let name): name
-        case .statistics: "Statistics"
-        case .networkMonitor: "Network Monitor"
+        case .networkMonitor: "Activity"
         case .settings: "Settings"
         }
     }
@@ -418,8 +415,7 @@ enum SidebarItem: Hashable, Identifiable {
         case .social: "person.2"
         case .user: "person"
         case .room: "person.3"
-        case .statistics: "chart.bar"
-        case .networkMonitor: "network"
+        case .networkMonitor: "waveform.path.ecg"
         case .settings: "gear"
         }
     }

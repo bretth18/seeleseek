@@ -142,8 +142,3 @@ struct CenterNode: View {
     }
 }
 
-#Preview {
-    NetworkVisualizationView()
-        .environment(\.appState, AppState())
-        .frame(width: 800, height: 600)
-}

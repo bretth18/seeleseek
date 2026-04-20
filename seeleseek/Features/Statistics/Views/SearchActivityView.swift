@@ -4,8 +4,6 @@ import SeeleseekCore
 
 /// Real-time visualization of search activity - both outgoing and incoming
 struct SearchActivityView: View {
-    @Environment(\.appState) private var appState
-
     private var searchActivity: SearchActivityState {
         SearchState.activityTracker
     }
