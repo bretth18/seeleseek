@@ -25,13 +25,15 @@ private struct SessionDurationMetricCard: View {
     @Environment(\.appState) private var appState
 
     var body: some View {
-        MonitorMetricCard(
-            title: "Session",
-            value: appState.statisticsState.formattedSessionDuration,
-            subtitle: "elapsed",
-            icon: "clock.fill",
-            color: SeeleColors.info
-        )
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            MonitorMetricCard(
+                title: "Session",
+                value: appState.statisticsState.formattedSessionDuration,
+                subtitle: "elapsed",
+                icon: "clock.fill",
+                color: SeeleColors.info
+            )
+        }
     }
 }
 

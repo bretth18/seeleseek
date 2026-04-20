@@ -69,7 +69,7 @@ struct MonitorConnectionHealthCard: View {
                 .trim(from: 0, to: healthScore / 100)
                 .stroke(healthColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.spring(), value: healthScore)
+                .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: healthScore)
 
             Text(String(format: "%.0f%%", healthScore))
                 .font(SeeleTypography.title2)

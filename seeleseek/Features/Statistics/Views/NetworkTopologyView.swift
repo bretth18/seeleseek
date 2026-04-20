@@ -14,7 +14,6 @@ struct NetworkTopologyView: View {
             let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
 
             ZStack {
-                // Connection lines
                 ForEach(connections) { conn in
                     if let position = nodePositions[conn.id] {
                         ConnectionLine(
@@ -26,33 +25,44 @@ struct NetworkTopologyView: View {
                     }
                 }
 
-                // Center node (self)
                 CenterNode(username: centerUsername)
                     .position(center)
 
-                // Peer nodes
                 ForEach(connections) { conn in
                     if let position = nodePositions[conn.id] {
-                        PeerNode(
-                            info: conn,
-                            isSelected: selectedPeer == conn.id
-                        )
+                        Button {
+                            selectedPeer = conn.id
+                        } label: {
+                            PeerNode(
+                                info: conn,
+                                isSelected: selectedPeer == conn.id
+                            )
+                        }
+                        .buttonStyle(.plain)
                         .position(position)
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                selectedPeer = selectedPeer == conn.id ? nil : conn.id
+                        .popover(
+                            isPresented: Binding(
+                                get: { selectedPeer == conn.id },
+                                set: { if !$0 { selectedPeer = nil } }
+                            ),
+                            attachmentAnchor: .point(.top),
+                            arrowEdge: .bottom
+                        ) {
+                            PeerInfoPopover(peer: conn)
+                        }
+                        .contextMenu {
+                            if !conn.username.isEmpty && conn.username != "unknown" {
+                                UserContextMenuItems(
+                                    username: conn.username,
+                                    showAddBuddy: true,
+                                    navigateOnBrowse: true,
+                                    navigateOnMessage: true
+                                )
                             }
                         }
+                        .accessibilityLabel(conn.username.isEmpty || conn.username == "unknown" ? conn.ip : conn.username)
+                        .accessibilityHint("Show peer details")
                     }
-                }
-
-                // Selected peer detail
-                if let selected = selectedPeer,
-                   let conn = connections.first(where: { $0.id == selected }),
-                   let position = nodePositions[selected] {
-                    PeerDetailPopover(info: conn)
-                        .position(x: position.x, y: position.y - 80)
-                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .onAppear {
@@ -102,7 +112,7 @@ struct ConnectionLine: View {
             isActive ? SeeleColors.success.opacity(0.6) : SeeleColors.textTertiary.opacity(0.3),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
         )
-        .animation(.easeInOut(duration: 0.3), value: isActive)
+        .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: isActive)
     }
 }
 
@@ -139,6 +149,7 @@ struct CenterNode: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textPrimary)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("You: \(username)")
     }
 }
-

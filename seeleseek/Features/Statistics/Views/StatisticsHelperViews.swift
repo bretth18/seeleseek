@@ -40,7 +40,7 @@ struct TransferHistoryRow: View {
             Text(formatTime(entry.timestamp))
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
-                .frame(width: 50)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)

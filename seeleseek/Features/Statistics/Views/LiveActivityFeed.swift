@@ -105,6 +105,16 @@ struct ActivityEventRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let username = event.username {
+                UserContextMenuItems(
+                    username: username,
+                    showAddBuddy: true,
+                    navigateOnBrowse: true,
+                    navigateOnMessage: true
+                )
+            }
+        }
     }
 }
 

@@ -13,13 +13,11 @@ struct NetworkMonitorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: SeeleSpacing.sm) {
-                StandardTabBar(selection: $selectedTab)
-                Spacer(minLength: 0)
-                MonitorLiveStatsBadge()
-                    .padding(.trailing, SeeleSpacing.md)
-            }
-            .background(SeeleColors.surface)
+            StandardTabBar(selection: $selectedTab)
+                .overlay(alignment: .trailing) {
+                    MonitorLiveStatsBadge()
+                        .padding(.trailing, SeeleSpacing.md)
+                }
 
             Divider()
                 .background(SeeleColors.surfaceSecondary)

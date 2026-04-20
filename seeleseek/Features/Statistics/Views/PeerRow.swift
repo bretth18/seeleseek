@@ -24,9 +24,9 @@ struct PeerRow: View {
         !peer.username.isEmpty && peer.username != "unknown" ? peer.ip : peer.connectionType.rawValue
     }
 
-    private var connectionDuration: String {
+    private func connectionDuration(now: Date) -> String {
         guard let connectedAt = peer.connectedAt else { return "--" }
-        let duration = Date().timeIntervalSince(connectedAt)
+        let duration = now.timeIntervalSince(connectedAt)
         if duration < 60 { return "\(Int(duration))s" }
         if duration < 3600 { return "\(Int(duration / 60))m" }
         return "\(Int(duration / 3600))h"
@@ -52,9 +52,11 @@ struct PeerRow: View {
                         Text("•")
                             .foregroundStyle(SeeleColors.textTertiary)
 
-                        Text(connectionDuration)
-                            .font(SeeleTypography.caption2)
-                            .foregroundStyle(SeeleColors.textTertiary)
+                        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                            Text(connectionDuration(now: ctx.date))
+                                .font(SeeleTypography.caption2)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                        }
                     }
                 }
 
