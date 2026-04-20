@@ -10,6 +10,15 @@ import SystemConfiguration
 /// Mapping, teardown, and refresh all share the same raw wire code
 /// (`mapPortUPnPRaw` / `mapPortNATPMPRaw`) so there's one place per protocol
 /// where the byte layout has to be correct.
+///
+/// ## Lifecycle
+///
+/// Callers **must** `await removeAllMappings()` before releasing this actor.
+/// Swift actor deinit can't be async, so router state cannot be cleaned up
+/// from deinit — a dropped `NATService` leaves NAT-PMP mappings on the router
+/// until their lease expires, and any UPnP permanent mappings (lease=0) stay
+/// forever. `NetworkClient.teardown()` is the normal caller and does this
+/// correctly via its `teardownTask`.
 public actor NATService {
     private let logger = Logger(subsystem: "com.seeleseek", category: "NATService")
 
@@ -184,12 +193,22 @@ public actor NATService {
         guard refreshTask == nil else { return }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                // Half of the shortest lease we'd use (UPnP 3600 -> 1800s).
-                try? await Task.sleep(for: .seconds(1800))
+                let delay = await self?.nextRefreshDelay() ?? 1800
+                try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
                 await self?.refreshAllMappings()
             }
         }
+    }
+
+    /// Half the shortest active finite lease, floored at 60s. If we only have
+    /// permanent mappings (or none), falls back to 1800s — permanent mappings
+    /// don't need refresh, but the loop still ticks to pick up newly-added
+    /// finite-lease mappings without a wake signal.
+    private func nextRefreshDelay() -> Int {
+        let finiteLeases = mappedPorts.compactMap { $0.leaseSeconds > 0 ? Int($0.leaseSeconds) : nil }
+        guard let shortest = finiteLeases.min() else { return 1800 }
+        return max(60, shortest / 2)
     }
 
     private func refreshAllMappings() async {
@@ -639,6 +658,7 @@ public actor NATService {
                     connection.receiveMessage { data, _, _, _ in
                         guard let data = data, data.count >= 16 else { return }
 
+                        let respVersion = data.readByte(at: 0) ?? 0xFF
                         let respOpcode = data.readByte(at: 1) ?? 0
                         let resultCode = data.readUInt16(at: 2) ?? 0xFFFF
                         let mappedPort = data.readUInt16(at: 10) ?? 0
@@ -650,7 +670,9 @@ public actor NATService {
                         }) else { return }
                         connection.cancel()
 
-                        guard respOpcode == expectedResponseOpcode else {
+                        // RFC 6886: response version must echo request version (0) and
+                        // opcode must be request_opcode + 128.
+                        guard respVersion == 0, respOpcode == expectedResponseOpcode else {
                             continuation.resume(throwing: NATError.mappingFailed)
                             return
                         }
@@ -732,14 +754,22 @@ public actor NATService {
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
         let connection = NWConnection(to: endpoint, using: params)
 
+        // 96-bit transaction ID. Captured so we can reject late/injected replies
+        // that don't match this specific query.
+        let txnID: (UInt32, UInt32, UInt32) = (
+            UInt32.random(in: 0...UInt32.max),
+            UInt32.random(in: 0...UInt32.max),
+            UInt32.random(in: 0...UInt32.max)
+        )
+
         let request: Data = {
             var data = Data()
             data.appendUInt16(0x0001) // Binding Request
             data.appendUInt16(0x0000) // Message Length
             data.appendUInt32(0x2112A442) // Magic Cookie
-            for _ in 0..<3 {
-                data.appendUInt32(UInt32.random(in: 0...UInt32.max))
-            }
+            data.appendUInt32(txnID.0)
+            data.appendUInt32(txnID.1)
+            data.appendUInt32(txnID.2)
             return data
         }()
 
@@ -752,7 +782,13 @@ public actor NATService {
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
                     connection.receiveMessage { data, _, _, _ in
-                        guard let data = data else { return }
+                        guard let data = data, data.count >= 20 else { return }
+                        // Drop replies whose transaction ID doesn't match ours — guards
+                        // against stale responses from prior queries to the same server.
+                        guard data.readUInt32(at: 8) == txnID.0,
+                              data.readUInt32(at: 12) == txnID.1,
+                              data.readUInt32(at: 16) == txnID.2 else { return }
+
                         if let reflex = Self.parseSTUNResponse(data) {
                             guard didComplete.withLock({
                                 guard !$0 else { return false }
