@@ -61,6 +61,13 @@ struct TransferRow: View {
         return appState.audioPreview.isPlaying(url: path)
     }
 
+    /// Country flag emoji for the peer, resolved via GeoIP from cached
+    /// peer IPs. Nil when we haven't (yet) seen an address for this peer.
+    private var countryFlag: String? {
+        let f = appState.networkClient.userInfoCache.flag(for: transfer.username)
+        return f.isEmpty ? nil : f
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             StandardListRow(onHoverChanged: { isHovered = $0 }) {
@@ -69,7 +76,8 @@ struct TransferRow: View {
 
                     TransferInfoColumn(
                         transfer: transfer,
-                        peerStatus: peerStatus
+                        peerStatus: peerStatus,
+                        countryFlag: countryFlag
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -257,6 +265,7 @@ private struct TransferDirectionGlyph: View {
 private struct TransferInfoColumn: View {
     let transfer: Transfer
     let peerStatus: BuddyStatus?
+    let countryFlag: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -330,7 +339,8 @@ private struct TransferInfoColumn: View {
                 iconName: transfer.direction == .download ? "arrow.down" : "arrow.up",
                 username: transfer.username,
                 width: TransferRowLayout.peerUsernameWidth,
-                peerStatus: peerStatus
+                peerStatus: peerStatus,
+                countryFlag: countryFlag
             )
 
             if transfer.retryCount > 0, transfer.error != nil {

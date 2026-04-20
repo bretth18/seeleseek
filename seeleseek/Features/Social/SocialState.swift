@@ -269,6 +269,14 @@ final class SocialState: PeerWatching {
             self?.privilegeTimeRemaining = timeLeft
         }
 
+        // Country-code resolutions: persist on the buddy record so the
+        // flag is available immediately on next launch (otherwise the
+        // GeoIP lookup has to run again the next time we hear the
+        // peer's IP). Also keeps the currently-viewed profile in sync.
+        client.userInfoCache.onCountryResolved = { [weak self] username, code in
+            self?.handleCountryResolved(username: username, countryCode: code)
+        }
+
         // Provide profile data for UserInfoResponse
         client.profileDataProvider = { [weak self] in
             let desc = self?.myDescription ?? ""
@@ -293,8 +301,17 @@ final class SocialState: PeerWatching {
             // Seed peerStatuses with each buddy's persisted last-known
             // status so `peerStatus(for:)` returns something for buddies
             // before the first live status message arrives.
+            //
+            // Same idea for the country flag: push each buddy's
+            // persisted countryCode into the live UserInfoCache so all
+            // the row-level views (which read from the cache) light up
+            // immediately on launch instead of waiting for a fresh
+            // PeerAddress message to come in.
             for buddy in buddies {
                 peerStatuses[buddy.username] = buddy.status
+                if let code = buddy.countryCode {
+                    networkClient?.userInfoCache.seedCountry(code, for: buddy.username)
+                }
             }
             logger.info("Loaded \(self.buddies.count) buddies from database")
 
@@ -437,6 +454,28 @@ final class SocialState: PeerWatching {
             } catch {
                 logger.error("Failed to update buddy status in database: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Persist a freshly-resolved country code on the buddy record (if
+    /// the user is a buddy) and surface it on the currently-viewed
+    /// profile. Idempotent — does nothing when the value hasn't actually
+    /// changed, so we don't churn the DB on repeat resolutions.
+    private func handleCountryResolved(username: String, countryCode: String) {
+        if let index = buddies.firstIndex(where: { $0.username == username }),
+           buddies[index].countryCode != countryCode {
+            buddies[index].countryCode = countryCode
+            let snapshot = buddies[index]
+            Task {
+                do {
+                    try await SocialRepository.saveBuddy(snapshot)
+                } catch {
+                    logger.error("Failed to persist country for \(username): \(error.localizedDescription)")
+                }
+            }
+        }
+        if viewingProfile?.username == username {
+            viewingProfile?.countryCode = countryCode
         }
     }
 

@@ -38,6 +38,15 @@ struct HistoryRow: View {
         return appState.audioPreview.isPlaying(url: path)
     }
 
+    /// Country flag for the peer (GeoIP-resolved from cached IPs). Nil
+    /// when we haven't seen an address for this user yet — typically the
+    /// case for older history rows whose peer we may have evicted from
+    /// cache, but populated for recent activity.
+    private var countryFlag: String? {
+        let f = appState.networkClient.userInfoCache.flag(for: item.username)
+        return f.isEmpty ? nil : f
+    }
+
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
             HStack(alignment: .top, spacing: SeeleSpacing.sm) {
@@ -99,7 +108,8 @@ struct HistoryRow: View {
             PeerUsernameLabel(
                 iconName: item.isDownload ? "arrow.down" : "arrow.up",
                 username: item.username,
-                width: HistoryRowLayout.peerUsernameWidth
+                width: HistoryRowLayout.peerUsernameWidth,
+                countryFlag: countryFlag
             )
 
             if !item.fileExists {

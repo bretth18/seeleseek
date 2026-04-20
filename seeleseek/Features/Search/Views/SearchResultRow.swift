@@ -54,6 +54,13 @@ struct SearchResultRow: View {
         appState.socialState.peerStatus(for: result.username)
     }
 
+    /// Country flag for the peer (GeoIP-resolved from cached IPs). Nil
+    /// when we haven't seen an address for this user yet.
+    private var countryFlag: String? {
+        let f = appState.networkClient.userInfoCache.flag(for: result.username)
+        return f.isEmpty ? nil : f
+    }
+
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
             HStack(alignment: .top, spacing: SeeleSpacing.sm) {
@@ -188,7 +195,8 @@ struct SearchResultRow: View {
                 iconName: "arrow.up",
                 username: result.username,
                 width: SearchResultRowLayout.peerUsernameWidth,
-                peerStatus: peerStatus
+                peerStatus: peerStatus,
+                countryFlag: countryFlag
             )
 
             Text(peerSpeedText)
@@ -636,25 +644,25 @@ enum QualityScale {
     let samples: [SearchResult] = [
         SearchResult(
             username: "musiclover42",
-            filename: "Music\\Pink Floyd\\The Dark Side of the Moon\\03 - Time.flac",
+            filename: "Music\\Underscores\\U\\03 - Hollywood Forever.flac",
             size: 45_000_000, bitrate: 1411, duration: 413, sampleRate: 44100, bitDepth: 16,
             freeSlots: true, uploadSpeed: 1_500_000
         ),
         SearchResult(
             username: "vinylcollector",
-            filename: "Music\\MP3\\Pink Floyd - Time.mp3",
+            filename: "Music\\MP3\\Underscores - Hollywood Forever.mp3",
             size: 8_500_000, bitrate: 320, duration: 413,
             freeSlots: false, uploadSpeed: 300_000, queueLength: 5
         ),
         SearchResult(
             username: "jazzfan",
-            filename: "Downloads\\time.mp3",
+            filename: "Downloads\\hollywoodforever.mp3",
             size: 4_200_000, bitrate: 128, duration: 413, isVBR: true,
             freeSlots: true, uploadSpeed: 80_000
         ),
         SearchResult(
             username: "hifihead",
-            filename: "Audio\\High-Res\\Pink Floyd - Time (2011 Remaster).flac",
+            filename: "Audio\\High-Res\\Underscores - Hollywood Forever (2026).flac",
             size: 120_000_000, bitrate: 4608, duration: 413, sampleRate: 96000, bitDepth: 24,
             freeSlots: true, uploadSpeed: 2_400_000, isPrivate: true
         ),

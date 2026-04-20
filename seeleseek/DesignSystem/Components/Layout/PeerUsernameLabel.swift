@@ -12,11 +12,16 @@ import SeeleseekCore
 /// tertiary). Overlaying the dot costs no horizontal space, so the 96pt
 /// sub-cell still holds the full username width — important for
 /// cross-row alignment.
+///
+/// When `countryFlag` is non-nil the emoji renders at the end of the
+/// cell at caption2 size. It carries `layoutPriority(1)` so it stays
+/// visible even when a long username has to truncate.
 struct PeerUsernameLabel: View {
     let iconName: String
     let username: String
     let width: CGFloat
     var peerStatus: BuddyStatus? = nil
+    var countryFlag: String? = nil
 
     var body: some View {
         HStack(spacing: SeeleSpacing.xs) {
@@ -46,6 +51,13 @@ struct PeerUsernameLabel: View {
                 .foregroundStyle(SeeleColors.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+
+            if let countryFlag, !countryFlag.isEmpty {
+                Text(countryFlag)
+                    .font(SeeleTypography.caption2)
+                    .layoutPriority(1)
+                    .accessibilityHidden(true)
+            }
         }
         .frame(width: width, alignment: .leading)
     }

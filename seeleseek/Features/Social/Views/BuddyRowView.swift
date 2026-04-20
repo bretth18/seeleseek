@@ -25,8 +25,8 @@ struct BuddyRowView: View {
                             .foregroundStyle(SeeleColors.warning)
                     }
 
-                    if let code = buddy.countryCode {
-                        Text(countryFlag(for: code))
+                    if let flag = resolvedCountryFlag {
+                        Text(flag)
                             .font(.system(size: SeeleSpacing.iconSizeSmall - 2))
                     }
 
@@ -129,6 +129,17 @@ struct BuddyRowView: View {
 
     private func countryFlag(for code: String) -> String {
         CountryFormatter.flag(for: code)
+    }
+
+    /// Country flag for the buddy. Prefers `UserInfoCache` (live
+    /// GeoIP-resolved value, seeded from the buddy's persisted country
+    /// at launch) and falls back to `buddy.countryCode` directly.
+    /// Empty string from the cache reads as "not yet resolved", in
+    /// which case we still try the persisted value.
+    private var resolvedCountryFlag: String? {
+        let live = appState.networkClient.userInfoCache.flag(for: buddy.username)
+        if !live.isEmpty { return live }
+        return buddy.countryCode.map { CountryFormatter.flag(for: $0) }
     }
 }
 
