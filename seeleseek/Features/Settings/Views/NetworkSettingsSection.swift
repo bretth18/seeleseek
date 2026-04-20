@@ -6,6 +6,10 @@ struct NetworkSettingsSection: View {
     @Bindable var settings: SettingsState
 
     @State private var isApplyingPort = false
+    /// One-shot error surfaced under the Apply row when the bounce
+    /// fails (e.g. the requested port is already in use). Cleared
+    /// when the user starts another apply attempt.
+    @State private var portApplyError: String?
     /// Focus on the listen-port TextField. Tracked so we can defocus
     /// the field before reading `settings.listenPort` in the apply
     /// path — `TextField(value:format:)` only writes back to its
@@ -44,6 +48,9 @@ struct NetworkSettingsSection: View {
                 listenPortRow
                 if portChangeIsLive {
                     applyPortRow
+                }
+                if let portApplyError {
+                    portApplyErrorRow(portApplyError)
                 }
                 settingsToggle("Enable UPnP", isOn: $settings.enableUPnP)
             }
@@ -108,20 +115,53 @@ struct NetworkSettingsSection: View {
         }
     }
 
+    private func portApplyErrorRow(_ message: String) -> some View {
+        settingsRow {
+            HStack(spacing: SeeleSpacing.md) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.error)
+                    .accessibilityHidden(true)
+
+                Text(message)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+                    .lineLimit(3)
+
+                Spacer(minLength: SeeleSpacing.sm)
+
+                Button("Dismiss") {
+                    portApplyError = nil
+                }
+                .buttonStyle(.plain)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.accent)
+            }
+        }
+    }
+
     private func applyPortChange() async {
         // Force the TextField to commit any in-flight typing to the
         // binding before we read settings.listenPort. Yield to the
-        // runloop so the focus change actually propagates.
+        // runloop so the focus change actually propagates. SwiftUI
+        // commits @FocusState transitions on the next runloop tick;
+        // a single yield is enough today but the dependency is fragile
+        // — if a future SwiftUI release reorders this, the apply path
+        // will silently use the stale port.
         listenPortFocused = false
         await Task.yield()
 
         let username = appState.connection.loginUsername
         let password = appState.connection.loginPassword
         let targetPort = settings.listenPort
+        // Snapshot before disconnect — `boundPort` reads listenPort,
+        // which `performDisconnect` clears to 0.
+        let originalPort = boundPort
         guard !username.isEmpty, !password.isEmpty else { return }
-        guard targetPort != boundPort else { return }
+        guard targetPort != originalPort else { return }
 
         isApplyingPort = true
+        portApplyError = nil
         // Suppress LoginView for the brief `.disconnected` window the
         // bounce produces — see `ConnectionState.isReapplyingSettings`.
         appState.connection.isReapplyingSettings = true
@@ -142,6 +182,28 @@ struct NetworkSettingsSection: View {
             password: password,
             preferredListenPort: UInt16(targetPort)
         )
+
+        // If the bounce didn't end with us connected, the listener
+        // either failed to bind the requested port (already in use,
+        // privileged, etc.) or the server login failed. NetworkClient
+        // schedules an auto-reconnect with the *same* preferredListenPort,
+        // which would loop forever on a bad port. Cancel the loop, revert
+        // the field, reconnect on the original port, and surface a
+        // visible error so the user knows the apply didn't take.
+        if appState.connection.connectionStatus != .connected {
+            await appState.networkClient.disconnectAsync()
+            settings.listenPort = originalPort
+            portApplyError = "Couldn't bind port \(targetPort). Reverted to \(originalPort)."
+            if originalPort > 0 {
+                await appState.networkClient.connect(
+                    server: ServerConnection.defaultHost,
+                    port: ServerConnection.defaultPort,
+                    username: username,
+                    password: password,
+                    preferredListenPort: UInt16(originalPort)
+                )
+            }
+        }
     }
 }
 

@@ -61,6 +61,13 @@ public final class UserInfoCache {
     /// lookup runs and `onCountryResolved` does NOT fire — we already
     /// know the value, no need to round-trip through the persistence
     /// callback.
+    ///
+    /// Skips the write when an entry already exists, so a stale
+    /// persisted country won't be re-resolved within the same session
+    /// (e.g. a buddy who relocated). Acceptable today: clear() on logout
+    /// drops the cache, and the next `registerIP` after a fresh login
+    /// will overwrite. Revisit if buddy churn proves to outlast a
+    /// session.
     public func seedCountry(_ code: String, for username: String) {
         guard !username.isEmpty, !code.isEmpty else { return }
         if countries[username] == nil {

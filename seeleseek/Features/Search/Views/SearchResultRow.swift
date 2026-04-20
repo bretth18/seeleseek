@@ -640,6 +640,7 @@ enum QualityScale {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("Search results") {
     let samples: [SearchResult] = [
         SearchResult(
@@ -674,7 +675,7 @@ enum QualityScale {
         ),
     ]
 
-    return ScrollView {
+    ScrollView {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             ForEach(samples) { result in
                 SearchResultRow(result: result)
@@ -688,3 +689,4 @@ enum QualityScale {
     .background(SeeleColors.background)
     .previewAppState()
 }
+#endif

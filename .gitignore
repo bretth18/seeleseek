@@ -10,6 +10,7 @@ CMakePresets.json
 
 
 *.log
+*.profraw
 
 
 .internal

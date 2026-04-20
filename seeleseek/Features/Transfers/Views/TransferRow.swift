@@ -750,6 +750,7 @@ struct TransferSparkline: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("Transfer rows") {
     let downloading = Transfer(
         username: "musiclover42",
@@ -814,7 +815,7 @@ struct TransferSparkline: View {
         return max(60_000, Int64(base + ramp + noise))
     }
 
-    return ScrollView {
+    ScrollView {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             TransferRow(
                 transfer: downloading,
@@ -838,3 +839,4 @@ struct TransferSparkline: View {
     .background(SeeleColors.background)
     .previewAppState()
 }
+#endif

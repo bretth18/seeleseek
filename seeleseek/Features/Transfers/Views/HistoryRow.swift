@@ -285,6 +285,7 @@ struct HistoryRow: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview("History rows") {
     let samples: [TransferHistoryItem] = [
         TransferHistoryItem(
@@ -344,7 +345,7 @@ struct HistoryRow: View {
         ),
     ]
 
-    return ScrollView {
+    ScrollView {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             ForEach(samples) { item in
                 HistoryRow(item: item)
@@ -358,3 +359,4 @@ struct HistoryRow: View {
     .background(SeeleColors.background)
     .previewAppState()
 }
+#endif
