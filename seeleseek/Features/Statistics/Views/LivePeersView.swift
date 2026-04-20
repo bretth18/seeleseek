@@ -15,45 +15,44 @@ struct LivePeersView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            HStack {
-                Text("Connected Peers")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
+        StandardCard {
+            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                HStack {
+                    Text("Connected Peers")
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
 
-                Spacer()
+                    Spacer()
 
-                HStack(spacing: SeeleSpacing.sm) {
-                    Circle()
-                        .fill(SeeleColors.success)
-                        .frame(width: 8, height: 8)
-                    Text("\(peerPool.activeConnections) active")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textSecondary)
+                    HStack(spacing: SeeleSpacing.sm) {
+                        Circle()
+                            .fill(SeeleColors.success)
+                            .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
+                        Text("\(peerPool.activeConnections) active")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textSecondary)
+                            .contentTransition(.numericText())
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(peerPool.activeConnections) active peers")
                 }
-            }
 
-            if sortedPeers.isEmpty {
-                VStack(spacing: SeeleSpacing.md) {
-                    Image(systemName: "person.2.slash")
-                        .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
-                        .foregroundStyle(SeeleColors.textTertiary)
-                    Text("No peers connected")
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 100)
-            } else {
-                LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                    ForEach(sortedPeers) { peer in
-                        PeerRow(peer: peer)
+                if sortedPeers.isEmpty {
+                    StandardEmptyState(
+                        icon: "person.2.slash",
+                        title: "No Peers",
+                        subtitle: "Peer connections will appear here as they come online."
+                    )
+                    .frame(minHeight: 160)
+                } else {
+                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
+                        ForEach(sortedPeers) { peer in
+                            PeerRow(peer: peer)
+                        }
                     }
                 }
             }
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 
