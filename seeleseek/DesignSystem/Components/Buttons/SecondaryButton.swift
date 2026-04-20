@@ -1,33 +1,26 @@
 import SwiftUI
 import SeeleseekCore
 
-struct PrimaryButton: View {
+
+struct SecondaryButton: View {
     let title: String
     let icon: String?
-    let isLoading: Bool
     let action: () -> Void
 
     init(
         _ title: String,
         icon: String? = nil,
-        isLoading: Bool = false,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.icon = icon
-        self.isLoading = isLoading
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: SeeleSpacing.sm) {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .scaleEffect(0.8)
-                        .tint(.white)
-                } else if let icon {
+                if let icon {
                     Image(systemName: icon)
                         .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
                 }
@@ -37,21 +30,21 @@ struct PrimaryButton: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, SeeleSpacing.xl)
             .padding(.vertical, SeeleSpacing.md)
-            .background(SeeleColors.accent)
-            .foregroundStyle(SeeleColors.textOnAccent)
+            .background(SeeleColors.surfaceSecondary)
+            .foregroundStyle(SeeleColors.textPrimary)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                    .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
-        .disabled(isLoading)
-        .opacity(isLoading ? 0.7 : 1.0)
-        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isLoading)
     }
 }
 
-#Preview("Buttons") {
+#Preview("Secondary Button") {
     VStack(spacing: SeeleSpacing.lg) {
-        PrimaryButton("Connect", icon: "network") {}
-        PrimaryButton("Loading...", isLoading: true) {}
+        SecondaryButton("Cancel", icon: "xmark") {}
     }
     .padding()
     .background(SeeleColors.background)

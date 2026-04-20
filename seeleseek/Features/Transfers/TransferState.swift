@@ -139,17 +139,6 @@ final class TransferState: TransferTracking {
         peerWatcher.watchPeer(username)
         watchedUsernames.insert(username)
     }
-
-    private func stopWatch(_ username: String) {
-        guard let peerWatcher,
-              watchedUsernames.contains(username) else { return }
-        // Only release if no other transfer in the list still uses this peer.
-        let stillReferenced = downloads.contains(where: { $0.username == username })
-            || uploads.contains(where: { $0.username == username })
-        guard !stillReferenced else { return }
-        peerWatcher.unwatchPeer(username)
-        watchedUsernames.remove(username)
-    }
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
         didSet { rebuildDownloadIndex() }
@@ -180,8 +169,10 @@ final class TransferState: TransferTracking {
     // MARK: - Speed History (per-transfer ring buffer for sparklines)
     /// 1-sample-per-second speed history, oldest → newest, capped at 30
     /// entries (~30 seconds of context). Populated while the transfer is
-    /// active and left intact after completion so completed rows still
-    /// show their final curve.
+    /// active and retained after completion so completed rows still show
+    /// their final curve. Pruned in the removal paths
+    /// (`removeTransfer` / `clearCompleted` / `clearFailed`) so the dict
+    /// doesn't grow unboundedly with the lifetime cumulative transfer count.
     private(set) var speedHistory: [UUID: [Int64]] = [:]
     private static let speedHistoryLimit = 30
 
@@ -398,14 +389,10 @@ final class TransferState: TransferTracking {
     }
 
     func removeTransfer(id: UUID) {
-        let removedUsers = Set(
-            (downloads + uploads)
-                .filter { $0.id == id }
-                .map { $0.username }
-        )
         downloads.removeAll { $0.id == id }
         uploads.removeAll { $0.id == id }
-        for name in removedUsers { stopWatch(name) }
+        speedHistory.removeValue(forKey: id)
+        reconcilePeerWatches()
 
         // Remove from database
         Task {
@@ -414,14 +401,13 @@ final class TransferState: TransferTracking {
     }
 
     func clearCompleted() {
-        let removedUsers = Set(
-            (downloads + uploads)
-                .filter { $0.status == .completed }
-                .map { $0.username }
-        )
+        let removedIds = (downloads + uploads)
+            .filter { $0.status == .completed }
+            .map(\.id)
         downloads.removeAll { $0.status == .completed }
         uploads.removeAll { $0.status == .completed }
-        for name in removedUsers { stopWatch(name) }
+        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        reconcilePeerWatches()
 
         // Clear from database
         Task {
@@ -430,14 +416,13 @@ final class TransferState: TransferTracking {
     }
 
     func clearFailed() {
-        let removedUsers = Set(
-            (downloads + uploads)
-                .filter { $0.status == .failed || $0.status == .cancelled }
-                .map { $0.username }
-        )
+        let removedIds = (downloads + uploads)
+            .filter { $0.status == .failed || $0.status == .cancelled }
+            .map(\.id)
         downloads.removeAll { $0.status == .failed || $0.status == .cancelled }
         uploads.removeAll { $0.status == .failed || $0.status == .cancelled }
-        for name in removedUsers { stopWatch(name) }
+        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        reconcilePeerWatches()
 
         // Clear from database
         Task {

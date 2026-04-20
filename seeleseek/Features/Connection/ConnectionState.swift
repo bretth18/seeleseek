@@ -10,6 +10,13 @@ final class ConnectionState {
     var serverGreeting: String?
     var errorMessage: String?
 
+    /// True while the app is intentionally bouncing the connection to
+    /// apply a setting (e.g. a new listen port). Lets `MainView`
+    /// suppress LoginView during the brief `.disconnected` window so
+    /// the user stays on whatever they were looking at instead of
+    /// flashing back to the login screen.
+    var isReapplyingSettings: Bool = false
+
     // MARK: - Login Form
     var loginUsername: String = ""
     var loginPassword: String = ""

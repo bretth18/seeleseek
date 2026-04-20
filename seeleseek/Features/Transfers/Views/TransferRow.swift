@@ -44,7 +44,6 @@ struct TransferRow: View {
     var speedHistory: [Int64] = []
 
     @State private var isHovered = false
-    @State private var preview = RowAudioPreview()
 
     /// Live peer status from the app-wide peer-status cache. Populated
     /// for any peer currently being watched — `TransferState` auto-watches
@@ -52,6 +51,14 @@ struct TransferRow: View {
     /// too, not just buddies.
     private var peerStatus: BuddyStatus? {
         appState.socialState.peerStatus(for: transfer.username)
+    }
+
+    /// True only if the app-wide audio preview is currently playing
+    /// *this row's* file. Preview state lives on `AppState` so starting
+    /// playback elsewhere flips this row's button back to "play".
+    private var isPlayingPreview: Bool {
+        guard let path = transfer.localPath else { return false }
+        return appState.audioPreview.isPlaying(url: path)
     }
 
     var body: some View {
@@ -74,7 +81,7 @@ struct TransferRow: View {
                     TransferActionCluster(
                         transfer: transfer,
                         isHovered: isHovered,
-                        isPlaying: preview.isPlaying,
+                        isPlaying: isPlayingPreview,
                         onCancel: onCancel,
                         onRetry: onRetry,
                         onRemove: onRemove,
@@ -93,7 +100,7 @@ struct TransferRow: View {
         .accessibilityLabel(accessibilityLabel)
         .modifier(TransferRowAccessibilityActions(
             transfer: transfer,
-            isPlaying: preview.isPlaying,
+            isPlaying: isPlayingPreview,
             onCancel: onCancel,
             onRetry: onRetry,
             onRemove: onRemove,
@@ -101,7 +108,6 @@ struct TransferRow: View {
             onTogglePreview: toggleAudioPreview,
             onEditMetadata: openMetadataEditor
         ))
-        .onDisappear { preview.stop() }
     }
 
     // MARK: - Context menu
@@ -123,8 +129,8 @@ struct TransferRow: View {
         if transfer.status == .completed, transfer.isAudioFile, transfer.localPath != nil {
             Button(action: toggleAudioPreview) {
                 Label(
-                    preview.isPlaying ? "Stop Preview" : "Play Preview",
-                    systemImage: preview.isPlaying ? "stop.fill" : "play.fill"
+                    isPlayingPreview ? "Stop Preview" : "Play Preview",
+                    systemImage: isPlayingPreview ? "stop.fill" : "play.fill"
                 )
             }
             Button(action: openMetadataEditor) {
@@ -175,7 +181,7 @@ struct TransferRow: View {
 
     private func toggleAudioPreview() {
         guard let path = transfer.localPath else { return }
-        preview.toggle(url: path)
+        appState.audioPreview.toggle(url: path)
     }
 
     private func openMetadataEditor() {
@@ -255,7 +261,7 @@ private struct TransferInfoColumn: View {
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text(transfer.displayFilename)
-                .font(SeeleTypography.headline)
+                .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -499,7 +505,7 @@ private struct TransferMetadataColumn: View {
         switch transfer.status {
         case .transferring, .connecting:
             let pct = Int(transfer.progress * 100)
-            return "\(pct)% · \(transfer.bytesTransferred.formattedBytes) / \(transfer.size.formattedBytes)"
+            return "\(pct)% · \(transfer.bytesTransferred.formattedBytes)/\(transfer.size.formattedBytes)"
         default:
             return transfer.size.formattedBytes
         }

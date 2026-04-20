@@ -28,7 +28,15 @@ struct HistoryRow: View {
     let item: TransferHistoryItem
 
     @State private var isHovered = false
-    @State private var preview = RowAudioPreview()
+
+    /// True only if the app-wide audio preview is currently playing
+    /// *this row's* file. See `RowAudioPreview` — preview state lives on
+    /// `AppState` so starting playback on another row flips this row's
+    /// button back to "play".
+    private var isPlayingPreview: Bool {
+        guard let path = item.resolvedLocalPath else { return false }
+        return appState.audioPreview.isPlaying(url: path)
+    }
 
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
@@ -49,14 +57,13 @@ struct HistoryRow: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityActions {
             if item.isAudioFile, item.fileExists {
-                Button(preview.isPlaying ? "Stop preview" : "Play preview", action: toggleAudioPreview)
+                Button(isPlayingPreview ? "Stop preview" : "Play preview", action: toggleAudioPreview)
                 Button("Edit metadata", action: openMetadataEditor)
             }
             if item.fileExists {
                 Button("Reveal in Finder", action: revealInFinder)
             }
         }
-        .onDisappear { preview.stop() }
     }
 
     // MARK: - Direction glyph
@@ -77,7 +84,7 @@ struct HistoryRow: View {
     private var infoColumn: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text(item.displayFilename)
-                .font(SeeleTypography.headline)
+                .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -185,8 +192,8 @@ struct HistoryRow: View {
         HStack(spacing: SeeleSpacing.xxs) {
             if item.isAudioFile, item.fileExists {
                 RowIconButton(
-                    systemName: preview.isPlaying ? "pause.fill" : "play.fill",
-                    help: preview.isPlaying ? "Pause preview" : "Play preview",
+                    systemName: isPlayingPreview ? "pause.fill" : "play.fill",
+                    help: isPlayingPreview ? "Pause preview" : "Play preview",
                     action: toggleAudioPreview
                 )
 
@@ -216,8 +223,8 @@ struct HistoryRow: View {
         if item.isAudioFile, item.fileExists {
             Button(action: toggleAudioPreview) {
                 Label(
-                    preview.isPlaying ? "Stop Preview" : "Play Preview",
-                    systemImage: preview.isPlaying ? "stop.fill" : "play.fill"
+                    isPlayingPreview ? "Stop Preview" : "Play Preview",
+                    systemImage: isPlayingPreview ? "stop.fill" : "play.fill"
                 )
             }
             Button(action: openMetadataEditor) {
@@ -262,7 +269,7 @@ struct HistoryRow: View {
 
     private func toggleAudioPreview() {
         guard let path = item.resolvedLocalPath else { return }
-        preview.toggle(url: path)
+        appState.audioPreview.toggle(url: path)
     }
 }
 

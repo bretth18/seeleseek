@@ -140,6 +140,8 @@ struct SearchResultRow: View {
     private var glyphIcon: String {
         if result.isLossless { return "waveform" }
         if result.isAudioFile { return "music.note" }
+        if result.isImageFile { return "photo"}
+        if result.isVideoFile { return "video" }
         return "doc"
     }
 
@@ -154,7 +156,7 @@ struct SearchResultRow: View {
     private var infoColumn: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             Text(result.displayFilename)
-                .font(SeeleTypography.headline)
+                .font(SeeleTypography.body)
                 .foregroundStyle(isIgnored ? SeeleColors.textTertiary : SeeleColors.textPrimary)
                 .strikethrough(isIgnored, color: SeeleColors.textTertiary)
                 .lineLimit(1)
@@ -211,7 +213,7 @@ struct SearchResultRow: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .help(result.folderPath.replacingOccurrences(of: "\\", with: " / "))
+                .help(result.folderPath.replacingOccurrences(of: "\\", with: "/"))
         }
     }
 
@@ -220,9 +222,9 @@ struct SearchResultRow: View {
         let parts = result.folderPath.split(separator: "\\").map(String.init)
         guard !parts.isEmpty else { return "" }
         if parts.count <= 3 {
-            return parts.joined(separator: " / ")
+            return parts.joined(separator: "/")
         }
-        return "… / " + parts.suffix(3).joined(separator: " / ")
+        return "…/" + parts.suffix(3).joined(separator: "/")
     }
 
     // MARK: - Metadata column (right)
@@ -313,7 +315,7 @@ struct SearchResultRow: View {
                     .monospacedDigit()
             }
             .foregroundStyle(SeeleColors.warning)
-        } else {
+        } else if !result.isPrivate {
             HStack(spacing: SeeleSpacing.xxs) {
                 Circle()
                     .fill(SeeleColors.success)
@@ -325,6 +327,18 @@ struct SearchResultRow: View {
                     .font(SeeleTypography.caption)
             }
             .foregroundStyle(SeeleColors.success)
+        } else {
+            HStack(spacing: SeeleSpacing.xxs) {
+                Circle()
+                    .fill(SeeleColors.warning)
+                    .frame(
+                        width: SeeleSpacing.statusDotSmall,
+                        height: SeeleSpacing.statusDotSmall
+                    )
+                Text("Private")
+                    .font(SeeleTypography.caption)
+            }
+            .foregroundStyle(SeeleColors.warning)
         }
     }
 

@@ -131,6 +131,11 @@ final class AppState {
     // MARK: - Upload Manager
     let uploadManager = UploadManager()
 
+    // MARK: - Audio Preview
+    // App-wide so starting playback in one row stops the previous row's
+    // preview automatically (no overlapping audio across the list).
+    let audioPreview = RowAudioPreview()
+
     // MARK: - Initialization
 
     // init() is intentionally lightweight — @Entry and SwiftUI may construct

@@ -12,9 +12,12 @@ final class SocialState: PeerWatching {
     var showAddBuddySheet = false
 
     // MARK: - Peer Status (live status for any watched user, buddy or not)
-    /// Last-known status for every peer the app is currently watching.
-    /// Shared by transfer rows, search rows, etc. so non-buddy peers can
-    /// still surface an online/away/offline indicator.
+    /// Single source of truth for `peerStatus(for:)`. Holds the last-known
+    /// status for every peer the app is currently watching, plus every
+    /// buddy (seeded from the persisted buddy list on load and on add).
+    /// `buddies[i].status` is a per-row mirror used by the buddy-list
+    /// views (sorting, filtering, persistence) — both fields are written
+    /// from the same MainActor handler so they cannot diverge.
     private(set) var peerStatuses: [String: BuddyStatus] = [:]
     /// Reference count per peer — the app may watch a peer because of a
     /// queued download *and* an upload simultaneously. We unwatch only
@@ -105,12 +108,11 @@ final class SocialState: PeerWatching {
     // MARK: - Peer Status
 
     /// Last known status for `username`, if the app has received one.
-    /// Prefers the live `peerStatuses` cache, falls back to the buddy list
-    /// (persisted-last-seen) so buddies still carry a status before the
-    /// first live update arrives.
+    /// Reads only from `peerStatuses` — buddies are seeded into the cache
+    /// on load/add (and preserved across `unwatchPeer` for buddies), so
+    /// no fallback to the buddy list is needed.
     func peerStatus(for username: String) -> BuddyStatus? {
-        if let status = peerStatuses[username] { return status }
-        return buddies.first(where: { $0.username == username })?.status
+        peerStatuses[username]
     }
 
     /// Begin watching `username` for live status updates. Ref-counted —
@@ -164,20 +166,25 @@ final class SocialState: PeerWatching {
     }
 
     /// Release one watch on `username`. When the refcount hits zero the
-    /// server subscription is torn down.
+    /// server subscription is torn down. For buddies we keep the
+    /// `peerStatuses` entry around (it's seeded from the buddy list and
+    /// kept fresh by the auto-pushed buddy status updates) so the buddy's
+    /// row still shows a status after the last transfer goes away.
     func unwatchPeer(_ username: String) {
         guard !username.isEmpty else { return }
         let count = (peerWatchRefCounts[username] ?? 0) - 1
         if count <= 0 {
             peerWatchRefCounts.removeValue(forKey: username)
-            peerStatuses.removeValue(forKey: username)
-            if buddies.contains(where: { $0.username == username }) { return }
-            Task { [weak self] in
-                guard let self, let client = self.networkClient else { return }
-                do {
-                    try await client.unwatchUser(username)
-                } catch {
-                    self.logger.error("unwatchPeer(\(username)) failed: \(error.localizedDescription)")
+            let isBuddy = buddies.contains(where: { $0.username == username })
+            if !isBuddy {
+                peerStatuses.removeValue(forKey: username)
+                Task { [weak self] in
+                    guard let self, let client = self.networkClient else { return }
+                    do {
+                        try await client.unwatchUser(username)
+                    } catch {
+                        self.logger.error("unwatchPeer(\(username)) failed: \(error.localizedDescription)")
+                    }
                 }
             }
         } else {
@@ -283,6 +290,12 @@ final class SocialState: PeerWatching {
         do {
             // Load buddies from database
             buddies = try await SocialRepository.fetchBuddies()
+            // Seed peerStatuses with each buddy's persisted last-known
+            // status so `peerStatus(for:)` returns something for buddies
+            // before the first live status message arrives.
+            for buddy in buddies {
+                peerStatuses[buddy.username] = buddy.status
+            }
             logger.info("Loaded \(self.buddies.count) buddies from database")
 
             // Load blocked users
@@ -338,6 +351,10 @@ final class SocialState: PeerWatching {
 
         let buddy = Buddy(username: username)
         buddies.append(buddy)
+        // Seed the live cache so `peerStatus(for:)` returns something
+        // immediately; the watch/getUserStatus calls below will replace
+        // this with the real status as soon as the server responds.
+        peerStatuses[username] = buddy.status
 
         // Persist to database
         Task {
@@ -363,6 +380,12 @@ final class SocialState: PeerWatching {
 
     func removeBuddy(_ username: String) async {
         buddies.removeAll { $0.username == username }
+        // Drop the seeded live-cache entry too — but only if no transfer
+        // is still holding a watch on this peer (otherwise the row's
+        // status indicator would go blank).
+        if peerWatchRefCounts[username] == nil {
+            peerStatuses.removeValue(forKey: username)
+        }
 
         // Remove from database
         Task {
