@@ -404,7 +404,14 @@ public final class UploadManager {
         }
     }
 
-    /// Handle TransferResponse from peer (they accepted or rejected our upload offer)
+    /// Handle TransferResponse from peer (they accepted or rejected our upload offer).
+    ///
+    /// Rejection semantics per protocol: `reason` carries a short string
+    /// distinguishing recoverable states ("Queued", where the peer accepted
+    /// the request and will follow up with PlaceInQueueReply/QueueUpload)
+    /// from hard rejections ("Cancelled", arbitrary errors). We map these to
+    /// the right TransferStatus so the row doesn't misleadingly show as
+    /// Failed when the peer is actually in the process of queuing us.
     private func handleTransferResponse(token: UInt32, allowed: Bool, reason: String?, connection: PeerConnection) async {
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.debug("No pending upload for token \(token)")
@@ -413,9 +420,10 @@ public final class UploadManager {
 
         if !allowed {
             let detail = reason ?? "Peer rejected transfer"
-            logger.warning("Peer rejected upload for \(pending.filename): \(detail)")
+            let status = Self.status(forReject: reason)
+            logger.warning("Peer rejected upload for \(pending.filename): \(detail) (→ \(status.rawValue))")
             transferState?.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
+                t.status = status
                 t.error = detail
             }
             return
@@ -1155,6 +1163,27 @@ public final class UploadManager {
             } catch {
                 logger.debug("Could not send UploadFailed to \(username): \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Maps a TransferReply rejection `reason` string to the closest
+    /// TransferStatus. Exposed for unit tests.
+    static func status(forReject reason: String?) -> Transfer.TransferStatus {
+        // Normalise for case-insensitive prefix matching so minor server
+        // variants ("Queued.", "Queued\0") still classify correctly.
+        let trimmed = reason?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+            .lowercased() ?? ""
+
+        switch trimmed {
+        case "queued":
+            // Peer accepted the request and will follow up with queue
+            // position / upload readiness. Not a failure.
+            return .queued
+        case "cancelled", "canceled":
+            return .cancelled
+        default:
+            return .failed
         }
     }
 }

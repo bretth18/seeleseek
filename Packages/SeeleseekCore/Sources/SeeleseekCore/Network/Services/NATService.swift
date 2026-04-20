@@ -7,45 +7,77 @@ import Synchronization
 public actor NATService {
     private let logger = Logger(subsystem: "com.seeleseek", category: "NATService")
 
+    /// One entry per active port mapping we created (UPnP or NAT-PMP).
+    public struct PortMapping: Sendable, Equatable {
+        public let internalPort: UInt16
+        public let externalPort: UInt16
+        public let proto: String
+    }
+
     private var mappedPorts: [(internal: UInt16, external: UInt16, protocol: String)] = []
     private var externalIP: String?
     private var gatewayIP: String?
-
+    private var gatewayControlURL: String?
+    
+    private enum MappingMethod: Sendable { case upnp, natpmp}
+    
+    private struct InternalMapping: Sendable {
+        let internalPort: UInt16
+        let externalPort: UInt16
+        let proto: String
+        let method: MappingMethod
+        let leaseSeconds: UInt32
+        let createdAt: Date
+    }
+    
+    private var mappedPorts: [InternalMapping] = []
+    
+    public var activeMappings: [PortMapping] {
+        mappedPorts.map { PortMapping(internalPort: $0.internalPort, externalPort: $0.externalPort, proto: $0.proto) }
+    }
+    
     // MARK: - Public Interface
 
     public var externalAddress: String? { externalIP }
+
+    /// Gateway (router) IP discovered during UPnP or inferred from the local
+    /// subnet. nil until the first mapping or IP-discovery attempt succeeds.
+    public var gatewayAddress: String? { gatewayIP }
+
+    /// Active port mappings we successfully registered. Empty when running
+    /// without UPnP/NAT-PMP or when all mapping attempts failed.
+    public var activeMappings: [PortMapping] {
+        mappedPorts.map { PortMapping(internalPort: $0.internal, externalPort: $0.external, proto: $0.protocol) }
+    }
 
     /// Attempts to map a port using UPnP or NAT-PMP
     public func mapPort(_ internalPort: UInt16, externalPort: UInt16? = nil, protocol proto: String = "TCP") async throws -> UInt16 {
         let targetExternal = externalPort ?? internalPort
 
-        print("🔧 NAT: Attempting to map port \(internalPort) -> \(targetExternal) (\(proto))")
+        logger.debug("Attempting to map port \(internalPort) -> \(targetExternal) (\(proto))")
 
         // Try UPnP first
         do {
             let mapped = try await mapPortUPnP(internalPort, externalPort: targetExternal, protocol: proto)
             mappedPorts.append((internalPort, mapped, proto))
-            print("✅ NAT: UPnP mapped port \(internalPort) -> \(mapped)")
             logger.info("UPnP mapped port \(internalPort) -> \(mapped)")
             Task { @MainActor in ActivityLogger.shared?.logNATMapping(port: mapped, success: true) }
             return mapped
         } catch {
-            print("⚠️ NAT: UPnP failed: \(error)")
+            logger.debug("UPnP failed: \(error.localizedDescription)")
         }
 
         // Fall back to NAT-PMP
         do {
             let mapped = try await mapPortNATPMP(internalPort, externalPort: targetExternal, protocol: proto)
             mappedPorts.append((internalPort, mapped, proto))
-            print("✅ NAT: NAT-PMP mapped port \(internalPort) -> \(mapped)")
             logger.info("NAT-PMP mapped port \(internalPort) -> \(mapped)")
             return mapped
         } catch {
-            print("⚠️ NAT: NAT-PMP failed: \(error)")
+            logger.debug("NAT-PMP failed: \(error.localizedDescription)")
         }
 
         // If both fail, assume we're not behind NAT or port is already open
-        print("❌ NAT: All mapping methods failed for port \(internalPort)")
         logger.warning("NAT mapping failed for port \(internalPort), assuming direct connection")
         Task { @MainActor in ActivityLogger.shared?.logNATMapping(port: internalPort, success: false) }
         throw NATError.mappingFailed
@@ -54,9 +86,16 @@ public actor NATService {
     /// Removes all port mappings
     public func removeAllMappings() async {
         for mapping in mappedPorts {
-            try? await removePortMapping(mapping.external, protocol: mapping.protocol)
+            switch mapping.method {
+            case .upnp:
+                try? await removePortMappingUPnP(m.externalPort, protocol: m.proto)
+            case .natpmp:
+                try? await removePortMappingNATPMP(m.internalPort, protocol: m.proto)
+            }
         }
         mappedPorts.removeAll()
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     /// Discovers external IP address
@@ -85,20 +124,20 @@ public actor NATService {
     // MARK: - UPnP Implementation
 
     private func mapPortUPnP(_ internalPort: UInt16, externalPort: UInt16, protocol proto: String) async throws -> UInt16 {
-        print("🔧 NAT: mapPortUPnP starting...")
+        logger.debug("mapPortUPnP starting")
 
         // Discover UPnP gateway
         let gateway = try await discoverUPnPGateway()
         gatewayIP = gateway.ip
+        gatewayControlURL = gateway.controlURL
 
         // Get local IP
         guard let localIP = getLocalIPAddress() else {
-            print("❌ NAT: Could not determine local IP address")
+            logger.error("Could not determine local IP address")
             throw NATError.noLocalIP
         }
 
-        print("🔧 NAT: Local IP: \(localIP), Gateway: \(gateway.ip)")
-        print("🔧 NAT: Sending AddPortMapping request to \(gateway.controlURL)")
+        logger.debug("Local IP \(localIP), gateway \(gateway.ip), sending AddPortMapping to \(gateway.controlURL)")
 
         // Send AddPortMapping request
         let soapAction = "AddPortMapping"
@@ -123,11 +162,11 @@ public actor NATService {
         let success = try await sendUPnPRequest(to: gateway.controlURL, action: soapAction, body: soapBody)
 
         if success {
-            print("✅ NAT: AddPortMapping succeeded for port \(externalPort)")
+            logger.info("AddPortMapping succeeded for port \(externalPort)")
             return externalPort
         }
 
-        print("❌ NAT: AddPortMapping failed")
+        logger.warning("AddPortMapping failed")
         throw NATError.mappingFailed
     }
 
@@ -157,6 +196,8 @@ public actor NATService {
 
     private func removePortMapping(_ externalPort: UInt16, protocol proto: String) async throws {
         guard let gateway = try? await discoverUPnPGateway() else { return }
+        
+        guard let controlURL = gatewayControlURL else { return }
 
         let soapAction = "DeletePortMapping"
         let soapBody = """
@@ -172,7 +213,12 @@ public actor NATService {
         </s:Envelope>
         """
 
-        _ = try? await sendUPnPRequest(to: gateway.controlURL, action: soapAction, body: soapBody)
+        _ = try? await sendUPnPRequest(to: controlURL, action: soapAction, body: soapBody)
+    }
+    
+    private func removePortMappingNATPMP(_ internalPort: Uint16, protocol proto: String) async throws {
+        // same request shape as mapping but with lifetime=0 (RFC 6886)
+        _ try await mapPortNATPMPRaw(internalPort, externalPort: 0, protocol: proto, lifetime: 0)
     }
 
     private struct UPnPGateway {
@@ -181,7 +227,7 @@ public actor NATService {
     }
 
     private func discoverUPnPGateway() async throws -> UPnPGateway {
-        print("🔧 NAT: Discovering UPnP gateway via SSDP...")
+        logger.debug("Discovering UPnP gateway via SSDP")
 
         // Try the most common service types first - avoid rapid-fire probing that triggers IDS
         // Most routers respond to InternetGatewayDevice:1
@@ -196,7 +242,7 @@ public actor NATService {
                 try? await Task.sleep(for: .milliseconds(500))
             }
 
-            print("🔧 NAT: Trying service type: \(serviceType)")
+            logger.debug("Trying SSDP service type \(serviceType)")
             if let gateway = try? await discoverGatewayWithServiceType(serviceType) {
                 return gateway
             }
@@ -225,9 +271,9 @@ public actor NATService {
                 switch state {
                 case .ready:
                     // Send the M-SEARCH request
-                    connection.send(content: ssdpRequest.data(using: .utf8), completion: .contentProcessed { error in
+                    connection.send(content: ssdpRequest.data(using: .utf8), completion: .contentProcessed { [logger] error in
                         if let error = error {
-                            print("🔧 NAT: SSDP send error: \(error)")
+                            logger.warning("SSDP send error: \(error.localizedDescription)")
                         }
                     })
 
@@ -237,10 +283,10 @@ public actor NATService {
                             guard !didComplete.withLock({ $0 }) else { return }
 
                             if let data = data, let response = String(data: data, encoding: .utf8) {
-                                print("🔧 NAT: SSDP response (\(data.count) bytes)")
+                                self.logger.debug("SSDP response (\(data.count) bytes)")
 
                                 if let location = self.parseLocationHeader(from: response) {
-                                    print("🔧 NAT: Gateway at: \(location)")
+                                    self.logger.debug("Gateway at \(location)")
 
                                     let taskConnection = connection
                                     let taskContinuation = continuation
@@ -364,17 +410,17 @@ public actor NATService {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             if let httpResponse = response as? HTTPURLResponse {
-                print("🔧 NAT: UPnP \(action) response: HTTP \(httpResponse.statusCode)")
+                logger.debug("UPnP \(action) response: HTTP \(httpResponse.statusCode)")
                 if httpResponse.statusCode != 200 {
                     if let responseBody = String(data: data, encoding: .utf8) {
-                        print("🔧 NAT: Error response: \(responseBody.prefix(500))")
+                        logger.debug("Error response: \(responseBody.prefix(500))")
                     }
                 }
                 return httpResponse.statusCode == 200
             }
             return false
         } catch {
-            print("🔧 NAT: UPnP request error: \(error)")
+            logger.warning("UPnP request error: \(error.localizedDescription)")
             throw error
         }
     }
@@ -669,12 +715,12 @@ public actor NATService {
             let parts = localIP.split(separator: ".")
             if parts.count == 4 {
                 let gateway = "\(parts[0]).\(parts[1]).\(parts[2]).1"
-                print("🔧 NAT: Inferred gateway from local IP: \(gateway)")
+                logger.debug("Inferred gateway from local IP: \(gateway)")
                 return gateway
             }
         }
 
-        print("🔧 NAT: Could not determine default gateway")
+        logger.debug("Could not determine default gateway")
         return nil
     }
 }

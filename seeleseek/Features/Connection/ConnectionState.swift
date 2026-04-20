@@ -1,4 +1,7 @@
 import SwiftUI
+import os
+
+private let connectionLogger = Logger(subsystem: "com.seeleseek", category: "ConnectionState")
 
 @Observable
 @MainActor
@@ -125,7 +128,7 @@ enum CredentialStorage {
 
         let status = SecItemAdd(query as CFDictionary, nil)
         if status != errSecSuccess {
-            print("⚠️ Keychain save failed: \(status)")
+            connectionLogger.error("Keychain save failed: status=\(status)")
         }
     }
 

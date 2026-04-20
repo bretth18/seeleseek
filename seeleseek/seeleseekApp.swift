@@ -27,12 +27,14 @@ struct SeeleSeekApp: App {
                 .tint(SeeleColors.accent)
                 .task {
                     if Self.isRunningInPreview { return }
+                    #if DEBUG
                     if DemoDataSeeder.isEnabled {
                         DemoDataSeeder.seed(into: appState)
-                    } else {
-                        appState.configure()
-                        SeeleSeekShortcuts.updateAppShortcutParameters()
+                        return
                     }
+                    #endif
+                    appState.configure()
+                    SeeleSeekShortcuts.updateAppShortcutParameters()
                 }
         }
         #if os(macOS)

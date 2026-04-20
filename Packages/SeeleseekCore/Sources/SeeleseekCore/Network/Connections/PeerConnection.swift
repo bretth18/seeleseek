@@ -1247,6 +1247,7 @@ public actor PeerConnection {
         let version = payload.count > 0 ? payload[payload.startIndex] : 0
         isSeeleSeekPeer = true
         logger.info("[\(self.peerUsername)] SeeleSeek peer detected (version \(version))")
+        eventContinuation.yield(.seeleSeekVersionDiscovered(version))
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.

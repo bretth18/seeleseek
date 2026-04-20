@@ -1,5 +1,8 @@
 import SwiftUI
+import os
 import SeeleseekCore
+
+private let logger = Logger(subsystem: "com.seeleseek", category: "BrowseView")
 
 struct BrowseView: View {
     @Environment(\.appState) private var appState
@@ -324,7 +327,7 @@ struct BrowseView: View {
     private func browseUser() {
         guard browseState.canBrowse else { return }
         let username = browseState.currentUser
-        print("📂 BrowseView: Starting browse for \(username)")
+        logger.info("Starting browse for \(username)")
         browseState.browseUser(username)
     }
 }

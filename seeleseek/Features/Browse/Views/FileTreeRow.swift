@@ -1,5 +1,8 @@
 import SwiftUI
+import os
 import SeeleseekCore
+
+private let logger = Logger(subsystem: "com.seeleseek", category: "FileTreeRow")
 
 struct FileTreeRow: View {
     @Environment(\.appState) private var appState
@@ -203,7 +206,7 @@ struct FileTreeRow: View {
     }
 
     private func downloadFile() {
-        print("📥 Browse download: \(file.filename) from \(username)")
+        logger.info("Browse download: \(file.filename) from \(username)")
 
         let result = SearchResult(
             username: username,
@@ -224,7 +227,7 @@ struct FileTreeRow: View {
         guard file.isDirectory, let children = file.children else { return }
 
         let allFiles = SharedFile.collectAllFiles(in: children)
-        print("📁 Browse download folder: \(file.displayName) (\(allFiles.count) files)")
+        logger.info("Browse download folder: \(file.displayName) (\(allFiles.count) files)")
 
         var queuedCount = 0
         for childFile in allFiles {
@@ -246,9 +249,9 @@ struct FileTreeRow: View {
         }
 
         if queuedCount > 0 {
-            print("✅ Queued \(queuedCount) files from folder")
+            logger.info("Queued \(queuedCount) files from folder")
         } else {
-            print("ℹ️ All files in folder already queued")
+            logger.debug("All files in folder already queued")
         }
     }
 

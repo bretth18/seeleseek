@@ -74,6 +74,20 @@ struct PeerInfoPopover: View {
                     Text(stateLabel)
                         .font(SeeleTypography.caption)
                         .foregroundStyle(stateColor)
+
+                    if let version = peer.seeleSeekVersion {
+                        // Only set for SeeleSeek peers who completed the
+                        // capability handshake; standard Soulseek clients
+                        // (Nicotine+, SoulseekQt, etc.) never expose their
+                        // version peer-to-peer, so nothing to show.
+                        Text("SeeleSeek v\(version)")
+                            .font(SeeleTypography.caption2)
+                            .foregroundStyle(SeeleColors.accent)
+                            .padding(.horizontal, SeeleSpacing.xs)
+                            .padding(.vertical, SeeleSpacing.xxs)
+                            .background(SeeleColors.accent.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
                 }
             }
 

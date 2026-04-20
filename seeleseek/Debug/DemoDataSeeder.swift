@@ -1,9 +1,12 @@
+#if DEBUG
 import Foundation
 import SeeleseekCore
 
 /// Seeds realistic demo data into AppState for marketing screenshots.
 /// Activated by launching the app with `--screenshots` argument
 /// (typically from the UI test target).
+/// Debug-only: release builds strip this entire file, avoiding hundreds of
+/// KB of demo strings from shipping to users.
 @MainActor
 enum DemoDataSeeder {
     static var isEnabled: Bool {
@@ -286,3 +289,4 @@ enum DemoDataSeeder {
         ]
     }
 }
+#endif

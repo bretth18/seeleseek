@@ -571,13 +571,25 @@ final class SocialState: PeerWatching {
         }
     }
 
-    private func applyUserInfo(_ info: MessageParser.UserInfoReplyInfo, for username: String) {
-        guard viewingProfile?.username == username else { return }
+    /// Applies a parsed UserInfoReply to `viewingProfile` when it matches the
+    /// reply's user. Called from both the network-reply handler (fresh fetch)
+    /// and the loadProfile call site (cache hit) so both paths fan into one
+    /// update. Internal so tests can drive it directly.
+    func applyUserInfo(_ info: MessageParser.UserInfoReplyInfo, for username: String) {
+        guard let current = viewingProfile?.username else {
+            logger.debug("applyUserInfo(\(username)) skipped: no viewingProfile")
+            return
+        }
+        guard current == username else {
+            logger.debug("applyUserInfo(\(username)) skipped: viewingProfile=\(current)")
+            return
+        }
         viewingProfile?.description = info.description
         viewingProfile?.picture = info.pictureData
         viewingProfile?.totalUploads = info.totalUploads
         viewingProfile?.queueSize = info.queueSize
         viewingProfile?.hasFreeSlots = info.hasFreeSlots
+        logger.debug("applyUserInfo(\(username)): description=\(info.description.count)B picture=\(info.pictureData?.count ?? 0)B uploads=\(info.totalUploads)")
     }
 
     private func handleUserInterests(username: String, likes: [String], hates: [String]) {

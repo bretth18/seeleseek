@@ -32,22 +32,92 @@ struct DiagnosticsSection: View {
             settingsGroup("Network Configuration") {
                 diagRow("Listen Port", value: appState.networkClient.listenPort > 0 ? "\(appState.networkClient.listenPort)" : "-")
                 diagRow("Obfuscated Port", value: appState.networkClient.obfuscatedPort > 0 ? "\(appState.networkClient.obfuscatedPort)" : "-")
+                diagRow("Local IP", value: appState.networkClient.localIP ?? "-")
                 diagRow("External IP", value: appState.networkClient.externalIP ?? "Unknown")
                 diagRow("Configured Port", value: "\(appState.settings.listenPort)")
                 diagRow("UPnP Enabled", value: appState.settings.enableUPnP ? "Yes" : "No")
             }
 
-            settingsGroup("Peer Connections") {
-                diagRow("Active Connections", value: "\(appState.networkClient.peerConnectionPool.activeConnections)")
-                diagRow("Max Connections", value: "\(appState.networkClient.peerConnectionPool.maxConnections)")
-                diagRow("ConnectToPeer Received", value: "\(appState.networkClient.peerConnectionPool.connectToPeerCount)")
-                diagRow("PierceFirewall Received", value: "\(appState.networkClient.peerConnectionPool.pierceFirewallCount)",
-                       color: appState.networkClient.peerConnectionPool.pierceFirewallCount > 0 ? SeeleColors.success : SeeleColors.textSecondary)
+            settingsGroup("NAT / Reachability") {
+                diagRow("Reachability",
+                        value: appState.networkClient.reachability.label,
+                        color: reachabilityColor(appState.networkClient.reachability))
+                diagRow("Gateway", value: appState.networkClient.natGateway ?? "-")
+                diagRow("Port Mappings", value: mappingSummary(appState.networkClient.natMappings))
+                if !appState.networkClient.natMappings.isEmpty {
+                    settingsRow {
+                        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                            ForEach(appState.networkClient.natMappings, id: \.internalPort) { mapping in
+                                Text("\(mapping.proto) \(mapping.internalPort) → \(mapping.externalPort)")
+                                    .font(SeeleTypography.mono)
+                                    .foregroundStyle(SeeleColors.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 settingsRow {
-                    Text("Note: If ConnectToPeer is high but PierceFirewall is 0, your port is not reachable.")
+                    Text(reachabilityHint(appState.networkClient.reachability))
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
+            }
+
+            settingsGroup("Peer Connections") {
+                let pool = appState.networkClient.peerConnectionPool
+                diagRow("Active / Total", value: "\(pool.activeConnections) / \(pool.totalConnections)")
+                diagRow("Max Connections", value: "\(pool.maxConnections)")
+
+                // Direct inbound reachability — the real "can peers reach my port" signal.
+                diagRow("Direct Inbound (PeerInit)", value: "\(pool.peerInitCount)",
+                       color: pool.peerInitCount > 0 ? SeeleColors.success : SeeleColors.textSecondary)
+
+                // ConnectToPeer count: the OPPOSITE signal — each one is proof
+                // a peer tried direct and failed, so they asked the server to
+                // forward. Good when zero, bad when nonzero.
+                diagRow("Server-Forwarded (ConnectToPeer)", value: "\(pool.connectToPeerCount)",
+                       color: pool.connectToPeerCount == 0 ? SeeleColors.textSecondary :
+                              pool.peerInitCount > 0 ? SeeleColors.warning : SeeleColors.error)
+
+                // PierceFirewall received: unrelated direction — peers responding
+                // to our own outbound ConnectToPeer requests. Surface for
+                // completeness but not as a primary metric.
+                diagRow("PierceFirewall Received", value: "\(pool.pierceFirewallCount)")
+
+                diagRow("Avg Connection Duration", value: formatDuration(pool.averageConnectionDuration))
+                diagRow("Total Received", value: pool.totalBytesReceived.formattedBytes)
+                diagRow("Total Sent", value: pool.totalBytesSent.formattedBytes)
+
+                settingsRow {
+                    VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                        Text("Direct Inbound is the definitive reachability signal — if it's > 0, your port is open to at least some peers.")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                        Text("Server-Forwarded counts peers who couldn't reach your port directly and fell back to the server. High values = port problem.")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                }
+            }
+
+            settingsGroup("Session") {
+                let stats = appState.statisticsState
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    diagRow("Uptime", value: stats.formattedSessionDuration)
+                }
+                diagRow("Downloads", value: "\(stats.filesDownloaded)")
+                diagRow("Uploads", value: "\(stats.filesUploaded)")
+                diagRow("Searches Performed", value: "\(stats.searchesPerformed)")
+                let uniqueUsers = stats.uniqueUsersDownloadedFrom.count + stats.uniqueUsersUploadedTo.count
+                diagRow("Unique Peers (Session)", value: "\(uniqueUsers)")
+            }
+
+            settingsGroup("Distributed Network") {
+                diagRow("Accept Children", value: appState.networkClient.acceptDistributedChildren ? "Yes" : "No")
+                diagRow("Branch Level", value: "\(appState.networkClient.distributedBranchLevel)")
+                diagRow("Branch Root",
+                       value: appState.networkClient.distributedBranchRoot.isEmpty ? "-" : appState.networkClient.distributedBranchRoot)
+                diagRow("Children", value: "\(appState.networkClient.distributedChildren.count)")
             }
 
             settingsGroup("Port Reachability Test") {
@@ -176,6 +246,42 @@ struct DiagnosticsSection: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    private func reachabilityColor(_ r: NetworkClient.Reachability) -> Color {
+        switch r {
+        case .direct, .upnpMapped: return SeeleColors.success
+        case .partial: return SeeleColors.warning
+        case .unreachable: return SeeleColors.error
+        case .unknown: return SeeleColors.textSecondary
+        }
+    }
+
+    private func reachabilityHint(_ r: NetworkClient.Reachability) -> String {
+        switch r {
+        case .direct:
+            return "Your listen port is open to the internet. Peers are connecting directly."
+        case .upnpMapped:
+            return "Direct connections are working and your router has a UPnP/NAT-PMP mapping active."
+        case .partial:
+            return "Your port is reachable — some peers connect directly — but others can't and fall back to the server. Usually their NAT is the issue, not yours."
+        case .unreachable:
+            return "No peer has reached your port directly. Check: (1) Listen Port matches the one you forwarded in your router; (2) macOS firewall allows SeeleSeek; (3) you're not behind double NAT (ISP modem + router both NAT'ing)."
+        case .unknown:
+            return "No peers have tried to reach us yet. Trigger a search or browse to generate activity, then check back."
+        }
+    }
+
+    private func mappingSummary(_ mappings: [NATService.PortMapping]) -> String {
+        if mappings.isEmpty { return "None" }
+        return "\(mappings.count) active"
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "-" }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        return "\(Int(seconds / 3600))h \(Int((seconds.truncatingRemainder(dividingBy: 3600)) / 60))m"
     }
 
     private func tipRow(_ title: String, _ description: String) -> some View {
