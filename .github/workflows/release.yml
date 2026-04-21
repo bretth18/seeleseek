@@ -104,6 +104,24 @@ jobs:
           -exportOptionsPlist ExportOptions.plist \
           -exportPath $PWD/build
 
+    - name: Verify exported .app contains GeoLite2 database
+      # Single integrity check on the shipped artifact. Fails the release if
+      # GeoLite2-Country.mmdb didn't make it into the .app for any reason —
+      # sandbox denial, codesign strip, export drop, etc. Catches the class
+      # of silent-resource-drop bug that shipped broken in v1.1.0.
+      run: |
+        MMDB="$PWD/build/seeleseek.app/Contents/Resources/GeoLite2-Country.mmdb"
+        if [ ! -f "$MMDB" ]; then
+          echo "::error::GeoLite2-Country.mmdb missing from exported .app. Release aborted."
+          exit 1
+        fi
+        SIZE=$(stat -f%z "$MMDB")
+        if [ "$SIZE" -lt 1000000 ]; then
+          echo "::error::GeoLite2-Country.mmdb is suspiciously small ($SIZE bytes) — expected ~9MB."
+          exit 1
+        fi
+        echo "Verified: $MMDB ($SIZE bytes)"
+
     - name: Extract version from tag
       id: version
       run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
