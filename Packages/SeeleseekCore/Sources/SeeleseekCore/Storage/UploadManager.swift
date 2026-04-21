@@ -26,6 +26,12 @@ public final class UploadManager {
     public var maxQueuedPerUser = 50  // Max files queued per user (nicotine+ default)
     public var uploadSpeedLimit: Int64? = nil  // bytes per second, nil = unlimited
 
+    /// Highest valid upload-speed sample observed this session, in B/s.
+    /// Used to avoid overwriting our server-side profile speed with noisy
+    /// samples (small files, throttled peers, TCP slow-start). Session-only
+    /// by design — next good upload after a restart re-establishes it.
+    private var peakReportedSpeed: UInt32 = 0
+
     /// Called to check if an upload should be allowed (checks blocklist + leech status)
     /// Set by AppState to delegate to SocialState
     public var uploadPermissionChecker: ((String) -> Bool)?
@@ -775,22 +781,24 @@ public final class UploadManager {
                 })
             }
 
-            // Give TCP stack time to flush any remaining buffered data
-            // This is important because cancel() might tear down the connection before TCP sends all data
+            // Measure transfer duration at the moment the last application
+            // byte has been handed to TCP — the 500 ms flush sleep below is
+            // transport teardown, not transfer time, so must not inflate the
+            // denominator.
+            let duration = Date().timeIntervalSince(startTime)
+
+            // Give TCP stack time to flush any remaining buffered data.
+            // This is important because cancel() might tear down the
+            // connection before TCP sends all data.
             try? await Task.sleep(for: .milliseconds(500))
 
-            // Complete
-            let duration = Date().timeIntervalSince(startTime)
             logger.info("Upload complete: \(bytesSent) bytes sent in \(String(format: "%.1f", duration))s")
 
             let filename = (filePath as NSString).lastPathComponent
             let uploadUsername = activeUploads[transferId]?.username ?? "unknown"
 
-            // Report upload speed to server
-            let avgSpeed = duration > 0 ? UInt32(Double(bytesSent - offset) / duration) : 0
-            if avgSpeed > 0 {
-                try? await networkClient?.reportUploadSpeed(avgSpeed)
-            }
+            // Report upload speed to server (filtered, peak-tracked)
+            await reportUploadSpeedIfValid(bytesTransferred: bytesSent - offset, elapsed: duration)
 
             await MainActor.run { [transferState, statisticsState] in
                 transferState?.updateTransfer(id: transferId) { t in
@@ -877,6 +885,53 @@ public final class UploadManager {
             group.cancelAll()
             return result
         }
+    }
+
+    // MARK: - Upload Speed Reporting
+
+    /// Report a completed upload's throughput to the Soulseek server, but only
+    /// if the sample is trustworthy AND exceeds the best sample we've seen
+    /// this session.
+    ///
+    /// Why: the server's `SendUploadSpeed` (code 121) simply overwrites the
+    /// profile's stored value. Reporting every completed file — including
+    /// small files dominated by TCP slow-start and uploads throttled by a
+    /// slow peer — silently ratchets the displayed speed downward. Peak
+    /// tracking + noise filtering ensures the profile reflects our actual
+    /// sustained throughput on representative transfers.
+    ///
+    /// Filters:
+    /// - `bytesTransferred < 1 MiB`: dominated by connection setup and TCP
+    ///   slow-start, not a measurement of sustained throughput.
+    /// - `elapsed < 2 s`: too short for the transport to reach steady state.
+    /// - `sample > 1 GiB/s`: implausible on any consumer uplink — almost
+    ///   certainly loopback or a measurement bug. Rejected to protect the
+    ///   peak from getting stuck at an unreachable value.
+    private func reportUploadSpeedIfValid(bytesTransferred: UInt64, elapsed: TimeInterval) async {
+        let minBytes: UInt64 = 1_048_576                    // 1 MiB
+        let minElapsed: TimeInterval = 2.0                  // seconds
+        let maxPlausibleSpeed: Double = 1_073_741_824       // 1 GiB/s
+
+        guard bytesTransferred >= minBytes, elapsed >= minElapsed else {
+            logger.debug("Upload speed sample rejected: bytes=\(bytesTransferred) elapsed=\(elapsed)")
+            return
+        }
+
+        let sample = Double(bytesTransferred) / elapsed
+        guard sample > 0, sample < maxPlausibleSpeed else {
+            logger.debug("Upload speed sample rejected: implausible rate \(sample) B/s")
+            return
+        }
+
+        let sampleU32 = UInt32(sample)
+        guard sampleU32 > peakReportedSpeed else {
+            logger.debug("Upload speed sample \(sampleU32) B/s ≤ session peak \(self.peakReportedSpeed), not reporting")
+            return
+        }
+
+        peakReportedSpeed = sampleU32
+        logger.info("New upload-speed peak this session: \(sampleU32) B/s — reporting to server")
+        try? await networkClient?.reportUploadSpeed(sampleU32)
     }
 
     // MARK: - Public API
@@ -1107,11 +1162,8 @@ public final class UploadManager {
 
             logger.info("Upload complete: \(filePath) (\(bytesTransferred) bytes in \(String(format: "%.1f", elapsed))s, \(Int64(avgSpeed)) B/s)")
 
-            // Report upload speed to server
-            let reportSpeed = UInt32(avgSpeed)
-            if reportSpeed > 0 {
-                try? await networkClient?.reportUploadSpeed(reportSpeed)
-            }
+            // Report upload speed to server (filtered, peak-tracked)
+            await reportUploadSpeedIfValid(bytesTransferred: bytesTransferred, elapsed: elapsed)
 
             transferState?.updateTransfer(id: transferId) { t in
                 t.status = .completed
