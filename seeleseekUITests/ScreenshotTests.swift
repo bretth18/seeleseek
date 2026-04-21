@@ -100,10 +100,17 @@ nonisolated final class ScreenshotTests: XCTestCase {
             .deletingLastPathComponent()  // <repo>/
         let inRepo = repoRoot.appendingPathComponent("screenshots")
 
-        // Probe whether the runner can write to the repo path.
+        // Probe whether the runner can actually write to the repo path.
+        // createDirectory succeeds as a no-op on an existing directory even
+        // when the sandbox denies writes to its contents — so we have to
+        // verify with an actual file write.
         let fm = FileManager.default
         if (try? fm.createDirectory(at: inRepo, withIntermediateDirectories: true)) != nil {
-            return inRepo
+            let probe = inRepo.appendingPathComponent(".write-probe-\(UUID().uuidString)")
+            if fm.createFile(atPath: probe.path, contents: Data()) {
+                try? fm.removeItem(at: probe)
+                return inRepo
+            }
         }
 
         return URL(fileURLWithPath: NSTemporaryDirectory())
