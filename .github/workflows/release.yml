@@ -64,6 +64,11 @@ jobs:
         echo "=== Codesigning identities ==="
         security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+    - name: Fetch GeoLite2 Country database
+      uses: ./.github/actions/fetch-geolite2
+      with:
+        license-key: ${{ secrets.MAXMIND_LICENSE_KEY }}
+
     - name: Archive App
       run: |
         xcodebuild -scheme seeleseek \

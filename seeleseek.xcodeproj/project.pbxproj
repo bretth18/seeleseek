@@ -131,6 +131,7 @@
 			buildPhases = (
 				A61208142F32A89C00995D21 /* Sources */,
 				A61208152F32A89C00995D21 /* Frameworks */,
+				A68250AD2F96FB1B007430A4 /* Copy GeoLite2 MMDB (Optional) */,
 				A61208162F32A89C00995D21 /* Resources */,
 			);
 			buildRules = (
@@ -262,6 +263,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A68250AD2F96FB1B007430A4 /* Copy GeoLite2 MMDB (Optional) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy GeoLite2 MMDB (Optional)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = " MMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\n  if [ -f \"$MMDB\" ]; then\n      cp \"$MMDB\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\n      echo \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n  else\n      echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups\n  will return nil\"\n  fi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A61208142F32A89C00995D21 /* Sources */ = {

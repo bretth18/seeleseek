@@ -54,9 +54,37 @@ A SvelteKit based marketing + documentation site lives in this repo under `/site
 ### Setup
 1. Clone the repository.
 2. Open `seeleseek.xcodeproj` (the local package resolves automatically).
+3. (Optional) [Set up GeoIP](#setting-up-geoip) for peer country flags.
 
 ### Build
 Run `xcodebuild` or use Xcode.
+
+### Setting up GeoIP
+Peer country flags (in browse views, the monitor, etc.) are resolved locally
+against a MaxMind GeoLite2-Country database. The `.mmdb` file can't be
+committed to this repo — MaxMind's EULA prohibits redistribution.
+
+Without the database, lookups return `nil` and flags are omitted; the app
+runs fine, you just don't get geolocation.
+
+To enable it:
+1. Create a free account at https://www.maxmind.com/en/geolite2/signup
+2. Generate a license key and download `GeoLite2-Country.mmdb`.
+3. Drag the file into the `seeleseek` app target in Xcode ("Copy items if
+   needed", "Add to targets: seeleseek"). It should appear under
+   **Copy Bundle Resources** in the build phases.
+4. Rebuild. The log "GeoIP database loaded: GeoLite2-Country (...)" confirms
+   it's working.
+
+MaxMind refreshes the database biweekly; plan for periodic updates if accuracy
+matters to you. Attribution: "IP geolocation by MaxMind — maxmind.com".
+
+**CI/Release builds** fetch the database automatically via a reusable composite
+action at `.github/actions/fetch-geolite2`, invoked from `release.yml`. This
+requires a repo secret named `MAXMIND_LICENSE_KEY`. If the secret isn't set,
+tagged releases will fail at the "Fetch GeoLite2 Country database" step. The
+`build.yml` CI (PRs, main branch) does NOT need the secret — unit tests use
+a committed Apache-licensed fixture instead.
 
 ### CI/CD
 GitHub Actions is configured to build and release the app on push to `main`.

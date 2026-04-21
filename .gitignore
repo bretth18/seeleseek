@@ -12,5 +12,10 @@ CMakePresets.json
 *.log
 *.profraw
 
+# MaxMind GeoLite2 — EULA prohibits redistribution. Each dev / the release
+# CI pipeline must download their own copy. The Apache-licensed test fixture
+# under Packages/SeeleseekCore/Tests/ is fine and is NOT ignored.
+GeoLite2-*.mmdb
+
 
 .internal
