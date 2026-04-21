@@ -127,7 +127,9 @@ final class WishlistState {
     func removeItem(id: UUID) {
         tokenToWishlistId = tokenToWishlistId.filter { $0.value != id }
         items.removeAll { $0.id == id }
+        let phantomCount = results[id]?.count ?? 0
         results.removeValue(forKey: id)
+        unviewedResultCount = max(0, unviewedResultCount - phantomCount)
 
         Task {
             do {
@@ -166,8 +168,14 @@ final class WishlistState {
         tokenToWishlistId[token] = item.id
         logger.info("searchNow: query='\(item.query)' token=\(String(format: "0x%08X", token)) itemId=\(item.id) activeTokens=\(self.tokenToWishlistId.count)")
 
-        // Clear stale results from previous search cycle
+        // Clear stale results from previous search cycle, subtracting their
+        // contribution from the sidebar badge so the count stays in sync
+        // with results actually visible in the wishlist view. max(0, …)
+        // guards against markResultsViewed() having already zeroed the
+        // badge between results arriving and this next scan.
+        let staleCount = results[item.id]?.count ?? 0
         results[item.id] = []
+        unviewedResultCount = max(0, unviewedResultCount - staleCount)
 
         Task {
             do {
