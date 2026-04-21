@@ -41,31 +41,24 @@ public extension Data {
         guard let length = readUInt32(at: offset) else { return nil }
         let len = Int(length)
 
-        // SECURITY: Reject excessively long strings to prevent memory exhaustion
+        // SECURITY: Reject excessively long strings to prevent memory exhaustion.
         guard len <= Self.maxStringLength, offset + 4 + len <= count else { return nil }
-        
+
         let start = self.startIndex.advanced(by: offset + 4)
         let end = start.advanced(by: len)
         let stringData = self[start..<end]
-        
-        return String(data: stringData, encoding: .utf8).map { ($0, 4 + len) }
 
-//        let stringStart = offset + 4
-//        let stringEnd = stringStart + Int(length)
-//        guard stringEnd <= count else { return nil }
-//
-//        let startIndex = self.startIndex.advanced(by: stringStart)
-//        let endIndex = self.startIndex.advanced(by: stringEnd)
-//        let stringData = self[startIndex..<endIndex]
-//
-//        guard let string = String(data: stringData, encoding: .utf8) else {
-//            // Try Latin-1 as fallback
-//            guard let fallbackString = String(data: stringData, encoding: .isoLatin1) else {
-//                return nil
-//            }
-//            return (fallbackString, 4 + Int(length))
-//        }
-//        return (string, 4 + Int(length))
+        // Soulseek peers in the wild still send Latin-1 filenames (old Windows
+        // clients, non-English locales). Fall back rather than dropping the
+        // whole message — isoLatin1 will never fail since every byte maps to a
+        // codepoint, so the final `return nil` is only a safety belt.
+        if let utf8 = String(data: stringData, encoding: .utf8) {
+            return (utf8, 4 + len)
+        }
+        if let latin1 = String(data: stringData, encoding: .isoLatin1) {
+            return (latin1, 4 + len)
+        }
+        return nil
     }
 
     nonisolated func readBool(at offset: Int) -> Bool? {
