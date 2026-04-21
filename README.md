@@ -9,7 +9,32 @@ seeleseek is a modern, native macOS client for the soulseek protocol. It provide
 [Docs](https://seeleseek.net)
 
 
-<img width="554" height="383" alt="Screenshot" src="./site/static/screenshots/01-search.png" />
+<img alt="seeleseek — search" src="./site/static/screenshots/01-search.png" width="900" />
+
+<details>
+<summary>More screenshots</summary>
+<br/>
+
+<table>
+  <tr>
+    <td width="50%"><img alt="Wishlists"   src="./site/static/screenshots/02-wishlists.png"  /><br/><sub>Wishlists</sub></td>
+    <td width="50%"><img alt="Transfers"   src="./site/static/screenshots/03-transfers.png"  /><br/><sub>Transfers</sub></td>
+  </tr>
+  <tr>
+    <td><img alt="Chat"       src="./site/static/screenshots/04-chat.png"       /><br/><sub>Chat</sub></td>
+    <td><img alt="Browse"     src="./site/static/screenshots/05-browse.png"     /><br/><sub>Browse</sub></td>
+  </tr>
+  <tr>
+    <td><img alt="Friends"    src="./site/static/screenshots/06-friends.png"    /><br/><sub>Friends</sub></td>
+    <td><img alt="Statistics" src="./site/static/screenshots/07-statistics.png" /><br/><sub>Statistics</sub></td>
+  </tr>
+  <tr>
+    <td><img alt="Settings"   src="./site/static/screenshots/08-settings.png"   /><br/><sub>Settings</sub></td>
+    <td></td>
+  </tr>
+</table>
+
+</details>
 
 ## Installation
 
