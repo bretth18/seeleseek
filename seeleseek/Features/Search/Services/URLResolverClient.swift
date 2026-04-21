@@ -17,25 +17,33 @@ actor URLResolverClient {
     }
 
     enum MusicService: String, Sendable {
-        case spotify = "Spotify"
-        case appleMusic = "Apple Music"
-        case youtube = "YouTube"
-        case soundcloud = "SoundCloud"
-        case bandcamp = "Bandcamp"
+        case spotify
+        case appleMusic
+        case youtube
+        case soundcloud
+        case bandcamp
+
+        var displayName: String {
+            switch self {
+            case .spotify: return "Spotify"
+            case .appleMusic: return "Apple Music"
+            case .youtube: return "YouTube"
+            case .soundcloud: return "SoundCloud"
+            case .bandcamp: return "Bandcamp"
+            }
+        }
     }
 
     enum ResolveError: LocalizedError {
         case unsupportedURL
         case notATrack
         case parseFailed(String)
-        case networkError(Error)
 
         var errorDescription: String? {
             switch self {
             case .unsupportedURL: return "Unsupported music URL"
             case .notATrack: return "URL does not point to a single track"
             case .parseFailed(let detail): return "Could not parse track info: \(detail)"
-            case .networkError(let error): return "Network error: \(error.localizedDescription)"
             }
         }
     }
@@ -48,7 +56,7 @@ actor URLResolverClient {
             throw ResolveError.unsupportedURL
         }
 
-        logger.info("Resolving \(service.rawValue) URL: \(url)")
+        logger.info("Resolving \(service.displayName, privacy: .public) URL: \(url, privacy: .private)")
 
         let track: ResolvedTrack
         switch service {
@@ -64,46 +72,55 @@ actor URLResolverClient {
             track = try await resolveBandcamp(url: url)
         }
 
-        logger.info("Resolved: \(track.artist) - \(track.title) [\(service.rawValue)]")
+        logger.info("Resolved: \(track.artist, privacy: .public) - \(track.title, privacy: .public) [\(service.displayName, privacy: .public)]")
         return track
     }
 
     /// Detect which music service a URL belongs to, or nil if not a recognized music URL
     static func detectService(from url: String) -> MusicService? {
-        let lowered = url.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Prepend scheme if missing so URL parsing gives us a host.
+        let normalized = trimmed.hasPrefix("http") ? trimmed : "https://\(trimmed)"
 
-        // Spotify: open.spotify.com/track/ or open.spotify.com/intl-*/track/
-        if lowered.contains("open.spotify.com/") && lowered.contains("/track/") {
+        guard let parsed = URL(string: normalized),
+              let host = parsed.host?.lowercased() else {
+            return nil
+        }
+        let path = parsed.path.lowercased()
+
+        // Spotify: open.spotify.com/track/... (optionally /intl-*/ prefix)
+        if host == "open.spotify.com", path.contains("/track/") {
             return .spotify
         }
 
-        // Apple Music: music.apple.com with ?i= (track in album) or /song/
-        if lowered.contains("music.apple.com/") {
-            if lowered.contains("i=") || lowered.contains("/song/") {
+        // Apple Music: music.apple.com with ?i=<id> (track in album) or /song/<slug>/<id>
+        if host == "music.apple.com" || host == "geo.music.apple.com" {
+            let components = URLComponents(url: parsed, resolvingAgainstBaseURL: false)
+            let hasTrackQuery = components?.queryItems?.contains(where: { $0.name == "i" }) ?? false
+            if hasTrackQuery || path.contains("/song/") {
                 return .appleMusic
             }
-            // Album-only URL without track ID — reject later
             return nil
         }
 
-        // YouTube: youtube.com/watch, youtu.be/, music.youtube.com/watch
-        if lowered.contains("youtube.com/watch") || lowered.contains("youtu.be/") || lowered.contains("music.youtube.com/watch") {
+        // YouTube: {www,m,music}.youtube.com/watch or youtu.be/<id>
+        if host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" || host == "music.youtube.com" {
+            if path == "/watch" { return .youtube }
+        }
+        if host == "youtu.be", !path.isEmpty, path != "/" {
             return .youtube
         }
 
-        // SoundCloud: soundcloud.com with at least 2 path segments (artist/track)
-        if lowered.contains("soundcloud.com/") {
-            if let urlObj = URL(string: url),
-               urlObj.pathComponents.filter({ $0 != "/" }).count >= 2 {
-                // Reject sets/playlists
-                if lowered.contains("/sets/") { return nil }
-                return .soundcloud
-            }
-            return nil
+        // SoundCloud: soundcloud.com/<artist>/<track> — reject /sets/<playlist>
+        if host == "soundcloud.com" || host == "www.soundcloud.com" || host == "m.soundcloud.com" {
+            let segments = parsed.pathComponents.filter { $0 != "/" }
+            guard segments.count >= 2 else { return nil }
+            if segments.contains("sets") { return nil }
+            return .soundcloud
         }
 
-        // Bandcamp: *.bandcamp.com/track/
-        if lowered.contains(".bandcamp.com/track/") {
+        // Bandcamp: <artist>.bandcamp.com/track/<slug>
+        if host.hasSuffix(".bandcamp.com"), path.hasPrefix("/track/") {
             return .bandcamp
         }
 
@@ -124,9 +141,8 @@ actor URLResolverClient {
         return "\(artist) \(strippedTitle)".trimmingCharacters(in: .whitespaces)
     }
 
-    /// Clean YouTube-style titles by stripping common video suffixes
-    static func cleanTitle(_ title: String) -> String {
-        // Pattern to match common video suffixes (case-insensitive)
+    // Compiled once on first access; cleanTitle is called on every resolve.
+    private static let titleCleanupRegexes: [NSRegularExpression] = {
         let patterns = [
             #"\s*[\(\[]\s*Official\s+(Music\s+)?Video\s*[\)\]]"#,
             #"\s*[\(\[]\s*Official\s+Audio\s*[\)\]]"#,
@@ -142,16 +158,18 @@ actor URLResolverClient {
             #"\s*[\(\[]\s*Explicit\s*[\)\]]"#,
             #"\s*[\(\[]\s*Visualizer\s*[\)\]]"#,
         ]
+        return patterns.compactMap { try? NSRegularExpression(pattern: $0, options: .caseInsensitive) }
+    }()
 
+    /// Clean YouTube-style titles by stripping common video suffixes.
+    static func cleanTitle(_ title: String) -> String {
         var cleaned = title
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                cleaned = regex.stringByReplacingMatches(
-                    in: cleaned,
-                    range: NSRange(cleaned.startIndex..., in: cleaned),
-                    withTemplate: ""
-                )
-            }
+        for regex in titleCleanupRegexes {
+            cleaned = regex.stringByReplacingMatches(
+                in: cleaned,
+                range: NSRange(cleaned.startIndex..., in: cleaned),
+                withTemplate: ""
+            )
         }
         return cleaned.trimmingCharacters(in: .whitespaces)
     }
@@ -167,13 +185,15 @@ actor URLResolverClient {
         }
 
         // og:description format: "Rick Astley · Whenever You Need Somebody · Song · 1987"
-        // Artist is the first segment before " · "
-        var artist = ""
-        if let ogDescription = extractMetaContent(html: html, property: "og:description") {
-            if let dotRange = ogDescription.range(of: " \u{00B7} ") {
-                artist = String(ogDescription[ogDescription.startIndex..<dotRange.lowerBound])
-                    .trimmingCharacters(in: .whitespaces)
-            }
+        // Artist is the first segment before " · ".
+        guard let ogDescription = extractMetaContent(html: html, property: "og:description"),
+              let dotRange = ogDescription.range(of: " \u{00B7} ") else {
+            throw ResolveError.parseFailed("Could not extract artist from Spotify og:description")
+        }
+        let artist = String(ogDescription[ogDescription.startIndex..<dotRange.lowerBound])
+            .trimmingCharacters(in: .whitespaces)
+        guard !artist.isEmpty else {
+            throw ResolveError.parseFailed("Spotify og:description had empty artist segment")
         }
 
         return ResolvedTrack(
@@ -183,27 +203,63 @@ actor URLResolverClient {
         )
     }
 
-    /// Apple Music: use oEmbed JSON API for reliable structured data
-    private func resolveAppleMusic(url: String) async throws -> ResolvedTrack {
-        let encodedURL = url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? url
-        let oembedURL = "https://music.apple.com/api/oembed?url=\(encodedURL)"
-        let oembed = try await fetchOEmbed(endpoint: oembedURL)
+    private struct ITunesLookupResponse: Decodable {
+        let results: [Track]
+        struct Track: Decodable {
+            let wrapperType: String
+            let artistName: String
+            // Optional because album/artist lookups also decode into this shape.
+            let trackName: String?
+        }
+    }
 
-        let artist = oembed.authorName ?? ""
-        // oEmbed title often has " - Single" or " - EP" suffix
-        var title = oembed.title
-        for suffix in [" - Single", " - EP", " - single", " - ep"] {
-            if title.hasSuffix(suffix) {
-                title = String(title.dropLast(suffix.count))
-                break
-            }
+    /// Apple Music: extract the track ID (from `?i=<id>` or the last path
+    /// component) and resolve via the iTunes Search API lookup endpoint.
+    /// Storefront is forwarded as `country=` so non-US catalogs resolve.
+    private func resolveAppleMusic(url: String) async throws -> ResolvedTrack {
+        guard let components = URLComponents(string: url) else {
+            throw ResolveError.parseFailed("Invalid Apple Music URL")
         }
 
-        return ResolvedTrack(
-            artist: artist.trimmingCharacters(in: .whitespaces),
-            title: title.trimmingCharacters(in: .whitespaces),
-            source: .appleMusic
-        )
+        let trackID = components.queryItems?.first(where: { $0.name == "i" })?.value
+            ?? components.path.split(separator: "/").last.map(String.init)
+
+        guard let trackID else { throw ResolveError.notATrack }
+
+        var country: String?
+        if let first = components.path.split(separator: "/").first,
+           first.count == 2, first.allSatisfy(\.isLetter) {
+            country = String(first)
+        }
+
+        var lookup = URLComponents()
+        lookup.scheme = "https"
+        lookup.host = "itunes.apple.com"
+        lookup.path = "/lookup"
+        var items: [URLQueryItem] = [.init(name: "id", value: trackID)]
+        if let country { items.append(.init(name: "country", value: country)) }
+        lookup.queryItems = items
+
+        guard let requestURL = lookup.url else {
+            throw ResolveError.parseFailed("Failed to build iTunes lookup URL")
+        }
+
+        var request = URLRequest(url: requestURL)
+        request.timeoutInterval = 10
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw ResolveError.parseFailed("iTunes lookup failed with status \(code)")
+        }
+
+        let decoded = try JSONDecoder().decode(ITunesLookupResponse.self, from: data)
+        // Reject album/artist entities — only wrapperType="track" has trackName.
+        guard let track = decoded.results.first(where: { $0.wrapperType == "track" }),
+              let trackName = track.trackName else {
+            throw ResolveError.notATrack
+        }
+
+        return ResolvedTrack(artist: track.artistName, title: trackName, source: .appleMusic)
     }
 
     /// YouTube: use oEmbed JSON endpoint, split "Artist - Title" from title field
@@ -220,7 +276,7 @@ actor URLResolverClient {
             let artist = String(cleanedTitle[cleanedTitle.startIndex..<dashRange.lowerBound]).trimmingCharacters(in: .whitespaces)
             let title = String(cleanedTitle[dashRange.upperBound...]).trimmingCharacters(in: .whitespaces)
             if !artist.isEmpty && !title.isEmpty {
-                return ResolvedTrack(artist: artist, title: Self.cleanTitle(title), source: .youtube)
+                return ResolvedTrack(artist: artist, title: title, source: .youtube)
             }
         }
 
@@ -286,12 +342,10 @@ actor URLResolverClient {
     private struct OEmbedResponse: Decodable {
         let title: String
         let authorName: String?
-        let authorURL: String?
 
         enum CodingKeys: String, CodingKey {
             case title
             case authorName = "author_name"
-            case authorURL = "author_url"
         }
     }
 
@@ -301,7 +355,9 @@ actor URLResolverClient {
             throw ResolveError.parseFailed("Invalid oEmbed URL")
         }
 
-        let (data, response) = try await session.data(for: URLRequest(url: url))
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        let (data, response) = try await session.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -336,41 +392,74 @@ actor URLResolverClient {
         return html
     }
 
-    /// Extract content attribute from a <meta property="..." content="..."> tag
+    /// Extract content attribute from a <meta property="..." content="..."> tag.
+    /// Handles both double- and single-quoted attribute values, property/name
+    /// forms, and either attribute ordering. Decodes named + numeric HTML entities.
     private func extractMetaContent(html: String, property: String) -> String? {
-        // Match: <meta property="og:title" content="...">
-        // Also handles: <meta name="..." content="..."> and various quote styles
         let patterns = [
+            // property=..., content=... (double quotes)
             #"<meta\s+property="\#(property)"\s+content="([^"]+)""#,
             #"<meta\s+content="([^"]+)"\s+property="\#(property)""#,
             #"<meta\s+name="\#(property)"\s+content="([^"]+)""#,
             #"<meta\s+content="([^"]+)"\s+name="\#(property)""#,
+            // Single quotes
+            #"<meta\s+property='\#(property)'\s+content='([^']+)'"#,
+            #"<meta\s+content='([^']+)'\s+property='\#(property)'"#,
+            #"<meta\s+name='\#(property)'\s+content='([^']+)'"#,
+            #"<meta\s+content='([^']+)'\s+name='\#(property)'"#,
         ]
 
         for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-               let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)) {
-                // The content is in the first capture group
-                let captureRange: NSRange
-                if regex.numberOfCaptureGroups >= 1 {
-                    captureRange = match.range(at: 1)
-                } else {
-                    continue
-                }
-                if let range = Range(captureRange, in: html) {
-                    let content = String(html[range])
-                    // Decode HTML entities
-                    return content
-                        .replacingOccurrences(of: "&amp;", with: "&")
-                        .replacingOccurrences(of: "&lt;", with: "<")
-                        .replacingOccurrences(of: "&gt;", with: ">")
-                        .replacingOccurrences(of: "&quot;", with: "\"")
-                        .replacingOccurrences(of: "&#39;", with: "'")
-                        .replacingOccurrences(of: "&#x27;", with: "'")
-                }
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                  regex.numberOfCaptureGroups >= 1,
+                  let range = Range(match.range(at: 1), in: html) else {
+                continue
             }
+            return Self.decodeHTMLEntities(String(html[range]))
+        }
+        return nil
+    }
+
+    /// Decode named and numeric HTML entities commonly found in og:* metadata.
+    /// Handles the named set (&amp; &lt; &gt; &quot; &apos; &nbsp;) plus any
+    /// numeric entity of the form &#NNN; (decimal) or &#xHHHH; (hex).
+    private static func decodeHTMLEntities(_ s: String) -> String {
+        var result = s
+        let named: [(String, String)] = [
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&quot;", "\""),
+            ("&apos;", "'"),
+            ("&nbsp;", "\u{00A0}"),
+            ("&amp;", "&"),
+        ]
+        for (entity, replacement) in named {
+            result = result.replacingOccurrences(of: entity, with: replacement)
         }
 
-        return nil
+        guard let regex = try? NSRegularExpression(pattern: #"&#(x?)([0-9a-fA-F]+);"#, options: .caseInsensitive) else {
+            return result
+        }
+        let nsrange = NSRange(result.startIndex..., in: result)
+        let matches = regex.matches(in: result, range: nsrange)
+        guard !matches.isEmpty else { return result }
+
+        var output = ""
+        var cursor = result.startIndex
+        for match in matches {
+            guard let fullRange = Range(match.range, in: result),
+                  let prefixRange = Range(match.range(at: 1), in: result),
+                  let digitsRange = Range(match.range(at: 2), in: result) else { continue }
+            let isHex = !result[prefixRange].isEmpty
+            let digits = String(result[digitsRange])
+            guard let value = UInt32(digits, radix: isHex ? 16 : 10),
+                  let scalar = Unicode.Scalar(value) else { continue }
+            output.append(contentsOf: result[cursor..<fullRange.lowerBound])
+            output.append(Character(scalar))
+            cursor = fullRange.upperBound
+        }
+        output.append(contentsOf: result[cursor...])
+        return output
     }
 }
