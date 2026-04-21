@@ -4,9 +4,17 @@ import Foundation
 @testable import SeeleseekCore
 @testable import seeleseek
 
-/// Live tests against the real SoulSeek server
-/// These tests require network access and a valid account
-@Suite("Live Server Tests", .serialized)
+/// Live tests against the real SoulSeek server.
+///
+/// Skipped on CI: GitHub-runner IPs get rate-limited/throttled by
+/// server.slsknet.org, which makes these tests hang for ~20+ min before
+/// failing. Run locally for manual integration verification.
+@Suite(
+    "Live Server Tests",
+    .serialized,
+    .disabled(if: ProcessInfo.processInfo.environment["CI"] != nil,
+              "Hits real Soulseek server; skipped on CI")
+)
 struct LiveServerTests {
 
     /// Test the full search flow against the real server
