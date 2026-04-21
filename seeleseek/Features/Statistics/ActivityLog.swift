@@ -18,6 +18,7 @@ final class ActivityLog: ActivityLogging {
         let type: EventType
         let title: String
         let detail: String?
+        let username: String?
     }
 
     enum EventType {
@@ -71,12 +72,13 @@ final class ActivityLog: ActivityLogging {
 
     private init() {}
 
-    func log(_ type: EventType, title: String, detail: String? = nil) {
+    func log(_ type: EventType, title: String, detail: String? = nil, username: String? = nil) {
         let event = ActivityEvent(
             timestamp: Date(),
             type: type,
             title: title,
-            detail: detail
+            detail: detail,
+            username: username
         )
 
         events.insert(event, at: 0)
@@ -108,11 +110,11 @@ final class ActivityLog: ActivityLogging {
     // MARK: - Convenience Methods
 
     func logPeerConnected(username: String, ip: String) {
-        log(.peerConnected, title: "Connected to \(username)", detail: ip)
+        log(.peerConnected, title: "Connected to \(username)", detail: ip, username: username)
     }
 
     func logPeerDisconnected(username: String) {
-        log(.peerDisconnected, title: "Disconnected from \(username)")
+        log(.peerDisconnected, title: "Disconnected from \(username)", username: username)
     }
 
     func logSearchStarted(query: String) {
@@ -120,11 +122,11 @@ final class ActivityLog: ActivityLogging {
     }
 
     func logSearchResults(query: String, count: Int, user: String) {
-        log(.searchResult, title: "\(count) results from \(user)", detail: query)
+        log(.searchResult, title: "\(count) results from \(user)", detail: query, username: user)
     }
 
     func logDownloadStarted(filename: String, from user: String) {
-        log(.downloadStarted, title: "Download started from \(user)", detail: filename)
+        log(.downloadStarted, title: "Download started from \(user)", detail: filename, username: user)
     }
 
     func logDownloadCompleted(filename: String) {
@@ -132,7 +134,7 @@ final class ActivityLog: ActivityLogging {
     }
 
     func logUploadStarted(filename: String, to user: String) {
-        log(.uploadStarted, title: "Upload started to \(user)", detail: filename)
+        log(.uploadStarted, title: "Upload started to \(user)", detail: filename, username: user)
     }
 
     func logUploadCompleted(filename: String) {
@@ -141,9 +143,9 @@ final class ActivityLog: ActivityLogging {
 
     func logChatMessage(from user: String, room: String?) {
         if let room = room {
-            log(.chatMessage, title: "Message from \(user)", detail: "in \(room)")
+            log(.chatMessage, title: "Message from \(user)", detail: "in \(room)", username: user)
         } else {
-            log(.chatMessage, title: "Private message from \(user)")
+            log(.chatMessage, title: "Private message from \(user)", username: user)
         }
     }
 

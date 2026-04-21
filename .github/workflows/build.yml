@@ -32,5 +32,11 @@ jobs:
       run: sudo xcode-select -s /Applications/Xcode.app
 
     - name: Run Unit Tests
+      env:
+        # xcodebuild strips the TEST_RUNNER_ prefix when forwarding env vars
+        # to the test process, so this surfaces as `CI=true` at test time.
+        # LiveServerTests reads it and skips — they hang indefinitely when
+        # server.slsknet.org rate-limits the GitHub runner.
+        TEST_RUNNER_CI: "true"
       run: |
         xcodebuild -scheme seeleseek -destination 'platform=macOS' -only-testing:seeleseekTests test CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO

@@ -284,6 +284,14 @@ final class SocialState: PeerWatching {
             return (description: description, picture: self?.myPicture)
         }
 
+        // Incoming UserInfoReply — populate the currently-viewed profile if it matches.
+        // Fires on fresh network replies (both solicited by fetchUserInfo and
+        // unsolicited). Cache-hit paths are handled by applyUserInfo at the
+        // loadProfile call site, since the handler doesn't fire on cached reads.
+        client.addUserInfoHandler { [weak self] username, info in
+            self?.applyUserInfo(info, for: username)
+        }
+
         logger.info("Social callbacks configured")
 
         // Load persisted data
@@ -506,7 +514,7 @@ final class SocialState: PeerWatching {
     func loadProfile(for username: String) async {
         isLoadingProfile = true
 
-        // Start with data from buddy list if available
+        // Seed from buddy list when available
         if let buddy = buddies.first(where: { $0.username == username }) {
             viewingProfile = UserProfile(
                 username: username,
@@ -521,19 +529,20 @@ final class SocialState: PeerWatching {
             viewingProfile = UserProfile(username: username)
         }
 
+        // Viewing our own profile: populate the local description+picture directly.
+        // The Soulseek protocol has no way to fetch this from the server — other
+        // users learn these values only by asking *us* via UserInfoRequest.
+        let isOwnProfile = (networkClient?.username ?? "") == username && !username.isEmpty
+        if isOwnProfile {
+            viewingProfile?.description = myDescription
+            viewingProfile?.picture = myPicture
+        }
+
         do {
-            // Request user status first
             try await networkClient?.getUserStatus(username)
-
-            // Request user interests
             try await networkClient?.getUserInterests(username)
-
-            // Request user stats
             try await networkClient?.getUserStats(username)
-
-            // Request user privileges
             try await networkClient?.getUserPrivileges(username)
-
             logger.info("Requested profile data for \(username)")
         } catch {
             logger.error("Failed to load profile: \(error.localizedDescription)")
@@ -541,6 +550,46 @@ final class SocialState: PeerWatching {
 
         isLoadingProfile = false
         showProfileSheet = true
+
+        // Kick off peer-to-peer UserInfoRequest for the description and picture.
+        // Cached after the first reply; concurrent callers share one round-trip.
+        // Skipped for our own profile (can't peer-connect to ourselves).
+        //
+        // We apply the result directly instead of relying only on the handler
+        // registered in setupCallbacks — the handler fires on fresh replies but
+        // NOT on cache hits, which is what made re-opening the same profile
+        // appear empty the second time.
+        if !isOwnProfile, let client = networkClient {
+            Task {
+                do {
+                    let info = try await client.fetchUserInfo(from: username)
+                    applyUserInfo(info, for: username)
+                } catch {
+                    logger.debug("fetchUserInfo failed for \(username): \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Applies a parsed UserInfoReply to `viewingProfile` when it matches the
+    /// reply's user. Called from both the network-reply handler (fresh fetch)
+    /// and the loadProfile call site (cache hit) so both paths fan into one
+    /// update. Internal so tests can drive it directly.
+    func applyUserInfo(_ info: MessageParser.UserInfoReplyInfo, for username: String) {
+        guard let current = viewingProfile?.username else {
+            logger.debug("applyUserInfo(\(username)) skipped: no viewingProfile")
+            return
+        }
+        guard current == username else {
+            logger.debug("applyUserInfo(\(username)) skipped: viewingProfile=\(current)")
+            return
+        }
+        viewingProfile?.description = info.description
+        viewingProfile?.picture = info.pictureData
+        viewingProfile?.totalUploads = info.totalUploads
+        viewingProfile?.queueSize = info.queueSize
+        viewingProfile?.hasFreeSlots = info.hasFreeSlots
+        logger.debug("applyUserInfo(\(username)): description=\(info.description.count)B picture=\(info.pictureData?.count ?? 0)B uploads=\(info.totalUploads)")
     }
 
     private func handleUserInterests(username: String, likes: [String], hates: [String]) {

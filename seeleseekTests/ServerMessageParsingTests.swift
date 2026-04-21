@@ -165,12 +165,12 @@ struct ServerMessageParsingTests {
             $0.appendUInt32(1704067200)
             $0.appendString("bob")
             $0.appendString("Hey there")
-            $0.appendBool(false) // not admin
+            $0.appendBool(false) // replay (was offline)
         })
         #expect(result?.id == 999)
         #expect(result?.username == "bob")
         #expect(result?.message == "Hey there")
-        #expect(result?.isAdmin == false)
+        #expect(result?.isNewMessage == false)
     }
 
     @Test("userJoinedRoom")
@@ -244,22 +244,47 @@ struct ServerMessageParsingTests {
 
     // MARK: - Room List
 
-    @Test("roomList - public rooms")
+    @Test("roomList - public rooms only")
     func testRoomListPublic() {
         var p = Data()
-        // 2 rooms
+        // 2 public rooms
         p.appendUInt32(2)
         p.appendString("Lounge")
         p.appendString("Metal")
-        // 2 counts
         p.appendUInt32(2)
         p.appendUInt32(50)
         p.appendUInt32(120)
 
         let result = MessageParser.parseRoomList(p)
-        #expect(result?.count == 2)
-        #expect(result?[0].name == "Lounge")
-        #expect(result?[1].name == "Metal")
+        #expect(result?.publicRooms.count == 2)
+        #expect(result?.publicRooms[0].name == "Lounge")
+        #expect(result?.publicRooms[0].userCount == 50)
+        #expect(result?.publicRooms[1].name == "Metal")
+        #expect(result?.ownedPrivate.isEmpty == true)
+        #expect(result?.memberPrivate.isEmpty == true)
+        #expect(result?.operatedPrivate.isEmpty == true)
+    }
+
+    @Test("roomList - all four sections")
+    func testRoomListAllSections() {
+        var p = Data()
+        // Public: 1 room
+        p.appendUInt32(1); p.appendString("Public1")
+        p.appendUInt32(1); p.appendUInt32(10)
+        // Owned private: 1 room
+        p.appendUInt32(1); p.appendString("MyPrivate")
+        p.appendUInt32(1); p.appendUInt32(5)
+        // Member private: 2 rooms
+        p.appendUInt32(2); p.appendString("Friends"); p.appendString("Label")
+        p.appendUInt32(2); p.appendUInt32(3); p.appendUInt32(8)
+        // Operated: 2 names, no counts
+        p.appendUInt32(2); p.appendString("OpRoom1"); p.appendString("OpRoom2")
+
+        let result = MessageParser.parseRoomList(p)
+        #expect(result?.publicRooms == [MessageParser.RoomListEntry(name: "Public1", userCount: 10)])
+        #expect(result?.ownedPrivate == [MessageParser.RoomListEntry(name: "MyPrivate", userCount: 5)])
+        #expect(result?.memberPrivate.count == 2)
+        #expect(result?.operatedPrivate == ["OpRoom1", "OpRoom2"])
     }
 
     // MARK: - Interests & Recommendations

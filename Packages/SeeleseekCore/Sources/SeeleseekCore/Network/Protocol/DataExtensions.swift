@@ -39,31 +39,30 @@ public extension Data {
 
     nonisolated func readString(at offset: Int) -> (string: String, bytesConsumed: Int)? {
         guard let length = readUInt32(at: offset) else { return nil }
+        let len = Int(length)
 
-        // SECURITY: Reject excessively long strings to prevent memory exhaustion
-        guard length <= Self.maxStringLength else { return nil }
+        // SECURITY: Reject excessively long strings to prevent memory exhaustion.
+        guard len <= Self.maxStringLength, offset + 4 + len <= count else { return nil }
 
-        let stringStart = offset + 4
-        let stringEnd = stringStart + Int(length)
-        guard stringEnd <= count else { return nil }
+        let start = self.startIndex.advanced(by: offset + 4)
+        let end = start.advanced(by: len)
+        let stringData = self[start..<end]
 
-        let startIndex = self.startIndex.advanced(by: stringStart)
-        let endIndex = self.startIndex.advanced(by: stringEnd)
-        let stringData = self[startIndex..<endIndex]
-
-        guard let string = String(data: stringData, encoding: .utf8) else {
-            // Try Latin-1 as fallback
-            guard let fallbackString = String(data: stringData, encoding: .isoLatin1) else {
-                return nil
-            }
-            return (fallbackString, 4 + Int(length))
+        // Soulseek peers in the wild still send Latin-1 filenames (old Windows
+        // clients, non-English locales). Fall back rather than dropping the
+        // whole message — isoLatin1 will never fail since every byte maps to a
+        // codepoint, so the final `return nil` is only a safety belt.
+        if let utf8 = String(data: stringData, encoding: .utf8) {
+            return (utf8, 4 + len)
         }
-        return (string, 4 + Int(length))
+        if let latin1 = String(data: stringData, encoding: .isoLatin1) {
+            return (latin1, 4 + len)
+        }
+        return nil
     }
 
     nonisolated func readBool(at offset: Int) -> Bool? {
-        guard let byte = readUInt8(at: offset) else { return nil }
-        return byte != 0
+        readUInt8(at: offset).map { $0 != 0 }
     }
 
     /// Alias for readUInt8
@@ -91,21 +90,18 @@ public extension Data {
     }
 
     nonisolated mutating func appendUInt16(_ value: UInt16) {
-        append(UInt8(value & 0xFF))
-        append(UInt8((value >> 8) & 0xFF))
+        var val = value.littleEndian
+        Swift.withUnsafeBytes(of: &val) { append(contentsOf: $0) }
     }
 
     nonisolated mutating func appendUInt32(_ value: UInt32) {
-        append(UInt8(value & 0xFF))
-        append(UInt8((value >> 8) & 0xFF))
-        append(UInt8((value >> 16) & 0xFF))
-        append(UInt8((value >> 24) & 0xFF))
+        var littleEndianValue = value.littleEndian
+        Swift.withUnsafeBytes(of: &littleEndianValue) { self.append(contentsOf: $0) }
     }
 
     nonisolated mutating func appendUInt64(_ value: UInt64) {
-        for i in 0..<8 {
-            append(UInt8((value >> (i * 8)) & 0xFF))
-        }
+        var val = value.littleEndian
+        Swift.withUnsafeBytes(of: &val) { append(contentsOf: $0 )}
     }
 
     nonisolated mutating func appendInt32(_ value: Int32) {
@@ -113,7 +109,7 @@ public extension Data {
     }
 
     nonisolated mutating func appendString(_ string: String) {
-        let data = string.data(using: .utf8) ?? Data()
+        let data = Data(string.utf8)
         appendUInt32(UInt32(data.count))
         append(data)
     }

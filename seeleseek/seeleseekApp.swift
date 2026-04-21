@@ -27,12 +27,14 @@ struct SeeleSeekApp: App {
                 .tint(SeeleColors.accent)
                 .task {
                     if Self.isRunningInPreview { return }
+                    #if DEBUG
                     if DemoDataSeeder.isEnabled {
                         DemoDataSeeder.seed(into: appState)
-                    } else {
-                        appState.configure()
-                        SeeleSeekShortcuts.updateAppShortcutParameters()
+                        return
                     }
+                    #endif
+                    appState.configure()
+                    SeeleSeekShortcuts.updateAppShortcutParameters()
                 }
         }
         #if os(macOS)
@@ -91,15 +93,10 @@ struct SeeleSeekApp: App {
 
                 Divider()
 
-                Button("Statistics") {
-                    appState.sidebarSelection = .statistics
-                }
-                .keyboardShortcut("7", modifiers: .command)
-
-                Button("Network Monitor") {
+                Button("Activity") {
                     appState.sidebarSelection = .networkMonitor
                 }
-                .keyboardShortcut("8", modifiers: .command)
+                .keyboardShortcut("7", modifiers: .command)
 
                 Divider()
 

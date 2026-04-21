@@ -72,6 +72,29 @@ struct AboutSettingsSection: View {
                 .padding(.horizontal, SeeleSpacing.rowHorizontal)
 
             settingsRow {
+                VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
+                    Text("Acknowledgments")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+
+                    // Required by the GeoLite2 EULA whenever we ship the DB.
+                    HStack(spacing: SeeleSpacing.xxs) {
+                        Text("IP geolocation by")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                        Link("MaxMind", destination: URL(string: "https://www.maxmind.com")!)
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.accent)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider()
+                .overlay(SeeleColors.border)
+                .padding(.horizontal, SeeleSpacing.rowHorizontal)
+
+            settingsRow {
                 HStack(alignment: .center, spacing: SeeleSpacing.xs) {
                     if let projectURL {
                         Link(destination: projectURL) {

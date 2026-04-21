@@ -98,20 +98,33 @@ struct MessageParserTests {
         #expect(result?.privileged == true)
     }
 
-    @Test("Parse private message")
-    func testParsePrivateMessage() {
+    @Test("Parse private message — live delivery has isNewMessage=true")
+    func testParsePrivateMessageLive() {
         var payload = Data()
         payload.appendUInt32(123) // Message ID
         payload.appendUInt32(1704067200) // Timestamp
         payload.appendString("sender")
         payload.appendString("Hello there!")
-        payload.appendBool(false) // Not admin
+        payload.appendBool(true) // new (real-time) message
 
         let result = MessageParser.parsePrivateMessage(payload)
         #expect(result?.id == 123)
         #expect(result?.username == "sender")
         #expect(result?.message == "Hello there!")
-        #expect(result?.isAdmin == false)
+        #expect(result?.isNewMessage == true)
+    }
+
+    @Test("Parse private message — replay for offline recipient has isNewMessage=false")
+    func testParsePrivateMessageReplay() {
+        var payload = Data()
+        payload.appendUInt32(123)
+        payload.appendUInt32(1704067200)
+        payload.appendString("sender")
+        payload.appendString("Queued while you were offline")
+        payload.appendBool(false) // replay
+
+        let result = MessageParser.parsePrivateMessage(payload)
+        #expect(result?.isNewMessage == false)
     }
 
     @Test("Parse with corrupted data returns nil")

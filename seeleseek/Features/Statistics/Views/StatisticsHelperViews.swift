@@ -1,24 +1,6 @@
 import SwiftUI
 import SeeleseekCore
 
-struct StatRow: View {
-    let label: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-            Spacer()
-            Text(value)
-                .font(SeeleTypography.mono)
-                .foregroundStyle(color)
-        }
-    }
-}
-
 struct TransferHistoryRow: View {
     let entry: StatisticsState.TransferHistoryEntry
 
@@ -58,7 +40,7 @@ struct TransferHistoryRow: View {
             Text(formatTime(entry.timestamp))
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
-                .frame(width: 50)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)

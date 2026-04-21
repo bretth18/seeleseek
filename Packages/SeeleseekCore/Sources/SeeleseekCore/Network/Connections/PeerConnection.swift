@@ -1247,6 +1247,7 @@ public actor PeerConnection {
         let version = payload.count > 0 ? payload[payload.startIndex] : 0
         isSeeleSeekPeer = true
         logger.info("[\(self.peerUsername)] SeeleSeek peer detected (version \(version))")
+        eventContinuation.yield(.seeleSeekVersionDiscovered(version))
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
@@ -1283,181 +1284,34 @@ public actor PeerConnection {
 
     private func handleSharesReply(_ data: Data) async {
         logger.debug("[\(self.peerInfo.username)] handleSharesReply called with \(data.count) bytes")
-        let dataPreview = data.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
 
-        // Shares are zlib compressed per protocol spec
+        // Shares are zlib compressed per protocol spec.
         let decompressed: Data
         do {
             decompressed = try decompressZlib(data)
             logger.debug("[\(self.peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
         } catch {
             logger.error("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
-            // SharesReply is always zlib compressed per protocol - raw data cannot be parsed
             eventContinuation.yield(.sharesReceived([]))
             return
         }
 
-        var offset = 0
-        var files: [SharedFile] = []
-
-        // Parse directory count
-        guard let dirCount = decompressed.readUInt32(at: offset) else {
-            logger.debug("[\(self.peerInfo.username)] Failed to read directory count at offset \(offset)")
+        guard let info = MessageParser.parseSharesReply(decompressed) else {
+            logger.error("[\(self.peerInfo.username)] Failed to parse SharesReply")
+            eventContinuation.yield(.sharesReceived([]))
             return
         }
-        // SECURITY: Limit directory count to prevent DoS
-        let maxDirCount: UInt32 = 100_000
-        guard dirCount <= maxDirCount else {
-            logger.warning("SECURITY: Directory count \(dirCount) exceeds limit \(maxDirCount)")
-            return
-        }
-        offset += 4
-        logger.debug("[\(self.peerInfo.username)] Directory count: \(dirCount)")
 
-        for dirIndex in 0..<dirCount {
-            guard let (dirName, dirLen) = decompressed.readString(at: offset) else {
-                logger.debug("[\(self.peerInfo.username)] Failed to read dir name at offset \(offset)")
-                break
-            }
-            offset += dirLen
-
-            guard let fileCount = decompressed.readUInt32(at: offset) else {
-                logger.debug("[\(self.peerInfo.username)] Failed to read file count at offset \(offset)")
-                break
-            }
-            // SECURITY: Limit file count per directory
-            let maxFileCount: UInt32 = 100_000
-            guard fileCount <= maxFileCount else {
-                logger.warning("SECURITY: File count \(fileCount) exceeds limit")
-                break
-            }
-            offset += 4
-
-            if dirIndex < 3 {
-                logger.debug("[\(self.peerInfo.username)] Dir[\(dirIndex)]: '\(dirName)' with \(fileCount) files")
-            }
-
-            for _ in 0..<fileCount {
-                guard decompressed.readByte(at: offset) != nil else { break }
-                offset += 1
-
-                guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-                offset += filenameLen
-
-                guard let size = decompressed.readUInt64(at: offset) else { break }
-                offset += 8
-
-                guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-                offset += extLen
-
-                guard let attrCount = decompressed.readUInt32(at: offset) else { break }
-                // SECURITY: Limit attribute count
-                let maxAttrCount: UInt32 = 100
-                guard attrCount <= maxAttrCount else { break }
-                offset += 4
-
-                var bitrate: UInt32?
-                var duration: UInt32?
-
-                for _ in 0..<attrCount {
-                    guard let attrType = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-                    guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-
-                    switch attrType {
-                    case 0: bitrate = attrValue
-                    case 1: duration = attrValue
-                    default: break
-                    }
-                }
-
-                let file = SharedFile(
-                    filename: "\(dirName)\\\(filename)",
-                    size: size,
-                    bitrate: bitrate,
-                    duration: duration,
-                    isPrivate: false
-                )
-                files.append(file)
-            }
+        let files = info.files.map {
+            SharedFile(
+                filename: $0.filename,
+                size: $0.size,
+                bitrate: $0.bitrate,
+                duration: $0.duration,
+                isPrivate: $0.isPrivate
+            )
         }
 
-        // Skip the "unknown" uint32 (always 0 per protocol)
-        if offset + 4 <= decompressed.count {
-            offset += 4
-        }
-
-        // Parse private directories (buddy-only files)
-        if let privateDirCount = decompressed.readUInt32(at: offset) {
-            // SECURITY: Limit private directory count
-            let maxPrivateDirCount: UInt32 = 100_000
-            guard privateDirCount <= maxPrivateDirCount else {
-                logger.warning("SECURITY: Private directory count \(privateDirCount) exceeds limit")
-                return
-            }
-            offset += 4
-            logger.debug("[\(self.peerInfo.username)] Private directory count: \(privateDirCount)")
-
-            for _ in 0..<privateDirCount {
-                guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break }
-                offset += dirLen
-
-                guard let fileCount = decompressed.readUInt32(at: offset) else { break }
-                // SECURITY: Limit file count per directory
-                let maxFileCount: UInt32 = 100_000
-                guard fileCount <= maxFileCount else { break }
-                offset += 4
-
-                for _ in 0..<fileCount {
-                    guard decompressed.readByte(at: offset) != nil else { break }
-                    offset += 1
-
-                    guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-                    offset += filenameLen
-
-                    guard let size = decompressed.readUInt64(at: offset) else { break }
-                    offset += 8
-
-                    guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-                    offset += extLen
-
-                    guard let attrCount = decompressed.readUInt32(at: offset) else { break }
-                    // SECURITY: Limit attribute count
-                    let maxAttrCount: UInt32 = 100
-                    guard attrCount <= maxAttrCount else { break }
-                    offset += 4
-
-                    var bitrate: UInt32?
-                    var duration: UInt32?
-
-                    for _ in 0..<attrCount {
-                        guard let attrType = decompressed.readUInt32(at: offset) else { break }
-                        offset += 4
-                        guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                        offset += 4
-
-                        switch attrType {
-                        case 0: bitrate = attrValue
-                        case 1: duration = attrValue
-                        default: break
-                        }
-                    }
-
-                    let file = SharedFile(
-                        filename: "\(dirName)\\\(filename)",
-                        size: size,
-                        bitrate: bitrate,
-                        duration: duration,
-                        isPrivate: true  // Mark as private/locked
-                    )
-                    files.append(file)
-                }
-            }
-        }
-
-        logger.debug("[\(self.peerInfo.username)] Parsed \(files.count) files (including private)")
         logger.info("Received \(files.count) shared files from \(self.peerInfo.username)")
         eventContinuation.yield(.sharesReceived(files))
     }
@@ -1526,29 +1380,12 @@ public actor PeerConnection {
     }
 
     private func handleUserInfoReply(_ data: Data) async {
-        var offset = 0
-
-        guard let (_, descLen) = data.readString(at: offset) else { return }
-        offset += descLen
-
-        // Has picture flag
-        guard let hasPicture = data.readBool(at: offset) else { return }
-        offset += 1
-
-        if hasPicture {
-            guard let pictureLen = data.readUInt32(at: offset) else { return }
-            offset += 4 + Int(pictureLen)
+        guard let info = MessageParser.parseUserInfoReply(data) else {
+            logger.error("[\(self.peerInfo.username)] Failed to parse UserInfoReply (\(data.count) bytes)")
+            return
         }
-
-        guard let totalUploads = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let queueSize = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let slotsFree = data.readBool(at: offset) else { return }
-
-        logger.info("User info: uploads=\(totalUploads) queue=\(queueSize) freeSlots=\(slotsFree)")
+        logger.info("[\(self.peerInfo.username)] UserInfoReply: desc=\(info.description.count)B picture=\(info.pictureData?.count ?? 0)B uploads=\(info.totalUploads) queue=\(info.queueSize) freeSlots=\(info.hasFreeSlots)")
+        eventContinuation.yield(.userInfoReply(info))
     }
 
     private func handleTransferRequest(_ data: Data) async {
@@ -1579,29 +1416,21 @@ public actor PeerConnection {
     }
 
     private func handleTransferReply(_ data: Data) async {
-        var offset = 0
-
-        guard let token = data.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let allowed = data.readBool(at: offset) else { return }
-        offset += 1
-
-        var filesize: UInt64? = nil
-        if allowed {
-            if let size = data.readUInt64(at: offset) {
-                filesize = size
-                logger.info("Transfer allowed: token=\(token) size=\(size)")
-                logger.info("TransferResponse: token=\(token) allowed=true size=\(size)")
-            }
-        } else {
-            if let (reason, _) = data.readString(at: offset) {
-                logger.info("Transfer denied: token=\(token) reason=\(reason)")
-                logger.info("TransferResponse: token=\(token) allowed=false reason=\(reason)")
-            }
+        guard let info = MessageParser.parseTransferReply(data) else {
+            logger.error("Failed to parse TransferReply")
+            return
         }
-
-        eventContinuation.yield(.transferResponse(token: token, allowed: allowed, filesize: filesize))
+        if info.allowed {
+            logger.info("TransferResponse: token=\(info.token) allowed=true size=\(info.fileSize ?? 0)")
+        } else {
+            logger.info("TransferResponse: token=\(info.token) allowed=false reason=\(info.reason ?? "-")")
+        }
+        eventContinuation.yield(.transferResponse(
+            token: info.token,
+            allowed: info.allowed,
+            filesize: info.fileSize,
+            reason: info.reason
+        ))
     }
 
     private func handleQueueDownload(_ data: Data) async {
@@ -1662,82 +1491,22 @@ public actor PeerConnection {
             return
         }
 
-        var offset = 0
-
-        guard let token = decompressed.readUInt32(at: offset) else { return }
-        offset += 4
-
-        guard let (folder, folderLen) = decompressed.readString(at: offset) else { return }
-        offset += folderLen
-
-        guard let folderCount = decompressed.readUInt32(at: offset) else { return }
-        offset += 4
-
-        var files: [SharedFile] = []
-        let maxFolderCount: UInt32 = 100_000
-        let maxFileCount: UInt32 = 100_000
-        let maxAttributeCount: UInt32 = 100
-        guard folderCount <= maxFolderCount else { return }
-
-        for _ in 0..<folderCount {
-            guard let (_, dirLen) = decompressed.readString(at: offset) else { break }
-            offset += dirLen
-
-            guard let fileCount = decompressed.readUInt32(at: offset) else { break }
-            offset += 4
-            guard fileCount <= maxFileCount else { break }
-
-            for _ in 0..<fileCount {
-                // uint8 code
-                guard decompressed.readByte(at: offset) != nil else { break }
-                offset += 1
-
-                // string filename
-                guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-                offset += filenameLen
-
-                // uint64 size
-                guard let size = decompressed.readUInt64(at: offset) else { break }
-                offset += 8
-
-                // string extension
-                guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-                offset += extLen
-
-                // uint32 attribute count
-                guard let attrCount = decompressed.readUInt32(at: offset) else { break }
-                offset += 4
-                guard attrCount <= maxAttributeCount else { break }
-
-                var bitrate: UInt32?
-                var duration: UInt32?
-
-                for _ in 0..<attrCount {
-                    guard let attrType = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-                    guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-
-                    switch attrType {
-                    case 0: bitrate = attrValue
-                    case 1: duration = attrValue
-                    default: break
-                    }
-                }
-
-                let file = SharedFile(
-                    filename: filename,
-                    size: size,
-                    bitrate: bitrate,
-                    duration: duration
-                )
-                files.append(file)
-            }
+        guard let info = MessageParser.parseFolderContentsReply(decompressed) else {
+            logger.error("Failed to parse FolderContentsReply")
+            return
         }
 
-        logger.info("Received folder contents: \(folder) (\(files.count) files)")
-        logger.info("FolderContentsReply: \(folder) with \(files.count) files")
-        eventContinuation.yield(.folderContentsResponse(token: token, folder: folder, files: files))
+        let files = info.files.map {
+            SharedFile(
+                filename: $0.filename,
+                size: $0.size,
+                bitrate: $0.bitrate,
+                duration: $0.duration
+            )
+        }
+
+        logger.info("FolderContentsReply: \(info.folder) with \(files.count) files")
+        eventContinuation.yield(.folderContentsResponse(token: info.token, folder: info.folder, files: files))
     }
 
     private func updateState(_ newState: State) {

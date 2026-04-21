@@ -1,0 +1,71 @@
+name: Fetch GeoLite2 Country Database
+description: >
+  Downloads MaxMind's GeoLite2-Country.mmdb using a license key and places it
+  at $SRCROOT for the Xcode build-phase script to pick up. Verifies the
+  SHA256 checksum MaxMind publishes alongside the tarball. Fails fast if the
+  license key is missing or the download/verify fails — a release build
+  without the DB would ship the app with country flags silently disabled.
+
+inputs:
+  license-key:
+    description: MaxMind license key (create at maxmind.com → My License Key)
+    required: true
+  destination:
+    description: Absolute path where GeoLite2-Country.mmdb should be written.
+    required: false
+    default: ${{ github.workspace }}/GeoLite2-Country.mmdb
+
+runs:
+  using: composite
+  steps:
+    - name: Download + verify GeoLite2-Country
+      shell: bash
+      env:
+        MAXMIND_LICENSE_KEY: ${{ inputs.license-key }}
+        DEST: ${{ inputs.destination }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${MAXMIND_LICENSE_KEY}" ]; then
+          echo "::error::MAXMIND_LICENSE_KEY input is empty. Set the repo secret MAXMIND_LICENSE_KEY and pass it via 'with: license-key'."
+          exit 1
+        fi
+
+        TMP="$(mktemp -d)"
+        trap 'rm -rf "$TMP"' EXIT
+
+        BASE="https://download.maxmind.com/app/geoip_download"
+        QUERY="edition_id=GeoLite2-Country&license_key=${MAXMIND_LICENSE_KEY}&suffix=tar.gz"
+
+        echo "Fetching tarball..."
+        curl -fsSL "${BASE}?${QUERY}" -o "${TMP}/geolite2.tar.gz"
+
+        echo "Fetching checksum..."
+        curl -fsSL "${BASE}?${QUERY/suffix=tar.gz/suffix=tar.gz.sha256}" -o "${TMP}/geolite2.tar.gz.sha256"
+
+        pushd "${TMP}" >/dev/null
+        # MaxMind's .sha256 file is "<hex>  <versioned_filename>". We only
+        # care about the hex column — our local file is renamed.
+        EXPECTED="$(awk '{print $1}' geolite2.tar.gz.sha256)"
+        ACTUAL="$(shasum -a 256 geolite2.tar.gz | awk '{print $1}')"
+        if [ "${EXPECTED}" != "${ACTUAL}" ]; then
+          echo "::error::SHA256 mismatch — expected ${EXPECTED}, got ${ACTUAL}"
+          exit 1
+        fi
+        echo "SHA256 verified: ${ACTUAL}"
+
+        echo "Extracting..."
+        tar -xzf geolite2.tar.gz
+        MMDB="$(find . -maxdepth 2 -name 'GeoLite2-Country.mmdb' -print -quit)"
+        if [ -z "${MMDB}" ]; then
+          echo "::error::GeoLite2-Country.mmdb not found in extracted archive"
+          exit 1
+        fi
+
+        mkdir -p "$(dirname "${DEST}")"
+        cp "${MMDB}" "${DEST}"
+        popd >/dev/null
+
+        # stat -f is macOS, -c is linux — the runner type dictates which works.
+        SIZE="$(stat -f%z "${DEST}" 2>/dev/null || stat -c%s "${DEST}")"
+        echo "GeoLite2-Country.mmdb ready at ${DEST} (${SIZE} bytes)"

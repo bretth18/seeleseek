@@ -14,13 +14,15 @@ public enum PeerConnectionEvent: Sendable {
     case uploadDenied(filename: String, reason: String)
     case uploadFailed(filename: String)
     case queueUpload(username: String, filename: String)
-    case transferResponse(token: UInt32, allowed: Bool, filesize: UInt64?)
+    case transferResponse(token: UInt32, allowed: Bool, filesize: UInt64?, reason: String?)
     case folderContentsRequest(token: UInt32, folder: String)
     case folderContentsResponse(token: UInt32, folder: String, files: [SharedFile])
     case placeInQueueRequest(username: String, filename: String)
     case placeInQueueReply(filename: String, position: UInt32)
     case sharesRequest
     case userInfoRequest
+    case userInfoReply(MessageParser.UserInfoReplyInfo)
+    case seeleSeekVersionDiscovered(UInt8)
     case artworkRequest(token: UInt32, filePath: String)
     case artworkReply(token: UInt32, imageData: Data)
 }

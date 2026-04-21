@@ -18,9 +18,9 @@ public enum MessageParser {
 
     // MARK: - Frame Parsing
 
-    public struct ParsedFrame: Sendable {
-        let code: UInt32
-        let payload: Data
+    public struct ParsedFrame: Sendable, Equatable {
+        public let code: UInt32
+        public let payload: Data
     }
 
     public nonisolated static func parseFrame(from data: Data) -> (frame: ParsedFrame, consumed: Int)? {
@@ -75,45 +75,92 @@ public enum MessageParser {
         }
     }
 
-    public struct RoomListEntry: Sendable {
-        let name: String
-        let userCount: UInt32
+    public struct RoomListEntry: Sendable, Equatable {
+        public let name: String
+        public let userCount: UInt32
     }
 
-    public nonisolated static func parseRoomList(_ payload: Data) -> [RoomListEntry]? {
-        var offset = 0
-        var rooms: [RoomListEntry] = []
+    public struct RoomListInfo: Sendable, Equatable {
+        public let publicRooms: [RoomListEntry]
+        public let ownedPrivate: [RoomListEntry]
+        public let memberPrivate: [RoomListEntry]
+        /// Rooms where we are an operator; payload only carries names, no counts.
+        public let operatedPrivate: [String]
+    }
 
+    /// Parse RoomList payload (code 64). Returns all four sections per spec.
+    /// Sections after `publicRooms` are absent on older responses — those are
+    /// returned empty rather than nil.
+    public nonisolated static func parseRoomList(_ payload: Data) -> RoomListInfo? {
+        var offset = 0
+
+        guard let publicRooms = readRoomNamesAndCounts(payload, offset: &offset) else {
+            return nil
+        }
+
+        let ownedPrivate = readRoomNamesAndCounts(payload, offset: &offset) ?? []
+        let memberPrivate = readRoomNamesAndCounts(payload, offset: &offset) ?? []
+
+        // Operator room section: names only (no user counts).
+        var operatedPrivate: [String] = []
+        if let opCount = payload.readUInt32(at: offset), opCount <= maxItemCount {
+            offset += 4
+            for _ in 0..<opCount {
+                guard let (name, len) = payload.readString(at: offset) else { break }
+                operatedPrivate.append(name)
+                offset += len
+            }
+        }
+
+        return RoomListInfo(
+            publicRooms: publicRooms,
+            ownedPrivate: ownedPrivate,
+            memberPrivate: memberPrivate,
+            operatedPrivate: operatedPrivate
+        )
+    }
+
+    /// Shared helper: reads `count + names[]` followed by `count + counts[]` —
+    /// the pattern used for public, owned-private, and member-private sections.
+    /// Returns nil when either length prefix is missing, so callers can detect
+    /// a truncated payload and decide whether the section was optional.
+    private nonisolated static func readRoomNamesAndCounts(_ payload: Data, offset: inout Int) -> [RoomListEntry]? {
         guard let roomCount = payload.readUInt32(at: offset) else { return nil }
-        // SECURITY: Limit room count to prevent DoS
         guard roomCount <= maxItemCount else { return nil }
         offset += 4
 
-        var roomNames: [String] = []
+        var names: [String] = []
         for _ in 0..<roomCount {
             guard let (name, len) = payload.readString(at: offset) else { return nil }
             offset += len
-            roomNames.append(name)
+            names.append(name)
         }
 
         guard let userCountsCount = payload.readUInt32(at: offset) else { return nil }
+        guard userCountsCount <= maxItemCount else { return nil }
         offset += 4
 
-        for i in 0..<Int(min(roomCount, userCountsCount)) {
-            guard let userCount = payload.readUInt32(at: offset) else { return nil }
+        var counts: [UInt32] = []
+        for _ in 0..<userCountsCount {
+            guard let count = payload.readUInt32(at: offset) else { break }
+            counts.append(count)
             offset += 4
-            rooms.append(RoomListEntry(name: roomNames[i], userCount: userCount))
         }
 
-        return rooms
+        return names.enumerated().map { index, name in
+            let userCount = index < counts.count ? counts[index] : 0
+            return RoomListEntry(name: name, userCount: userCount)
+        }
     }
 
-    public struct PeerInfo: Sendable {
-        let username: String
-        let ip: String
-        let port: UInt32
-        let token: UInt32
-        let privileged: Bool
+    public struct PeerInfo: Sendable, Equatable {
+        public let username: String
+        /// "P" (peer), "F" (file transfer), "D" (distributed) per spec.
+        public let connectionType: String
+        public let ip: String
+        public let port: UInt32
+        public let token: UInt32
+        public let privileged: Bool
     }
 
     public nonisolated static func parseConnectToPeer(_ payload: Data) -> PeerInfo? {
@@ -122,7 +169,7 @@ public enum MessageParser {
         guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
         offset += usernameLen
 
-        guard let (_, typeLen) = payload.readString(at: offset) else { return nil }
+        guard let (connectionType, typeLen) = payload.readString(at: offset) else { return nil }
         offset += typeLen
 
         guard let ip = payload.readUInt32(at: offset) else { return nil }
@@ -138,7 +185,14 @@ public enum MessageParser {
 
         let ipString = formatLittleEndianIPv4(ip)
 
-        return PeerInfo(username: username, ip: ipString, port: port, token: token, privileged: privileged)
+        return PeerInfo(
+            username: username,
+            connectionType: connectionType,
+            ip: ipString,
+            port: port,
+            token: token,
+            privileged: privileged
+        )
     }
 
     nonisolated private static func formatLittleEndianIPv4(_ ip: UInt32) -> String {
@@ -151,10 +205,10 @@ public enum MessageParser {
         return "\(b1).\(b2).\(b3).\(b4)"
     }
 
-    public struct UserStatusInfo: Sendable {
-        let username: String
-        let status: UserStatus
-        let privileged: Bool
+    public struct UserStatusInfo: Sendable, Equatable {
+        public let username: String
+        public let status: UserStatus
+        public let privileged: Bool
     }
 
     public nonisolated static func parseGetUserStatus(_ payload: Data) -> UserStatusInfo? {
@@ -173,12 +227,15 @@ public enum MessageParser {
         return UserStatusInfo(username: username, status: status, privileged: privileged)
     }
 
-    public struct PrivateMessageInfo: Sendable {
-        let id: UInt32
-        let timestamp: UInt32
-        let username: String
-        let message: String
-        let isAdmin: Bool
+    public struct PrivateMessageInfo: Sendable, Equatable {
+        public let id: UInt32
+        public let timestamp: UInt32
+        public let username: String
+        public let message: String
+        /// True if this message is being delivered in real time; false if it
+        /// is a re-send for a recipient who was offline when it was first sent
+        /// (matches the wire-level "new message" flag from the spec).
+        public let isNewMessage: Bool
     }
 
     public nonisolated static func parsePrivateMessage(_ payload: Data) -> PrivateMessageInfo? {
@@ -196,15 +253,18 @@ public enum MessageParser {
         guard let (message, messageLen) = payload.readString(at: offset) else { return nil }
         offset += messageLen
 
-        let isAdmin = payload.readBool(at: offset) ?? false
+        // Spec: trailing bool is "new message" — true for live delivery,
+        // false when the server is replaying a queued message for an
+        // offline recipient. If absent we assume live (most common case).
+        let isNewMessage = payload.readBool(at: offset) ?? true
 
-        return PrivateMessageInfo(id: id, timestamp: timestamp, username: username, message: message, isAdmin: isAdmin)
+        return PrivateMessageInfo(id: id, timestamp: timestamp, username: username, message: message, isNewMessage: isNewMessage)
     }
 
-    public struct ChatRoomMessageInfo: Sendable {
-        let roomName: String
-        let username: String
-        let message: String
+    public struct ChatRoomMessageInfo: Sendable, Equatable {
+        public let roomName: String
+        public let username: String
+        public let message: String
     }
 
     public nonisolated static func parseSayInChatRoom(_ payload: Data) -> ChatRoomMessageInfo? {
@@ -223,14 +283,14 @@ public enum MessageParser {
 
     // MARK: - Peer Message Parsing
 
-    public struct SearchResultFile: Sendable {
-        let filename: String
-        let size: UInt64
-        let `extension`: String
-        let attributes: [FileAttribute]
-        let isPrivate: Bool  // Buddy-only / locked file
+    public struct SearchResultFile: Sendable, Equatable {
+        public let filename: String
+        public let size: UInt64
+        public let `extension`: String
+        public let attributes: [FileAttribute]
+        public let isPrivate: Bool  // Buddy-only / locked file
 
-        nonisolated init(filename: String, size: UInt64, extension: String, attributes: [FileAttribute], isPrivate: Bool = false) {
+        public nonisolated init(filename: String, size: UInt64, extension: String, attributes: [FileAttribute], isPrivate: Bool = false) {
             self.filename = filename
             self.size = size
             self.extension = `extension`
@@ -239,11 +299,11 @@ public enum MessageParser {
         }
     }
 
-    public struct FileAttribute: Sendable {
-        let type: UInt32
-        let value: UInt32
+    public struct FileAttribute: Sendable, Equatable {
+        public let type: UInt32
+        public let value: UInt32
 
-        var description: String {
+        public var description: String {
             switch type {
             case 0: "Bitrate: \(value) kbps"
             case 1: "Duration: \(value) seconds"
@@ -255,13 +315,13 @@ public enum MessageParser {
         }
     }
 
-    public struct SearchReplyInfo: Sendable {
-        let username: String
-        let token: UInt32
-        let files: [SearchResultFile]
-        let freeSlots: Bool
-        let uploadSpeed: UInt32
-        let queueLength: UInt32
+    public struct SearchReplyInfo: Sendable, Equatable {
+        public let username: String
+        public let token: UInt32
+        public let files: [SearchResultFile]
+        public let freeSlots: Bool
+        public let uploadSpeed: UInt32
+        public let queueLength: UInt32
     }
 
     public nonisolated static func parseSearchReply(_ payload: Data) -> SearchReplyInfo? {
@@ -381,11 +441,11 @@ public enum MessageParser {
         )
     }
 
-    public struct TransferRequestInfo: Sendable {
-        let direction: FileTransferDirection
-        let token: UInt32
-        let filename: String
-        let fileSize: UInt64?
+    public struct TransferRequestInfo: Sendable, Equatable {
+        public let direction: FileTransferDirection
+        public let token: UInt32
+        public let filename: String
+        public let fileSize: UInt64?
     }
 
     public nonisolated static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
@@ -461,16 +521,16 @@ public enum MessageParser {
 
     // MARK: - Peer Message Parsing (Extended)
 
-    public struct ShareFileInfo: Sendable {
-        let filename: String
-        let size: UInt64
-        let bitrate: UInt32?
-        let duration: UInt32?
-        let isPrivate: Bool
+    public struct ShareFileInfo: Sendable, Equatable {
+        public let filename: String
+        public let size: UInt64
+        public let bitrate: UInt32?
+        public let duration: UInt32?
+        public let isPrivate: Bool
     }
 
-    public struct SharesReplyInfo: Sendable {
-        let files: [ShareFileInfo]
+    public struct SharesReplyInfo: Sendable, Equatable {
+        public let files: [ShareFileInfo]
     }
 
     /// Parse decompressed SharesReply payload (code 5).
@@ -599,10 +659,10 @@ public enum MessageParser {
         return SharesReplyInfo(files: files)
     }
 
-    public struct FolderContentsReplyInfo: Sendable {
-        let token: UInt32
-        let folder: String
-        let files: [ShareFileInfo]
+    public struct FolderContentsReplyInfo: Sendable, Equatable {
+        public let token: UInt32
+        public let folder: String
+        public let files: [ShareFileInfo]
     }
 
     /// Parse decompressed FolderContentsReply payload (code 37).
@@ -675,13 +735,13 @@ public enum MessageParser {
         return FolderContentsReplyInfo(token: token, folder: folder, files: files)
     }
 
-    public struct UserInfoReplyInfo: Sendable {
-        let description: String
-        let hasPicture: Bool
-        let pictureData: Data?
-        let totalUploads: UInt32
-        let queueSize: UInt32
-        let hasFreeSlots: Bool
+    public struct UserInfoReplyInfo: Sendable, Equatable {
+        public let description: String
+        public let hasPicture: Bool
+        public let pictureData: Data?
+        public let totalUploads: UInt32
+        public let queueSize: UInt32
+        public let hasFreeSlots: Bool
     }
 
     /// Parse UserInfoReply payload (code 16).
@@ -721,11 +781,11 @@ public enum MessageParser {
         )
     }
 
-    public struct TransferReplyInfo: Sendable {
-        let token: UInt32
-        let allowed: Bool
-        let fileSize: UInt64?
-        let reason: String?
+    public struct TransferReplyInfo: Sendable, Equatable {
+        public let token: UInt32
+        public let allowed: Bool
+        public let fileSize: UInt64?
+        public let reason: String?
     }
 
     /// Parse TransferReply payload (code 41).
@@ -752,11 +812,11 @@ public enum MessageParser {
 
     // MARK: - Server Message Parsing (Extended)
 
-    public struct JoinRoomInfo: Sendable {
-        let roomName: String
-        let users: [String]
-        let owner: String?
-        let operators: [String]
+    public struct JoinRoomInfo: Sendable, Equatable {
+        public let roomName: String
+        public let users: [String]
+        public let owner: String?
+        public let operators: [String]
     }
 
     /// Parse JoinRoom payload (code 14).
@@ -838,14 +898,16 @@ public enum MessageParser {
         return JoinRoomInfo(roomName: roomName, users: users, owner: owner, operators: operators)
     }
 
-    public struct WatchUserInfo: Sendable {
-        let username: String
-        let exists: Bool
-        let status: UserStatus?
-        let avgSpeed: UInt32?
-        let uploadNum: UInt32?
-        let files: UInt32?
-        let dirs: UInt32?
+    public struct WatchUserInfo: Sendable, Equatable {
+        public let username: String
+        public let exists: Bool
+        public let status: UserStatus?
+        public let avgSpeed: UInt32?
+        public let uploadNum: UInt32?
+        public let files: UInt32?
+        public let dirs: UInt32?
+        /// Present for online / away users (per spec); nil for offline or not-exists.
+        public let countryCode: String?
     }
 
     /// Parse WatchUser response payload (code 5 response).
@@ -859,7 +921,11 @@ public enum MessageParser {
         offset += 1
 
         guard exists else {
-            return WatchUserInfo(username: username, exists: false, status: nil, avgSpeed: nil, uploadNum: nil, files: nil, dirs: nil)
+            return WatchUserInfo(
+                username: username, exists: false,
+                status: nil, avgSpeed: nil, uploadNum: nil, files: nil, dirs: nil,
+                countryCode: nil
+            )
         }
 
         guard let statusRaw = payload.readUInt32(at: offset) else { return nil }
@@ -874,16 +940,29 @@ public enum MessageParser {
         guard let files = payload.readUInt32(at: offset) else { return nil }
         offset += 4
         guard let dirs = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
 
         let status = UserStatus(rawValue: statusRaw) ?? .offline
 
-        return WatchUserInfo(username: username, exists: true, status: status, avgSpeed: avgSpeed, uploadNum: uploadNum, files: files, dirs: dirs)
+        // Spec: country code string trails when status is online or away.
+        var countryCode: String?
+        if status == .away || status == .online,
+           let (code, _) = payload.readString(at: offset) {
+            countryCode = code.isEmpty ? nil : code
+        }
+
+        return WatchUserInfo(
+            username: username, exists: true,
+            status: status, avgSpeed: avgSpeed, uploadNum: uploadNum,
+            files: files, dirs: dirs,
+            countryCode: countryCode
+        )
     }
 
-    public struct PossibleParentInfo: Sendable {
-        let username: String
-        let ip: String
-        let port: UInt32
+    public struct PossibleParentInfo: Sendable, Equatable {
+        public let username: String
+        public let ip: String
+        public let port: UInt32
     }
 
     /// Parse PossibleParents payload (code 102).
@@ -912,14 +991,14 @@ public enum MessageParser {
         return parents
     }
 
-    public struct RecommendationEntry: Sendable {
-        let item: String
-        let score: Int32
+    public struct RecommendationEntry: Sendable, Equatable {
+        public let item: String
+        public let score: Int32
     }
 
-    public struct RecommendationsInfo: Sendable {
-        let recommendations: [RecommendationEntry]
-        let unrecommendations: [RecommendationEntry]
+    public struct RecommendationsInfo: Sendable, Equatable {
+        public let recommendations: [RecommendationEntry]
+        public let unrecommendations: [RecommendationEntry]
     }
 
     /// Parse Recommendations payload (code 54, 55, 56).
@@ -958,10 +1037,10 @@ public enum MessageParser {
         return RecommendationsInfo(recommendations: recommendations, unrecommendations: unrecommendations)
     }
 
-    public struct UserInterestsInfo: Sendable {
-        let username: String
-        let likes: [String]
-        let hates: [String]
+    public struct UserInterestsInfo: Sendable, Equatable {
+        public let username: String
+        public let likes: [String]
+        public let hates: [String]
     }
 
     /// Parse UserInterests payload (code 57).
@@ -996,9 +1075,9 @@ public enum MessageParser {
         return UserInterestsInfo(username: username, likes: likes, hates: hates)
     }
 
-    public struct SimilarUserEntry: Sendable {
-        let username: String
-        let rating: UInt32
+    public struct SimilarUserEntry: Sendable, Equatable {
+        public let username: String
+        public let rating: UInt32
     }
 
     /// Parse SimilarUsers payload (code 110).
@@ -1021,12 +1100,12 @@ public enum MessageParser {
         return users
     }
 
-    public struct UserStatsInfo: Sendable {
-        let username: String
-        let avgSpeed: UInt32
-        let uploadNum: UInt32
-        let files: UInt32
-        let dirs: UInt32
+    public struct UserStatsInfo: Sendable, Equatable {
+        public let username: String
+        public let avgSpeed: UInt32
+        public let uploadNum: UInt32
+        public let files: UInt32
+        public let dirs: UInt32
     }
 
     /// Parse GetUserStats payload (code 36 response).
@@ -1054,14 +1133,14 @@ public enum MessageParser {
         return UserStatsInfo(username: username, avgSpeed: avgSpeed, uploadNum: uploadNum, files: files, dirs: dirs)
     }
 
-    public struct RoomTickerEntry: Sendable {
-        let username: String
-        let ticker: String
+    public struct RoomTickerEntry: Sendable, Equatable {
+        public let username: String
+        public let ticker: String
     }
 
-    public struct RoomTickerStateInfo: Sendable {
-        let room: String
-        let tickers: [RoomTickerEntry]
+    public struct RoomTickerStateInfo: Sendable, Equatable {
+        public let room: String
+        public let tickers: [RoomTickerEntry]
     }
 
     /// Parse RoomTickerState payload (code 113).
@@ -1087,9 +1166,9 @@ public enum MessageParser {
         return RoomTickerStateInfo(room: room, tickers: tickers)
     }
 
-    public struct RoomMembersInfo: Sendable {
-        let room: String
-        let members: [String]
+    public struct RoomMembersInfo: Sendable, Equatable {
+        public let room: String
+        public let members: [String]
     }
 
     /// Parse PrivateRoomMembers / PrivateRoomOperators payload (codes 133, 148).
@@ -1131,11 +1210,11 @@ public enum MessageParser {
         return phrases
     }
 
-    public struct DistributedSearchInfo: Sendable {
-        let unknown: UInt32
-        let username: String
-        let token: UInt32
-        let query: String
+    public struct DistributedSearchInfo: Sendable, Equatable {
+        public let unknown: UInt32
+        public let username: String
+        public let token: UInt32
+        public let query: String
     }
 
     /// Parse distributed search request payload (distributed code 3).

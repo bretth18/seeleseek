@@ -7,6 +7,7 @@ struct UserContextMenuItems: View {
     @Environment(\.appState) private var appState
     let username: String
     var showAddBuddy: Bool = false
+    var showBlock: Bool = false
     var navigateOnBrowse: Bool = false
     var navigateOnMessage: Bool = false
 
@@ -52,6 +53,22 @@ struct UserContextMenuItems: View {
                 Task { await appState.socialState.ignoreUser(username) }
             } label: {
                 Label("Ignore User", systemImage: "eye.slash")
+            }
+        }
+
+        if showBlock {
+            if appState.socialState.isBlocked(username) {
+                Button {
+                    Task { await appState.socialState.unblockUser(username) }
+                } label: {
+                    Label("Unblock User", systemImage: "checkmark.shield")
+                }
+            } else {
+                Button(role: .destructive) {
+                    Task { await appState.socialState.blockUser(username) }
+                } label: {
+                    Label("Block from Connecting", systemImage: "nosign")
+                }
             }
         }
     }

@@ -25,54 +25,60 @@ struct MonitorConnectionHealthCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
-            Text("Connection Health")
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
+        StandardCard {
+            VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+                Text("Connection Health")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textPrimary)
 
-            HStack(spacing: SeeleSpacing.xl) {
-                // Health gauge
-                ZStack {
-                    Circle()
-                        .stroke(SeeleColors.surfaceSecondary, lineWidth: 10)
+                HStack(spacing: SeeleSpacing.xl) {
+                    healthGauge
+                        .frame(width: 80, height: 80)
 
-                    Circle()
-                        .trim(from: 0, to: healthScore / 100)
-                        .stroke(healthColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.spring(), value: healthScore)
-
-                    VStack {
-                        Text(String(format: "%.0f%%", healthScore))
-                            .font(SeeleTypography.title2)
-                            .foregroundStyle(SeeleColors.textPrimary)
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        StandardStatBadge(
+                            "Active",
+                            value: "\(peerPool.activeConnections)",
+                            color: SeeleColors.success
+                        )
+                        StandardStatBadge(
+                            "Total",
+                            value: "\(peerPool.totalConnections)",
+                            color: SeeleColors.textSecondary
+                        )
+                        StandardStatBadge(
+                            "Avg Duration",
+                            value: formatDuration(peerPool.averageConnectionDuration),
+                            color: SeeleColors.info
+                        )
                     }
-                }
-                .frame(width: 80, height: 80)
 
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    HealthStatRow(
-                        label: "Active",
-                        value: "\(peerPool.activeConnections)",
-                        color: SeeleColors.success
-                    )
-                    HealthStatRow(
-                        label: "Total",
-                        value: "\(peerPool.totalConnections)",
-                        color: SeeleColors.textSecondary
-                    )
-                    HealthStatRow(
-                        label: "Avg Duration",
-                        value: formatDuration(peerPool.averageConnectionDuration),
-                        color: SeeleColors.info
-                    )
+                    Spacer()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+    }
+
+    private var healthGauge: some View {
+        ZStack {
+            Circle()
+                .stroke(SeeleColors.surfaceSecondary, lineWidth: 10)
+
+            Circle()
+                .trim(from: 0, to: healthScore / 100)
+                .stroke(healthColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: healthScore)
+
+            Text(String(format: "%.0f%%", healthScore))
+                .font(SeeleTypography.title2)
+                .foregroundStyle(SeeleColors.textPrimary)
+                .contentTransition(.numericText())
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Connection health")
+        .accessibilityValue("\(Int(healthScore)) percent — \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active")
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
@@ -82,24 +88,6 @@ struct MonitorConnectionHealthCard: View {
             return "\(Int(seconds / 60))m"
         } else {
             return "\(Int(seconds / 3600))h"
-        }
-    }
-}
-
-struct HealthStatRow: View {
-    let label: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-            Spacer()
-            Text(value)
-                .font(SeeleTypography.mono)
-                .foregroundStyle(color)
         }
     }
 }

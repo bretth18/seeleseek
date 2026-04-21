@@ -24,6 +24,76 @@ public final class NetworkClient {
     public private(set) var obfuscatedPort: UInt16 = 0
     public private(set) var externalIP: String?
 
+    /// Local interface IP (en0/en1). Set once at startup.
+    public private(set) var localIP: String?
+    /// Router gateway discovered by UPnP or inferred from the local subnet.
+    /// Nil until NAT setup runs.
+    public private(set) var natGateway: String?
+    /// Port mappings we successfully registered via UPnP or NAT-PMP. Empty
+    /// when mapping is disabled or all attempts failed.
+    public private(set) var natMappings: [NATService.PortMapping] = []
+
+    /// Classifies our listen port's reachability from other peers. Not
+    /// RFC-grade NAT classification — just "can peers reach our port, and
+    /// if not, why?" — which is what users need to know.
+    ///
+    /// The core signal is `peerInitCount`: it's only incremented when a peer
+    /// reaches us directly and sends PeerInit. The server forwarding
+    /// `ConnectToPeer` to us is the OPPOSITE signal — it means a peer
+    /// couldn't reach our port and asked the server to forward their
+    /// request instead.
+    public enum Reachability: Sendable, Equatable {
+        /// Not enough signal yet — no peer has tried to reach us.
+        case unknown
+        /// Peers are directly reaching our listen port (at least some of them).
+        case direct
+        /// Direct works AND we have a UPnP / NAT-PMP mapping active.
+        case upnpMapped
+        /// Only some peers reach us directly; others fall back to the server
+        /// forwarding route because we're partially reachable (e.g. ISP CGNAT,
+        /// symmetric-NAT peer on the other side).
+        case partial
+        /// Server is forwarding `ConnectToPeer` requests but no peer has
+        /// reached our port directly. Port is effectively closed to the
+        /// internet; we can only initiate outbound connections.
+        case unreachable
+
+        public var label: String {
+            switch self {
+            case .unknown: "Checking…"
+            case .direct: "Port open — peers connect directly"
+            case .upnpMapped: "Direct + UPnP mapping active"
+            case .partial: "Partially reachable"
+            case .unreachable: "Port unreachable — outbound only"
+            }
+        }
+    }
+
+    /// Current reachability classification. Recomputed on read from existing
+    /// observable counters; no cache, no poll.
+    public var reachability: Reachability {
+        let pool = peerConnectionPool
+        let directInbound = pool.peerInitCount
+        let indirectWanted = pool.connectToPeerCount
+
+        if directInbound > 0 {
+            // At least one peer reached our port directly — definitively reachable.
+            if !natMappings.isEmpty { return .upnpMapped }
+            // Some peers still fall back to server forwarding, which usually
+            // means the other side is behind a symmetric NAT — not our fault.
+            if indirectWanted > directInbound * 2 { return .partial }
+            return .direct
+        }
+
+        // Server forwarded at least 10 ConnectToPeer and none have reached our
+        // port directly — port is unreachable from the internet.
+        if indirectWanted >= 10 {
+            return .unreachable
+        }
+
+        return .unknown
+    }
+
     // MARK: - Distributed Network
     public var acceptDistributedChildren = true  // Participate in distributed search network
     public private(set) var distributedBranchLevel: UInt32 = 0
@@ -146,8 +216,8 @@ public final class NetworkClient {
         case .queueUpload(let username, let filename, let connection):
             Task { await onQueueUpload?(username, filename, connection) }
 
-        case .transferResponse(let token, let allowed, let filesize, let connection):
-            Task { await onTransferResponse?(token, allowed, filesize, connection) }
+        case .transferResponse(let token, let allowed, let filesize, let reason, let connection):
+            Task { await onTransferResponse?(token, allowed, filesize, reason, connection) }
 
         case .folderContentsRequest(let username, let token, let folder, let connection):
             Task { await handleFolderContentsRequest(username: username, token: token, folder: folder, connection: connection) }
@@ -169,6 +239,9 @@ public final class NetworkClient {
 
         case .userInfoRequest(let username, let connection):
             Task { await handleUserInfoRequest(username: username, connection: connection) }
+
+        case .userInfoReply(let username, let info):
+            handleUserInfoReplyEvent(username: username, info: info)
 
         case .artworkRequest(_, let token, let filePath, let connection):
             Task { await handleArtworkRequest(token: token, filePath: filePath, connection: connection) }
@@ -218,7 +291,7 @@ public final class NetworkClient {
     public var onUploadDenied: ((String, String) -> Void)?  // (filename, reason)
     public var onUploadFailed: ((String) -> Void)?  // filename
     public var onQueueUpload: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection) - peer wants to download from us
-    public var onTransferResponse: ((UInt32, Bool, UInt64?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, connection)
+    public var onTransferResponse: ((UInt32, Bool, UInt64?, String?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, reason?, connection)
     public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     public var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
     public var onTransferRequest: ((TransferRequest) -> Void)?  // Pool-level TransferRequest (for connections not directly managed by DownloadManager)
@@ -637,6 +710,7 @@ public final class NetworkClient {
                 }
                 logger.info("NAT: External IP: \(extIP)")
             }
+            await syncNATDiagnostics()
             return
         }
 
@@ -674,7 +748,22 @@ public final class NetworkClient {
             logger.info("NAT: External IP: \(extIP)")
         }
 
+        await syncNATDiagnostics()
         logger.info("NAT: Background setup complete")
+    }
+
+    /// Pulls the current gateway + mapping snapshot off the NAT actor and
+    /// publishes it onto `self` for the diagnostics UI to observe. Cheap:
+    /// called once after setup, not on every UI render.
+    private func syncNATDiagnostics() async {
+        let gateway = await natService.gatewayAddress
+        let mappings = await natService.activeMappings
+        let local = NATService.localInterfaceIP()
+        await MainActor.run {
+            self.natGateway = gateway
+            self.natMappings = mappings
+            self.localIP = local
+        }
     }
 
     // MARK: - Message Receiving
@@ -965,92 +1054,16 @@ public final class NetworkClient {
     // When peer connects via PierceFirewall, they send the same token we used in ConnectToPeer
     // (pendingBrowseStates is defined below in the browse section)
 
-    /// Browse a user's shared files
+    /// Browse a user's shared files.
     public func browseUser(_ username: String) async throws -> [SharedFile] {
         logger.debug("Browse: START browseUser(\(username))")
-        guard isConnected else {
-            logger.error("Browse: ERROR - not connected")
-            throw NetworkError.notConnected
-        }
+        // Historical behaviour: browse always opens a fresh P connection
+        // rather than reusing one from the pool. Preserved via `forceFresh`
+        // until we have evidence reuse is safe for large share lists.
+        let connection = try await establishPeerConnection(for: username, forceFresh: true)
 
-        var connection: PeerConnection
-        var isIndirectConnection = false
-
-        // Always create a fresh connection for browse
-        do {
-            let token = UInt32.random(in: 0...UInt32.max)
-            logger.debug("Browse: Using token \(token) for \(username)")
-
-            // CRITICAL: Register pending browse BEFORE sending ConnectToPeer to avoid race condition
-            // PierceFirewall can arrive immediately after ConnectToPeer is sent!
-            registerPendingBrowse(token: token, username: username, timeout: 30)
-
-            // Step 1: Send ConnectToPeer to server - peer will try to connect to us via PierceFirewall
-            await sendConnectToPeer(token: token, username: username, connectionType: "P")
-            logger.debug("Browse: Sent ConnectToPeer to server")
-
-            // Step 2: Get peer address for direct connection attempt
-            logger.debug("Browse: Getting peer address for \(username)...")
-            let (ip, port) = try await getPeerAddress(for: username)
-            logger.debug("Browse: Got address \(ip):\(port)")
-
-            // Step 3: Race direct connection + handshake (10s timeout) vs indirect (PierceFirewall)
-            // Direct TCP connect blocks for ~60s on timeout, way too long. PierceFirewall
-            // typically arrives in ~1-3s. Also, even when direct TCP connects, the peer may
-            // not respond with PeerInit (they already connected to us via PierceFirewall).
-            do {
-                connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
-                    group.addTask {
-                        let conn = try await self.peerConnectionPool.connect(
-                            to: username, ip: ip, port: port, token: token
-                        )
-                        // Must also complete handshake - peer may not respond if they
-                        // already connected to us via PierceFirewall
-                        try await conn.waitForPeerHandshake(timeout: .seconds(8))
-                        return conn
-                    }
-                    group.addTask {
-                        try await Task.sleep(for: .seconds(10))
-                        throw NetworkError.timeout
-                    }
-                    let result = try await group.next()!
-                    group.cancelAll()
-                    return result
-                }
-                cancelPendingBrowse(token: token)
-                logger.debug("Browse: Direct connection + handshake to \(username) successful!")
-            } catch {
-                // Direct timed out or failed - use indirect (PierceFirewall) connection
-                logger.debug("Browse: Direct failed (\(error.localizedDescription)), waiting for indirect...")
-
-                // Clean up stale direct connection from pool to prevent it lingering
-                if let staleConn = await peerConnectionPool.getConnectionForUser(username) {
-                    logger.debug("Browse: Disconnecting stale direct connection to \(username)")
-                    await staleConn.disconnect()
-                }
-
-                connection = try await waitForPendingBrowse(token: token)
-                isIndirectConnection = true
-                logger.debug("Browse: Got indirect connection from \(username)")
-            }
-        }
-
-        if isIndirectConnection {
-            // Resume receive loop - PierceFirewall stops it assuming file transfer mode,
-            // but P connections need to continue receiving peer messages (SharesReply, etc.)
-            await connection.resumeReceivingForPeerConnection()
-            logger.debug("Browse: Resumed receive loop for indirect P connection")
-        }
-
-        // For indirect connections, PierceFirewall sets peerHandshakeReceived=true
-        // so this returns immediately. For direct, handshake was already done in the race.
-        try await connection.waitForPeerHandshake(timeout: .seconds(5))
-        logger.debug("Browse: Handshake verified, setting up callback...")
-
-        // Request shares and wait for response via pool event stream
         logger.debug("Browse: Requesting shares from \(username)...")
         try await connection.requestShares()
-        logger.debug("Browse: Shares request sent, waiting for response...")
 
         // Wait for sharesReceived event via pool stream (arrives in handlePoolEvent)
         let files = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[SharedFile], Error>) in
@@ -1748,6 +1761,154 @@ public final class NetworkClient {
         } catch {
             logger.error("Failed to send user info to \(username): \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - User Info Fetching (outbound)
+
+    /// Session-long cache of parsed UserInfoReply data, keyed by username.
+    /// Populated whenever a reply arrives (either solicited via fetchUserInfo
+    /// or unsolicited from any peer connection).
+    private var userInfoReplyCache: [String: MessageParser.UserInfoReplyInfo] = [:]
+
+    /// In-flight fetch Tasks keyed by username, so concurrent callers for the
+    /// same user share one network round-trip.
+    private var userInfoInFlight: [String: Task<MessageParser.UserInfoReplyInfo, Error>] = [:]
+
+    /// Continuations awaiting a UserInfoReply from a specific peer. Resumed
+    /// when the pool event arrives or when the timeout task fires.
+    private var userInfoReplyContinuations: [String: CheckedContinuation<MessageParser.UserInfoReplyInfo, Error>] = [:]
+
+    /// Multi-listener handlers invoked for every incoming UserInfoReply
+    /// (solicited or unsolicited). App code should subscribe once per state.
+    private var userInfoReplyHandlers: [(String, MessageParser.UserInfoReplyInfo) -> Void] = []
+
+    /// Register a handler for incoming UserInfoReply events. Multiple handlers supported.
+    public func addUserInfoHandler(_ handler: @escaping (String, MessageParser.UserInfoReplyInfo) -> Void) {
+        userInfoReplyHandlers.append(handler)
+        logger.debug("NetworkClient: Added user info handler (total: \(self.userInfoReplyHandlers.count))")
+    }
+
+    /// Fetch user info (description, picture, upload stats) from a peer.
+    /// Establishes a P connection if one isn't already open, sends UserInfoRequest,
+    /// and awaits the reply. Results are cached for the session and concurrent
+    /// callers for the same user are coalesced into one round-trip.
+    @discardableResult
+    public func fetchUserInfo(from username: String) async throws -> MessageParser.UserInfoReplyInfo {
+        if let cached = userInfoReplyCache[username] {
+            return cached
+        }
+        if let inFlight = userInfoInFlight[username] {
+            return try await inFlight.value
+        }
+        let task = Task<MessageParser.UserInfoReplyInfo, Error> { [weak self] in
+            guard let self else { throw NetworkError.notConnected }
+            defer { self.userInfoInFlight[username] = nil }
+
+            let connection = try await self.establishPeerConnection(for: username)
+            try await connection.requestUserInfo()
+
+            // Wait for the reply via a per-user continuation, with a hard timeout.
+            return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<MessageParser.UserInfoReplyInfo, Error>) in
+                self.userInfoReplyContinuations[username] = cont
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(15))
+                    if let waiter = self?.userInfoReplyContinuations.removeValue(forKey: username) {
+                        waiter.resume(throwing: NetworkError.timeout)
+                    }
+                }
+            }
+        }
+        userInfoInFlight[username] = task
+        let info = try await task.value
+        userInfoReplyCache[username] = info
+        return info
+    }
+
+    /// Invalidate the cached user info for a user (next fetch will re-request).
+    public func invalidateUserInfoCache(for username: String) {
+        userInfoReplyCache.removeValue(forKey: username)
+    }
+
+    private func handleUserInfoReplyEvent(username: String, info: MessageParser.UserInfoReplyInfo) {
+        userInfoReplyCache[username] = info
+        if let cont = userInfoReplyContinuations.removeValue(forKey: username) {
+            cont.resume(returning: info)
+        }
+        for handler in userInfoReplyHandlers {
+            handler(username, info)
+        }
+    }
+
+    // MARK: - Peer Connection Establishment
+
+    /// Opens (or reuses) a P-type peer connection, completing the handshake.
+    /// Used by `browseUser` and `fetchUserInfo` so the ConnectToPeer +
+    /// direct/indirect-race dance lives in one place.
+    ///
+    /// - Parameter forceFresh: when `true`, always opens a new connection.
+    ///   `browseUser` passes this because historically it was never documented
+    ///   why it created a fresh one — preserving behaviour until someone
+    ///   proves reuse is safe for share-list fetches.
+    private func establishPeerConnection(for username: String, forceFresh: Bool = false) async throws -> PeerConnection {
+        guard isConnected else {
+            throw NetworkError.notConnected
+        }
+
+        if !forceFresh, let existing = await peerConnectionPool.getConnectionForUser(username) {
+            return existing
+        }
+
+        let token = UInt32.random(in: 0...UInt32.max)
+        registerPendingBrowse(token: token, username: username, timeout: 30)
+        await sendConnectToPeer(token: token, username: username, connectionType: "P")
+
+        let (ip, port) = try await getPeerAddress(for: username)
+
+        var connection: PeerConnection
+        var isIndirect = false
+        do {
+            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
+                group.addTask {
+                    let conn = try await self.peerConnectionPool.connect(
+                        to: username, ip: ip, port: port, token: token
+                    )
+                    // Handshake must also complete — the peer may not respond
+                    // via PeerInit on the direct connection if they already
+                    // connected back to us via PierceFirewall.
+                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                    return conn
+                }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(10))
+                    throw NetworkError.timeout
+                }
+                let result = try await group.next()!
+                group.cancelAll()
+                return result
+            }
+            cancelPendingBrowse(token: token)
+        } catch {
+            // Direct timed out or handshake failed — disconnect the stale direct
+            // attempt so it doesn't linger, then wait for the peer's indirect
+            // PierceFirewall connection instead.
+            if let staleConn = await peerConnectionPool.getConnectionForUser(username) {
+                await staleConn.disconnect()
+            }
+            connection = try await waitForPendingBrowse(token: token)
+            isIndirect = true
+        }
+
+        if isIndirect {
+            // PierceFirewall stops the receive loop assuming file-transfer
+            // mode. P connections need it resumed for peer messages.
+            await connection.resumeReceivingForPeerConnection()
+        }
+
+        // For indirect, PierceFirewall sets peerHandshakeReceived=true so
+        // this returns immediately. For direct, the handshake was already
+        // awaited inside the race.
+        try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        return connection
     }
 
     // MARK: - SeeleSeek Artwork Request Handling

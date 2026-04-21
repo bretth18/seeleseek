@@ -4,78 +4,76 @@ import SeeleseekCore
 
 /// Real-time visualization of search activity - both outgoing and incoming
 struct SearchActivityView: View {
-    @Environment(\.appState) private var appState
-
     private var searchActivity: SearchActivityState {
         SearchState.activityTracker
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
-            HStack {
-                Text("Search Activity")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
+        StandardCard {
+            VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
+                HStack {
+                    Text("Search Activity")
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
 
-                Spacer()
+                    Spacer()
 
-                HStack(spacing: SeeleSpacing.xs) {
-                    Circle()
-                        .fill(SeeleColors.info)
-                        .frame(width: 6, height: 6)
-                        .opacity(searchActivity.isActive ? 1 : 0.3)
-                    Text("Live")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-            }
-
-            SearchTimelineView(events: searchActivity.recentEvents)
-                .frame(height: 60)
-
-            VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                Text("Recent Queries")
-                    .font(SeeleTypography.subheadline)
-                    .foregroundStyle(SeeleColors.textSecondary)
-
-                if searchActivity.recentEvents.isEmpty {
-                    Text("No search activity yet")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                        .padding(.vertical, SeeleSpacing.md)
-                } else {
-                    ForEach(searchActivity.recentEvents.prefix(10)) { event in
-                        SearchEventRow(event: event)
-                    }
-                }
-            }
-
-            if !searchActivity.incomingSearches.isEmpty {
-                Divider()
-                    .background(SeeleColors.surfaceSecondary)
-
-                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                    HStack {
-                        Text("Incoming Search Requests")
-                            .font(SeeleTypography.subheadline)
-                            .foregroundStyle(SeeleColors.textSecondary)
-
-                        Spacer()
-
-                        Text("\(searchActivity.incomingSearches.count) total")
+                    HStack(spacing: SeeleSpacing.xs) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: SeeleSpacing.iconSizeXS - 2))
+                            .foregroundStyle(searchActivity.isActive ? SeeleColors.info : SeeleColors.textTertiary)
+                            .symbolEffect(.pulse, options: .repeating, isActive: searchActivity.isActive)
+                        Text("Live")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
+                }
 
-                    ForEach(searchActivity.incomingSearches.prefix(5)) { search in
-                        IncomingSearchRow(search: search)
+                SearchTimelineView(events: searchActivity.recentEvents)
+                    .frame(height: 60)
+
+                VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                    Text("Recent Queries")
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+
+                    if searchActivity.recentEvents.isEmpty {
+                        Text("No search activity yet")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                            .padding(.vertical, SeeleSpacing.md)
+                    } else {
+                        ForEach(searchActivity.recentEvents.prefix(10)) { event in
+                            SearchEventRow(event: event)
+                        }
+                    }
+                }
+
+                if !searchActivity.incomingSearches.isEmpty {
+                    Divider()
+                        .background(SeeleColors.surfaceSecondary)
+
+                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                        HStack {
+                            Text("Incoming Search Requests")
+                                .font(SeeleTypography.subheadline)
+                                .foregroundStyle(SeeleColors.textSecondary)
+
+                            Spacer()
+
+                            Text("\(searchActivity.incomingSearches.count) total")
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                                .contentTransition(.numericText())
+                        }
+
+                        ForEach(searchActivity.incomingSearches.prefix(5)) { search in
+                            IncomingSearchRow(search: search)
+                        }
                     }
                 }
             }
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 }
 

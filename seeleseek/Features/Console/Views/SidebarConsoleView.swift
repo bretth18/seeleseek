@@ -162,3 +162,76 @@ struct SidebarConsoleView: View {
         return f
     }()
 }
+
+// MARK: - Previews
+//
+// The console reads from `ActivityLog.shared`, a @MainActor singleton, which
+// starts empty. Each preview clears the log and seeds a representative event
+// mix, then renders at the sidebar's real width (220pt). Expand/collapse is
+// interactive in the Xcode canvas — click the chevron to switch states.
+
+private func seedConsolePreview(_ events: () -> Void) {
+    let log = ActivityLog.shared
+    log.clear()
+    events()
+}
+
+#Preview("Empty") {
+    SidebarConsoleView()
+        .frame(width: 220, height: 80)
+        .background(SeeleColors.surface)
+        .onAppear {
+            seedConsolePreview {}
+        }
+}
+
+#Preview("Collapsed — one recent event") {
+    SidebarConsoleView()
+        .frame(width: 220, height: 80)
+        .background(SeeleColors.surface)
+        .onAppear {
+            seedConsolePreview {
+                let log = ActivityLog.shared
+                log.logPeerConnected(username: "musicfan42", ip: "192.168.1.100")
+            }
+        }
+}
+
+#Preview("Collapsed — mixed activity") {
+    SidebarConsoleView()
+        .frame(width: 220, height: 80)
+        .background(SeeleColors.surface)
+        .onAppear {
+            seedConsolePreview {
+                let log = ActivityLog.shared
+                log.logPeerConnected(username: "vinylcollector", ip: "10.0.0.42")
+                log.logSearchStarted(query: "pink floyd dark side flac")
+                log.logSearchResults(query: "pink floyd dark side flac", count: 47, user: "vinylcollector")
+                log.logDownloadStarted(filename: "Speak to Me.flac", from: "vinylcollector")
+            }
+        }
+}
+
+#Preview("Expanded — full log (click chevron)") {
+    SidebarConsoleView()
+        .frame(width: 500, height: 800)
+        .background(SeeleColors.surface)
+        .onAppear {
+            seedConsolePreview {
+                let log = ActivityLog.shared
+                log.logConnectionSuccess(username: "demo_user", server: "server.slsknet.org")
+                log.logPeerConnected(username: "vinylcollector", ip: "10.0.0.42")
+                log.logSearchStarted(query: "cindy lee diamond jubilee")
+                log.logSearchResults(query: "cindy lee diamond jubilee", count: 12, user: "trackhunter")
+                log.logSearchResults(query: "cindy lee diamond jubilee", count: 8, user: "archivist99")
+                log.logDownloadStarted(filename: "01 - Diamond Jubilee.flac", from: "trackhunter")
+                log.logChatMessage(from: "djmixer", room: "Electronic")
+                log.logUploadStarted(filename: "Loveless - 01.flac", to: "mbvdevotee")
+                log.logDownloadCompleted(filename: "01 - Diamond Jubilee.flac")
+                log.logRoomJoined(room: "Electronic", userCount: 834)
+                log.logError("Connection refused", detail: "peer unavailable: 203.0.113.1:2234")
+                log.logPeerDisconnected(username: "archivist99")
+                log.logInfo("NAT mapped port 2234")
+            }
+        }
+}

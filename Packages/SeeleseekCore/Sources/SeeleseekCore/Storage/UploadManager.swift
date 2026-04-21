@@ -106,11 +106,11 @@ public final class UploadManager {
         }
 
         // Set up callback for TransferResponse (peer accepted/rejected our upload offer)
-        networkClient.onTransferResponse = { [weak self] token, allowed, filesize, connection in
+        networkClient.onTransferResponse = { [weak self] token, allowed, _, reason, connection in
             guard let self else { return }
             _ = await MainActor.run {
                 Task {
-                    await self.handleTransferResponse(token: token, allowed: allowed, connection: connection)
+                    await self.handleTransferResponse(token: token, allowed: allowed, reason: reason, connection: connection)
                 }
             }
         }
@@ -404,18 +404,27 @@ public final class UploadManager {
         }
     }
 
-    /// Handle TransferResponse from peer (they accepted or rejected our upload offer)
-    private func handleTransferResponse(token: UInt32, allowed: Bool, connection: PeerConnection) async {
+    /// Handle TransferResponse from peer (they accepted or rejected our upload offer).
+    ///
+    /// Rejection semantics per protocol: `reason` carries a short string
+    /// distinguishing recoverable states ("Queued", where the peer accepted
+    /// the request and will follow up with PlaceInQueueReply/QueueUpload)
+    /// from hard rejections ("Cancelled", arbitrary errors). We map these to
+    /// the right TransferStatus so the row doesn't misleadingly show as
+    /// Failed when the peer is actually in the process of queuing us.
+    private func handleTransferResponse(token: UInt32, allowed: Bool, reason: String?, connection: PeerConnection) async {
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.debug("No pending upload for token \(token)")
             return
         }
 
         if !allowed {
-            logger.warning("Peer rejected upload for \(pending.filename)")
+            let detail = reason ?? "Peer rejected transfer"
+            let status = Self.status(forReject: reason)
+            logger.warning("Peer rejected upload for \(pending.filename): \(detail) (→ \(status.rawValue))")
             transferState?.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = "Peer rejected transfer"
+                t.status = status
+                t.error = detail
             }
             return
         }
@@ -734,6 +743,7 @@ public final class UploadManager {
                 // Send chunk
                 try await sendData(connection: connection, data: chunk)
                 bytesSent += UInt64(chunk.count)
+                networkClient?.peerConnectionPool.recordBytesSent(UInt64(chunk.count))
 
                 // Update progress
                 let elapsed = Date().timeIntervalSince(startTime)
@@ -1154,6 +1164,27 @@ public final class UploadManager {
             } catch {
                 logger.debug("Could not send UploadFailed to \(username): \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Maps a TransferReply rejection `reason` string to the closest
+    /// TransferStatus. Exposed for unit tests.
+    static func status(forReject reason: String?) -> Transfer.TransferStatus {
+        // Normalise for case-insensitive prefix matching so minor server
+        // variants ("Queued.", "Queued\0") still classify correctly.
+        let trimmed = reason?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+            .lowercased() ?? ""
+
+        switch trimmed {
+        case "queued":
+            // Peer accepted the request and will follow up with queue
+            // position / upload readiness. Not a failure.
+            return .queued
+        case "cancelled", "canceled":
+            return .cancelled
+        default:
+            return .failed
         }
     }
 }
