@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<installer-gui-script minSpecVersion="2">
+    <title>SeeleSeek</title>
+    <organization>__BUNDLE_ID__</organization>
+
+    <!-- Installer chrome -->
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="license.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- Install behavior -->
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_localSystem="true"/>
+
+    <!-- Minimum macOS (matches MACOSX_DEPLOYMENT_TARGET) -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="15.0"/>
+        </allowed-os-versions>
+    </volume-check>
+
+    <!--
+        __BUNDLE_ID__ and __VERSION__ are substituted at release time from the
+        built .app's Info.plist — see .github/workflows/release.yml.
+
+        must-close: the installer refuses to proceed while a running process
+        with this bundle identifier exists.
+    -->
+    <pkg-ref id="__BUNDLE_ID__">
+        <must-close>
+            <app id="__BUNDLE_ID__"/>
+        </must-close>
+    </pkg-ref>
+
+    <!-- Choice tree (single hidden choice — no customize UI) -->
+    <choices-outline>
+        <line choice="default">
+            <line choice="__BUNDLE_ID__"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="__BUNDLE_ID__" visible="false">
+        <pkg-ref id="__BUNDLE_ID__"/>
+    </choice>
+
+    <!-- Component pkg reference. -->
+    <pkg-ref id="__BUNDLE_ID__" version="__VERSION__" onConclusion="none">seeleseek-component.pkg</pkg-ref>
+</installer-gui-script>

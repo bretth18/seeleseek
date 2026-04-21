@@ -141,30 +141,49 @@ jobs:
       run: |
         VERSION="${{ steps.version.outputs.VERSION }}"
 
-        # Build unsigned pkg
+        # Bundle id is read from the actually-built .app, so Xcode's
+        # PRODUCT_BUNDLE_IDENTIFIER is the single source of truth — the pkg
+        # can never drift from the app's CFBundleIdentifier.
+        BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" build/seeleseek.app/Contents/Info.plist)
+
+        # 1. Component pkg — the payload. Filename must match the pkg-ref
+        #    in Installer/Distribution.xml (seeleseek-component.pkg).
         pkgbuild \
           --component build/seeleseek.app \
           --install-location /Applications \
-          --identifier computerdata.seeleseek \
+          --identifier "$BUNDLE_ID" \
           --version "$VERSION" \
+          build/seeleseek-component.pkg
+
+        # 2. Stamp bundle id + release version into the Distribution template.
+        sed -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" \
+            -e "s/__VERSION__/$VERSION/g" \
+            Installer/Distribution.xml > build/Distribution.xml
+
+        # 3. Product archive: welcome / license / conclusion / background
+        #    + must-close enforcement for computerdata.seeleseek.
+        productbuild \
+          --distribution build/Distribution.xml \
+          --resources Installer/Resources \
+          --package-path build \
           build/seeleseek-unsigned.pkg
 
-        # Sign pkg with Developer ID Installer certificate
+        # 4. Sign with Developer ID Installer certificate.
         productsign \
           --sign "Developer ID Installer: Brett Henderson (94XUGF9CU7)" \
           --keychain "$KEYCHAIN_PATH" \
           build/seeleseek-unsigned.pkg \
           build/seeleseek.pkg
 
-        rm build/seeleseek-unsigned.pkg
+        rm build/seeleseek-unsigned.pkg build/seeleseek-component.pkg build/Distribution.xml
 
-        # Notarize using stored credentials (avoids secrets in process args)
+        # 5. Notarize using stored credentials (avoids secrets in process args).
         xcrun notarytool submit build/seeleseek.pkg \
           --keychain-profile "notary-profile" \
           --keychain "$KEYCHAIN_PATH" \
           --wait
 
-        # Staple the notarization ticket
+        # 6. Staple the notarization ticket.
         xcrun stapler staple build/seeleseek.pkg
 
     - name: Release
