@@ -743,6 +743,7 @@ public final class UploadManager {
                 // Send chunk
                 try await sendData(connection: connection, data: chunk)
                 bytesSent += UInt64(chunk.count)
+                networkClient?.peerConnectionPool.recordBytesSent(UInt64(chunk.count))
 
                 // Update progress
                 let elapsed = Date().timeIntervalSince(startTime)

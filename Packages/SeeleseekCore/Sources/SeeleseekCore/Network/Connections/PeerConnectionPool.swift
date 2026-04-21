@@ -42,6 +42,12 @@ public final class PeerConnectionPool {
 
     public private(set) var totalBytesReceived: UInt64 = 0
     public private(set) var totalBytesSent: UInt64 = 0
+
+    /// Raw accumulators bumped by every transfer chunk. Not @Observable — the
+    /// 1Hz speed tracker rolls these up into `totalBytesReceived`/`Sent` so
+    /// SwiftUI isn't invalidated thousands of times per second during transfers.
+    @ObservationIgnored private var pendingBytesReceived: UInt64 = 0
+    @ObservationIgnored private var pendingBytesSent: UInt64 = 0
     public private(set) var totalConnections: UInt32 = 0
     public private(set) var activeConnections: Int = 0
     public private(set) var connectToPeerCount: Int = 0  // How many ConnectToPeer messages we've received
@@ -586,55 +592,59 @@ public final class PeerConnectionPool {
 
     // MARK: - Statistics
 
-    public func updateStatistics(from connection: PeerConnection) async {
-        let received = await connection.bytesReceived
-        let sent = await connection.bytesSent
+    /// Called by `DownloadManager` on every received file chunk. Cheap — just
+    /// bumps a non-observable accumulator. The 1Hz tracker turns it into speed.
+    public func recordBytesReceived(_ delta: UInt64) {
+        guard delta > 0 else { return }
+        pendingBytesReceived &+= delta
+    }
 
-        totalBytesReceived += received
-        totalBytesSent += sent
-
-        // Update connection info
-        let username = connection.peerInfo.username
-        if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-            connections[key]?.bytesReceived = received
-            connections[key]?.bytesSent = sent
-            connections[key]?.lastActivity = await connection.lastActivityAt
-        }
+    /// Called by `UploadManager` on every sent file chunk.
+    public func recordBytesSent(_ delta: UInt64) {
+        guard delta > 0 else { return }
+        pendingBytesSent &+= delta
     }
 
     private func startSpeedTracking() {
-        Task {
-            while true {
+        Task { [weak self] in
+            while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-
-                let now = Date()
-                let elapsed = now.timeIntervalSince(lastSpeedCheck)
-
-                if elapsed > 0 {
-                    let downloadDelta = Double(totalBytesReceived - lastBytesReceived)
-                    let uploadDelta = Double(totalBytesSent - lastBytesSent)
-
-                    currentDownloadSpeed = downloadDelta / elapsed
-                    currentUploadSpeed = uploadDelta / elapsed
-
-                    let sample = SpeedSample(
-                        timestamp: now,
-                        downloadSpeed: currentDownloadSpeed,
-                        uploadSpeed: currentUploadSpeed
-                    )
-                    speedHistory.append(sample)
-
-                    // Keep last 60 samples (1 minute at 1 sample/second)
-                    if speedHistory.count > 60 {
-                        speedHistory.removeFirst()
-                    }
-
-                    lastBytesReceived = totalBytesReceived
-                    lastBytesSent = totalBytesSent
-                    lastSpeedCheck = now
-                }
+                if Task.isCancelled { break }
+                self?.captureSpeedSample()
             }
         }
+    }
+
+    private func captureSpeedSample() {
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastSpeedCheck)
+        guard elapsed > 0 else { return }
+
+        // Snapshot once — writes (from transfer loops) and this read are both
+        // on MainActor, so no further locking is needed.
+        let rx = pendingBytesReceived
+        let tx = pendingBytesSent
+
+        let downloadDelta = Double(rx &- lastBytesReceived)
+        let uploadDelta = Double(tx &- lastBytesSent)
+
+        currentDownloadSpeed = downloadDelta / elapsed
+        currentUploadSpeed = uploadDelta / elapsed
+        totalBytesReceived = rx
+        totalBytesSent = tx
+
+        speedHistory.append(SpeedSample(
+            timestamp: now,
+            downloadSpeed: currentDownloadSpeed,
+            uploadSpeed: currentUploadSpeed
+        ))
+        if speedHistory.count > 60 {
+            speedHistory.removeFirst()
+        }
+
+        lastBytesReceived = rx
+        lastBytesSent = tx
+        lastSpeedCheck = now
     }
 
     // MARK: - Callbacks Setup

@@ -1076,6 +1076,7 @@ public final class DownloadManager {
 
             try fileHandle.write(contentsOf: chunk)
             bytesReceived += UInt64(chunk.count)
+            networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
 
             // Update progress
             let elapsed = Date().timeIntervalSince(startTime)
@@ -1924,6 +1925,7 @@ public final class DownloadManager {
                 if !chunk.isEmpty {
                     try fileHandle.write(contentsOf: chunk)
                     bytesReceived += UInt64(chunk.count)
+                    networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
                     lastDataTime = Date()  // Reset timeout tracker
 
                     // Update progress periodically (not every chunk to reduce UI overhead)
