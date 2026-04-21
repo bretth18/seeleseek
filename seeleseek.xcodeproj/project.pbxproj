@@ -284,7 +284,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nMMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\nif [ ! -f \"$MMDB\" ]; then\n    echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups will return nil\"\n    exit 0\nfi\nDEST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GeoLite2-Country.mmdb\"\nmkdir -p \"$(dirname \"$DEST\")\"\n# Use a plain stdio redirect instead of cp. Xcode's user-script sandbox denies\n# copyfile(2)-based ops even on declared output paths — likely because files\n# downloaded via curl carry a kernel-applied com.apple.provenance xattr that\n# cp -X can't strip. cat > dest writes raw bytes through stdio, sidestepping it.\ncat \"$MMDB\" > \"$DEST\"\necho \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n";
+			shellScript = "set -e\n# Use $SCRIPT_INPUT_FILE_0 / $SCRIPT_OUTPUT_FILE_0 — the exact paths Xcode\n# declared to the sandbox. $BUILT_PRODUCTS_DIR (the env var) silently shifts\n# to the installation path during archive (DEPLOYMENT_LOCATION=YES), which\n# writes OUTSIDE the declared outputs and the sandbox denies the create.\nMMDB=\"$SCRIPT_INPUT_FILE_0\"\nif [ ! -f \"$MMDB\" ]; then\n    echo \"warning: GeoLite2-Country.mmdb not found at $MMDB — GeoIP lookups will return nil\"\n    exit 0\nfi\nmkdir -p \"$(dirname \"$SCRIPT_OUTPUT_FILE_0\")\"\ncat \"$MMDB\" > \"$SCRIPT_OUTPUT_FILE_0\"\necho \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -462,6 +462,7 @@
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = seeleseek/Info.plist;
@@ -513,6 +514,7 @@
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = seeleseek/Info.plist;
