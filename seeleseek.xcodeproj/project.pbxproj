@@ -284,7 +284,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nMMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\nif [ ! -f \"$MMDB\" ]; then\n    echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups will return nil\"\n    exit 0\nfi\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n# -X skips extended attributes; avoids 'Operation not permitted' under Xcode's\n# user-script sandbox on CI runners.\n/bin/cp -X -f \"$MMDB\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GeoLite2-Country.mmdb\"\necho \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n";
+			shellScript = "set -e\nMMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\nif [ ! -f \"$MMDB\" ]; then\n    echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups will return nil\"\n    exit 0\nfi\nDEST=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GeoLite2-Country.mmdb\"\nmkdir -p \"$(dirname \"$DEST\")\"\n# Use a plain stdio redirect instead of cp. Xcode's user-script sandbox denies\n# copyfile(2)-based ops even on declared output paths — likely because files\n# downloaded via curl carry a kernel-applied com.apple.provenance xattr that\n# cp -X can't strip. cat > dest writes raw bytes through stdio, sidestepping it.\ncat \"$MMDB\" > \"$DEST\"\necho \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
