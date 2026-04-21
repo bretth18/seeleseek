@@ -53,6 +53,9 @@ struct SearchView: View {
                 }
             }
         }
+        .onTapGesture {
+            isSearchFocused = false
+        }
         .background(SeeleColors.background)
     }
 
