@@ -274,15 +274,17 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/GeoLite2-Country.mmdb",
 			);
 			name = "Copy GeoLite2 MMDB (Optional)";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GeoLite2-Country.mmdb",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = " MMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\n  if [ -f \"$MMDB\" ]; then\n      cp \"$MMDB\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/\"\n      echo \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n  else\n      echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups\n  will return nil\"\n  fi\n";
+			shellScript = "set -e\nMMDB=\"${SRCROOT}/GeoLite2-Country.mmdb\"\nif [ ! -f \"$MMDB\" ]; then\n    echo \"warning: GeoLite2-Country.mmdb not found at \\$SRCROOT — GeoIP lookups will return nil\"\n    exit 0\nfi\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n# -X skips extended attributes; avoids 'Operation not permitted' under Xcode's\n# user-script sandbox on CI runners.\n/bin/cp -X -f \"$MMDB\" \"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GeoLite2-Country.mmdb\"\necho \"Copied GeoLite2-Country.mmdb ($(stat -f%z \"$MMDB\") bytes)\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
