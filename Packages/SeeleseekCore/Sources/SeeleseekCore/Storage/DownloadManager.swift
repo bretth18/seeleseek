@@ -2131,43 +2131,45 @@ public final class DownloadManager {
 
     // MARK: - Retry Logic (nicotine+ style)
 
-    /// Check if an error is retriable
-    private func isRetriableError(_ error: String?) -> Bool {
-        guard let error = error?.lowercased() else { return false }
+    /// Classify a download-failure reason as retriable. Used by both the
+    /// scheduled-retry path (after a transient failure) and
+    /// `resumeDownloadsOnConnect` (to decide which persisted `.failed` rows
+    /// to resurrect on next login).
+    ///
+    /// Retry-by-default. The old implementation used an allowlist of
+    /// substrings ("timeout", "connection", "network", …) and returned
+    /// false for anything unmatched, which meant common failure reasons
+    /// like `NetworkError.notConnected`'s "Not connected to server" or
+    /// `NWError.canceled`'s "Operation canceled" (American spelling vs our
+    /// British "cancelled") dropped straight through to "not retriable" —
+    /// no retry ever scheduled, no resume on reconnect. With the retry
+    /// count capped at `maxRetries = 4` the downside of an over-eager
+    /// retry is bounded, so we now flip the default: retry unless the
+    /// error matches an explicit user- or peer-driven stop reason.
+    static func isRetriableError(_ error: String?) -> Bool {
+        guard let lowered = error?.lowercased(), !lowered.isEmpty else {
+            return false
+        }
 
-        // Don't retry on explicit denials or user-initiated cancels
-        let nonRetriablePatterns = [
+        // Known terminal reasons — user action or peer-side decisions
+        // that re-asking won't change. `cancel` (bare stem) matches both
+        // "cancelled" and "canceled" spellings.
+        let terminalPatterns = [
+            "cancel",
             "denied",
             "not shared",
-            "cancelled",
             "not available",
             "file not found",
-            "too many"
+            "too many",
         ]
-
-        for pattern in nonRetriablePatterns {
-            if error.contains(pattern) {
-                return false
-            }
+        for pattern in terminalPatterns {
+            if lowered.contains(pattern) { return false }
         }
+        return true
+    }
 
-        // Retry on connection issues
-        let retriablePatterns = [
-            "timeout",
-            "connection",
-            "network",
-            "unreachable",
-            "firewall",
-            "incomplete"
-        ]
-
-        for pattern in retriablePatterns {
-            if error.contains(pattern) {
-                return true
-            }
-        }
-
-        return false
+    private func isRetriableError(_ error: String?) -> Bool {
+        Self.isRetriableError(error)
     }
 
     private static func formatRetryDelay(_ delay: TimeInterval) -> String {
