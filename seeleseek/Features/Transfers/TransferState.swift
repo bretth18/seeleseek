@@ -151,13 +151,30 @@ final class TransferState: TransferTracking {
     // MARK: - Download Status Index (O(1) lookup)
     private(set) var downloadStatusIndex: [String: Transfer.TransferStatus] = [:]
 
+    /// Per-`(user, filename)` lookup used by `DownloadManager`'s salvage path
+    /// (peer sent a TransferRequest for a download we haven't lifted into
+    /// `pendingDownloads` yet). Holds only entries whose status is still
+    /// eligible for salvage: `.queued`, `.waiting`, `.connecting`. Rebuilt
+    /// alongside `downloadStatusIndex` so it tracks live downloads — completed
+    /// and failed entries fall out automatically.
+    private(set) var salvageableDownloadIDs: [String: UUID] = [:]
+
     private func rebuildDownloadIndex() {
-        var index: [String: Transfer.TransferStatus] = [:]
-        index.reserveCapacity(downloads.count)
+        var statusIndex: [String: Transfer.TransferStatus] = [:]
+        var salvageIndex: [String: UUID] = [:]
+        statusIndex.reserveCapacity(downloads.count)
         for transfer in downloads {
-            index["\(transfer.username)\0\(transfer.filename)"] = transfer.status
+            let key = "\(transfer.username)\0\(transfer.filename)"
+            statusIndex[key] = transfer.status
+            switch transfer.status {
+            case .queued, .waiting, .connecting:
+                salvageIndex[key] = transfer.id
+            default:
+                break
+            }
         }
-        downloadStatusIndex = index
+        downloadStatusIndex = statusIndex
+        salvageableDownloadIDs = salvageIndex
     }
 
     /// Count of downloads that are queued, waiting, connecting, or actively
@@ -346,6 +363,11 @@ final class TransferState: TransferTracking {
             return transfer
         }
         return uploads.first(where: { $0.id == id })
+    }
+
+    func findSalvageableDownload(username: String, filename: String) -> Transfer? {
+        guard let id = salvageableDownloadIDs["\(username)\0\(filename)"] else { return nil }
+        return downloads.first(where: { $0.id == id })
     }
 
     /// Check if a file is already queued or downloading

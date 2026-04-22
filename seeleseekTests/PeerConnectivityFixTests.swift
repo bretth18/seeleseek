@@ -486,6 +486,13 @@ final class MockTransferTracking: TransferTracking, @unchecked Sendable {
     func getTransfer(id: UUID) -> Transfer? {
         downloads.first(where: { $0.id == id }) ?? uploads.first(where: { $0.id == id })
     }
+
+    func findSalvageableDownload(username: String, filename: String) -> Transfer? {
+        downloads.first { t in
+            t.username == username && t.filename == filename &&
+            (t.status == .queued || t.status == .waiting || t.status == .connecting)
+        }
+    }
 }
 
 /// Thread-safe single-value sink for capturing async callback results from tests.

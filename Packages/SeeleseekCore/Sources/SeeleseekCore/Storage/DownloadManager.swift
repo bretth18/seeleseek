@@ -456,17 +456,20 @@ public final class DownloadManager {
         let alreadyPending = pendingDownloads.values.contains {
             $0.username == peerUsername && $0.filename == request.filename
         }
+        // Salvage lookup goes through the `salvageableDownloadIDs` index on
+        // TransferState (O(1)) rather than filtering all of `.downloads`.
+        // Index already restricts to `.queued | .waiting | .connecting`, so
+        // the status guard is redundant here but kept defensive. The old
+        // `.min(by: startTime)` tiebreak is gone — the index is keyed by
+        // `(user, filename)` so it holds at most one entry per key, which
+        // was the effective behavior anyway.
         if !peerUsername.isEmpty,
            !alreadyPending,
-           let transfer = transferState?.downloads
-               .filter({ t in
-                   t.direction == .download &&
-                   t.username == peerUsername &&
-                   t.filename == request.filename &&
-                   (t.status == .queued || t.status == .waiting ||
-                    t.status == .connecting)
-               })
-               .min(by: { ($0.startTime ?? .distantFuture) < ($1.startTime ?? .distantFuture) })
+           let transfer = transferState?.findSalvageableDownload(
+               username: peerUsername,
+               filename: request.filename
+           ),
+           transfer.direction == .download
         {
             let salvagedToken = UInt32.random(in: 1...UInt32.max)
             let info = connection.peerInfo

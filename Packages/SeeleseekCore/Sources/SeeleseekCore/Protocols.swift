@@ -60,6 +60,13 @@ public protocol TransferTracking: AnyObject, Sendable {
     func addUpload(_ transfer: Transfer)
     func updateTransfer(id: UUID, update: (inout Transfer) -> Void)
     func getTransfer(id: UUID) -> Transfer?
+    /// Indexed lookup for the salvage path in `DownloadManager`: returns the
+    /// download (if any) for `(username, filename)` whose status is still
+    /// eligible to be lifted into `pendingDownloads` when the peer sends an
+    /// unsolicited TransferRequest. Eligible = `.queued`, `.waiting`, or
+    /// `.connecting`. Must be O(1) relative to total history size — the old
+    /// implementation filtered every entry in `downloads` per peer message.
+    func findSalvageableDownload(username: String, filename: String) -> Transfer?
 }
 
 // MARK: - Statistics Recording
