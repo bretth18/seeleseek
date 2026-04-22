@@ -737,11 +737,11 @@ public final class PeerConnectionPool {
             // Hand the F-connection off to DownloadManager and stop tracking
             // it here. The pool's cleanupStaleConnections timer otherwise
             // kills the underlying NWConnection 10-30s after handoff —
-            // mid-file-transfer for anything bigger than a few hundred KB —
-            // because the pool has no insight into raw file bytes flowing
-            // outside its peer-message framing. Same pattern as
-            // .pierceFirewall below; both events transfer ownership of the
-            // connection from pool to consumer.
+            // long enough that any transfer that doesn't complete inside
+            // that window dies mid-flight — because the pool has no
+            // insight into raw file bytes flowing outside its peer-message
+            // framing. Same pattern as .pierceFirewall below; both events
+            // transfer ownership of the connection from pool to consumer.
             decrementIPCounter(for: capturedIP)
             connections.removeValue(forKey: connectionId)
             activeConnections_.removeValue(forKey: connectionId)
@@ -845,5 +845,29 @@ public final class PeerConnectionPool {
             .sorted { ($0.bytesReceived + $0.bytesSent) > ($1.bytesReceived + $1.bytesSent) }
             .prefix(10)
             .map { $0 }
+    }
+
+    // MARK: - Test-only accessors
+
+    internal func _seedConnectionForTest(_ info: PeerConnectionInfo) {
+        connections[info.id] = info
+        activeConnections = connections.count
+    }
+
+    internal func _connectionInfo(id: String) -> PeerConnectionInfo? {
+        connections[id]
+    }
+
+    internal func _touchActivityForTest(connectionId: String) {
+        touchActivity(connectionId: connectionId)
+    }
+
+    /// Drive the F-connection handoff branch directly. Real callers reach it
+    /// via the pool event stream after a peer's PeerInit type=F.
+    internal func _simulateFileTransferHandoffForTest(connectionId: String, ip: String) {
+        decrementIPCounter(for: ip)
+        connections.removeValue(forKey: connectionId)
+        activeConnections_.removeValue(forKey: connectionId)
+        activeConnections = connections.count
     }
 }

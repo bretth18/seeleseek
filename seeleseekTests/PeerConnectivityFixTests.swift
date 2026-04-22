@@ -280,6 +280,212 @@ struct PeerConnectivityFixTests {
         // Result still the original payload — nothing was overwritten.
         #expect(result.get() == Data([0xFF]))
     }
+
+    // MARK: - Pool: F-connection handoff (regression for transfers killed mid-flight)
+
+    @Test("Pool removes F-connection from tracking on handoff")
+    func poolRemovesFConnectionOnHandoff() async {
+        let pool = await PeerConnectionPool()
+
+        let info = await PeerConnectionPool.PeerConnectionInfo(
+            id: "incoming-TEST",
+            username: "alice",
+            ip: "10.0.0.5",
+            port: 12345,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: Date()
+        )
+        await pool._seedConnectionForTest(info)
+        #expect(await pool._connectionInfo(id: "incoming-TEST") != nil,
+                "precondition: connection seeded")
+
+        // Simulate the .fileTransferConnection event arriving — the pool
+        // must hand the connection off (untrack it) so `cleanupStaleConnections`
+        // can't kill it mid-transfer.
+        await pool._simulateFileTransferHandoffForTest(connectionId: "incoming-TEST", ip: "10.0.0.5")
+
+        #expect(await pool._connectionInfo(id: "incoming-TEST") == nil,
+                "F-connection must be removed from pool tracking after handoff")
+    }
+
+    // MARK: - Pool: lastActivity bumped on event
+
+    @Test("touchActivity updates lastActivity so cleanup doesn't reap a live connection")
+    func poolTouchActivityKeepsConnectionFresh() async {
+        let pool = await PeerConnectionPool()
+
+        // Seed a connection that's been "alive" longer than the 10s
+        // stuck-handshake cutoff but with no activity yet.
+        let staleConnectedAt = Date().addingTimeInterval(-15)
+        let info = await PeerConnectionPool.PeerConnectionInfo(
+            id: "alice-42",
+            username: "alice",
+            ip: "10.0.0.6",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: staleConnectedAt
+        )
+        await pool._seedConnectionForTest(info)
+        #expect(await pool._connectionInfo(id: "alice-42")?.lastActivity == nil,
+                "precondition: lastActivity unset")
+
+        // Real wiring: handlePeerEvent calls this on every event.
+        await pool._touchActivityForTest(connectionId: "alice-42")
+
+        let after = await pool._connectionInfo(id: "alice-42")
+        #expect(after?.lastActivity != nil, "lastActivity must be set after activity")
+        // Now run cleanup. The stuck-handshake branch only fires when
+        // lastActivity is nil — with our touch, it should be skipped.
+        await pool.cleanupStaleConnections()
+        #expect(await pool._connectionInfo(id: "alice-42") != nil,
+                "live connection must survive cleanup tick")
+    }
+
+    // MARK: - DownloadManager: salvage path
+
+    /// These tests use `_evaluatePoolTransferRequestForTest` rather than
+    /// `_handlePoolTransferRequestForTest` so the assertion observes the
+    /// routing DECISION rather than the side effect. The full
+    /// `handlePoolTransferRequest` pipeline calls `handleTransferRequest`
+    /// which tries to send TransferReply on the connection and removes
+    /// the pending entry on failure — racy to assert against on a
+    /// synthetic non-connected PeerConnection.
+
+    @Test("Salvage lifts a transferState entry into pendingDownloads")
+    func salvageLiftsTransferStateEntry() async {
+        let dm = await DownloadManager()
+        let tracking = await MockTransferTracking()
+        await dm._setTransferStateForTest(tracking)
+
+        let transferId = UUID()
+        await tracking.addDownload(Transfer(
+            id: transferId,
+            username: "alice",
+            filename: "Music/song.mp3",
+            size: 5_000_000,
+            direction: .download,
+            status: .queued
+        ))
+
+        let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
+        let decision = await dm._evaluatePoolTransferRequestForTest(
+            TransferRequest(direction: .upload, token: 999,
+                            filename: "Music/song.mp3", size: 5_000_000,
+                            username: "alice"),
+            connection: conn
+        )
+
+        guard case .salvaged(let salvagedToken, let salvagedTransferId) = decision else {
+            Issue.record("expected .salvaged, got \(decision)")
+            return
+        }
+        #expect(salvagedTransferId == transferId, "salvaged decision must reference the matching transferState transfer")
+
+        let pending = await dm._pendingDownloadFor(username: "alice", filename: "Music/song.mp3")
+        #expect(pending?.transferId == transferId)
+        #expect(pending?.size == 5_000_000)
+        #expect(pending?.peerIP == "10.0.0.7")
+        #expect(pending?.peerPort == 2234)
+        #expect(salvagedToken != 0)
+    }
+
+    @Test("Salvage refuses to duplicate when a pendingDownload already exists")
+    func salvageSkipsWhenPendingExists() async {
+        let dm = await DownloadManager()
+        let tracking = await MockTransferTracking()
+        await dm._setTransferStateForTest(tracking)
+
+        let transferId = UUID()
+        await dm._seedPendingDownloadForTest(
+            DownloadManager.PendingDownload(
+                transferId: transferId,
+                username: "alice",
+                filename: "Music/song.mp3",
+                size: 5_000_000,
+                peerIP: "10.0.0.7",
+                peerPort: 2234
+            ),
+            token: 7
+        )
+
+        await tracking.addDownload(Transfer(
+            id: transferId,
+            username: "alice",
+            filename: "Music/song.mp3",
+            size: 5_000_000,
+            direction: .download,
+            status: .queued
+        ))
+
+        let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
+        let decision = await dm._evaluatePoolTransferRequestForTest(
+            TransferRequest(direction: .upload, token: 999,
+                            filename: "Music/song.mp3", size: 5_000_000,
+                            username: "alice"),
+            connection: conn
+        )
+
+        // Token 999 doesn't match our seed (token 7), but (alice, song.mp3)
+        // does — expect a `matched` decision pointing at our seeded token.
+        // Critically, NOT a `salvaged` decision creating a duplicate entry.
+        #expect(decision == .matched(token: 7))
+        let count = await dm._pendingDownloadCount
+        #expect(count == 1, "no duplicate pending entry created")
+    }
+
+    @Test("Salvage refuses .failed transfers — user gave up; peer offer is stale")
+    func salvageRefusesFailedTransfers() async {
+        let dm = await DownloadManager()
+        let tracking = await MockTransferTracking()
+        await dm._setTransferStateForTest(tracking)
+
+        await tracking.addDownload(Transfer(
+            id: UUID(),
+            username: "alice",
+            filename: "Music/song.mp3",
+            size: 5_000_000,
+            direction: .download,
+            status: .failed,
+            error: "Manually cancelled by user"
+        ))
+
+        let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
+        let decision = await dm._evaluatePoolTransferRequestForTest(
+            TransferRequest(direction: .upload, token: 999,
+                            filename: "Music/song.mp3", size: 5_000_000,
+                            username: "alice"),
+            connection: conn
+        )
+
+        #expect(decision == .dropped, ".failed transfers must NOT be silently re-accepted via salvage")
+        let count = await dm._pendingDownloadCount
+        #expect(count == 0)
+    }
+}
+
+// MARK: - Test fixtures
+
+@MainActor
+final class MockTransferTracking: TransferTracking, @unchecked Sendable {
+    var downloads: [Transfer] = []
+    var uploads: [Transfer] = []
+
+    func addDownload(_ transfer: Transfer) { downloads.append(transfer) }
+    func addUpload(_ transfer: Transfer) { uploads.append(transfer) }
+
+    func updateTransfer(id: UUID, update: (inout Transfer) -> Void) {
+        if let idx = downloads.firstIndex(where: { $0.id == id }) {
+            update(&downloads[idx])
+        } else if let idx = uploads.firstIndex(where: { $0.id == id }) {
+            update(&uploads[idx])
+        }
+    }
+
+    func getTransfer(id: UUID) -> Transfer? {
+        downloads.first(where: { $0.id == id }) ?? uploads.first(where: { $0.id == id })
+    }
 }
 
 /// Thread-safe single-value sink for capturing async callback results from tests.

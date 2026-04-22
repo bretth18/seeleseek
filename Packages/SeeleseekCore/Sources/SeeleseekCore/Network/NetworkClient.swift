@@ -1083,9 +1083,16 @@ public final class NetworkClient {
 
     private func _performBrowseUser(_ username: String) async throws -> [SharedFile] {
         logger.debug("Browse: START browseUser(\(username))")
-        // No more `forceFresh: true` — outer coalescing in `browseUser`
-        // ensures only one in-flight call per peer at a time, so reusing
-        // an existing pool connection is safe and saves a roundtrip.
+        // Earlier code passed `forceFresh: true` here. Tracing the history
+        // (c950b1f → b80a28e → 4b73571 → ...) the original commit added
+        // the behavior with the inline comment "Always create a fresh
+        // connection for browse" — no justification given. The later
+        // refactor that introduced `forceFresh` admitted as much
+        // ("preserved until we have evidence reuse is safe"). With no
+        // documented concrete failure mode, removed. Watch for browse-
+        // returning-stale-data or browse-blocking-other-messages
+        // regressions; if they appear, restore `forceFresh` and document
+        // the actual reason this time.
         let connection = try await establishPeerConnection(for: username)
 
         logger.debug("Browse: Requesting shares from \(username)...")

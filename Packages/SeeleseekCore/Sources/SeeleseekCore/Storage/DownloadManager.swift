@@ -325,8 +325,12 @@ public final class DownloadManager {
         guard let pending = pendingDownloads[token] else { return }
 
         // Stash IP/port for the F-fallback path in handleTransferRequest →
-        // initiateOutgoingFileConnection. The IP/port don't change between
-        // sessions, so caching them on the pending entry is safe.
+        // initiateOutgoingFileConnection. Acceptable to cache here because
+        // the F-fallback only runs within ~60s of TransferRequest arrival;
+        // the peer's listen address is unlikely to change in that window.
+        // (If they restart their app or move networks the F-fallback will
+        // fail, the user gets a "Peer unreachable" and the retry path
+        // re-resolves the address. Not catastrophic.)
         let info = connection.peerInfo
         if !info.ip.isEmpty, info.port > 0 {
             pendingDownloads[token]?.peerIP = info.ip
@@ -344,7 +348,11 @@ public final class DownloadManager {
             // After 60s with no PlaceInQueueReply or TransferRequest, flip
             // .connecting → .waiting so the UI doesn't claim we're still
             // mid-handshake when really we're sitting in the peer's queue.
-            // Fire-and-forget; the Task is short-lived.
+            // Fire-and-forget — the Task sleeps 60s then exits; if the
+            // manager is deinit'd in that window the [weak self] check
+            // makes it a no-op. Per-startDownload, so a busy folder
+            // download spawns N of these (acceptable; each is one Task,
+            // sleeping with no allocations).
             Task { [weak self] in
                 await self?.markWaitingIfStillConnecting(token: token)
             }
@@ -426,17 +434,40 @@ public final class DownloadManager {
 
         // Salvage path: the peer is offering a file we don't have in
         // pendingDownloads (cleared by app restart, or not yet registered
-        // because resumeDownloadsOnConnect hasn't reached it). If the user
-        // still wants this file (transferState shows it in a pre-transfer
-        // state), accept the offer on the fresh connection.
+        // because resumeDownloadsOnConnect hasn't reached it). Walk
+        // transferState for a matching user-intent entry and lift it into
+        // pendingDownloads.
+        //
+        // Guards (added in response to review):
+        //   1. Skip if any pendingDownload already exists for (peer, file).
+        //      Without this, a peer that re-sends TransferRequest before our
+        //      file-connection timeout fires would create a second pending
+        //      entry with a fresh random token; both would race to receive
+        //      the F-connection.
+        //   2. Refuse to salvage `.failed` transfers — if the user (or our
+        //      retry logic) gave up, accepting the peer's offer anyway
+        //      would silently restart a download the user thought was dead.
+        //      A retry will move it back to .queued via scheduleRetry/
+        //      retryFailedDownload, at which point the next TransferRequest
+        //      is salvageable again.
+        //   3. Use stable tiebreak (oldest startTime) when transferState
+        //      has multiple matching candidates. Pre-fix `first(where:)`
+        //      depended on dictionary ordering.
+        let alreadyPending = pendingDownloads.values.contains {
+            $0.username == peerUsername && $0.filename == request.filename
+        }
         if !peerUsername.isEmpty,
-           let transfer = transferState?.downloads.first(where: { t in
-               t.direction == .download &&
-               t.username == peerUsername &&
-               t.filename == request.filename &&
-               (t.status == .queued || t.status == .waiting ||
-                t.status == .connecting || t.status == .failed)
-           }) {
+           !alreadyPending,
+           let transfer = transferState?.downloads
+               .filter({ t in
+                   t.direction == .download &&
+                   t.username == peerUsername &&
+                   t.filename == request.filename &&
+                   (t.status == .queued || t.status == .waiting ||
+                    t.status == .connecting)
+               })
+               .min(by: { ($0.startTime ?? .distantFuture) < ($1.startTime ?? .distantFuture) })
+        {
             let salvagedToken = UInt32.random(in: 1...UInt32.max)
             let info = connection.peerInfo
             pendingDownloads[salvagedToken] = PendingDownload(
@@ -2262,4 +2293,98 @@ public final class DownloadManager {
         }
     }
 
+    // MARK: - Test-only accessors
+
+    internal var _pendingDownloadCount: Int { pendingDownloads.count }
+
+    internal func _pendingDownloadFor(username: String, filename: String) -> PendingDownload? {
+        pendingDownloads.values.first { $0.username == username && $0.filename == filename }
+    }
+
+    internal func _seedPendingDownloadForTest(_ pending: PendingDownload, token: UInt32) {
+        pendingDownloads[token] = pending
+    }
+
+    /// Test-only re-entry into the salvage path. Real callers go through the
+    /// pool event stream wired in `configure(...)`.
+    internal func _handlePoolTransferRequestForTest(
+        _ request: TransferRequest,
+        connection: PeerConnection
+    ) async {
+        await handlePoolTransferRequest(request, connection: connection)
+    }
+
+    /// Test-only: evaluate the routing DECISION for an incoming pool
+    /// TransferRequest without actually executing handleTransferRequest
+    /// (which would try to send TransferReply on `connection` and clean up
+    /// on failure — racy to test on a synthetic non-connected PeerConnection).
+    /// Returns what the routing layer would do and, for `salvaged`,
+    /// transitions pendingDownloads to the post-salvage state so the caller
+    /// can inspect the new entry.
+    internal enum PoolTransferDecision: Equatable {
+        case matched(token: UInt32)
+        case salvaged(token: UInt32, transferId: UUID)
+        case dropped
+    }
+
+    internal func _evaluatePoolTransferRequestForTest(
+        _ request: TransferRequest,
+        connection: PeerConnection
+    ) -> PoolTransferDecision {
+        let peerUsername = request.username.isEmpty ? connection.peerInfo.username : request.username
+        let normalized = request.username.isEmpty && !peerUsername.isEmpty
+            ? TransferRequest(direction: request.direction, token: request.token, filename: request.filename, size: request.size, username: peerUsername)
+            : request
+
+        if let token = matchPendingDownload(for: normalized) {
+            return .matched(token: token)
+        }
+
+        let alreadyPending = pendingDownloads.values.contains {
+            $0.username == peerUsername && $0.filename == request.filename
+        }
+        guard !peerUsername.isEmpty, !alreadyPending else {
+            return .dropped
+        }
+        guard let transfer = transferState?.downloads
+            .filter({ t in
+                t.direction == .download &&
+                t.username == peerUsername &&
+                t.filename == request.filename &&
+                (t.status == .queued || t.status == .waiting || t.status == .connecting)
+            })
+            .min(by: { ($0.startTime ?? .distantFuture) < ($1.startTime ?? .distantFuture) })
+        else {
+            return .dropped
+        }
+
+        let salvagedToken = UInt32.random(in: 1...UInt32.max)
+        let info = connection.peerInfo
+        pendingDownloads[salvagedToken] = PendingDownload(
+            transferId: transfer.id,
+            username: transfer.username,
+            filename: transfer.filename,
+            size: request.size,
+            peerIP: info.ip.isEmpty ? nil : info.ip,
+            peerPort: info.port > 0 ? info.port : nil
+        )
+        return .salvaged(token: salvagedToken, transferId: transfer.id)
+    }
+
+    /// Inject a TransferTracking implementation without going through full
+    /// `configure(...)` (which requires a NetworkClient). Tests use this to
+    /// drive logic that only touches transferState.
+    ///
+    /// The real `transferState` property is `weak` (production owns its
+    /// lifecycle). For tests we additionally retain the mock strongly via
+    /// `_testStrongTransferState` so it survives across awaits — without
+    /// this, test-local mocks get released by ARC before the assertion
+    /// runs, the weak ref nils out, and the salvage path's
+    /// `transferState?.downloads` lookup returns nil.
+    internal func _setTransferStateForTest(_ tracking: any TransferTracking) {
+        self._testStrongTransferState = tracking
+        self.transferState = tracking
+    }
+
+    private var _testStrongTransferState: (any TransferTracking)?
 }
