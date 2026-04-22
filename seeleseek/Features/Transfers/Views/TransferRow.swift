@@ -61,11 +61,13 @@ struct TransferRow: View {
         return appState.audioPreview.isPlaying(url: path)
     }
 
-    /// Country flag emoji for the peer, resolved via GeoIP from cached
-    /// peer IPs. Nil when we haven't (yet) seen an address for this peer.
-    private var countryFlag: String? {
+    /// Country flag emoji for the peer. Captured at row appear rather than
+    /// live-read; see SearchResultRow / HistoryRow for the same pattern.
+    @State private var countryFlag: String?
+
+    private func refreshCountryFlag() {
         let f = appState.networkClient.userInfoCache.flag(for: transfer.username)
-        return f.isEmpty ? nil : f
+        countryFlag = f.isEmpty ? nil : f
     }
 
     var body: some View {
@@ -116,6 +118,8 @@ struct TransferRow: View {
             onTogglePreview: toggleAudioPreview,
             onEditMetadata: openMetadataEditor
         ))
+        .onAppear(perform: refreshCountryFlag)
+        .onChange(of: transfer.username) { _, _ in refreshCountryFlag() }
     }
 
     // MARK: - Context menu

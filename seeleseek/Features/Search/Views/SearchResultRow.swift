@@ -54,11 +54,16 @@ struct SearchResultRow: View {
         appState.socialState.peerStatus(for: result.username)
     }
 
-    /// Country flag for the peer (GeoIP-resolved from cached IPs). Nil
-    /// when we haven't seen an address for this user yet.
-    private var countryFlag: String? {
+    /// Country flag for the peer. Captured at row appear rather than read
+    /// in body — `UserInfoCache.countries` mutates on every GeoIP resolution
+    /// and reading it live would invalidate every visible search row on
+    /// every unrelated peer's country arriving. Accepts minor staleness if
+    /// this user's country resolves after the row is on screen.
+    @State private var countryFlag: String?
+
+    private func refreshCountryFlag() {
         let f = appState.networkClient.userInfoCache.flag(for: result.username)
-        return f.isEmpty ? nil : f
+        countryFlag = f.isEmpty ? nil : f
     }
 
     var body: some View {
@@ -92,6 +97,8 @@ struct SearchResultRow: View {
             Button("Browse folder", action: browseFolder)
             Button("Browse \(result.username)", action: browseUser)
         }
+        .onAppear(perform: refreshCountryFlag)
+        .onChange(of: result.username) { _, _ in refreshCountryFlag() }
     }
 
     // MARK: - Selection checkbox
