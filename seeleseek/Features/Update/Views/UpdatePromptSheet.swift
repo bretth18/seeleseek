@@ -109,3 +109,7 @@ struct UpdatePromptSheet: View {
         return "Starting…"
     }
 }
+
+#Preview {
+    UpdatePromptSheet(updateState: UpdateState())
+}

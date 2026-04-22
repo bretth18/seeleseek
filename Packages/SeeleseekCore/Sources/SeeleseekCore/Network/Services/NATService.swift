@@ -633,14 +633,15 @@ public actor NATService {
         let opcode: UInt8 = proto.uppercased() == "TCP" ? 2 : 1
         let expectedResponseOpcode = opcode + 128
 
+        // NAT-PMP is network byte order (RFC 6886); use the BE helpers, not the Soulseek LE ones.
         let request: Data = {
             var data = Data()
             data.append(0)              // Version
             data.append(opcode)         // Opcode: 1=UDP, 2=TCP
             data.append(contentsOf: [0, 0])  // Reserved
-            data.appendUInt16(internalPort)
-            data.appendUInt16(externalPort)
-            data.appendUInt32(lifetime)
+            data.appendUInt16BE(internalPort)
+            data.appendUInt16BE(externalPort)
+            data.appendUInt32BE(lifetime)
             return data
         }()
 
@@ -660,8 +661,8 @@ public actor NATService {
 
                         let respVersion = data.readByte(at: 0) ?? 0xFF
                         let respOpcode = data.readByte(at: 1) ?? 0
-                        let resultCode = data.readUInt16(at: 2) ?? 0xFFFF
-                        let mappedPort = data.readUInt16(at: 10) ?? 0
+                        let resultCode = data.readUInt16BE(at: 2) ?? 0xFFFF
+                        let mappedPort = data.readUInt16BE(at: 10) ?? 0
 
                         guard didComplete.withLock({
                             guard !$0 else { return false }
@@ -741,7 +742,6 @@ public actor NATService {
             if let ip = try? await stunQuery(host: server.host, port: server.port) {
                 return ip
             }
-            logger.debug("STUN \(server.host):\(server.port) failed, trying next")
         }
         throw NATError.ipDiscoveryFailed
     }
@@ -750,7 +750,12 @@ public actor NATService {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
             throw NATError.ipDiscoveryFailed
         }
+        // Force IPv4: Soulseek peer addresses are 32-bit on the wire, so the
+        // IPv6 reflexive address from a dual-stack path is useless for us.
         let params = NWParameters.udp
+        if let ipOptions = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ipOptions.version = .v4
+        }
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
         let connection = NWConnection(to: endpoint, using: params)
 
@@ -762,18 +767,20 @@ public actor NATService {
             UInt32.random(in: 0...UInt32.max)
         )
 
+        // STUN is network byte order; don't use the Soulseek LE `append*` helpers here.
         let request: Data = {
             var data = Data()
-            data.appendUInt16(0x0001) // Binding Request
-            data.appendUInt16(0x0000) // Message Length
-            data.appendUInt32(0x2112A442) // Magic Cookie
-            data.appendUInt32(txnID.0)
-            data.appendUInt32(txnID.1)
-            data.appendUInt32(txnID.2)
+            data.appendUInt16BE(0x0001) // Binding Request
+            data.appendUInt16BE(0x0000) // Message Length
+            data.appendUInt32BE(0x2112A442) // Magic Cookie
+            data.appendUInt32BE(txnID.0)
+            data.appendUInt32BE(txnID.1)
+            data.appendUInt32BE(txnID.2)
             return data
         }()
 
         let didComplete = Mutex(false)
+        let queryLogger = logger
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.stateUpdateHandler = { state in
@@ -782,12 +789,12 @@ public actor NATService {
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
                     connection.receiveMessage { data, _, _, _ in
-                        guard let data = data, data.count >= 20 else { return }
+                        guard let data, data.count >= 20 else { return }
                         // Drop replies whose transaction ID doesn't match ours — guards
                         // against stale responses from prior queries to the same server.
-                        guard data.readUInt32(at: 8) == txnID.0,
-                              data.readUInt32(at: 12) == txnID.1,
-                              data.readUInt32(at: 16) == txnID.2 else { return }
+                        guard data.readUInt32BE(at: 8) == txnID.0,
+                              data.readUInt32BE(at: 12) == txnID.1,
+                              data.readUInt32BE(at: 16) == txnID.2 else { return }
 
                         if let reflex = Self.parseSTUNResponse(data) {
                             guard didComplete.withLock({
@@ -797,6 +804,8 @@ public actor NATService {
                             }) else { return }
                             connection.cancel()
                             continuation.resume(returning: reflex.ip)
+                        } else {
+                            queryLogger.debug("STUN \(host):\(port) parse failed; bytes: \(data.hexString)")
                         }
                     }
 
@@ -838,16 +847,16 @@ public actor NATService {
         guard data.count >= 20 else { return nil }
         var offset = 20
         while offset + 4 <= data.count {
-            guard let attrType = data.readUInt16(at: offset),
-                  let attrLength = data.readUInt16(at: offset + 2) else {
+            guard let attrType = data.readUInt16BE(at: offset),
+                  let attrLength = data.readUInt16BE(at: offset + 2) else {
                 break
             }
 
             if attrType == 0x0020 && attrLength >= 8 {
                 let family = data.readByte(at: offset + 5)
                 if family == 0x01,
-                   let xorPort = data.readUInt16(at: offset + 6),
-                   let xorIP = data.readUInt32(at: offset + 8) {
+                   let xorPort = data.readUInt16BE(at: offset + 6),
+                   let xorIP = data.readUInt32BE(at: offset + 8) {
                     // Port is XOR'd with the high 16 bits of the magic cookie.
                     let port = xorPort ^ 0x2112
                     // Address is XOR'd with the full magic cookie.
@@ -986,6 +995,34 @@ enum NATError: Error, LocalizedError {
         case .ipDiscoveryFailed: return "Could not discover external IP"
         case .soapFault(let code): return "UPnP SOAP fault (code \(code))"
         case .natpmpError(let code): return "NAT-PMP error (code \(code))"
+        }
+    }
+}
+
+// Big-endian helpers scoped to this file — STUN (and NAT-PMP) are network byte
+// order, unlike the Soulseek-LE `append*`/`read*` helpers in DataExtensions.swift.
+private extension Data {
+    mutating func appendUInt16BE(_ value: UInt16) {
+        var be = value.bigEndian
+        Swift.withUnsafeBytes(of: &be) { append(contentsOf: $0) }
+    }
+
+    mutating func appendUInt32BE(_ value: UInt32) {
+        var be = value.bigEndian
+        Swift.withUnsafeBytes(of: &be) { append(contentsOf: $0) }
+    }
+
+    func readUInt16BE(at offset: Int) -> UInt16? {
+        guard offset >= 0, offset + 2 <= count else { return nil }
+        return withUnsafeBytes { bytes in
+            UInt16(bigEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self))
+        }
+    }
+
+    func readUInt32BE(at offset: Int) -> UInt32? {
+        guard offset >= 0, offset + 4 <= count else { return nil }
+        return withUnsafeBytes { bytes in
+            UInt32(bigEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
         }
     }
 }
