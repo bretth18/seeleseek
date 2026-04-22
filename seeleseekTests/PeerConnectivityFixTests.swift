@@ -105,9 +105,7 @@ struct PeerConnectivityFixTests {
         let request = TransferRequest(
             direction: .upload, token: 42, filename: "ANY.flac", size: 1000, username: "zzz"
         )
-        let (matched, ambiguous) = DownloadManager.matchPendingDownload(request: request, pending: pending)
-        #expect(matched == 42)
-        #expect(ambiguous == false)
+        #expect(DownloadManager.matchPendingDownload(request: request, pending: pending) == 42)
     }
 
     @Test("(username, filename) wins when token doesn't match")
@@ -119,37 +117,23 @@ struct PeerConnectivityFixTests {
         let request = TransferRequest(
             direction: .upload, token: 999, filename: "shared.flac", size: 1000, username: "bob"
         )
-        let (matched, ambiguous) = DownloadManager.matchPendingDownload(request: request, pending: pending)
-        #expect(matched == 2)
-        #expect(ambiguous == false)
+        #expect(DownloadManager.matchPendingDownload(request: request, pending: pending) == 2)
     }
 
-    @Test("Ambiguous same-filename fallback refuses to guess")
-    func transferRoutingRefusesAmbiguousFallback() {
-        let pending: [UInt32: DownloadManager.PendingDownload] = [
-            1: .init(transferId: UUID(), username: "alice", filename: "shared.flac", size: 1000),
-            2: .init(transferId: UUID(), username: "bob",   filename: "shared.flac", size: 1000)
-        ]
-        // request.username is empty (reused-connection path) — can't disambiguate.
-        let request = TransferRequest(
-            direction: .upload, token: 999, filename: "shared.flac", size: 1000, username: ""
-        )
-        let (matched, ambiguous) = DownloadManager.matchPendingDownload(request: request, pending: pending)
-        #expect(matched == nil)
-        #expect(ambiguous == true)
-    }
-
-    @Test("Single filename candidate still resolves via loose fallback")
-    func transferRoutingResolvesUniqueFilename() {
+    @Test("Empty request.username refuses to match — caller must normalize")
+    func transferRoutingRequiresUsername() {
+        // request.username is empty (the connection identification didn't make it
+        // into the request payload). The filename-only fallback was removed
+        // because it could misroute when two peers happen to be sending the same
+        // filename. handlePoolTransferRequest is responsible for filling in the
+        // username from the delivering connection's peerInfo before matching.
         let pending: [UInt32: DownloadManager.PendingDownload] = [
             5: .init(transferId: UUID(), username: "alice", filename: "only.flac", size: 1000)
         ]
         let request = TransferRequest(
             direction: .upload, token: 999, filename: "only.flac", size: 1000, username: ""
         )
-        let (matched, ambiguous) = DownloadManager.matchPendingDownload(request: request, pending: pending)
-        #expect(matched == 5)
-        #expect(ambiguous == false)
+        #expect(DownloadManager.matchPendingDownload(request: request, pending: pending) == nil)
     }
 
     // MARK: - Outbound parameters

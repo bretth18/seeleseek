@@ -47,7 +47,14 @@ public final class DownloadManager {
         public let username: String
         public let filename: String
         public var size: UInt64
-        public var peerConnection: PeerConnection?
+        // We deliberately do NOT cache a PeerConnection here. The pool is the
+        // single source of truth for live connections — caching one on the
+        // pending entry leads to stale references when the original
+        // connection dies between queueing the download and the peer
+        // actually delivering its TransferRequest hours later. Look up the
+        // current connection via `peerConnectionPool.getConnectionForUser`
+        // at send time, or use the connection that delivered the event you
+        // are reacting to.
         public var peerIP: String?       // Store peer IP for outgoing F connection
         public var peerPort: Int?        // Store peer port for outgoing F connection
         public var resumeOffset: UInt64 = 0  // For resuming partial downloads
@@ -55,14 +62,6 @@ public final class DownloadManager {
 
     // Track partial downloads for resume
     private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
-
-    // MARK: - Pending Indirect Connection State (for racing direct vs PierceFirewall)
-    private struct PendingIndirectState {
-        let username: String
-        var receivedConnection: PeerConnection?
-        var failed = false  // Set by CantConnectToPeer
-    }
-    private var pendingIndirectStates: [UInt32: PendingIndirectState] = [:]
 
     public struct PendingFileTransfer {
         public let transferId: UUID
@@ -111,22 +110,14 @@ public final class DownloadManager {
         self.settings = settings
         self.metadataReader = metadataReader
 
-        // Set up callbacks for peer address responses using multi-listener pattern
-        logger.info("Adding peer address handler")
-        networkClient.addPeerAddressHandler { [weak self] username, ip, port in
-            self?.logger.debug("Peer address handler called: \(username) @ \(ip):\(port)")
-            Task { @MainActor in
-                await self?.handlePeerAddress(username: username, ip: ip, port: port)
-            }
-        }
-
-        // Set up callback for incoming connections that match pending downloads
-        networkClient.onIncomingConnectionMatched = { [weak self] username, token, connection in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.handleIncomingConnection(username: username, token: token, connection: connection)
-            }
-        }
+        // Connection establishment for downloads now goes through
+        // NetworkClient.establishPeerConnection (which is shared with
+        // browse/folder-contents/user-info). That means DownloadManager no
+        // longer needs to react to GetPeerAddress responses or
+        // incomingConnectionMatched — the establishment helper drives the
+        // ConnectToPeer + direct/indirect race itself, so the previous
+        // addPeerAddressHandler / onIncomingConnectionMatched registrations
+        // are intentionally absent.
 
         // Set up callback for incoming file transfer connections
         networkClient.onFileTransferConnection = { [weak self] username, token, connection in
@@ -298,12 +289,10 @@ public final class DownloadManager {
 
         let token = UInt32.random(in: 0...UInt32.max)
 
-        // Update status to connecting
         transferState.updateTransfer(id: transfer.id) { t in
             t.status = .connecting
         }
 
-        // Store pending download
         pendingDownloads[token] = PendingDownload(
             transferId: transfer.id,
             username: transfer.username,
@@ -313,411 +302,110 @@ public final class DownloadManager {
             peerPort: nil
         )
 
-        logger.info("Starting download from \(transfer.username), token=\(token)")
-
-        // If a live P-connection to this peer already exists (e.g. from a
-        // recent folder-contents fetch or another download), reuse it instead
-        // of running another GetPeerAddress + ConnectToPeer + 30s race. The
-        // pool already prunes stale entries inside `getConnectionForUser`.
-        if let existing = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
-            await reuseConnectionForDownload(token: token, connection: existing)
-            return
-        }
-
         do {
-            // Step 1: Get peer address
-            logger.debug("Requesting peer address for \(transfer.username)")
-            try await networkClient.getUserAddress(transfer.username)
-
-            // Poll every 500ms for up to 30s, checking if connection was established
-            // handlePeerAddress() will set peerConnection or remove the pending entry
-            var elapsed: TimeInterval = 0
-            let timeoutSeconds: TimeInterval = 30
-            while elapsed < timeoutSeconds {
-                try await Task.sleep(for: .milliseconds(500))
-                elapsed += 0.5
-                // Connection established by handlePeerAddress
-                if pendingDownloads[token]?.peerConnection != nil { return }
-                // Already handled (removed from pending by handlePeerAddress or other handler)
-                if pendingDownloads[token] == nil { return }
-            }
-
-            // Timed out - mark as failed and schedule retry
-            if pendingDownloads[token] != nil {
-                let errorMsg = "Connection timeout"
-                let currentRetryCount = transferState.getTransfer(id: transfer.id)?.retryCount ?? 0
-
-                transferState.updateTransfer(id: transfer.id) { t in
-                    t.status = .failed
-                    t.error = errorMsg
-                }
-                pendingDownloads.removeValue(forKey: token)
-
-                // Auto-retry for connection timeouts
-                if currentRetryCount < maxRetries {
-                    scheduleRetry(
-                        transferId: transfer.id,
-                        username: transfer.username,
-                        filename: transfer.filename,
-                        size: transfer.size,
-                        retryCount: currentRetryCount
-                    )
-                }
-            }
+            // Single shared establishment dance — the same one browse,
+            // folder-contents, and user-info use. Reuses an existing pool
+            // connection if there is one; otherwise races direct vs
+            // PierceFirewall. Concurrent calls for the same peer are
+            // coalesced inside NetworkClient, so a folder-batch of N
+            // downloads opens one connection, not N.
+            let connection = try await networkClient.establishPeerConnection(for: transfer.username)
+            await queueOnConnection(token: token, connection: connection)
         } catch {
-            logger.error("Download failed: \(error.localizedDescription)")
-            let currentRetryCount = transferState.getTransfer(id: transfer.id)?.retryCount ?? 0
-
-            transferState.updateTransfer(id: transfer.id) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
-            }
-            pendingDownloads.removeValue(forKey: token)
-
-            // Auto-retry for retriable errors
-            if isRetriableError(error.localizedDescription) && currentRetryCount < maxRetries {
-                scheduleRetry(
-                    transferId: transfer.id,
-                    username: transfer.username,
-                    filename: transfer.filename,
-                    size: transfer.size,
-                    retryCount: currentRetryCount
-                )
-            }
+            logger.error("startDownload(\(transfer.filename)): \(error.localizedDescription)")
+            failPending(token: token, reason: error.localizedDescription)
         }
     }
 
-    /// Queue a download on an already-live peer connection. Mirrors the
-    /// existing-connection branch inside `handlePeerAddress` but is reachable
-    /// from `startDownload` directly so we can skip the address-lookup +
-    /// ConnectToPeer dance entirely when the pool already has a connection.
-    private func reuseConnectionForDownload(token: UInt32, connection: PeerConnection) async {
-        guard let transferState, let pending = pendingDownloads[token] else { return }
+    /// Send QueueDownload + PlaceInQueueRequest for a pending download on a
+    /// live connection. Used by every "kick this download forward" call site
+    /// (start, resume, periodic re-queue, salvage). Does NOT cache the
+    /// connection — see `PendingDownload`'s docstring.
+    private func queueOnConnection(token: UInt32, connection: PeerConnection) async {
+        guard let pending = pendingDownloads[token] else { return }
 
-        // Stash IP/port from the live connection so the later
-        // outbound-F-connection fallback (NAT traversal in
-        // initiateOutgoingFileConnection) still has a target if the peer
-        // can't reach us directly for the file transfer.
+        // Stash IP/port for the F-fallback path in handleTransferRequest →
+        // initiateOutgoingFileConnection. The IP/port don't change between
+        // sessions, so caching them on the pending entry is safe.
         let info = connection.peerInfo
         if !info.ip.isEmpty, info.port > 0 {
             pendingDownloads[token]?.peerIP = info.ip
             pendingDownloads[token]?.peerPort = info.port
         }
-        pendingDownloads[token]?.peerConnection = connection
-
-        logger.info("Reusing existing connection to \(pending.username) for \(pending.filename)")
 
         do {
-            await setupTransferRequestCallback(token: token, connection: connection)
             try await connection.queueDownload(filename: pending.filename)
             do {
                 try await connection.sendPlaceInQueueRequest(filename: pending.filename)
             } catch {
-                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+                logger.warning("PlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
             }
-            await waitForTransferResponse(token: token)
+            logger.info("Queued \(pending.filename) with \(pending.username)")
+            // After 60s with no PlaceInQueueReply or TransferRequest, flip
+            // .connecting → .waiting so the UI doesn't claim we're still
+            // mid-handshake when really we're sitting in the peer's queue.
+            // Fire-and-forget; the Task is short-lived.
+            Task { [weak self] in
+                await self?.markWaitingIfStillConnecting(token: token)
+            }
         } catch {
-            logger.error("Failed to queue on reused connection: \(error.localizedDescription)")
+            logger.error("queueOnConnection(\(pending.filename)): \(error.localizedDescription)")
+            failPending(token: token, reason: error.localizedDescription)
+        }
+    }
+
+    private func markWaitingIfStillConnecting(token: UInt32) async {
+        try? await Task.sleep(for: .seconds(60))
+        guard let transferState, let pending = pendingDownloads[token] else { return }
+        if let current = transferState.getTransfer(id: pending.transferId), current.status == .connecting {
             transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
+                t.status = .waiting
             }
-            pendingDownloads.removeValue(forKey: token)
         }
     }
 
-    private func handlePeerAddress(username: String, ip: String, port: Int) async {
-        guard let networkClient, let transferState else {
-            logger.error("handlePeerAddress: NetworkClient or TransferState is nil")
-            return
+    /// Fail a pending download, remove its entry, and schedule a retry if
+    /// eligible. Centralizes the error-handling that used to be sprinkled
+    /// across startDownload/handlePeerAddress/queue paths.
+    private func failPending(token: UInt32, reason: String) {
+        guard let transferState, let pending = pendingDownloads[token] else { return }
+        let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
+        transferState.updateTransfer(id: pending.transferId) { t in
+            t.status = .failed
+            t.error = reason
         }
-
-        // Find ALL pending downloads for this user (not just first)
-        let matchingEntries = pendingDownloads.filter { $0.value.username == username }
-        guard !matchingEntries.isEmpty else {
-            logger.debug("No pending download for \(username)")
-            return
+        pendingDownloads.removeValue(forKey: token)
+        if isRetriableError(reason) && currentRetryCount < maxRetries {
+            scheduleRetry(
+                transferId: pending.transferId,
+                username: pending.username,
+                filename: pending.filename,
+                size: pending.size,
+                retryCount: currentRetryCount
+            )
         }
-
-        // Use first entry as the "primary" for connection establishment
-        let (token, pending) = matchingEntries.first!
-        let additionalEntries = matchingEntries.filter { $0.key != token }
-
-        logger.info("Peer address for \(username): \(ip):\(port), token=\(token) (\(matchingEntries.count) pending downloads)")
-
-        // Store peer address for all pending downloads
-        for (t, _) in matchingEntries {
-            pendingDownloads[t]?.peerIP = ip
-            pendingDownloads[t]?.peerPort = port
-        }
-
-        // First, check if we already have a connection to this user (from incoming connections)
-        if let existingConnection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
-            logger.info("Reusing existing connection to \(username)")
-            pendingDownloads[token]?.peerConnection = existingConnection
-
-            do {
-                await setupTransferRequestCallback(token: token, connection: existingConnection)
-                try await existingConnection.queueDownload(filename: pending.filename)
-                do {
-                    try await existingConnection.sendPlaceInQueueRequest(filename: pending.filename)
-                } catch {
-                    logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
-                }
-                logger.info("Sent QueueDownload for \(pending.filename)")
-
-                // Also queue additional downloads on the same connection
-                for (extraToken, extraPending) in additionalEntries {
-                    pendingDownloads[extraToken]?.peerConnection = existingConnection
-                    await setupTransferRequestCallback(token: extraToken, connection: existingConnection)
-                    do {
-                        try await existingConnection.queueDownload(filename: extraPending.filename)
-                        try await existingConnection.sendPlaceInQueueRequest(filename: extraPending.filename)
-                    } catch {
-                        logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
-                    }
-                    logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
-                }
-
-                await waitForTransferResponse(token: token)
-            } catch {
-                logger.error("Failed to queue download on existing connection: \(error.localizedDescription)")
-                transferState.updateTransfer(id: pending.transferId) { t in
-                    t.status = .failed
-                    t.error = error.localizedDescription
-                }
-                pendingDownloads.removeValue(forKey: token)
-            }
-            return
-        }
-
-        // CRITICAL: Register pending indirect BEFORE sending ConnectToPeer to avoid race condition
-        // PierceFirewall can arrive immediately after ConnectToPeer is sent!
-        registerPendingIndirect(token: token, username: username, timeout: 30)
-
-        // Send ConnectToPeer to server - starts indirect path in parallel
-        // Server will tell the peer to connect to us via PierceFirewall
-        await networkClient.sendConnectToPeer(token: token, username: username, connectionType: "P")
-        logger.info("Sent ConnectToPeer for \(username), racing direct vs indirect...")
-
-        // Race: direct connection + handshake (10s) vs indirect (PierceFirewall)
-        var connection: PeerConnection
-        var isIndirect = false
-
-        do {
-            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
-                group.addTask {
-                    let conn = try await networkClient.peerConnectionPool.connect(
-                        to: username, ip: ip, port: port, token: token
-                    )
-                    // Must also complete handshake - peer may not respond if they
-                    // already connected to us via PierceFirewall
-                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
-                    return conn
-                }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(10))
-                    throw NetworkError.timeout
-                }
-                let result = try await group.next()!
-                group.cancelAll()
-                return result
-            }
-            cancelPendingIndirect(token: token)
-            logger.info("Direct connection + handshake to \(username) succeeded")
-        } catch {
-            // Direct timed out or failed - wait for indirect (PierceFirewall) connection
-            logger.info("Direct connection failed (\(error.localizedDescription)), waiting for indirect...")
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .connecting
-                t.error = "Trying indirect connection..."
-            }
-
-            do {
-                connection = try await waitForPendingIndirect(token: token)
-                isIndirect = true
-                logger.info("Got indirect connection from \(username)")
-            } catch {
-                // Both paths failed - fail all pending downloads for this user
-                logger.error("Both direct and indirect connections to \(username) failed")
-                let isSameNetwork = networkClient.externalIP == ip
-                let errorMsg = isSameNetwork
-                    ? "Same network - hairpin NAT limitation"
-                    : "Connection timeout - peer unreachable"
-
-                for (failToken, failPending) in matchingEntries {
-                    let currentRetryCount = transferState.getTransfer(id: failPending.transferId)?.retryCount ?? 0
-                    transferState.updateTransfer(id: failPending.transferId) { t in
-                        t.status = .failed
-                        t.error = errorMsg
-                    }
-                    pendingDownloads.removeValue(forKey: failToken)
-
-                    if !isSameNetwork && currentRetryCount < maxRetries {
-                        scheduleRetry(
-                            transferId: failPending.transferId,
-                            username: failPending.username,
-                            filename: failPending.filename,
-                            size: failPending.size,
-                            retryCount: currentRetryCount
-                        )
-                    }
-                }
-                return
-            }
-        }
-
-        if isIndirect {
-            // Resume receive loop - PierceFirewall stops it assuming file transfer mode,
-            // but P connections need to continue receiving peer messages
-            await connection.resumeReceivingForPeerConnection()
-        }
-
-        // Got a connection - send QueueDownload for all pending downloads
-        pendingDownloads[token]?.peerConnection = connection
-
-        do {
-            if isIndirect {
-                // For indirect connections, identify ourselves to the peer
-                try await connection.sendPeerInit(username: networkClient.username)
-                logger.debug("Sent PeerInit via indirect connection")
-            }
-
-            await setupTransferRequestCallback(token: token, connection: connection)
-            try await connection.queueDownload(filename: pending.filename)
-            do {
-                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
-            } catch {
-                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
-            }
-            logger.info("Sent QueueDownload for \(pending.filename)")
-
-            // Also queue additional downloads on the same connection
-            for (extraToken, extraPending) in additionalEntries {
-                pendingDownloads[extraToken]?.peerConnection = connection
-                await setupTransferRequestCallback(token: extraToken, connection: connection)
-                do {
-                    try await connection.queueDownload(filename: extraPending.filename)
-                    try await connection.sendPlaceInQueueRequest(filename: extraPending.filename)
-                } catch {
-                    logger.warning("Failed to batch-queue \(extraPending.filename): \(error.localizedDescription)")
-                }
-                logger.info("Sent QueueDownload for additional: \(extraPending.filename)")
-            }
-
-            await waitForTransferResponse(token: token)
-        } catch {
-            logger.error("Failed to queue download: \(error.localizedDescription)")
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
-            }
-            pendingDownloads.removeValue(forKey: token)
-        }
-    }
-
-    // MARK: - Pending Indirect Connection Helpers
-
-    /// Register a pending indirect download BEFORE sending ConnectToPeer (to avoid race condition)
-    private func registerPendingIndirect(token: UInt32, username: String, timeout: TimeInterval) {
-        pendingIndirectStates[token] = PendingIndirectState(username: username)
-    }
-
-    /// Wait for PierceFirewall to arrive for a previously registered token (polling-based, no continuation leak)
-    private func waitForPendingIndirect(token: UInt32, timeout: TimeInterval = 30) async throws -> PeerConnection {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            if let state = pendingIndirectStates[token] {
-                if let connection = state.receivedConnection {
-                    pendingIndirectStates.removeValue(forKey: token)
-                    return connection
-                }
-                if state.failed {
-                    pendingIndirectStates.removeValue(forKey: token)
-                    throw NetworkError.connectionFailed("Peer unreachable")
-                }
-            } else {
-                // State was removed (cancelled)
-                throw NetworkError.timeout
-            }
-
-            try await Task.sleep(for: .milliseconds(100))
-        }
-
-        // Timed out
-        pendingIndirectStates.removeValue(forKey: token)
-        throw NetworkError.timeout
-    }
-
-    /// Cancel a pending indirect download (used when direct connection succeeds)
-    private func cancelPendingIndirect(token: UInt32) {
-        pendingIndirectStates.removeValue(forKey: token)
-    }
-
-    /// Called when PierceFirewall arrives - check if it matches a racing download
-    /// Returns true if it was handled
-    private func handlePierceFirewallForRace(token: UInt32, connection: PeerConnection) -> Bool {
-        guard let state = pendingIndirectStates[token] else {
-            return false
-        }
-
-        logger.info("PierceFirewall token=\(token) matched racing download for \(state.username)")
-
-        Task {
-            await connection.setPeerUsername(state.username)
-        }
-
-        pendingIndirectStates[token]?.receivedConnection = connection
-        return true
-    }
-
-    /// TransferRequest routing is now handled centrally via the pool event stream.
-    /// All transfer requests arrive through NetworkClient.onTransferRequest → handlePoolTransferRequest.
-    /// This method is kept as a no-op to avoid changing all call sites.
-    private func setupTransferRequestCallback(token: UInt32, connection: PeerConnection) async {
-        logger.debug("TransferRequest routing via pool event stream (token=\(token))")
     }
 
     private func matchPendingDownload(for request: TransferRequest) -> UInt32? {
-        let (token, ambiguous) = Self.matchPendingDownload(request: request, pending: pendingDownloads)
-        if ambiguous {
-            logger.warning("Refusing ambiguous TransferRequest match for filename \(request.filename)")
-        }
-        return token
+        Self.matchPendingDownload(request: request, pending: pendingDownloads)
     }
 
-    /// Token → (username, filename) → filename-only (only when unambiguous).
-    /// Reused connections can arrive with empty `request.username`, so a
-    /// filename-only fallback is retained — but ambiguous cases return `nil`
-    /// rather than guess. `ambiguous` is true when the fallback refused to match.
+    /// Token → (username, filename). The earlier filename-only fallback
+    /// could misroute when two different peers happened to be sending the
+    /// same filename; it was only needed because `request.username` used
+    /// to arrive empty on reused connections. `handlePoolTransferRequest`
+    /// now normalizes the request with the connection's authoritative
+    /// `peerInfo.username` before calling this, so the fallback is gone.
     static func matchPendingDownload(
         request: TransferRequest,
         pending: [UInt32: PendingDownload]
-    ) -> (token: UInt32?, ambiguous: Bool) {
+    ) -> UInt32? {
         if pending[request.token] != nil {
-            return (request.token, false)
+            return request.token
         }
-        if let (token, _) = pending.first(where: { (_, p) in
+        return pending.first { (_, p) in
             p.username == request.username && p.filename == request.filename
-        }) {
-            return (token, false)
-        }
-        let filenameMatches = pending.filter { (_, p) in p.filename == request.filename }
-        if filenameMatches.count == 1 {
-            return (filenameMatches.first?.key, false)
-        }
-        return (nil, filenameMatches.count > 1)
-    }
-
-    private func handleTransferRequestByFilename(request: TransferRequest, fallbackToken: UInt32) async {
-        if let token = matchPendingDownload(for: request) {
-            logger.debug("Matched TransferRequest to pending download: user=\(request.username) file=\(request.filename)")
-            await handleTransferRequest(token: token, request: request)
-        } else {
-            logger.debug("No match for TransferRequest, using fallback token=\(fallbackToken)")
-            await handleTransferRequest(token: fallbackToken, request: request)
-        }
+        }?.key
     }
 
     private func handlePoolTransferRequest(_ request: TransferRequest, connection: PeerConnection) async {
@@ -731,14 +419,8 @@ public final class DownloadManager {
             : request
 
         if let token = matchPendingDownload(for: normalizedRequest) {
-            // Replace the cached connection. The one we stashed when first
-            // queueing the download (e.g. an early incoming connection) is
-            // often dead by the time the peer's upload queue drains and
-            // they reach us with TransferRequest. The fresh connection that
-            // delivered THIS request is the one we must reply on.
-            pendingDownloads[token]?.peerConnection = connection
             logger.info("Pool TransferRequest matched pending download: user=\(peerUsername) file=\(request.filename)")
-            await handleTransferRequest(token: token, request: normalizedRequest)
+            await handleTransferRequest(token: token, request: normalizedRequest, connection: connection)
             return
         }
 
@@ -762,63 +444,40 @@ public final class DownloadManager {
                 username: transfer.username,
                 filename: transfer.filename,
                 size: request.size,
-                peerConnection: connection,
                 peerIP: info.ip.isEmpty ? nil : info.ip,
                 peerPort: info.port > 0 ? info.port : nil
             )
             logger.info("Pool TransferRequest salvaged from transferState: user=\(peerUsername) file=\(request.filename) (token=\(salvagedToken))")
-            await handleTransferRequest(token: salvagedToken, request: normalizedRequest)
+            await handleTransferRequest(token: salvagedToken, request: normalizedRequest, connection: connection)
             return
         }
 
         logger.info("Pool TransferRequest dropped — no pending or transferState match: user=\(peerUsername) file=\(request.filename)")
     }
 
-    private func waitForTransferResponse(token: UInt32) async {
-        guard let transferState, let pending = pendingDownloads[token] else { return }
-
-        // Wait for the transfer to complete or timeout
-        do {
-            try await Task.sleep(for: .seconds(60))
-
-            // Still waiting - only mark as waiting if still in .connecting status
-            // Don't overwrite .transferring or other statuses
-            if pendingDownloads[token] != nil {
-                await MainActor.run {
-                    if let currentTransfer = transferState.getTransfer(id: pending.transferId),
-                       currentTransfer.status == .connecting {
-                        transferState.updateTransfer(id: pending.transferId) { t in
-                            t.status = .waiting
-                        }
-                    }
-                }
-            }
-        } catch {
-            // Task was cancelled or other error
-        }
-    }
-
-    private func handleTransferRequest(token: UInt32, request: TransferRequest) async {
+    private func handleTransferRequest(token: UInt32, request: TransferRequest, connection: PeerConnection) async {
         guard let transferState, let pending = pendingDownloads[token] else { return }
 
         let directionStr = request.direction == .upload ? "upload" : "download"
         logger.info("Transfer request received: direction=\(directionStr) size=\(request.size) from \(request.username)")
 
         if request.direction == .upload {
-            // Peer is ready to upload to us - send acceptance reply
-            if let connection = pending.peerConnection {
-                do {
-                    try await connection.sendTransferReply(token: request.token, allowed: true)
-                    logger.info("Sent transfer reply accepting upload for token \(request.token)")
-                } catch {
-                    logger.error("Failed to send transfer reply: \(error.localizedDescription)")
-                    transferState.updateTransfer(id: pending.transferId) { t in
-                        t.status = .failed
-                        t.error = "Failed to accept transfer"
-                    }
-                    pendingDownloads.removeValue(forKey: token)
-                    return
+            // Peer is ready to upload to us — send acceptance reply on the
+            // connection that delivered THIS request, not on a cached one.
+            // The cached one is often dead by the time the peer's queue
+            // drains; replying on it surfaces as "send() - no connection!"
+            // and the peer never gets our acceptance.
+            do {
+                try await connection.sendTransferReply(token: request.token, allowed: true)
+                logger.info("Sent transfer reply accepting upload for token \(request.token)")
+            } catch {
+                logger.error("Failed to send transfer reply: \(error.localizedDescription)")
+                transferState.updateTransfer(id: pending.transferId) { t in
+                    t.status = .failed
+                    t.error = "Failed to accept transfer"
                 }
+                pendingDownloads.removeValue(forKey: token)
+                return
             }
 
             // Register pending file transfer - peer will connect to us with type "F"
@@ -1550,45 +1209,13 @@ public final class DownloadManager {
 
     // MARK: - Incoming Connection Handling
 
-    /// Called when we receive an indirect connection from a peer
-    public func handleIncomingConnection(username: String, token: UInt32, connection: PeerConnection) async {
-        guard let pending = pendingDownloads[token] else {
-            // Not a download we're waiting for
-            return
-        }
-
-        guard let networkClient else {
-            logger.error("NetworkClient is nil in handleIncomingConnection")
-            return
-        }
-
-        logger.info("Indirect connection established with \(username) for token \(token)")
-
-        pendingDownloads[token]?.peerConnection = connection
-
-        // Send PeerInit + QueueDownload
-        // Per protocol: We need to send PeerInit to identify ourselves before QueueUpload
-        do {
-            // Send PeerInit FIRST - identifies us to the peer (token=0 for P connections)
-            try await connection.sendPeerInit(username: networkClient.username)
-            logger.debug("Sent PeerInit via indirect connection")
-
-            // Set up callback BEFORE sending QueueDownload to avoid race condition
-            await setupTransferRequestCallback(token: token, connection: connection)
-
-            try await connection.queueDownload(filename: pending.filename)
-            do {
-                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
-            } catch {
-                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
-            }
-            logger.info("Sent QueueDownload via indirect connection")
-
-            await waitForTransferResponse(token: token)
-        } catch {
-            logger.error("Failed to queue download: \(error.localizedDescription)")
-        }
-    }
+    // The old `handleIncomingConnection(username:token:connection:)` lived
+    // here. It was wired to `NetworkClient.onIncomingConnectionMatched`, which
+    // fires when an incoming PeerInit's token matches `pendingConnections` in
+    // the pool. Nothing populates `pendingConnections` (no caller of
+    // `addPendingConnection`), so the path was dead. The
+    // ConnectToPeer/PierceFirewall race is now owned end-to-end by
+    // NetworkClient.establishPeerConnection.
 
     /// Called when a peer opens a file transfer connection to us (type "F")
     /// Per SoulSeek protocol: After PeerInit, uploader sends FileTransferInit token (4 bytes)
@@ -2127,46 +1754,40 @@ public final class DownloadManager {
 
     // MARK: - PierceFirewall Handling (Indirect Connections)
 
-    /// Called when a peer sends PierceFirewall - indirect connection established
+    /// Called when a peer sends PierceFirewall — indirect connection established.
+    /// NetworkClient already routes browse/folder/userinfo/download race winners
+    /// via `handlePierceFirewallForBrowse` (since downloads now use the shared
+    /// `establishPeerConnection` path). What's left to handle here is the
+    /// upload-side delegation: PierceFirewall arrives in response to a peer's
+    /// pending upload, and UploadManager owns that flow.
     public func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
         logger.debug("handlePierceFirewall: token=\(token)")
 
-        // Check if this matches a racing download (handlePeerAddress is waiting for this)
-        if handlePierceFirewallForRace(token: token, connection: connection) {
-            logger.debug("PierceFirewall handled by download race")
-            return
-        }
-
-        // Check if this is for a pending upload
         if let uploadManager, uploadManager.hasPendingUpload(token: token) {
             logger.debug("PierceFirewall token \(token) delegated to UploadManager")
             await uploadManager.handlePierceFirewall(token: token, connection: connection)
             return
         }
 
-        logger.debug("No pending download/upload for PierceFirewall token \(token)")
+        logger.debug("No pending upload for PierceFirewall token \(token)")
     }
 
     // MARK: - CantConnectToPeer Handling
 
-    /// Server tells us the peer couldn't connect to us — fail-fast instead of waiting for timeout
+    /// Server tells us the peer couldn't connect to us — fail fast instead of
+    /// waiting for the 30s timeout. Browse/folder/userinfo/download races all
+    /// share `pendingBrowseStates` in NetworkClient, so we forward there;
+    /// uploads have their own pending tracking in UploadManager.
     private func handleCantConnectToPeer(token: UInt32) {
-        // Check if this matches a racing download waiting for indirect connection
-        if var state = pendingIndirectStates[token] {
-            logger.warning("CantConnectToPeer for download token \(token) — failing indirect wait")
-            state.failed = true
-            pendingIndirectStates[token] = state
-            return
-        }
+        networkClient?.failPendingBrowse(token: token, reason: "Peer unreachable (CantConnectToPeer)")
 
-        // Check if this is for a pending upload
         if let uploadManager, uploadManager.hasPendingUpload(token: token) {
             logger.warning("CantConnectToPeer for upload token \(token) — failing upload")
             uploadManager.handleCantConnectToPeer(token: token)
             return
         }
 
-        logger.debug("CantConnectToPeer token \(token) — no matching pending transfer")
+        logger.debug("CantConnectToPeer token \(token) — forwarded to pending-browse + upload paths")
     }
 
     // MARK: - Periodic Re-Queue (nicotine+ style)

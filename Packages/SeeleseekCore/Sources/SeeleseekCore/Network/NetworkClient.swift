@@ -1091,8 +1091,15 @@ public final class NetworkClient {
         var receivedConnection: PeerConnection?  // Set if PierceFirewall arrives before we start waiting
         var timeoutTask: Task<Void, Never>?
         var timedOut = false
+        var failureReason: String?  // Set by CantConnectToPeer to fail the wait fast
     }
     private var pendingBrowseStates: [UInt32: PendingBrowseState] = [:]
+
+    /// Coalesce concurrent `establishPeerConnection` calls for the same peer.
+    /// Without this, N parallel downloads to one peer each kick off their own
+    /// ConnectToPeer + race, opening N independent TCP connections — wasteful
+    /// and historically the source of the localPort=2235 4-tuple collision.
+    private var pendingEstablishments: [String: Task<PeerConnection, Error>] = [:]
 
     /// Register a pending browse BEFORE sending ConnectToPeer (to avoid race condition)
     public func registerPendingBrowse(token: UInt32, username: String, timeout: TimeInterval) {
@@ -1125,7 +1132,7 @@ public final class NetworkClient {
 
     /// Wait for a previously registered pending browse to receive PierceFirewall
     public func waitForPendingBrowse(token: UInt32) async throws -> PeerConnection {
-        // Check if connection already arrived
+        // Check if connection already arrived (or failed)
         if let state = pendingBrowseStates[token] {
             if let connection = state.receivedConnection {
                 logger.debug("Browse: PierceFirewall already received for token=\(token)")
@@ -1135,6 +1142,10 @@ public final class NetworkClient {
             if state.timedOut {
                 pendingBrowseStates.removeValue(forKey: token)
                 throw NetworkError.timeout
+            }
+            if let reason = state.failureReason {
+                pendingBrowseStates.removeValue(forKey: token)
+                throw NetworkError.connectionFailed(reason)
             }
         }
 
@@ -1152,6 +1163,11 @@ public final class NetworkClient {
                     continuation.resume(throwing: NetworkError.timeout)
                     return
                 }
+                if let reason = state.failureReason {
+                    pendingBrowseStates.removeValue(forKey: token)
+                    continuation.resume(throwing: NetworkError.connectionFailed(reason))
+                    return
+                }
                 state.continuation = continuation
                 pendingBrowseStates[token] = state
             } else {
@@ -1159,6 +1175,20 @@ public final class NetworkClient {
                 continuation.resume(throwing: NetworkError.timeout)
             }
         }
+    }
+
+    /// Mark a pending browse as failed (e.g. server sent CantConnectToPeer).
+    /// The waiter, if any, fails fast instead of sitting on the 30s timeout.
+    public func failPendingBrowse(token: UInt32, reason: String) {
+        guard var state = pendingBrowseStates[token] else { return }
+        state.failureReason = reason
+        if let continuation = state.continuation {
+            state.continuation = nil
+            pendingBrowseStates.removeValue(forKey: token)
+            continuation.resume(throwing: NetworkError.connectionFailed(reason))
+            return
+        }
+        pendingBrowseStates[token] = state
     }
 
     /// Cancel a pending browse (used when direct connection succeeds or search delivery completes)
@@ -1841,14 +1871,20 @@ public final class NetworkClient {
     // MARK: - Peer Connection Establishment
 
     /// Opens (or reuses) a P-type peer connection, completing the handshake.
-    /// Used by `browseUser` and `fetchUserInfo` so the ConnectToPeer +
-    /// direct/indirect-race dance lives in one place.
+    /// The single home of the ConnectToPeer + direct/indirect-race dance —
+    /// used by browse, folder-contents, user-info, and downloads. Anyone
+    /// reaching out to a peer for the first time should go through here so
+    /// the firewall-traversal logic isn't reinvented per consumer.
+    ///
+    /// Concurrent calls for the same `username` are coalesced via
+    /// `pendingEstablishments`, so N parallel downloads to one peer share
+    /// one connection establishment instead of racing each other.
     ///
     /// - Parameter forceFresh: when `true`, always opens a new connection.
     ///   `browseUser` passes this because historically it was never documented
     ///   why it created a fresh one — preserving behaviour until someone
     ///   proves reuse is safe for share-list fetches.
-    private func establishPeerConnection(for username: String, forceFresh: Bool = false) async throws -> PeerConnection {
+    public func establishPeerConnection(for username: String, forceFresh: Bool = false) async throws -> PeerConnection {
         guard isConnected else {
             throw NetworkError.notConnected
         }
@@ -1857,6 +1893,26 @@ public final class NetworkClient {
             return existing
         }
 
+        if !forceFresh, let inFlight = pendingEstablishments[username] {
+            return try await inFlight.value
+        }
+
+        let task = Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.pendingEstablishments.removeValue(forKey: username)
+                }
+            }
+            guard let self else { throw NetworkError.notConnected }
+            return try await self.performEstablishPeerConnection(for: username)
+        }
+        if !forceFresh {
+            pendingEstablishments[username] = task
+        }
+        return try await task.value
+    }
+
+    private func performEstablishPeerConnection(for username: String) async throws -> PeerConnection {
         let token = UInt32.random(in: 0...UInt32.max)
         registerPendingBrowse(token: token, username: username, timeout: 30)
         await sendConnectToPeer(token: token, username: username, connectionType: "P")
