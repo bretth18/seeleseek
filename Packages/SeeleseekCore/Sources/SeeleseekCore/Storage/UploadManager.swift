@@ -44,8 +44,14 @@ public final class UploadManager {
         public let filename: String
         public let localPath: String
         public let size: UInt64
-        public let connection: PeerConnection
         public let queuedAt: Date
+        // We deliberately do NOT cache a PeerConnection here. The cached
+        // connection is the one the peer used at the moment of QueueUpload;
+        // by the time we get around to broadcasting queue positions or
+        // starting the upload it's often dead, and `send()` fails silently
+        // on a closed connection. Resolve via
+        // `peerConnectionPool.getConnectionForUser(username)` at every send
+        // site instead. Same fix as the DownloadManager refactor.
     }
 
     public struct ActiveUpload {
