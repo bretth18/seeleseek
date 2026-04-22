@@ -541,6 +541,17 @@ public final class PeerConnectionPool {
 
         activeConnections = connections.count
 
+        // Evict rate-limit history for IPs whose most-recent attempt falls
+        // outside the window. Without this pass the dict's key set never
+        // shrinks — an IP that tries once and never comes back lingers
+        // forever. The per-IP filter inside `handleIncomingConnection`
+        // only prunes an IP's timestamps when that same IP re-attempts.
+        let windowCutoff = Date().addingTimeInterval(-rateLimitWindow)
+        connectionAttempts = connectionAttempts.filter { _, timestamps in
+            guard let newest = timestamps.last else { return false }
+            return newest > windowCutoff
+        }
+
         if !toRemove.isEmpty {
             logger.info("Cleaned up \(toRemove.count) stale connections, \(self.activeConnections) active")
         }
