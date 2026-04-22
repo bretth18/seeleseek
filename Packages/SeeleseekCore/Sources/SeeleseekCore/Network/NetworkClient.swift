@@ -225,8 +225,8 @@ public final class NetworkClient {
         case .folderContentsResponse(let token, let folder, let files):
             onFolderContentsResponse?(token, folder, files)
 
-        case .transferRequest(let request):
-            onTransferRequest?(request)
+        case .transferRequest(let request, let connection):
+            onTransferRequest?(request, connection)
 
         case .placeInQueueRequest(let username, let filename, let connection):
             Task { await onPlaceInQueueRequest?(username, filename, connection) }
@@ -294,7 +294,7 @@ public final class NetworkClient {
     public var onTransferResponse: ((UInt32, Bool, UInt64?, String?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, reason?, connection)
     public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     public var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
-    public var onTransferRequest: ((TransferRequest) -> Void)?  // Pool-level TransferRequest (for connections not directly managed by DownloadManager)
+    public var onTransferRequest: ((TransferRequest, PeerConnection) -> Void)?  // (request, connection that delivered it). The connection is critical: peers can deliver TransferRequests on a different connection than the one we cached when queueing the download.
     public var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
     public var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
 
@@ -405,7 +405,6 @@ public final class NetworkClient {
             let ports = try await listenerService.start(preferredPort: preferredListenPort)
             listenPort = ports.port
             obfuscatedPort = ports.obfuscatedPort
-            peerConnectionPool.listenPort = ports.port  // For NAT traversal - bind outgoing connections to listen port
             logger.info("Listening on port \(self.listenPort)")
             logger.info("Listening on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 

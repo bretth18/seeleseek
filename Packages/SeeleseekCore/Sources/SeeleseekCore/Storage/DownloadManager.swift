@@ -29,9 +29,13 @@ public final class DownloadManager {
     /// Directories that already have folder icons applied (avoid redundant work)
     private var iconAppliedDirs: Set<URL> = []
 
-    // MARK: - Retry Configuration (nicotine+ style)
-    private let maxRetries = 3
-    private let baseRetryDelay: TimeInterval = 5  // Start with 5 seconds
+    // MARK: - Retry Configuration
+    // Soulseek peer upload queues are commonly measured in minutes to hours.
+    // The previous 5s/15s/45s ladder exhausted in ~65s — long before a busy
+    // peer's queue ever drained — so the eventual TransferRequest arrived
+    // after pendingDownloads had been swept and was silently dropped.
+    private let retryDelays: [TimeInterval] = [30, 120, 600, 1800]  // 30s, 2m, 10m, 30m
+    private var maxRetries: Int { retryDelays.count }
     private var pendingRetries: [UUID: Task<Void, Never>] = [:]  // Track retry tasks
     private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer (60s)
     private var connectionRetryTimer: Task<Void, Never>?  // Retry failed connections (3 min)
@@ -158,10 +162,11 @@ public final class DownloadManager {
         }
 
         // Set up callback for pool-level TransferRequests (arrives on connections not directly managed by us,
-        // e.g. stale direct connections when PierceFirewall won the race)
-        networkClient.onTransferRequest = { [weak self] request in
+        // e.g. stale direct connections when PierceFirewall won the race, or fresh
+        // incoming connections opened later when the peer's upload queue drains).
+        networkClient.onTransferRequest = { [weak self] request, connection in
             Task { @MainActor in
-                await self?.handlePoolTransferRequest(request)
+                await self?.handlePoolTransferRequest(request, connection: connection)
             }
         }
 
@@ -310,6 +315,15 @@ public final class DownloadManager {
 
         logger.info("Starting download from \(transfer.username), token=\(token)")
 
+        // If a live P-connection to this peer already exists (e.g. from a
+        // recent folder-contents fetch or another download), reuse it instead
+        // of running another GetPeerAddress + ConnectToPeer + 30s race. The
+        // pool already prunes stale entries inside `getConnectionForUser`.
+        if let existing = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
+            await reuseConnectionForDownload(token: token, connection: existing)
+            return
+        }
+
         do {
             // Step 1: Get peer address
             logger.debug("Requesting peer address for \(transfer.username)")
@@ -370,6 +384,45 @@ public final class DownloadManager {
                     retryCount: currentRetryCount
                 )
             }
+        }
+    }
+
+    /// Queue a download on an already-live peer connection. Mirrors the
+    /// existing-connection branch inside `handlePeerAddress` but is reachable
+    /// from `startDownload` directly so we can skip the address-lookup +
+    /// ConnectToPeer dance entirely when the pool already has a connection.
+    private func reuseConnectionForDownload(token: UInt32, connection: PeerConnection) async {
+        guard let transferState, let pending = pendingDownloads[token] else { return }
+
+        // Stash IP/port from the live connection so the later
+        // outbound-F-connection fallback (NAT traversal in
+        // initiateOutgoingFileConnection) still has a target if the peer
+        // can't reach us directly for the file transfer.
+        let info = connection.peerInfo
+        if !info.ip.isEmpty, info.port > 0 {
+            pendingDownloads[token]?.peerIP = info.ip
+            pendingDownloads[token]?.peerPort = info.port
+        }
+        pendingDownloads[token]?.peerConnection = connection
+
+        logger.info("Reusing existing connection to \(pending.username) for \(pending.filename)")
+
+        do {
+            await setupTransferRequestCallback(token: token, connection: connection)
+            try await connection.queueDownload(filename: pending.filename)
+            do {
+                try await connection.sendPlaceInQueueRequest(filename: pending.filename)
+            } catch {
+                logger.warning("sendPlaceInQueueRequest(\(pending.filename)) failed: \(error.localizedDescription)")
+            }
+            await waitForTransferResponse(token: token)
+        } catch {
+            logger.error("Failed to queue on reused connection: \(error.localizedDescription)")
+            transferState.updateTransfer(id: pending.transferId) { t in
+                t.status = .failed
+                t.error = error.localizedDescription
+            }
+            pendingDownloads.removeValue(forKey: token)
         }
     }
 
@@ -667,13 +720,58 @@ public final class DownloadManager {
         }
     }
 
-    private func handlePoolTransferRequest(_ request: TransferRequest) async {
-        if let token = matchPendingDownload(for: request) {
-            logger.info("Pool TransferRequest matched pending download: user=\(request.username) file=\(request.filename)")
-            await handleTransferRequest(token: token, request: request)
-        } else {
-            logger.debug("Pool TransferRequest: no matching pending download for user=\(request.username) file=\(request.filename)")
+    private func handlePoolTransferRequest(_ request: TransferRequest, connection: PeerConnection) async {
+        // Authoritative peer username: prefer the live connection's peerInfo
+        // over `request.username`, which is empty when the request arrives on
+        // a connection whose handshake didn't carry a username (e.g. a peer
+        // reusing a stream they identified on earlier).
+        let peerUsername = request.username.isEmpty ? connection.peerInfo.username : request.username
+        let normalizedRequest = request.username.isEmpty && !peerUsername.isEmpty
+            ? TransferRequest(direction: request.direction, token: request.token, filename: request.filename, size: request.size, username: peerUsername)
+            : request
+
+        if let token = matchPendingDownload(for: normalizedRequest) {
+            // Replace the cached connection. The one we stashed when first
+            // queueing the download (e.g. an early incoming connection) is
+            // often dead by the time the peer's upload queue drains and
+            // they reach us with TransferRequest. The fresh connection that
+            // delivered THIS request is the one we must reply on.
+            pendingDownloads[token]?.peerConnection = connection
+            logger.info("Pool TransferRequest matched pending download: user=\(peerUsername) file=\(request.filename)")
+            await handleTransferRequest(token: token, request: normalizedRequest)
+            return
         }
+
+        // Salvage path: the peer is offering a file we don't have in
+        // pendingDownloads (cleared by app restart, or not yet registered
+        // because resumeDownloadsOnConnect hasn't reached it). If the user
+        // still wants this file (transferState shows it in a pre-transfer
+        // state), accept the offer on the fresh connection.
+        if !peerUsername.isEmpty,
+           let transfer = transferState?.downloads.first(where: { t in
+               t.direction == .download &&
+               t.username == peerUsername &&
+               t.filename == request.filename &&
+               (t.status == .queued || t.status == .waiting ||
+                t.status == .connecting || t.status == .failed)
+           }) {
+            let salvagedToken = UInt32.random(in: 1...UInt32.max)
+            let info = connection.peerInfo
+            pendingDownloads[salvagedToken] = PendingDownload(
+                transferId: transfer.id,
+                username: transfer.username,
+                filename: transfer.filename,
+                size: request.size,
+                peerConnection: connection,
+                peerIP: info.ip.isEmpty ? nil : info.ip,
+                peerPort: info.port > 0 ? info.port : nil
+            )
+            logger.info("Pool TransferRequest salvaged from transferState: user=\(peerUsername) file=\(request.filename) (token=\(salvagedToken))")
+            await handleTransferRequest(token: salvagedToken, request: normalizedRequest)
+            return
+        }
+
+        logger.info("Pool TransferRequest dropped — no pending or transferState match: user=\(peerUsername) file=\(request.filename)")
     }
 
     private func waitForTransferResponse(token: UInt32) async {
@@ -845,9 +943,10 @@ public final class DownloadManager {
                 port: nwPort
             )
 
-            let listenPort = networkClient?.listenPort ?? 0
-            let bindPort: UInt16? = listenPort > 0 ? listenPort : nil
-            let connection = try await openFileConnectionWithRetry(to: endpoint, bindTo: bindPort)
+            // Use an ephemeral source port (bindTo: nil). Pinning to listenPort
+            // collides with concurrent F-connections to the same peer on the
+            // same 4-tuple (POSIX EEXIST/17) and offers no NAT benefit.
+            let connection = try await openFileConnectionOnce(to: endpoint, bindTo: nil)
 
             logger.info("Outgoing F connection established to \(username)")
 
@@ -929,21 +1028,6 @@ public final class DownloadManager {
         } catch {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
             // Don't mark as failed yet - the timeout will handle that
-        }
-    }
-
-    /// Open an outbound F-connection bound to `localPort`; retry unbound once
-    /// if the OS refuses the bind.
-    private func openFileConnectionWithRetry(
-        to endpoint: NWEndpoint,
-        bindTo localPort: UInt16?
-    ) async throws -> NWConnection {
-        do {
-            return try await openFileConnectionOnce(to: endpoint, bindTo: localPort)
-        } catch let error where PeerConnection.isBindFailure(error) {
-            guard localPort != nil else { throw error }
-            logger.warning("Bound F connect failed (\(error.localizedDescription)); retrying unbound")
-            return try await openFileConnectionOnce(to: endpoint, bindTo: nil)
         }
     }
 
@@ -2431,20 +2515,27 @@ public final class DownloadManager {
         return false
     }
 
-    /// Schedule automatic retry for a failed transfer with exponential backoff
+    private static func formatRetryDelay(_ delay: TimeInterval) -> String {
+        let seconds = Int(delay)
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        return "\(minutes)m"
+    }
+
+    /// Schedule automatic retry for a failed transfer with backoff measured
+    /// in minutes (see `retryDelays`).
     private func scheduleRetry(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         guard retryCount < self.maxRetries else {
             logger.info("Max retries (\(self.maxRetries)) reached for \(filename)")
             return
         }
 
-        // Exponential backoff: 5s, 15s, 45s
-        let delay = baseRetryDelay * pow(3.0, Double(retryCount))
+        let delay = retryDelays[retryCount]
         logger.info("Scheduling retry #\(retryCount + 1) for \(filename) in \(delay)s")
 
         // Update status to show pending retry
         transferState?.updateTransfer(id: transferId) { t in
-            t.error = "Retrying in \(Int(delay))s..."
+            t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
         }
 
         // Cancel any prior pending retry for this transfer first —

@@ -556,14 +556,10 @@ public final class UploadManager {
             port: nwPort
         )
 
-        let listenPort = networkClient.listenPort
-        let bindPort: UInt16? = listenPort > 0 ? listenPort : nil
-
-        var attemptResult = await Self.attemptFileConnect(to: endpoint, bindTo: bindPort)
-        if case .bindFailed = attemptResult, bindPort != nil {
-            logger.warning("Bound F connect to \(ip):\(port) failed (bind); retrying unbound")
-            attemptResult = await Self.attemptFileConnect(to: endpoint, bindTo: nil)
-        }
+        // Use an ephemeral source port (bindTo: nil). Pinning to listenPort
+        // collides with concurrent F-connections to the same peer on the
+        // same 4-tuple (POSIX EEXIST/17) and offers no NAT benefit.
+        let attemptResult = await Self.attemptFileConnect(to: endpoint, bindTo: nil)
 
         let connected: Bool
         let connection: NWConnection
