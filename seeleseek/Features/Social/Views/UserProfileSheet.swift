@@ -89,7 +89,7 @@ struct UserProfileSheet: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
 
-                    if let version = profile.seeleSeekVersion {
+                    if let version = liveSeeleSeekVersion {
                         Text("SeeleSeek v\(version)")
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
@@ -333,6 +333,18 @@ struct UserProfileSheet: View {
         if !live.isEmpty { return live }
         return profile.countryCode.map { CountryFormatter.flag(for: $0) }
     }
+
+    /// SeeleSeek version read live from any current pool connection for
+    /// this user. Re-renders on its own when the capability handshake
+    /// lands after the sheet is already open — opening the sheet kicks
+    /// off `fetchUserInfo`, which typically creates the peer connection
+    /// that carries the handshake, so there's a built-in race the
+    /// snapshot approach couldn't win.
+    private var liveSeeleSeekVersion: UInt8? {
+        appState.networkClient.peerConnectionPool.connections.values
+            .first(where: { $0.username == profile.username && $0.seeleSeekVersion != nil })?
+            .seeleSeekVersion
+    }
 }
 
 #Preview {
@@ -349,8 +361,7 @@ struct UserProfileSheet: View {
         hatedInterests: ["pop", "country"],
         status: .online,
         isPrivileged: true,
-        countryCode: "US",
-        seeleSeekVersion: 1
+        countryCode: "US"
     ))
     .environment(\.appState, AppState())
 }
