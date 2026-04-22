@@ -493,16 +493,11 @@ public final class PeerConnectionPool {
     }
 
     /// Bump `lastActivity` for the connection that just emitted an event.
-    /// For outgoing connections we look up by `username-` prefix because
-    /// the connectionId was generated locally; for incoming we have it
-    /// directly.
-    private func touchActivity(connectionId: String, username: String, isIncoming: Bool) {
-        let now = Date()
-        if isIncoming {
-            connections[connectionId]?.lastActivity = now
-        } else if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-            connections[key]?.lastActivity = now
-        }
+    /// `connectionId` is the dict key for both incoming and outgoing
+    /// connections (outgoing keys are `"\(username)-\(token)"`, set in
+    /// `connect(...)`), so this is a direct lookup — no prefix scan.
+    private func touchActivity(connectionId: String) {
+        connections[connectionId]?.lastActivity = Date()
     }
 
     public func cleanupStaleConnections() {
@@ -653,7 +648,7 @@ public final class PeerConnectionPool {
         // into `cleanupStaleConnections`'s "ghost" branch and got killed
         // 10-30s after creation regardless of whether it was being used —
         // forcing the peer to reconnect on every operation.
-        touchActivity(connectionId: connectionId, username: username, isIncoming: isIncoming)
+        touchActivity(connectionId: connectionId)
 
         switch event {
         case .stateChanged(let state):

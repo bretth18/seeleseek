@@ -1177,6 +1177,7 @@ public final class NetworkClient {
     /// The waiter, if any, fails fast instead of sitting on the 30s timeout.
     public func failPendingBrowse(token: UInt32, reason: String) {
         guard var state = pendingBrowseStates[token] else { return }
+        state.timeoutTask?.cancel()
         state.failureReason = reason
         if let continuation = state.continuation {
             state.continuation = nil
@@ -1889,7 +1890,13 @@ public final class NetworkClient {
             return existing
         }
 
-        if !forceFresh, let inFlight = pendingEstablishments[username] {
+        // forceFresh callers always want a brand-new connection, so they
+        // bypass the dedup table entirely.
+        if forceFresh {
+            return try await performEstablishPeerConnection(for: username)
+        }
+
+        if let inFlight = pendingEstablishments[username] {
             return try await inFlight.value
         }
 
@@ -1902,9 +1909,7 @@ public final class NetworkClient {
             guard let self else { throw NetworkError.notConnected }
             return try await self.performEstablishPeerConnection(for: username)
         }
-        if !forceFresh {
-            pendingEstablishments[username] = task
-        }
+        pendingEstablishments[username] = task
         return try await task.value
     }
 
