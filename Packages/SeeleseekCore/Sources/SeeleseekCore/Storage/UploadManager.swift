@@ -19,7 +19,12 @@ public final class UploadManager {
     private var uploadQueue: [QueuedUpload] = []
     private var activeUploads: [UUID: ActiveUpload] = [:]
     private var pendingTransfers: [UInt32: PendingUpload] = [:]  // token -> pending
-    private var pendingAddressLookups: [String: [(PendingUpload, UInt32)]] = [:]  // username -> [(pending, token)]
+    /// Per-token timeout for "peer didn't reply to TransferRequest". Cancelled
+    /// by handleTransferResponse so the timer doesn't fire after the response
+    /// arrives — without this, the same `pendingTransfers[token]` entry that
+    /// gets re-registered for PierceFirewall handling would be falsely
+    /// flagged as a no-response timeout 60s after the original TransferRequest.
+    private var transferResponseTimeouts: [UInt32: Task<Void, Never>] = [:]
 
     // Configuration
     public var maxConcurrentUploads = 3
@@ -44,8 +49,14 @@ public final class UploadManager {
         public let filename: String
         public let localPath: String
         public let size: UInt64
-        public let connection: PeerConnection
         public let queuedAt: Date
+        // We deliberately do NOT cache a PeerConnection here. The cached
+        // connection is the one the peer used at the moment of QueueUpload;
+        // by the time we get around to broadcasting queue positions or
+        // starting the upload it's often dead, and `send()` fails silently
+        // on a closed connection. Resolve via
+        // `peerConnectionPool.getConnectionForUser(username)` at every send
+        // site instead. Same fix as the DownloadManager refactor.
     }
 
     public struct ActiveUpload {
@@ -66,7 +77,7 @@ public final class UploadManager {
         public let localPath: String
         public let size: UInt64
         public let token: UInt32
-        public let connection: PeerConnection
+        // No cached PeerConnection — see QueuedUpload's docstring for why.
     }
 
     // MARK: - Errors
@@ -131,16 +142,11 @@ public final class UploadManager {
             }
         }
 
-        // Set up callback for peer address using multi-listener pattern
-        // This replaces the fragile callback chaining approach that could break if
-        // DownloadManager was configured after UploadManager
-        networkClient.addPeerAddressHandler { [weak self] username, ip, port in
-            self?.logger.debug("Peer address handler called: \(username) @ \(ip):\(port)")
-            guard let self else { return }
-            Task { @MainActor in
-                await self.handlePeerAddressForUpload(username: username, ip: ip, port: port)
-            }
-        }
+        // Peer-address resolution for uploads now uses
+        // `NetworkClient.getPeerAddress(for:timeout:)` directly inside
+        // `handleTransferResponse` (await-style with timeout). The previous
+        // addPeerAddressHandler + pendingAddressLookups dance was a manual
+        // re-implementation of the same coalescing logic.
 
         logger.info("UploadManager configured")
     }
@@ -211,10 +217,20 @@ public final class UploadManager {
 
     /// Tell all queued peers their updated queue position
     private func broadcastQueuePositions() async {
+        guard let pool = networkClient?.peerConnectionPool else { return }
         for (index, upload) in uploadQueue.enumerated() {
             let position = UInt32(index + 1)
+            // Resolve the live connection at send time. Caching the one the
+            // peer used at QueueUpload meant broadcasts often went to a dead
+            // connection and the failure was silent (logged at .debug).
+            // If the peer has no live connection, skip — they'll reconnect
+            // and re-request position when they want it.
+            guard let connection = await pool.getConnectionForUser(upload.username) else {
+                logger.debug("No live connection to \(upload.username) — skipping queue-position broadcast")
+                continue
+            }
             do {
-                try await upload.connection.sendPlaceInQueue(filename: upload.filename, place: position)
+                try await connection.sendPlaceInQueue(filename: upload.filename, place: position)
             } catch {
                 logger.debug("Failed to send queue position to \(upload.username): \(error.localizedDescription)")
             }
@@ -305,7 +321,6 @@ public final class UploadManager {
             filename: filename,
             localPath: indexedFile.localPath,
             size: indexedFile.size,
-            connection: connection,
             queuedAt: Date()
         )
         uploadQueue.append(queued)
@@ -352,26 +367,21 @@ public final class UploadManager {
             filename: upload.filename,
             localPath: upload.localPath,
             size: upload.size,
-            token: token,
-            connection: upload.connection
+            token: token
         )
         pendingTransfers[token] = pending
 
         logger.info("Starting upload: \(upload.filename) to \(upload.username), token=\(token)")
 
-        // Get a fresh connection -- the one stored at queue time may be stale
-        let connection: PeerConnection
-        if await upload.connection.isConnected {
-            connection = upload.connection
-        } else if let fresh = await networkClient?.peerConnectionPool.getConnectionForUser(upload.username) {
-            logger.info("Using fresh connection for upload to \(upload.username) (original was stale)")
-            connection = fresh
-        } else {
+        // Always look up the connection fresh — the one the peer used to
+        // send QueueUpload may have died waiting in our queue.
+        guard let connection = await networkClient?.peerConnectionPool.getConnectionForUser(upload.username) else {
             logger.warning("No active connection to \(upload.username), upload cannot proceed")
             transferState?.updateTransfer(id: transfer.id) { t in
                 t.status = .failed
                 t.error = "Peer disconnected"
             }
+            pendingTransfers.removeValue(forKey: token)
             await processQueue()
             return
         }
@@ -386,17 +396,19 @@ public final class UploadManager {
             )
             logger.info("Sent TransferRequest for \(upload.filename)")
 
-            // Wait for response (timeout after 60 seconds)
-            Task {
+            // Schedule a 60s "no TransferResponse" timeout. The Task is
+            // tracked in `transferResponseTimeouts` so handleTransferResponse
+            // can cancel it when the peer replies — otherwise the timer
+            // would fire later and stomp the entry that we re-register for
+            // PierceFirewall handling.
+            transferResponseTimeouts[token] = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(60))
-                if pendingTransfers[token] != nil {
-                    // Timed out waiting for response
-                    pendingTransfers.removeValue(forKey: token)
-                    await MainActor.run {
-                        self.transferState?.updateTransfer(id: transfer.id) { t in
-                            t.status = .failed
-                            t.error = "Timeout waiting for peer response"
-                        }
+                guard !Task.isCancelled, let self else { return }
+                self.transferResponseTimeouts.removeValue(forKey: token)
+                if let pending = self.pendingTransfers.removeValue(forKey: token) {
+                    self.transferState?.updateTransfer(id: pending.transferId) { t in
+                        t.status = .failed
+                        t.error = "Timeout waiting for peer response"
                     }
                 }
             }
@@ -407,6 +419,7 @@ public final class UploadManager {
                 t.error = error.localizedDescription
             }
             pendingTransfers.removeValue(forKey: token)
+            transferResponseTimeouts.removeValue(forKey: token)?.cancel()
         }
     }
 
@@ -419,6 +432,12 @@ public final class UploadManager {
     /// the right TransferStatus so the row doesn't misleadingly show as
     /// Failed when the peer is actually in the process of queuing us.
     private func handleTransferResponse(token: UInt32, allowed: Bool, reason: String?, connection: PeerConnection) async {
+        // Cancel the no-response timeout — peer replied. Without this, the
+        // timer would fire 60s after our original TransferRequest and stomp
+        // the same `pendingTransfers[token]` entry that we re-register
+        // below for PierceFirewall handling.
+        transferResponseTimeouts.removeValue(forKey: token)?.cancel()
+
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.debug("No pending upload for token \(token)")
             return
@@ -438,19 +457,16 @@ public final class UploadManager {
         logger.info("Peer accepted upload for \(pending.filename), opening F connection")
 
         // Peer accepted - now we need to open an F (file) connection to their listen port
-        // First, we need to get their address
         guard let networkClient else {
             logger.error("NetworkClient not available")
             return
         }
 
-        // Update status
         transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .transferring
             t.startTime = Date()
         }
 
-        // Track as active upload
         let active = ActiveUpload(
             transferId: pending.transferId,
             username: pending.username,
@@ -462,30 +478,24 @@ public final class UploadManager {
         )
         activeUploads[pending.transferId] = active
 
-        // Per protocol: Send ConnectToPeer FIRST, then GetPeerAddress
-        // ConnectToPeer (code 18) tells the server to forward our connection request to the peer
-        // If our direct connection fails, the peer will connect back to us with PierceFirewall
-
-        // Step 1: Send ConnectToPeer to server
-        // Use type "F" since this is for a file transfer connection
+        // Send ConnectToPeer (type "F") first so the server forwards our
+        // connection request to the peer in parallel; if our direct
+        // connection fails the peer will connect back to us via PierceFirewall.
         await networkClient.sendConnectToPeer(token: token, username: pending.username, connectionType: "F")
         logger.debug("Sent ConnectToPeer to server for upload to \(pending.username)")
 
-        // Register pending transfer BEFORE getting address, so PierceFirewall can find it
+        // Re-register pending transfer so PierceFirewall can find it. (The
+        // 60s response-timeout above is already cancelled, so it can't fire
+        // and falsely fail this re-registration.)
         pendingTransfers[token] = pending
         logger.debug("Registered pending upload token=\(token) for PierceFirewall")
 
-        // Step 2: Request peer address for direct F connection attempt
-        // IMPORTANT: Always use getUserAddress to get the peer's actual LISTEN port,
-        // not the ephemeral source port from the existing P connection
+        // Resolve the peer's listen port (NOT the ephemeral source port from
+        // the existing P-connection) and open the direct F-connection.
+        let ip: String
+        let port: Int
         do {
-            logger.info("Requesting peer address for F connection to \(pending.username)")
-            pendingAddressLookups[pending.username, default: []].append((pending, token))
-            logger.info("Stored pending address lookup: \(pending.username) -> token=\(token)")
-            try await networkClient.getUserAddress(pending.username)
-            logger.debug("GetPeerAddress request sent for \(pending.username)")
-            // The actual F connection will be triggered by handlePeerAddressForUpload callback
-
+            (ip, port) = try await networkClient.getPeerAddress(for: pending.username, timeout: .seconds(10))
         } catch {
             logger.error("Failed to get peer address: \(error.localizedDescription)")
             transferState?.updateTransfer(id: pending.transferId) { t in
@@ -493,40 +503,20 @@ public final class UploadManager {
                 t.error = "Failed to connect to peer"
             }
             activeUploads.removeValue(forKey: pending.transferId)
-        }
-    }
-
-    /// Handle peer address callback for pending uploads
-    private func handlePeerAddressForUpload(username: String, ip: String, port: Int) async {
-        guard var entries = pendingAddressLookups[username], !entries.isEmpty else {
+            pendingTransfers.removeValue(forKey: token)
             return
         }
 
-        // Pop the first pending upload for this user
-        let (pending, token) = entries.removeFirst()
-        if entries.isEmpty {
-            pendingAddressLookups.removeValue(forKey: username)
-        } else {
-            pendingAddressLookups[username] = entries
-            // Re-request address for remaining entries (server only sends one response per request)
-            Task { [weak self] in
-                do {
-                    try await self?.networkClient?.getUserAddress(username)
-                } catch {
-                    self?.logger.warning("getUserAddress(\(username)) failed: \(error.localizedDescription)")
-                }
-            }
-        }
-
-        logger.info("Received peer address for upload to \(username): \(ip):\(port)")
+        logger.info("Received peer address for upload to \(pending.username): \(ip):\(port)")
 
         guard port > 0 else {
-            logger.warning("Invalid port for \(username)")
+            logger.warning("Invalid port for \(pending.username)")
             transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .failed
                 t.error = "Could not get peer address"
             }
             activeUploads.removeValue(forKey: pending.transferId)
+            pendingTransfers.removeValue(forKey: token)
             return
         }
 
