@@ -2203,15 +2203,15 @@ public final class DownloadManager {
         pendingRetries[transferId] = task
     }
 
-    /// Reset a previously-failed (or cancelled) transfer so another
-    /// `requestDownload` can re-run from byte zero. Callers MUST ensure
-    /// the transfer is eligible first — the scheduled-retry path checks
-    /// `.failed` before calling this; `retryFailedDownload` checks
-    /// `.failed || .cancelled`.
+    /// Reset a previously-failed (or cancelled) transfer so `startDownload`
+    /// can re-run from byte zero. Callers MUST ensure the transfer is
+    /// eligible first — the scheduled-retry path checks `.failed` before
+    /// calling this; `retryFailedDownload` checks `.failed || .cancelled`.
     private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
 
-        // Update the existing transfer record
+        // Update the existing transfer record. Reset to .queued so
+        // `startDownload` (which sets it to .connecting) sees a clean slate.
         transferState?.updateTransfer(id: transferId) { t in
             t.status = .queued
             t.error = nil
@@ -2219,9 +2219,22 @@ public final class DownloadManager {
             t.retryCount = retryCount
         }
 
-        // Re-initiate the download
+        // Re-initiate via the normal startDownload path so the retry uses
+        // the same `establishPeerConnection` + `queueOnConnection` flow as
+        // a fresh download. The old `requestDownload` helper bypassed this
+        // (called `getUserAddress` directly and relied on the now-removed
+        // `handlePeerAddress` to drive forward).
+        let transfer = Transfer(
+            id: transferId,
+            username: username,
+            filename: filename,
+            size: size,
+            direction: .download,
+            status: .queued,
+            retryCount: retryCount
+        )
         Task {
-            await requestDownload(username: username, filename: filename, size: size, existingTransferId: transferId)
+            await startDownload(transfer: transfer)
         }
     }
 
@@ -2249,45 +2262,4 @@ public final class DownloadManager {
         }
     }
 
-    /// Request download with optional existing transfer ID (for retries)
-    private func requestDownload(username: String, filename: String, size: UInt64, existingTransferId: UUID?) async {
-        guard let networkClient else { return }
-
-        // Get or create transfer
-        let transferId: UUID
-        if let existing = existingTransferId {
-            transferId = existing
-        } else {
-            let transfer = Transfer(
-                username: username,
-                filename: filename,
-                size: size,
-                direction: .download,
-                status: .queued
-            )
-            transferState?.addDownload(transfer)
-            transferId = transfer.id
-        }
-
-        do {
-            // Request peer address to establish connection
-            // This will trigger the normal download flow via handlePeerAddress callback
-            let token = UInt32.random(in: 1...UInt32.max)
-            pendingDownloads[token] = PendingDownload(
-                transferId: transferId,
-                username: username,
-                filename: filename,
-                size: size
-            )
-
-            try await networkClient.getUserAddress(username)
-            logger.info("Requested peer address for retry: \(username)")
-        } catch {
-            logger.error("Retry download failed: \(error.localizedDescription)")
-            transferState?.updateTransfer(id: transferId) { t in
-                t.status = .failed
-                t.error = error.localizedDescription
-            }
-        }
-    }
 }
