@@ -208,4 +208,84 @@ struct PeerConnectivityFixTests {
         #expect(PeerConnection.isBindFailure(NWError.posix(.ECONNREFUSED)) == false)
         #expect(PeerConnection.isBindFailure(NWError.posix(.ETIMEDOUT)) == false)
     }
+
+    // MARK: - Artwork coalescing
+
+    @Test("Concurrent artwork requests for the same (peer, file) coalesce into one")
+    func artworkCoalescesSamePeerSameFile() async {
+        let client = await NetworkClient()
+
+        // Two waiters for the SAME (peer, file) key.
+        let result1 = LockedResult<Data?>()
+        let result2 = LockedResult<Data?>()
+        let key1 = await client._registerArtworkWaiterForTest(
+            username: "alice", filePath: "Music/foo.mp3"
+        ) { result1.set($0) }
+        let key2 = await client._registerArtworkWaiterForTest(
+            username: "alice", filePath: "Music/foo.mp3"
+        ) { result2.set($0) }
+        #expect(key1 == key2, "same (peer, file) must produce same coalescing key")
+
+        let count = await client._pendingArtworkWaiterCount(key: key1)
+        #expect(count == 2, "both waiters share one pending entry")
+
+        // One delivery fans out to all waiters.
+        let payload = Data([0xCA, 0xFE])
+        await client._deliverArtworkForTest(key: key1, data: payload)
+
+        #expect(result1.get() == payload)
+        #expect(result2.get() == payload)
+
+        let countAfter = await client._pendingArtworkWaiterCount(key: key1)
+        #expect(countAfter == 0, "delivery cleans up the coalesced entry")
+    }
+
+    @Test("Different (peer, file) keys do NOT coalesce")
+    func artworkDoesNotCoalesceDifferentKeys() async {
+        let client = await NetworkClient()
+
+        let resultA = LockedResult<Data?>()
+        let resultB = LockedResult<Data?>()
+        let keyA = await client._registerArtworkWaiterForTest(
+            username: "alice", filePath: "Music/a.mp3"
+        ) { resultA.set($0) }
+        let keyB = await client._registerArtworkWaiterForTest(
+            username: "bob", filePath: "Music/a.mp3"
+        ) { resultB.set($0) }
+        #expect(keyA != keyB, "different peers for same filename must NOT share a key")
+
+        await client._deliverArtworkForTest(key: keyA, data: Data([0x01]))
+        #expect(resultA.get() == Data([0x01]))
+        #expect(resultB.get() == nil, "delivering A must not trigger B's waiter")
+
+        await client._deliverArtworkForTest(key: keyB, data: Data([0x02]))
+        #expect(resultB.get() == Data([0x02]))
+    }
+
+    @Test("Late artwork delivery (timeout firing after reply) is a no-op")
+    func artworkLateDeliveryIsIdempotent() async {
+        let client = await NetworkClient()
+
+        let result = LockedResult<Data?>()
+        let key = await client._registerArtworkWaiterForTest(
+            username: "alice", filePath: "Music/foo.mp3"
+        ) { result.set($0) }
+
+        await client._deliverArtworkForTest(key: key, data: Data([0xFF]))
+        #expect(result.get() == Data([0xFF]))
+
+        // A second delivery (e.g. timeout firing late) must not crash or
+        // double-call the waiter.
+        await client._deliverArtworkForTest(key: key, data: nil)
+        // Result still the original payload — nothing was overwritten.
+        #expect(result.get() == Data([0xFF]))
+    }
+}
+
+/// Thread-safe single-value sink for capturing async callback results from tests.
+final class LockedResult<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T?
+    func set(_ v: T) { lock.lock(); value = v; lock.unlock() }
+    func get() -> T? { lock.lock(); defer { lock.unlock() }; return value }
 }

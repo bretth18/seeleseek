@@ -501,39 +501,32 @@ public final class PeerConnectionPool {
     }
 
     public func cleanupStaleConnections() {
-        let timeout = Date().addingTimeInterval(-connectionTimeout)
-        let shortTimeout = Date().addingTimeInterval(-10)  // 10s for connections with no activity
+        let idleCutoff = Date().addingTimeInterval(-connectionTimeout)
+        // Connections that haven't seen any event yet (lastActivity==nil) but
+        // were created more than 10s ago are considered "stuck handshake"
+        // and reaped early. With `touchActivity` bumping lastActivity on
+        // every event, a connection only ends up here if it never received
+        // a single event — i.e. it never even reached PeerInit.
+        let stuckHandshakeCutoff = Date().addingTimeInterval(-10)
 
-        // Find stale connection IDs (30s idle) and ghost connections (10s with no activity)
         var toRemove: [String] = []
-
         for (id, info) in connections {
             if let lastActivity = info.lastActivity {
-                // Regular idle timeout (30s)
-                if lastActivity <= timeout {
+                if lastActivity <= idleCutoff {
                     toRemove.append(id)
                 }
-            } else {
-                // Ghost connection - never had activity, close after 10s
-                if let connectedAt = info.connectedAt, connectedAt <= shortTimeout {
-                    toRemove.append(id)
-                }
+            } else if let connectedAt = info.connectedAt, connectedAt <= stuckHandshakeCutoff {
+                toRemove.append(id)
             }
         }
 
-        // Actually close and remove stale connections
         for id in toRemove {
-            // Decrement per-IP counter before removing
             if let info = connections[id] {
                 decrementIPCounter(for: info.ip)
             }
-
             if let conn = activeConnections_[id] {
-                Task {
-                    await conn.disconnect()
-                }
+                Task { await conn.disconnect() }
                 logger.info("Closed idle connection: \(id)")
-                logger.debug("Closed idle connection: \(id)")
             }
             connections.removeValue(forKey: id)
             activeConnections_.removeValue(forKey: id)

@@ -1049,13 +1049,44 @@ public final class NetworkClient {
     // When peer connects via PierceFirewall, they send the same token we used in ConnectToPeer
     // (pendingBrowseStates is defined below in the browse section)
 
-    /// Browse a user's shared files.
+    /// Browse a user's shared files. Concurrent callers for the same `username`
+    /// are coalesced into a single establishment + a single `requestShares`
+    /// roundtrip, and all receive the same `[SharedFile]` result.
+    ///
+    /// Two layers of coalescing happen here:
+    ///   1. `pendingBrowseUserCalls` dedups the *whole operation* (connection
+    ///      + request + reply wait) so we don't issue N requestShares to
+    ///      the same peer on N concurrent browses.
+    ///   2. `establishPeerConnection` (called inside) dedups just the
+    ///      connection establishment, which also benefits non-browse
+    ///      consumers like fetchUserInfo running in parallel.
     public func browseUser(_ username: String) async throws -> [SharedFile] {
+        if let inFlight = pendingBrowseUserCalls[username] {
+            return try await inFlight.value
+        }
+
+        let task = Task<[SharedFile], Error> { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.pendingBrowseUserCalls.removeValue(forKey: username)
+                }
+            }
+            guard let self else { throw NetworkError.notConnected }
+            return try await self._performBrowseUser(username)
+        }
+        pendingBrowseUserCalls[username] = task
+        return try await task.value
+    }
+
+    /// Coalesced concurrent `browseUser(_:)` calls.
+    private var pendingBrowseUserCalls: [String: Task<[SharedFile], Error>] = [:]
+
+    private func _performBrowseUser(_ username: String) async throws -> [SharedFile] {
         logger.debug("Browse: START browseUser(\(username))")
-        // Historical behaviour: browse always opens a fresh P connection
-        // rather than reusing one from the pool. Preserved via `forceFresh`
-        // until we have evidence reuse is safe for large share lists.
-        let connection = try await establishPeerConnection(for: username, forceFresh: true)
+        // No more `forceFresh: true` — outer coalescing in `browseUser`
+        // ensures only one in-flight call per peer at a time, so reusing
+        // an existing pool connection is safe and saves a roundtrip.
+        let connection = try await establishPeerConnection(for: username)
 
         logger.debug("Browse: Requesting shares from \(username)...")
         try await connection.requestShares()
@@ -1077,7 +1108,9 @@ public final class NetworkClient {
         return files
     }
 
-    /// Pending continuations for browse shares responses, keyed by username
+    /// Pending continuations for browse shares responses, keyed by username.
+    /// At most one continuation per user at a time — guaranteed by the
+    /// `pendingBrowseUserCalls` coalescing in `browseUser(_:)`.
     private var pendingBrowseSharesContinuations: [String: CheckedContinuation<[SharedFile], Error>] = [:]
 
     // Pending browse state - tracks both waiting and received connections
@@ -1876,24 +1909,13 @@ public final class NetworkClient {
     /// Concurrent calls for the same `username` are coalesced via
     /// `pendingEstablishments`, so N parallel downloads to one peer share
     /// one connection establishment instead of racing each other.
-    ///
-    /// - Parameter forceFresh: when `true`, always opens a new connection.
-    ///   `browseUser` passes this because historically it was never documented
-    ///   why it created a fresh one — preserving behaviour until someone
-    ///   proves reuse is safe for share-list fetches.
-    public func establishPeerConnection(for username: String, forceFresh: Bool = false) async throws -> PeerConnection {
+    public func establishPeerConnection(for username: String) async throws -> PeerConnection {
         guard isConnected else {
             throw NetworkError.notConnected
         }
 
-        if !forceFresh, let existing = await peerConnectionPool.getConnectionForUser(username) {
+        if let existing = await peerConnectionPool.getConnectionForUser(username) {
             return existing
-        }
-
-        // forceFresh callers always want a brand-new connection, so they
-        // bypass the dedup table entirely.
-        if forceFresh {
-            return try await performEstablishPeerConnection(for: username)
         }
 
         if let inFlight = pendingEstablishments[username] {
@@ -1993,6 +2015,21 @@ public final class NetworkClient {
     /// Pending artwork request callbacks keyed by token.
     private var artworkCallbacks: [UInt32: (Data?) -> Void] = [:]
 
+    /// Coalesce concurrent `requestArtwork` calls for the same (peer, file).
+    /// UI scenarios trigger multiple loaders for the same image (list cell +
+    /// detail view + hover preview) at the same moment; without this, each
+    /// loader opens its own token-based roundtrip and the peer is asked N
+    /// times for the same artwork.
+    private struct PendingArtworkRequest {
+        var token: UInt32
+        var waiters: [(Data?) -> Void]
+    }
+    private var pendingArtworkRequests: [String: PendingArtworkRequest] = [:]
+
+    private static func artworkKey(username: String, filePath: String) -> String {
+        "\(username)|\(filePath)"
+    }
+
     /// Request artwork from a SeeleSeek peer.
     /// The completion handler is called with image data, or nil if the peer doesn't respond / isn't SeeleSeek.
     /// Only works if we already have a connection to the peer (e.g., from search results).
@@ -2002,14 +2039,26 @@ public final class NetworkClient {
             return
         }
 
+        let key = Self.artworkKey(username: username, filePath: filePath)
+
+        // Coalesce: if a request for the same (peer, file) is in flight,
+        // attach as an additional waiter and return — peer is asked once.
+        if pendingArtworkRequests[key] != nil {
+            pendingArtworkRequests[key]?.waiters.append(completion)
+            return
+        }
+
         let token = UInt32.random(in: 1..<0x8000_0000)
-        artworkCallbacks[token] = completion
+        pendingArtworkRequests[key] = PendingArtworkRequest(token: token, waiters: [completion])
+        // Bridge token → key for the artworkReply event handler.
+        artworkCallbacks[token] = { [weak self] data in
+            self?.deliverArtwork(key: key, data: data)
+        }
 
         Task {
             guard let connection = await peerConnectionPool.getConnectionForUser(username) else {
                 logger.debug("No existing connection to \(username) for artwork request")
-                artworkCallbacks.removeValue(forKey: token)
-                completion(nil)
+                deliverArtwork(key: key, data: nil)
                 return
             }
 
@@ -2017,21 +2066,55 @@ public final class NetworkClient {
             do {
                 try await connection.send(request)
             } catch {
-                if let callback = artworkCallbacks.removeValue(forKey: token) {
-                    callback(nil)
-                }
+                deliverArtwork(key: key, data: nil)
                 return
             }
 
-            // Timeout: clean up after 10 seconds if no response
-            // The reply arrives via handlePoolEvent(.artworkReply) which calls artworkCallbacks
-            Task {
+            // Timeout: deliver nil to all waiters after 10s if no reply.
+            Task { [weak self] in
                 try? await Task.sleep(for: .seconds(10))
-                if let callback = self.artworkCallbacks.removeValue(forKey: token) {
-                    callback(nil)
-                }
+                self?.deliverArtwork(key: key, data: nil)
             }
         }
+    }
+
+    /// Deliver an artwork result to every waiter for `(peer, file)` and
+    /// clean up the coalesced entry. Idempotent — late timeout firing after
+    /// the real reply already delivered finds no entry and no-ops.
+    private func deliverArtwork(key: String, data: Data?) {
+        guard let pending = pendingArtworkRequests.removeValue(forKey: key) else { return }
+        artworkCallbacks.removeValue(forKey: pending.token)
+        for waiter in pending.waiters {
+            waiter(data)
+        }
+    }
+
+    /// Test-only: register an artwork waiter directly without a peer
+    /// connection. Returns the key used internally so tests can drive
+    /// `_deliverArtworkForTest`.
+    internal func _registerArtworkWaiterForTest(
+        username: String,
+        filePath: String,
+        completion: @escaping (Data?) -> Void
+    ) -> String {
+        let key = Self.artworkKey(username: username, filePath: filePath)
+        if pendingArtworkRequests[key] != nil {
+            pendingArtworkRequests[key]?.waiters.append(completion)
+        } else {
+            pendingArtworkRequests[key] = PendingArtworkRequest(
+                token: UInt32.random(in: 1..<0x8000_0000),
+                waiters: [completion]
+            )
+        }
+        return key
+    }
+
+    internal func _deliverArtworkForTest(key: String, data: Data?) {
+        deliverArtwork(key: key, data: data)
+    }
+
+    internal func _pendingArtworkWaiterCount(key: String) -> Int {
+        pendingArtworkRequests[key]?.waiters.count ?? 0
     }
 
     /// Request folder contents from a peer. Returns the token used so the
