@@ -46,6 +46,10 @@ final class UpdateState {
     var currentFullVersion: String {
         "\(currentVersion) (\(currentBuild))"
     }
+    
+    var currentFullVersionFormatted: String {
+        "\(currentVersion).\(currentBuild)"
+    }
 
     var autoCheckEnabled: Bool {
         get {
