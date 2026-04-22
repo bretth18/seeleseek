@@ -110,20 +110,21 @@ private struct PeerActivityHeatmapCard: View {
 private struct RecentTransfersCard: View {
     @Environment(\.appState) private var appState
 
-    private var combinedHistory: [StatisticsState.TransferHistoryEntry] {
-        let stats = appState.statisticsState
-        return (stats.downloadHistory + stats.uploadHistory)
-            .sorted { $0.timestamp > $1.timestamp }
-    }
-
     var body: some View {
-        StandardCard {
+        // Compute once per body evaluation — previously a computed property
+        // that was read in both the isEmpty check and the ForEach, causing
+        // two concat+sort passes per render.
+        let stats = appState.statisticsState
+        let history = (stats.downloadHistory + stats.uploadHistory)
+            .sorted { $0.timestamp > $1.timestamp }
+
+        return StandardCard {
             VStack(alignment: .leading, spacing: SeeleSpacing.md) {
                 Text("Recent Transfers")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
 
-                if combinedHistory.isEmpty {
+                if history.isEmpty {
                     StandardEmptyState(
                         icon: "arrow.up.arrow.down.circle",
                         title: "No Transfers Yet",
@@ -132,7 +133,7 @@ private struct RecentTransfersCard: View {
                     .frame(minHeight: 160)
                 } else {
                     LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                        ForEach(combinedHistory.prefix(20)) { entry in
+                        ForEach(history.prefix(20)) { entry in
                             TransferHistoryRow(entry: entry)
                         }
                     }

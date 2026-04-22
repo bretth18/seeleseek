@@ -10,6 +10,14 @@ final class ActivityLog: ActivityLogging {
     private(set) var hasRecentActivity = false
     private var activityTimer: Timer?
 
+    // Non-observable staging buffer. Log events land here synchronously and
+    // are drained into `events` in batches, coalescing observable
+    // invalidation so the sidebar console can't drive app-wide frame drops
+    // when activity is bursty. See `scheduleFlush` / `flush`.
+    private var pendingEvents: [ActivityEvent] = []
+    private var flushTask: Task<Void, Never>?
+    private static let flushInterval: Duration = .milliseconds(250)
+
     private let maxEvents = 500
 
     struct ActivityEvent: Identifiable {
@@ -81,19 +89,47 @@ final class ActivityLog: ActivityLogging {
             username: username
         )
 
-        events.insert(event, at: 0)
+        // Stage into the non-observable buffer — no view invalidation yet.
+        pendingEvents.append(event)
+        scheduleFlush()
 
-        if events.count > maxEvents {
-            events.removeLast(events.count - maxEvents)
-        }
-
-        triggerActivity()
-
+        // User-facing notifications are intentionally NOT batched; they
+        // have their own dedupe/throttle inside NotificationService.
         NotificationService.shared.handleActivityEvent(type: type, title: title, detail: detail)
     }
 
     func clear() {
+        pendingEvents.removeAll(keepingCapacity: true)
         events.removeAll()
+        flushTask?.cancel()
+        flushTask = nil
+    }
+
+    /// Start a deferred flush of `pendingEvents` into `events`. Subsequent
+    /// log calls during the flush window are absorbed into the same batch.
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.flushInterval)
+            guard !Task.isCancelled, let self else { return }
+            self.flush()
+        }
+    }
+
+    /// Prepend the pending batch onto `events` in one observable write,
+    /// preserving newest-first ordering.
+    private func flush() {
+        flushTask = nil
+        guard !pendingEvents.isEmpty else { return }
+        // pendingEvents is append-ordered (oldest first). Reverse so the
+        // newest event lands at index 0, matching the pre-batching insert-at-0
+        // semantics.
+        events.insert(contentsOf: pendingEvents.reversed(), at: 0)
+        pendingEvents.removeAll(keepingCapacity: true)
+        if events.count > maxEvents {
+            events.removeLast(events.count - maxEvents)
+        }
+        triggerActivity()
     }
 
     private func triggerActivity() {

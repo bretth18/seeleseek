@@ -29,6 +29,14 @@ struct HistoryRow: View {
 
     @State private var isHovered = false
 
+    /// Captured at row appear and on username change (the @State avoids
+    /// subscribing the whole row body to `UserInfoCache.countries`, which
+    /// mutates on every GeoIP resolution and would otherwise invalidate
+    /// every visible row on every peer's country arriving). Accepts minor
+    /// staleness if this user's country resolves after the row is already
+    /// on screen — fine for historical entries.
+    @State private var countryFlag: String?
+
     /// True only if the app-wide audio preview is currently playing
     /// *this row's* file. See `RowAudioPreview` — preview state lives on
     /// `AppState` so starting playback on another row flips this row's
@@ -38,13 +46,9 @@ struct HistoryRow: View {
         return appState.audioPreview.isPlaying(url: path)
     }
 
-    /// Country flag for the peer (GeoIP-resolved from cached IPs). Nil
-    /// when we haven't seen an address for this user yet — typically the
-    /// case for older history rows whose peer we may have evicted from
-    /// cache, but populated for recent activity.
-    private var countryFlag: String? {
+    private func refreshCountryFlag() {
         let f = appState.networkClient.userInfoCache.flag(for: item.username)
-        return f.isEmpty ? nil : f
+        countryFlag = f.isEmpty ? nil : f
     }
 
     var body: some View {
@@ -73,6 +77,8 @@ struct HistoryRow: View {
                 Button("Reveal in Finder", action: revealInFinder)
             }
         }
+        .onAppear(perform: refreshCountryFlag)
+        .onChange(of: item.username) { _, _ in refreshCountryFlag() }
     }
 
     // MARK: - Direction glyph
