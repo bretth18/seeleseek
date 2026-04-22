@@ -1102,7 +1102,10 @@ public final class NetworkClient {
         let files = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[SharedFile], Error>) in
             pendingBrowseSharesContinuations[username] = continuation
 
-            // Timeout after 30 seconds
+            // Timeout after 30 seconds. Fire-and-forget: idempotent via
+            // `removeValue` — if the reply arrives first the continuation
+            // is already gone, so this wakes to a no-op. Not worth tracking
+            // per-call; outer `browseUser` is coalesced and itself owned.
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(30))
                 if let cont = self?.pendingBrowseSharesContinuations.removeValue(forKey: username) {
@@ -1876,6 +1879,10 @@ public final class NetworkClient {
             // Wait for the reply via a per-user continuation, with a hard timeout.
             return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<MessageParser.UserInfoReplyInfo, Error>) in
                 self.userInfoReplyContinuations[username] = cont
+                // Fire-and-forget 15s timeout. Idempotent via `removeValue`:
+                // if the reply arrives first the continuation is already
+                // resumed and removed, so this wake is a no-op. Outer task
+                // is owned by `userInfoInFlight`.
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(15))
                     if let waiter = self?.userInfoReplyContinuations.removeValue(forKey: username) {
@@ -2077,7 +2084,9 @@ public final class NetworkClient {
                 return
             }
 
-            // Timeout: deliver nil to all waiters after 10s if no reply.
+            // Fire-and-forget 10s timeout. `deliverArtwork` is idempotent —
+            // if the real reply arrived first the entry is already gone, so
+            // the nil-delivery no-ops. Not worth tracking per-call.
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(10))
                 self?.deliverArtwork(key: key, data: nil)

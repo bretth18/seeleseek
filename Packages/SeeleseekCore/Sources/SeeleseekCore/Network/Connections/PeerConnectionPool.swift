@@ -64,6 +64,12 @@ public final class PeerConnectionPool {
     private var lastBytesReceived: UInt64 = 0
     private var lastBytesSent: UInt64 = 0
 
+    // Owned long-running tasks. Stored so they release `self` when the
+    // pool goes away — without `[weak self]` + tracking, the infinite
+    // loops inside would retain the pool forever.
+    @ObservationIgnored private var speedTrackingTask: Task<Void, Never>?
+    @ObservationIgnored private var cleanupTask: Task<Void, Never>?
+
     // Geographic distribution (when available)
     public private(set) var peerLocations: [PeerLocation] = []
 
@@ -155,10 +161,11 @@ public final class PeerConnectionPool {
     }
 
     private func startCleanupTimer() {
-        Task {
-            while true {
+        cleanupTask = Task { [weak self] in
+            while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
-                cleanupStaleConnections()
+                guard let self else { return }
+                self.cleanupStaleConnections()
             }
         }
     }
@@ -579,11 +586,11 @@ public final class PeerConnectionPool {
     }
 
     private func startSpeedTracking() {
-        Task { [weak self] in
+        speedTrackingTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { break }
-                self?.captureSpeedSample()
+                guard let self else { return }
+                self.captureSpeedSample()
             }
         }
     }
