@@ -380,7 +380,15 @@ public actor PeerConnection {
         logger.debug("PeerInit sent, handshake marked complete")
 
         // Send SeeleSeek handshake so the peer knows we support extensions
-        try? await send(MessageBuilder.seeleseekHandshakeMessage())
+        try? await sendSeeleSeekHandshake()
+    }
+
+    /// Send the SeeleSeek capability handshake (code 10000). Non-SeeleSeek
+    /// peers drop it as an unknown code. Only safe on P-type sockets — F-type
+    /// connections switch to raw file-transfer bytes after init and would
+    /// misinterpret this message as file data.
+    public func sendSeeleSeekHandshake() async throws {
+        try await send(MessageBuilder.seeleseekHandshakeMessage())
     }
 
     public func sendPierceFirewall() async throws {
@@ -1143,6 +1151,10 @@ public actor PeerConnection {
                 } else {
                     // Regular peer connection - notify the pool
                     eventContinuation.yield(.usernameDiscovered(username: username, token: peerToken))
+                    // Reciprocate the SeeleSeek handshake so the initiator learns
+                    // we're also a SeeleSeek client. Only on P-type sockets —
+                    // F-type is handled above and returns before this point.
+                    try? await sendSeeleSeekHandshake()
                 }
             }
             handshakeComplete = true

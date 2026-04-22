@@ -479,6 +479,12 @@ public final class ServerMessageHandler {
             logger.debug("connectToPeerThrottled: connection established, sending PierceFirewall...")
 
             try await connection.sendPierceFirewall()
+            // Announce ourselves as a SeeleSeek client on P-type sockets only.
+            // F-type flips to raw file-transfer bytes after PierceFirewall and
+            // would misinterpret an extra 13-byte message as file data.
+            if connectionType == "P" {
+                try? await connection.sendSeeleSeekHandshake()
+            }
             logger.info("connectToPeerThrottled SUCCESS: \(username)")
 
         } catch {
