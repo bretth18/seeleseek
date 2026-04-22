@@ -18,6 +18,10 @@ struct UserProfile: Identifiable, Sendable {
     var status: BuddyStatus = .offline
     var isPrivileged: Bool = false
     var countryCode: String?
+    /// Non-nil only for peers who completed the SeeleSeek capability handshake.
+    /// Snapshotted from the live pool connection when the sheet opens; does not
+    /// update if the handshake arrives later.
+    var seeleSeekVersion: UInt8?
 
     init(
         username: String,
@@ -33,7 +37,8 @@ struct UserProfile: Identifiable, Sendable {
         hatedInterests: [String] = [],
         status: BuddyStatus = .offline,
         isPrivileged: Bool = false,
-        countryCode: String? = nil
+        countryCode: String? = nil,
+        seeleSeekVersion: UInt8? = nil
     ) {
         self.username = username
         self.description = description
@@ -49,6 +54,7 @@ struct UserProfile: Identifiable, Sendable {
         self.status = status
         self.isPrivileged = isPrivileged
         self.countryCode = countryCode
+        self.seeleSeekVersion = seeleSeekVersion
     }
 
     /// Format speed for display (e.g., "1.5 MB/s")

@@ -538,6 +538,14 @@ final class SocialState: PeerWatching {
             viewingProfile?.picture = myPicture
         }
 
+        // Snapshot the SeeleSeek version from any live pool connection. Only
+        // set if a peer connection exists and the capability handshake landed.
+        if let pool = networkClient?.peerConnectionPool {
+            viewingProfile?.seeleSeekVersion = pool.connections.values
+                .first(where: { $0.username == username && $0.seeleSeekVersion != nil })?
+                .seeleSeekVersion
+        }
+
         do {
             try await networkClient?.getUserStatus(username)
             try await networkClient?.getUserInterests(username)

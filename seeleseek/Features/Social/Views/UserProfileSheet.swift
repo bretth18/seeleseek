@@ -88,6 +88,16 @@ struct UserProfileSheet: View {
                     Text(profile.status.description)
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+
+                    if let version = profile.seeleSeekVersion {
+                        Text("SeeleSeek v\(version)")
+                            .font(SeeleTypography.caption2)
+                            .foregroundStyle(SeeleColors.accent)
+                            .padding(.horizontal, SeeleSpacing.xs)
+                            .padding(.vertical, SeeleSpacing.xxs)
+                            .background(SeeleColors.accent.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
                 }
             }
 
@@ -339,7 +349,8 @@ struct UserProfileSheet: View {
         hatedInterests: ["pop", "country"],
         status: .online,
         isPrivileged: true,
-        countryCode: "US"
+        countryCode: "US",
+        seeleSeekVersion: 1
     ))
     .environment(\.appState, AppState())
 }
