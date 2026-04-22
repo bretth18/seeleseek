@@ -34,7 +34,7 @@ struct UpdatePromptSheet: View {
                     .foregroundStyle(SeeleColors.textPrimary)
 
                 if let latest = updateState.latestVersion {
-                    Text("Version \(latest) — you're on \(updateState.currentFullVersion)")
+                    Text("Version \(latest) — you're on \(updateState.currentFullVersionFormatted)")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
@@ -94,11 +94,15 @@ struct UpdatePromptSheet: View {
     private var downloadProgress: some View {
         HStack(spacing: SeeleSpacing.sm) {
             ProgressView(value: updateState.downloadProgress ?? 0)
-                .progressViewStyle(.linear)
-                .frame(width: 140)
-            Text(progressLabel)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textSecondary)
+            {
+                Text(progressLabel)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .progressViewStyle(.linear)
+            .frame(width: 140)
+            
+        
         }
     }
 
@@ -110,6 +114,58 @@ struct UpdatePromptSheet: View {
     }
 }
 
-#Preview {
-    UpdatePromptSheet(updateState: UpdateState())
+#if DEBUG
+@MainActor
+private func previewUpdateState(
+    latestVersion: String? = "1.2.0",
+    releaseNotes: String? = """
+    ## What's New
+
+    - Fixed STUN external IP discovery (was sending requests in the wrong byte order).
+    - Forced IPv4 on STUN queries so we get a usable Soulseek peer address.
+    - Trimmed noisy debug logging in the NAT path.
+
+    ## Fixes
+
+    - Salvage lookup is now O(1) instead of O(history size).
+    - Cancellation discipline audit — one retain cycle fixed in `PeerConnectionPool`.
+    """,
+    isDownloading: Bool = false,
+    progress: Double? = nil,
+    hasPkgURL: Bool = true
+) -> UpdateState {
+    let state = UpdateState()
+    state.latestVersion = latestVersion
+    state.releaseNotes = releaseNotes
+    state.isDownloading = isDownloading
+    state.downloadProgress = progress
+    if hasPkgURL {
+        state.latestPkgURL = URL(string: "https://example.com/seeleseek.pkg")
+    }
+    return state
 }
+
+#Preview("Update available") {
+    UpdatePromptSheet(updateState: previewUpdateState())
+}
+
+#Preview("Downloading — starting") {
+    UpdatePromptSheet(updateState: previewUpdateState(isDownloading: true, progress: nil))
+}
+
+#Preview("Downloading — 45%") {
+    UpdatePromptSheet(updateState: previewUpdateState(isDownloading: true, progress: 0.45))
+}
+
+#Preview("Downloading — 95%") {
+    UpdatePromptSheet(updateState: previewUpdateState(isDownloading: true, progress: 0.95))
+}
+
+#Preview("No release notes") {
+    UpdatePromptSheet(updateState: previewUpdateState(releaseNotes: nil))
+}
+
+#Preview("No pkg asset") {
+    UpdatePromptSheet(updateState: previewUpdateState(hasPkgURL: false))
+}
+#endif
