@@ -422,10 +422,20 @@ final class TransferState: TransferTracking {
         }
     }
 
+    /// Invoked when a user-visible action takes a transfer out of a
+    /// retriable state (cancel, remove, manual retry). Set by AppState to
+    /// `downloadManager.cancelRetry(transferId:)` so any `pendingRetries`
+    /// Task that was sleeping for the next backoff tick is dropped
+    /// immediately instead of waking up to 30 min later and finding it
+    /// has no work to do. The status-guard inside the Task already makes
+    /// the no-op safe; this just stops the wasted sleep.
+    var onDownloadTerminated: ((UUID) -> Void)?
+
     func cancelTransfer(id: UUID) {
         updateTransfer(id: id) { transfer in
             transfer.status = .cancelled
         }
+        onDownloadTerminated?(id)
     }
 
     func retryTransfer(id: UUID) {
@@ -434,6 +444,9 @@ final class TransferState: TransferTracking {
             transfer.bytesTransferred = 0
             transfer.error = nil
         }
+        // The scheduled retry (if any) is now stale — the transfer is
+        // about to be re-driven through startDownload.
+        onDownloadTerminated?(id)
     }
 
     func removeTransfer(id: UUID) {
@@ -441,6 +454,7 @@ final class TransferState: TransferTracking {
         uploads.removeAll { $0.id == id }
         speedHistory.removeValue(forKey: id)
         reconcilePeerWatches()
+        onDownloadTerminated?(id)
 
         // Remove from database
         Task {
@@ -456,6 +470,8 @@ final class TransferState: TransferTracking {
         uploads.removeAll { $0.status == .completed }
         for id in removedIds { speedHistory.removeValue(forKey: id) }
         reconcilePeerWatches()
+        // Completed transfers can't have a pending retry Task, so skip
+        // the onDownloadTerminated fan-out here.
 
         // Clear from database
         Task {
@@ -471,6 +487,7 @@ final class TransferState: TransferTracking {
         uploads.removeAll { $0.status == .failed || $0.status == .cancelled }
         for id in removedIds { speedHistory.removeValue(forKey: id) }
         reconcilePeerWatches()
+        for id in removedIds { onDownloadTerminated?(id) }
 
         // Clear from database
         Task {

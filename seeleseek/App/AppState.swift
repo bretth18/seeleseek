@@ -75,6 +75,14 @@ final class AppState {
         // buddies), so rows can surface offline state even for strangers.
         transferState.peerWatcher = socialState
 
+        // Cancel any pending retry Task when the user takes a transfer out
+        // of a retriable state (cancel, remove, manual retry, clear failed).
+        // Without this the retry Task sleeps up to 30 min before self-skipping
+        // via its status guard.
+        transferState.onDownloadTerminated = { [weak self] transferId in
+            self?.downloadManager.cancelRetry(transferId: transferId)
+        }
+
         uploadManager.uploadPermissionChecker = { [weak self] username in
             guard let self else { return true }
             let patterns = self.settings.activeBlockedPatterns
