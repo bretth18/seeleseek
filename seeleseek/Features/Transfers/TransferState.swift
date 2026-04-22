@@ -141,7 +141,10 @@ final class TransferState: TransferTracking {
     }
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
-        didSet { rebuildDownloadIndex() }
+        didSet {
+            rebuildDownloadIndex()
+            refreshDownloadsInProgressCount()
+        }
     }
     var uploads: [Transfer] = []
 
@@ -155,6 +158,29 @@ final class TransferState: TransferTracking {
             index["\(transfer.username)\0\(transfer.filename)"] = transfer.status
         }
         downloadStatusIndex = index
+    }
+
+    /// Count of downloads that are queued, waiting, connecting, or actively
+    /// transferring. Surfaced to the sidebar badge.
+    ///
+    /// Stored (not computed) so observers subscribe only to this `Int`, not
+    /// to `downloads` itself — mutating `downloads[i].bytesTransferred` on
+    /// every progress update would otherwise fan-out observable
+    /// invalidation to the sidebar. The setter guard below only writes
+    /// when the value actually changes, so progress updates (which call
+    /// `downloads.didSet` but leave the count identical) are free.
+    private(set) var downloadsInProgressCount: Int = 0
+
+    private func refreshDownloadsInProgressCount() {
+        var count = 0
+        for transfer in downloads {
+            if transfer.isActive || transfer.status == .queued || transfer.status == .waiting {
+                count += 1
+            }
+        }
+        if count != downloadsInProgressCount {
+            downloadsInProgressCount = count
+        }
     }
 
     // MARK: - History

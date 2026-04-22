@@ -1097,7 +1097,13 @@ public actor PeerConnection {
 
             if let (username, usernameLen) = payload.readString(at: offset) {
                 offset += usernameLen
-                peerUsername = username
+                // Use setPeerUsername so the nonisolated peerInfo.username
+                // mirror is also updated. Consumers like
+                // DownloadManager.handlePoolTransferRequest read peerInfo
+                // synchronously to identify which peer delivered an event,
+                // so leaving peerInfo.username empty after PeerInit causes
+                // routing fallbacks to fail.
+                setPeerUsername(username)
 
                 var peerToken: UInt32 = 0
                 var connType: String = "P"

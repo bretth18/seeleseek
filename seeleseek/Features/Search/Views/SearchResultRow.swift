@@ -488,6 +488,11 @@ struct SearchResultRow: View {
         }
         .disabled(isQueued || isIgnored)
 
+        Button(action: downloadContainingFolder) {
+            Label("Download entire folder", systemImage: "arrow.down.square.fill")
+        }
+        .disabled(isIgnored)
+
         Button(action: browseFolder) {
             Label("Browse folder", systemImage: "folder.badge.questionmark")
         }
@@ -544,6 +549,10 @@ struct SearchResultRow: View {
     private func browseFolder() {
         appState.browseState.browseUser(result.username, targetPath: result.filename)
         appState.sidebarSelection = .browse
+    }
+
+    private func downloadContainingFolder() {
+        Task { await appState.downloadContainingFolder(of: result) }
     }
 
     private func copyFilename() {

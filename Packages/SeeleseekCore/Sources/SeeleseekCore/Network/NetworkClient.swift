@@ -225,8 +225,8 @@ public final class NetworkClient {
         case .folderContentsResponse(let token, let folder, let files):
             onFolderContentsResponse?(token, folder, files)
 
-        case .transferRequest(let request):
-            onTransferRequest?(request)
+        case .transferRequest(let request, let connection):
+            onTransferRequest?(request, connection)
 
         case .placeInQueueRequest(let username, let filename, let connection):
             Task { await onPlaceInQueueRequest?(username, filename, connection) }
@@ -294,7 +294,7 @@ public final class NetworkClient {
     public var onTransferResponse: ((UInt32, Bool, UInt64?, String?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, reason?, connection)
     public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
     public var onFolderContentsResponse: ((UInt32, String, [SharedFile]) -> Void)?  // (token, folder, files)
-    public var onTransferRequest: ((TransferRequest) -> Void)?  // Pool-level TransferRequest (for connections not directly managed by DownloadManager)
+    public var onTransferRequest: ((TransferRequest, PeerConnection) -> Void)?  // (request, connection that delivered it). The connection is critical: peers can deliver TransferRequests on a different connection than the one we cached when queueing the download.
     public var onPlaceInQueueRequest: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection)
     public var onPlaceInQueueReply: ((String, String, UInt32) async -> Void)?  // (username, filename, position)
 
@@ -405,7 +405,6 @@ public final class NetworkClient {
             let ports = try await listenerService.start(preferredPort: preferredListenPort)
             listenPort = ports.port
             obfuscatedPort = ports.obfuscatedPort
-            peerConnectionPool.listenPort = ports.port  // For NAT traversal - bind outgoing connections to listen port
             logger.info("Listening on port \(self.listenPort)")
             logger.info("Listening on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 
@@ -1978,32 +1977,25 @@ public final class NetworkClient {
         }
     }
 
-    /// Request folder contents from a peer
-    public func requestFolderContents(from username: String, folder: String) async throws {
+    /// Request folder contents from a peer. Returns the token used so the
+    /// caller can correlate the eventual `onFolderContentsResponse` event
+    /// back to the originating request (multiple concurrent folder requests
+    /// otherwise race on `(folder, peer)` alone).
+    ///
+    /// Routes through `establishPeerConnection`, which races a direct TCP
+    /// connect against a server-mediated PierceFirewall indirect connection
+    /// (10 s budget) — essential for firewalled peers whose listen port is
+    /// unreachable. A bare `peerConnectionPool.connect(...)` here would hang
+    /// on TCP SYN for ~75 s with no fallback, which is the entire failure
+    /// mode this helper exists to solve. Do not bypass it.
+    @discardableResult
+    public func requestFolderContents(from username: String, folder: String) async throws -> UInt32 {
         guard isConnected else { throw NetworkError.notConnected }
 
         let token = UInt32.random(in: 0...UInt32.max)
-
-        // Check if we have an existing connection to this user
-        if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
-            try await existingConnection.requestFolderContents(token: token, folder: folder)
-            return
-        }
-
-        // Need to establish connection first - use concurrent-safe method
-        let (ip, port) = try await getPeerAddress(for: username)
-
-        // Connect to peer
-        let connectionToken = UInt32.random(in: 0...UInt32.max)
-        let connection = try await peerConnectionPool.connect(
-            to: username,
-            ip: ip,
-            port: port,
-            token: connectionToken
-        )
-
-        // Request folder contents
+        let connection = try await establishPeerConnection(for: username)
         try await connection.requestFolderContents(token: token, folder: folder)
+        return token
     }
 
     // MARK: - Share Updates

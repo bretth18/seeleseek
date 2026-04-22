@@ -221,9 +221,6 @@ public final class PeerConnectionPool {
     /// Our username for PeerInit messages
     public var ourUsername: String = ""
 
-    /// Our listen port for NAT traversal (bind outgoing connections to same port)
-    public var listenPort: UInt16 = 0
-
     /// Connect to a peer
     /// - Parameters:
     ///   - username: Peer's username
@@ -252,9 +249,14 @@ public final class PeerConnectionPool {
         }
 
         let peerInfo = PeerConnection.PeerInfo(username: username, ip: ip, port: port)
-        // Pass listen port for NAT traversal - binding outgoing connections to our listen port
-        // can help with NAT hole punching
-        let connection = PeerConnection(peerInfo: peerInfo, token: token, localPort: listenPort)
+        // Outbound P-connections use ephemeral source ports. Binding to our
+        // listen port pinned every outbound dial to the same 4-tuple
+        // (127.0.0.1:listen → peerIP:peerPort), which the kernel rejects
+        // (POSIX EEXIST/17) as soon as a second download to the same peer
+        // starts. There's no NAT-hole-punching benefit here either: peers
+        // reach us via PierceFirewall on the listen port, not by dialing the
+        // ephemeral source port of one of our outbound TCP sessions.
+        let connection = PeerConnection(peerInfo: peerInfo, token: token)
 
         // Start consuming events BEFORE connecting to avoid missing early events
         let outgoingId = "\(username)-\(token)"
@@ -705,7 +707,7 @@ public final class PeerConnectionPool {
             eventContinuation.yield(.sharesReceived(username: peerUsername, files: files))
 
         case .transferRequest(let request):
-            eventContinuation.yield(.transferRequest(request))
+            eventContinuation.yield(.transferRequest(request, connection: connection))
 
         case .usernameDiscovered(let discoveredUsername, let token):
             logger.info("Username discovered: \(discoveredUsername) token=\(token)")
