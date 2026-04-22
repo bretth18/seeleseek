@@ -117,7 +117,6 @@ enum PreviewData {
                 bytesReceived: 45_678_901,
                 bytesSent: 12_345_678,
                 connectedAt: Date().addingTimeInterval(-3600),
-                lastActivity: Date(),
                 currentSpeed: 125_000
             ),
             PeerConnectionPool.PeerConnectionInfo(
@@ -130,7 +129,6 @@ enum PreviewData {
                 bytesReceived: 23_456_789,
                 bytesSent: 5_678_901,
                 connectedAt: Date().addingTimeInterval(-1800),
-                lastActivity: Date().addingTimeInterval(-60),
                 currentSpeed: 85_000
             ),
             PeerConnectionPool.PeerConnectionInfo(

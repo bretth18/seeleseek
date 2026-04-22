@@ -114,7 +114,7 @@ struct PeerInfoPopover: View {
                 }
             }
 
-            if let lastActivity = peer.lastActivity {
+            if let lastActivity = appState.networkClient.peerConnectionPool.lastActivity(for: peer.id) {
                 DetailRow(label: "Last Activity", value: lastActivity.formatted(date: .omitted, time: .shortened))
             }
         }

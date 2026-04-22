@@ -46,12 +46,17 @@ struct SearchResultRow: View {
 
     private var isIgnored: Bool { appState.socialState.isIgnored(result.username) }
 
-    /// Live peer status from the app-wide peer-status cache. Populated
-    /// for any peer currently being watched (including transfer-list
-    /// peers); search-result rows will also pick up status if the same
-    /// peer later appears in a transfer.
-    private var peerStatus: BuddyStatus? {
-        appState.socialState.peerStatus(for: result.username)
+    /// Peer status captured at row appear rather than read live from
+    /// `SocialState.peerStatuses`. Reading the dict live would invalidate
+    /// every visible search row on every unrelated peer's status arriving
+    /// — with a 500-row result list this dominated the macOS 15 re-render
+    /// storm. Accepts minor staleness if this user's status changes after
+    /// the row is on screen (rare for search-result rows, which are
+    /// typically strangers rather than actively-watched peers).
+    @State private var peerStatus: BuddyStatus?
+
+    private func refreshPeerStatus() {
+        peerStatus = appState.socialState.peerStatus(for: result.username)
     }
 
     /// Country flag for the peer. Captured at row appear rather than read
@@ -97,8 +102,14 @@ struct SearchResultRow: View {
             Button("Browse folder", action: browseFolder)
             Button("Browse \(result.username)", action: browseUser)
         }
-        .onAppear(perform: refreshCountryFlag)
-        .onChange(of: result.username) { _, _ in refreshCountryFlag() }
+        .onAppear {
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
+        .onChange(of: result.username) { _, _ in
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
     }
 
     // MARK: - Selection checkbox

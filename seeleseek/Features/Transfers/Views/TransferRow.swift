@@ -38,19 +38,19 @@ struct TransferRow: View {
     let onRemove: () -> Void
     var onMoveToTop: (() -> Void)? = nil
     var onMoveToBottom: (() -> Void)? = nil
-    /// Speed samples ordered oldest → newest, sourced from
-    /// `TransferState.speedHistory` (1Hz ring buffer). Only rendered while
-    /// the transfer is active; empty arrays show a faint baseline.
-    var speedHistory: [Int64] = []
 
     @State private var isHovered = false
 
-    /// Live peer status from the app-wide peer-status cache. Populated
-    /// for any peer currently being watched — `TransferState` auto-watches
-    /// every peer in the transfer list so this resolves for strangers
-    /// too, not just buddies.
-    private var peerStatus: BuddyStatus? {
-        appState.socialState.peerStatus(for: transfer.username)
+    /// Peer status captured at row appear rather than read live from
+    /// `SocialState.peerStatuses`. Every status update mutates the whole
+    /// observable dict, which invalidated every visible row in the
+    /// transfer list — the same anti-pattern the country flag already
+    /// avoided here. Accepts minor staleness; the next appearance (scroll
+    /// off/on or username change) resamples.
+    @State private var peerStatus: BuddyStatus?
+
+    private func refreshPeerStatus() {
+        peerStatus = appState.socialState.peerStatus(for: transfer.username)
     }
 
     /// True only if the app-wide audio preview is currently playing
@@ -84,8 +84,7 @@ struct TransferRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     TransferMetadataColumn(
-                        transfer: transfer,
-                        speedHistory: speedHistory
+                        transfer: transfer
                     )
 
                     TransferActionCluster(
@@ -118,8 +117,14 @@ struct TransferRow: View {
             onTogglePreview: toggleAudioPreview,
             onEditMetadata: openMetadataEditor
         ))
-        .onAppear(perform: refreshCountryFlag)
-        .onChange(of: transfer.username) { _, _ in refreshCountryFlag() }
+        .onAppear {
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
+        .onChange(of: transfer.username) { _, _ in
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
     }
 
     // MARK: - Context menu
@@ -420,8 +425,8 @@ private struct TransferInfoColumn: View {
 // MARK: - Metadata column (right, two tiers)
 
 private struct TransferMetadataColumn: View {
+    @Environment(\.appState) private var appState
     let transfer: Transfer
-    let speedHistory: [Int64]
 
     private var line1Width: CGFloat {
         TransferRowLayout.sparklineWidth
@@ -450,8 +455,18 @@ private struct TransferMetadataColumn: View {
     private var sparklineSlot: some View {
         Group {
             if transfer.status == .transferring {
-                TransferSparkline(values: speedHistory, tint: SeeleColors.accent)
-                    .accessibilityHidden(true)
+                // Poll the non-observable speed-history accessor every
+                // second. `speedHistory(for:)` doesn't register an
+                // Observation dependency, so only this sparkline view
+                // refreshes on each tick — the enclosing row and list
+                // stay idle even while sampling is active.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    TransferSparkline(
+                        values: appState.transferState.speedHistory(for: transfer.id),
+                        tint: SeeleColors.accent
+                    )
+                }
+                .accessibilityHidden(true)
             } else {
                 Color.clear
             }
@@ -823,13 +838,11 @@ struct TransferSparkline: View {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             TransferRow(
                 transfer: downloading,
-                onCancel: {}, onRetry: {}, onRemove: {},
-                speedHistory: sparkDownloading
+                onCancel: {}, onRetry: {}, onRemove: {}
             )
             TransferRow(
                 transfer: uploading,
-                onCancel: {}, onRetry: {}, onRemove: {},
-                speedHistory: sparkUploading
+                onCancel: {}, onRetry: {}, onRemove: {}
             )
             TransferRow(transfer: queued, onCancel: {}, onRetry: {}, onRemove: {})
             TransferRow(transfer: failed, onCancel: {}, onRetry: {}, onRemove: {})
