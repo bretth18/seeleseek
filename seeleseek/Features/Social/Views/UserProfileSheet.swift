@@ -9,6 +9,12 @@ struct UserProfileSheet: View {
 
     @State private var showGivePrivileges = false
     @State private var selectedDays: UInt32 = 1
+    /// Sticky copy of the SeeleSeek version for this sheet's lifetime. The
+    /// underlying peer connection is transient — it comes up during
+    /// `fetchUserInfo` and the pool tears it down soon after — so a purely
+    /// live lookup flickers off. We latch the first non-nil observation and
+    /// keep showing it until the sheet closes.
+    @State private var stickySeeleSeekVersion: UInt8?
 
     var body: some View {
         ScrollView {
@@ -38,6 +44,9 @@ struct UserProfileSheet: View {
         }
         .frame(width: 450, height: 550)
         .background(SeeleColors.surface)
+        .onChange(of: liveSeeleSeekVersion, initial: true) { _, new in
+            if let new { stickySeeleSeekVersion = new }
+        }
     }
 
     private var header: some View {
@@ -89,8 +98,8 @@ struct UserProfileSheet: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
 
-                    if let version = liveSeeleSeekVersion {
-                        Text("SeeleSeek v\(version)")
+                    if let version = stickySeeleSeekVersion ?? liveSeeleSeekVersion {
+                        Text("seeleseek v\(version)")
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)

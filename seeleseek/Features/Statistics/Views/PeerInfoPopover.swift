@@ -80,7 +80,7 @@ struct PeerInfoPopover: View {
                         // capability handshake; standard Soulseek clients
                         // (Nicotine+, SoulseekQt, etc.) never expose their
                         // version peer-to-peer, so nothing to show.
-                        Text("SeeleSeek v\(version)")
+                        Text("seeleseek v\(version)")
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)
