@@ -197,9 +197,6 @@ public final class NetworkClient {
         case .searchResults(let token, let results):
             onSearchResults?(token, results)
 
-        case .incomingConnectionMatched(let username, let token, let connection):
-            Task { await onIncomingConnectionMatched?(username, token, connection) }
-
         case .fileTransferConnection(let username, let token, let connection):
             Task { await onFileTransferConnection?(username, token, connection) }
 
@@ -285,7 +282,6 @@ public final class NetworkClient {
         peerAddressHandlers.append(handler)
         logger.debug("NetworkClient: Added peer address handler (total: \(self.peerAddressHandlers.count))")
     }
-    public var onIncomingConnectionMatched: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     public var onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     public var onPierceFirewall: ((UInt32, PeerConnection) async -> Void)?  // (token, connection)
     public var onUploadDenied: ((String, String) -> Void)?  // (filename, reason)

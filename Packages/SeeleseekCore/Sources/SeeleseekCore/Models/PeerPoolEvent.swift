@@ -6,7 +6,6 @@ public enum PeerPoolEvent: Sendable {
     case searchResults(token: UInt32, results: [SearchResult])
     case sharesReceived(username: String, files: [SharedFile])
     case transferRequest(TransferRequest, connection: PeerConnection)
-    case incomingConnectionMatched(username: String, token: UInt32, connection: PeerConnection)
     case fileTransferConnection(username: String, token: UInt32, connection: PeerConnection)
     case pierceFirewall(token: UInt32, connection: PeerConnection)
     case uploadDenied(filename: String, reason: String)

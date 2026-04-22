@@ -32,7 +32,6 @@ public final class PeerConnectionPool {
     // MARK: - Connection Tracking
 
     public private(set) var connections: [String: PeerConnectionInfo] = [:]
-    public private(set) var pendingConnections: [UInt32: PendingConnection] = [:]
 
     // CRITICAL: Store actual PeerConnection objects to keep them alive!
     // Without this, connections get deallocated immediately after creation.
@@ -117,17 +116,6 @@ public final class PeerConnectionPool {
 
         public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, lastActivity: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil) {
             self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.lastActivity = lastActivity; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion
-        }
-    }
-
-    public struct PendingConnection {
-        public let username: String
-        public let token: UInt32
-        public let timestamp: Date
-        public var attempts: Int = 0
-
-        public init(username: String, token: UInt32, timestamp: Date, attempts: Int = 0) {
-            self.username = username; self.token = token; self.timestamp = timestamp; self.attempts = attempts
         }
     }
 
@@ -445,7 +433,6 @@ public final class PeerConnectionPool {
         }
         activeConnections_.removeAll()
         connections.removeAll()
-        pendingConnections.removeAll()
         activeConnections = 0
     }
 
@@ -491,20 +478,6 @@ public final class PeerConnectionPool {
         return nil
     }
 
-    // MARK: - Pending Connections
-
-    public func addPendingConnection(username: String, token: UInt32) {
-        pendingConnections[token] = PendingConnection(
-            username: username,
-            token: token,
-            timestamp: Date()
-        )
-    }
-
-    public func resolvePendingConnection(token: UInt32) -> PendingConnection? {
-        return pendingConnections.removeValue(forKey: token)
-    }
-
     // MARK: - Diagnostic Counters
 
     public func incrementConnectToPeerCount() {
@@ -519,12 +492,22 @@ public final class PeerConnectionPool {
         peerInitCount += 1
     }
 
+    /// Bump `lastActivity` for the connection that just emitted an event.
+    /// For outgoing connections we look up by `username-` prefix because
+    /// the connectionId was generated locally; for incoming we have it
+    /// directly.
+    private func touchActivity(connectionId: String, username: String, isIncoming: Bool) {
+        let now = Date()
+        if isIncoming {
+            connections[connectionId]?.lastActivity = now
+        } else if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+            connections[key]?.lastActivity = now
+        }
+    }
+
     public func cleanupStaleConnections() {
         let timeout = Date().addingTimeInterval(-connectionTimeout)
         let shortTimeout = Date().addingTimeInterval(-10)  // 10s for connections with no activity
-
-        // Remove stale pending connections
-        pendingConnections = pendingConnections.filter { $0.value.timestamp > timeout }
 
         // Find stale connection IDs (30s idle) and ghost connections (10s with no activity)
         var toRemove: [String] = []
@@ -665,6 +648,13 @@ public final class PeerConnectionPool {
     }
 
     private func handlePeerEvent(_ event: PeerConnectionEvent, connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) {
+        // Touch the connection's lastActivity on every event. Without this,
+        // `lastActivity` was never set anywhere, so every connection fell
+        // into `cleanupStaleConnections`'s "ghost" branch and got killed
+        // 10-30s after creation regardless of whether it was being used —
+        // forcing the peer to reconnect on every operation.
+        touchActivity(connectionId: connectionId, username: username, isIncoming: isIncoming)
+
         switch event {
         case .stateChanged(let state):
             if isIncoming {
@@ -754,15 +744,20 @@ public final class PeerConnectionPool {
                 connections[connectionId] = existingInfo
             }
 
-            // Check if this matches a pending connection (for downloads)
-            if pendingConnections[token] != nil {
-                logger.info("Matched incoming connection to pending: \(discoveredUsername) token=\(token)")
-                pendingConnections.removeValue(forKey: token)
-                eventContinuation.yield(.incomingConnectionMatched(username: discoveredUsername, token: token, connection: connection))
-            }
-
         case .fileTransferConnection(let ftUsername, let token, let fileConnection):
             logger.info("File transfer connection: \(ftUsername) token=\(token)")
+            // Hand the F-connection off to DownloadManager and stop tracking
+            // it here. The pool's cleanupStaleConnections timer otherwise
+            // kills the underlying NWConnection 10-30s after handoff —
+            // mid-file-transfer for anything bigger than a few hundred KB —
+            // because the pool has no insight into raw file bytes flowing
+            // outside its peer-message framing. Same pattern as
+            // .pierceFirewall below; both events transfer ownership of the
+            // connection from pool to consumer.
+            decrementIPCounter(for: capturedIP)
+            connections.removeValue(forKey: connectionId)
+            activeConnections_.removeValue(forKey: connectionId)
+            activeConnections = connections.count
             eventContinuation.yield(.fileTransferConnection(username: ftUsername, token: token, connection: fileConnection))
 
         case .pierceFirewall(let token):
