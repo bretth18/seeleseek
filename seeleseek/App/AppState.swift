@@ -113,6 +113,29 @@ final class AppState {
             }
         }
 
+        // Folder-download response handler: a search-row right-click → "Download
+        // entire folder" triggers `requestFolderContents`, which eventually
+        // lands here with the file list. Match by token to the username that
+        // initiated the request and queue every file. No ActivityLog entry —
+        // individual downloads surface in the Transfers tab and will emit
+        // their own logDownloadCompleted when they finish, matching the
+        // single-file download path.
+        //
+        // The `folder` argument is passed into `queueFolderDownload` because
+        // some peers (e.g. vanilla Nicotine+) send full paths as each file's
+        // `filename`, while others (seen in the wild) send only basenames.
+        // The queue path uses `folder` to reconstruct the full Soulseek path
+        // when the peer sent a basename — otherwise the QueueUpload request
+        // we later send to them comes back `File not shared`.
+        client.onFolderContentsResponse = { [weak self] token, folder, files in
+            guard let self,
+                  let username = self.pendingFolderDownloads.removeValue(forKey: token) else {
+                return
+            }
+            let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
+            self.logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
+        }
+
         client.searchResponseFilter = { [weak self] in
             guard let settings = self?.settings else {
                 return (enabled: true, minQueryLength: 3, maxResults: 50)
@@ -124,6 +147,109 @@ final class AppState {
             )
         }
     }
+
+    // MARK: - Folder Download Coordinator
+    // Maps the token returned by `requestFolderContents` to the username we
+    // asked — response events only carry `(token, folder, files)`, so we
+    // need this side-table to know where to queue the downloads.
+    private var pendingFolderDownloads: [UInt32: String] = [:]
+
+    /// Right-click "Download entire folder" entrypoint for a search result.
+    /// Derives the containing folder from the Soulseek path (backslash-
+    /// separated), asks the peer for its contents, and queues every returned
+    /// file once the response arrives. Pending tokens are auto-cleaned after
+    /// 60 s if the peer never responds, so `pendingFolderDownloads` can't grow
+    /// unbounded. No ActivityLog entries — folder downloads surface through
+    /// the same Transfers-tab path as single-file downloads, matching the
+    /// app's "log on completion, not on intent" convention.
+    func downloadContainingFolder(of result: SearchResult) async {
+        let folder = Self.containingSoulseekFolder(of: result.filename)
+        guard !folder.isEmpty else {
+            logger.warning("Could not derive containing folder from filename: \(result.filename)")
+            return
+        }
+        do {
+            let token = try await networkClient.requestFolderContents(
+                from: result.username,
+                folder: folder
+            )
+            pendingFolderDownloads[token] = result.username
+            logger.info("Requested folder contents '\(folder)' from \(result.username) (token=\(token))")
+            scheduleFolderDownloadTimeout(token: token, username: result.username, folder: folder)
+        } catch {
+            logger.error("Failed to request folder contents: \(error.localizedDescription)")
+        }
+    }
+
+    /// Drop the pending entry after 60 s if the peer never replied. No-op
+    /// if the response already arrived and removed it.
+    private func scheduleFolderDownloadTimeout(token: UInt32, username: String, folder: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard let self,
+                  self.pendingFolderDownloads.removeValue(forKey: token) != nil else {
+                return
+            }
+            self.logger.info("Folder contents request timed out: \(username) '\(folder)' (token=\(token))")
+        }
+    }
+
+    /// Queue every file from a folder-contents response, skipping files
+    /// already queued for this user. Returns the number actually queued.
+    ///
+    /// `folder` is the full Soulseek folder path the peer listed (as it
+    /// appeared in `FolderContentsReply`). Some peers embed the full path
+    /// in each file's `filename`; others send only basenames. If we just
+    /// forward the basename, the peer's subsequent QueueUpload lookup fails
+    /// with `File not shared` (they key their share index by full path).
+    /// We detect the basename-only case and prepend `folder` so the queued
+    /// SearchResult carries the path the peer expects.
+    private func queueFolderDownload(files: [SharedFile], from username: String, folder: String) -> Int {
+        var queued = 0
+        for file in files {
+            let fullPath = Self.fullSoulseekPath(folder: folder, filename: file.filename)
+            if transferState.isFileQueued(filename: fullPath, username: username) { continue }
+            let result = SearchResult(
+                username: username,
+                filename: fullPath,
+                size: file.size,
+                bitrate: file.bitrate,
+                duration: file.duration,
+                isVBR: false,
+                freeSlots: true,
+                uploadSpeed: 0,
+                queueLength: 0
+            )
+            downloadManager.queueDownload(from: result)
+            queued += 1
+        }
+        return queued
+    }
+
+    /// Combine `folder` and `filename` into a full Soulseek path, detecting
+    /// whether the peer already embedded the full path in `filename`. Heuristic:
+    /// if `filename` contains a backslash, trust it verbatim (either a full
+    /// path or a nested sub-path both of which the peer indexes directly);
+    /// otherwise prepend `folder` and the backslash separator. Empty `folder`
+    /// falls through to the bare filename — defensive; the caller already
+    /// guards against the empty-folder case upstream.
+    private static func fullSoulseekPath(folder: String, filename: String) -> String {
+        if filename.contains("\\") || folder.isEmpty {
+            return filename
+        }
+        let separator = folder.hasSuffix("\\") ? "" : "\\"
+        return "\(folder)\(separator)\(filename)"
+    }
+
+    /// Soulseek paths use backslash separators — e.g.
+    /// `@@hddmusic\Music\Artist\Album\01 - Track.flac`. Returns the path
+    /// with the trailing component dropped, or empty if there isn't one.
+    private static func containingSoulseekFolder(of filename: String) -> String {
+        let components = filename.components(separatedBy: "\\")
+        guard components.count > 1 else { return "" }
+        return components.dropLast().joined(separator: "\\")
+    }
+
 
     // MARK: - Download Manager
     let downloadManager = DownloadManager()

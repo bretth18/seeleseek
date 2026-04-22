@@ -1978,32 +1978,25 @@ public final class NetworkClient {
         }
     }
 
-    /// Request folder contents from a peer
-    public func requestFolderContents(from username: String, folder: String) async throws {
+    /// Request folder contents from a peer. Returns the token used so the
+    /// caller can correlate the eventual `onFolderContentsResponse` event
+    /// back to the originating request (multiple concurrent folder requests
+    /// otherwise race on `(folder, peer)` alone).
+    ///
+    /// Routes through `establishPeerConnection`, which races a direct TCP
+    /// connect against a server-mediated PierceFirewall indirect connection
+    /// (10 s budget) — essential for firewalled peers whose listen port is
+    /// unreachable. A bare `peerConnectionPool.connect(...)` here would hang
+    /// on TCP SYN for ~75 s with no fallback, which is the entire failure
+    /// mode this helper exists to solve. Do not bypass it.
+    @discardableResult
+    public func requestFolderContents(from username: String, folder: String) async throws -> UInt32 {
         guard isConnected else { throw NetworkError.notConnected }
 
         let token = UInt32.random(in: 0...UInt32.max)
-
-        // Check if we have an existing connection to this user
-        if let existingConnection = await peerConnectionPool.getConnectionForUser(username) {
-            try await existingConnection.requestFolderContents(token: token, folder: folder)
-            return
-        }
-
-        // Need to establish connection first - use concurrent-safe method
-        let (ip, port) = try await getPeerAddress(for: username)
-
-        // Connect to peer
-        let connectionToken = UInt32.random(in: 0...UInt32.max)
-        let connection = try await peerConnectionPool.connect(
-            to: username,
-            ip: ip,
-            port: port,
-            token: connectionToken
-        )
-
-        // Request folder contents
+        let connection = try await establishPeerConnection(for: username)
         try await connection.requestFolderContents(token: token, folder: folder)
+        return token
     }
 
     // MARK: - Share Updates

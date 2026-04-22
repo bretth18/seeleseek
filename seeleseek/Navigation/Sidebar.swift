@@ -117,6 +117,13 @@ struct SidebarRow: View {
             return appState.socialState.onlineBuddies.count
         case .wishlists:
             return appState.wishlistState.unviewedResultCount
+        case .transfers:
+            // `downloadsInProgressCount` is a dedicated stored Int on
+            // TransferState that is written only when the count actually
+            // changes — reading it here avoids subscribing the sidebar to
+            // the full `downloads` array which mutates on every byte-progress
+            // tick. Do not swap this for `activeDownloads.count`.
+            return appState.transferState.downloadsInProgressCount
         default:
             return 0
         }
@@ -134,6 +141,12 @@ struct SidebarRow: View {
                     .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
                     .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
                     .frame(width: 18)
+                    // Subtle bounce on badge changes — covers both "new thing
+                    // arrived" (count increased) and "thing finished" (count
+                    // decreased). Driven by SF Symbol animation so no layout
+                    // churn; `value:` keys the effect so it only fires when
+                    // the count actually changes, not on every re-render.
+                    .symbolEffect(.bounce, value: badgeCount)
 
                 Text(item.title)
                     .font(SeeleTypography.body)
