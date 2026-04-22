@@ -52,7 +52,15 @@ struct RoomUserListPanel: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(filteredUsers, id: \.self) { username in
-                        userRow(username)
+                        RoomUserRow(
+                            username: username,
+                            isOwner: room.owner == username,
+                            isOp: room.operators.contains(username),
+                            stats: chatState.userStatsCache[username],
+                            room: room,
+                            chatState: chatState,
+                            appState: appState
+                        )
                     }
                 }
             }
@@ -62,20 +70,35 @@ struct RoomUserListPanel: View {
         }
         .background(SeeleColors.surface)
     }
+}
 
-    private func userRow(_ username: String) -> some View {
-        let isOwner = room.owner == username
-        let isOp = room.operators.contains(username)
-        let stats = chatState.userStatsCache[username]
-        let flag = appState.networkClient.userInfoCache.flag(for: username)
+/// Extracted so the flag lookup can live in `onAppear` and escape the
+/// parent's body-level observation on `UserInfoCache.countries`. Previously
+/// every user's GeoIP resolution invalidated the whole user-list render.
+private struct RoomUserRow: View {
+    let username: String
+    let isOwner: Bool
+    let isOp: Bool
+    let stats: (speed: UInt32, files: UInt32)?
+    let room: ChatRoom
+    var chatState: ChatState
+    var appState: AppState
 
-        return HStack(spacing: SeeleSpacing.sm) {
+    @State private var countryFlag: String?
+
+    private func refreshCountryFlag() {
+        let f = appState.networkClient.userInfoCache.flag(for: username)
+        countryFlag = f.isEmpty ? nil : f
+    }
+
+    var body: some View {
+        HStack(spacing: SeeleSpacing.sm) {
             StandardStatusDot(isOnline: true, size: SeeleSpacing.statusDotSmall)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: SeeleSpacing.xs) {
-                    if !flag.isEmpty {
-                        Text(flag)
+                    if let countryFlag, !countryFlag.isEmpty {
+                        Text(countryFlag)
                             .font(.system(size: 9))
                     }
 
@@ -136,5 +159,7 @@ struct RoomUserListPanel: View {
                 }
             }
         }
+        .onAppear(perform: refreshCountryFlag)
+        .onChange(of: username) { _, _ in refreshCountryFlag() }
     }
 }

@@ -7,6 +7,22 @@ struct BuddyRowView: View {
 
     @State private var isHovering = false
 
+    /// Country flag for the buddy. Captured at row appear rather than
+    /// live-read — reading `UserInfoCache.flag(for:)` in body would
+    /// invalidate every buddy row on every unrelated peer's GeoIP
+    /// resolution. Re-evaluated when `buddy.countryCode` changes so
+    /// persisted updates still propagate.
+    @State private var resolvedCountryFlag: String?
+
+    private func refreshCountryFlag() {
+        let live = appState.networkClient.userInfoCache.flag(for: buddy.username)
+        if !live.isEmpty {
+            resolvedCountryFlag = live
+        } else {
+            resolvedCountryFlag = buddy.countryCode.map { CountryFormatter.flag(for: $0) }
+        }
+    }
+
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
             // Status indicator
@@ -101,6 +117,9 @@ struct BuddyRowView: View {
                 }
             }
         }
+        .onAppear(perform: refreshCountryFlag)
+        .onChange(of: buddy.username) { _, _ in refreshCountryFlag() }
+        .onChange(of: buddy.countryCode) { _, _ in refreshCountryFlag() }
     }
 
     private func viewProfile() {
@@ -131,16 +150,6 @@ struct BuddyRowView: View {
         CountryFormatter.flag(for: code)
     }
 
-    /// Country flag for the buddy. Prefers `UserInfoCache` (live
-    /// GeoIP-resolved value, seeded from the buddy's persisted country
-    /// at launch) and falls back to `buddy.countryCode` directly.
-    /// Empty string from the cache reads as "not yet resolved", in
-    /// which case we still try the persisted value.
-    private var resolvedCountryFlag: String? {
-        let live = appState.networkClient.userInfoCache.flag(for: buddy.username)
-        if !live.isEmpty { return live }
-        return buddy.countryCode.map { CountryFormatter.flag(for: $0) }
-    }
 }
 
 #Preview {
