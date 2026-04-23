@@ -36,6 +36,18 @@ jobs:
         # CodeQL" toolchain skew.
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: Resolve package dependencies
+        # Resolve SPM packages *before* CodeQL wraps the build. CodeQL's
+        # build tracer interacting with Xcode's package resolver has been
+        # observed to hang at "Resolve Package Graph" — running resolution
+        # in a separate, untraced step sidesteps that and also gives us
+        # visible log output for the slowest part of the build.
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -scheme seeleseek \
+            -destination 'platform=macOS'
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -50,11 +62,25 @@ jobs:
         # the exact same target the release path builds. Debug configuration
         # is deliberate: Release-mode optimizations can fold away code paths
         # CodeQL would otherwise inspect.
+        #
+        # Flags specific to the CodeQL path:
+        #   -disableAutomaticPackageResolution — packages were already
+        #       resolved in the previous step; stop xcodebuild from
+        #       re-entering resolution inside the traced build.
+        #   -skipPackagePluginValidation / -skipMacroValidation — CodeQL
+        #       can deadlock when validating package plugins / macro
+        #       targets under its build tracer. Skipping doesn't reduce
+        #       analysis coverage of app code.
+        #   -verbose — if we *do* hang, next time we see where.
         run: |
           xcodebuild \
             -scheme seeleseek \
             -destination 'platform=macOS' \
             -configuration Debug \
+            -disableAutomaticPackageResolution \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -verbose \
             build \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \

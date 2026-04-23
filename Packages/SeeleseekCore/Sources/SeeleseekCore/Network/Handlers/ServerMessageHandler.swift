@@ -744,27 +744,27 @@ public final class ServerMessageHandler {
             return
         }
 
-        // Search our shared files
+        // Search our shared files. The search itself hops off the main
+        // actor (see ShareManager.search), so the remaining work after
+        // the scan can stay on whatever actor this handler already runs
+        // on — we just need a Task boundary to await the async call.
         guard let shareManager = client?.shareManager else {
             logger.debug("No share manager available for distributed search")
             return
         }
+        let maxResults = filter.maxResults
 
-        var matchingFiles = shareManager.search(query: query)
-        guard !matchingFiles.isEmpty else {
-            return
-        }
-
-        // Cap results to limit bandwidth
-        if filter.maxResults > 0 && matchingFiles.count > filter.maxResults {
-            matchingFiles = Array(matchingFiles.prefix(filter.maxResults))
-        }
-
-        logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
-        ActivityLogger.shared?.logDistributedSearch(query: query, matchCount: matchingFiles.count)
-
-        // Send search results back to the searching user
         Task {
+            var matchingFiles = await shareManager.search(query: query)
+            guard !matchingFiles.isEmpty else { return }
+
+            if maxResults > 0 && matchingFiles.count > maxResults {
+                matchingFiles = Array(matchingFiles.prefix(maxResults))
+            }
+
+            logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
+            ActivityLogger.shared?.logDistributedSearch(query: query, matchCount: matchingFiles.count)
+
             await sendDistributedSearchResponse(
                 to: username,
                 token: token,
