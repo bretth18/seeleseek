@@ -20,13 +20,15 @@ struct SearchActivityView: View {
 
                     HStack(spacing: SeeleSpacing.xs) {
                         Image(systemName: "circle.fill")
-                            .font(.system(size: SeeleSpacing.iconSizeXS - 2))
+                            .font(.system(size: SeeleSpacing.iconSizeXXS))
                             .foregroundStyle(searchActivity.isActive ? SeeleColors.info : SeeleColors.textTertiary)
                             .symbolEffect(.pulse, options: .repeating, isActive: searchActivity.isActive)
                         Text("Live")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(searchActivity.isActive ? "Search activity — live" : "Search activity — idle")
                 }
 
                 SearchTimelineView(events: searchActivity.recentEvents)
@@ -168,7 +170,7 @@ struct SearchEventRow: View {
                 .font(SeeleTypography.caption2)
                 .foregroundStyle(SeeleColors.textTertiary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, SeeleSpacing.xs)
     }
 
     private func formatTime(_ date: Date) -> String {

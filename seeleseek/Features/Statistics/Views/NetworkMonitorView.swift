@@ -59,6 +59,8 @@ struct MonitorLiveStatsBadge: View {
                     .foregroundStyle(SeeleColors.success)
                     .contentTransition(.numericText())
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Download speed \(peerPool.currentDownloadSpeed.formattedSpeed)")
 
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "arrow.up")
@@ -69,6 +71,8 @@ struct MonitorLiveStatsBadge: View {
                     .foregroundStyle(SeeleColors.accent)
                     .contentTransition(.numericText())
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Upload speed \(peerPool.currentUploadSpeed.formattedSpeed)")
 
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "person.2.fill")

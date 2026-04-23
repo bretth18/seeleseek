@@ -54,6 +54,7 @@ struct SharesSettingsSection: View {
                             .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .help("Pick one or more folders on disk to share with peers.")
 
                         Spacer()
 
@@ -78,6 +79,7 @@ struct SharesSettingsSection: View {
                                 .foregroundStyle(SeeleColors.textSecondary)
                             }
                             .buttonStyle(.plain)
+                            .help("Re-read all shared folders and refresh the file index.")
                         }
                     }
                 }
@@ -186,6 +188,8 @@ struct SharedFolderRow: View {
             }
             .buttonStyle(.plain)
             .layoutPriority(2)
+            .accessibilityLabel("Stop sharing \(folder.displayName)")
+            .help("Stop sharing this folder")
         }
         .padding(.horizontal, SeeleSpacing.rowHorizontal)
         .padding(.vertical, SeeleSpacing.rowVertical)

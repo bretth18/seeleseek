@@ -17,13 +17,15 @@ struct LiveActivityFeed: View {
 
                     HStack(spacing: SeeleSpacing.xs) {
                         Image(systemName: "circle.fill")
-                            .font(.system(size: SeeleSpacing.iconSizeXS - 2))
+                            .font(.system(size: SeeleSpacing.iconSizeXXS))
                             .foregroundStyle(activityLog.hasRecentActivity ? SeeleColors.success : SeeleColors.textTertiary)
                             .symbolEffect(.pulse, options: .repeating, isActive: activityLog.hasRecentActivity)
                         Text("Live")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(activityLog.hasRecentActivity ? "Activity feed — live" : "Activity feed — idle")
 
                     Button {
                         activityLog.clear()

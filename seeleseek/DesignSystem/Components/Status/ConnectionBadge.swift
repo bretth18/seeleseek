@@ -30,7 +30,7 @@ struct ConnectionBadge: View {
 
     private var statusIndicator: some View {
         Image(systemName: status.icon)
-            .font(.system(size: SeeleSpacing.iconSizeSmall - 2, weight: .medium))
+            .font(.system(size: SeeleSpacing.iconSizeXSmall, weight: .medium))
             .foregroundStyle(status.color)
             .symbolEffect(.rotate, isActive: status == .connecting || status == .reconnecting)
             .contentTransition(.symbolEffect(.replace))

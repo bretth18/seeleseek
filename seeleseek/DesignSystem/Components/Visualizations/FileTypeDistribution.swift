@@ -57,8 +57,8 @@ struct FileTypeDistribution: View {
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, SeeleSpacing.sm)
+                    .padding(.vertical, SeeleSpacing.xxs)
                     .background(SeeleColors.surfaceSecondary)
                     .clipShape(Capsule())
                 }
@@ -67,17 +67,7 @@ struct FileTypeDistribution: View {
     }
 
     private func colorForType(_ type: String) -> Color {
-        switch type {
-        case "mp3": return Color(hex: 0xE53935)
-        case "flac": return Color(hex: 0x8E24AA)
-        case "ogg": return Color(hex: 0x5E35B1)
-        case "m4a", "aac": return Color(hex: 0x3949AB)
-        case "wav": return Color(hex: 0x1E88E5)
-        case "mp4", "mkv": return Color(hex: 0x00ACC1)
-        case "jpg", "png": return Color(hex: 0x43A047)
-        case "zip", "rar": return Color(hex: 0xFDD835)
-        default: return Color(hex: 0x757575)
-        }
+        SeeleColors.fileType(for: type)
     }
 }
 

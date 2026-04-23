@@ -170,7 +170,7 @@ struct PeerInfoPopover: View {
             } label: {
                 Label("Browse", systemImage: "folder")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
 
             Button {
                 appState.chatState.selectPrivateChat(peer.username)
@@ -179,7 +179,7 @@ struct PeerInfoPopover: View {
             } label: {
                 Label("Message", systemImage: "bubble.left")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
 
             Spacer()
         }
