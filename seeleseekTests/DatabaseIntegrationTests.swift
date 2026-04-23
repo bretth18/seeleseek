@@ -78,6 +78,11 @@ struct DatabaseIntegrationTests {
                 t.column("duration", .integer)
                 t.column("isDirectory", .integer).defaults(to: 0)
                 t.column("sortOrder", .integer).defaults(to: 0)
+                // Matches the v7 migration in DatabaseManager. The test
+                // DB bypasses DatabaseManager's migrator and builds
+                // schema inline, so it has to mirror every column a
+                // Record touches.
+                t.column("isPrivate", .integer).notNull().defaults(to: 0)
             }
             try db.create(index: "idx_shared_files_user", on: "shared_files", columns: ["userSharesId"])
             try db.create(index: "idx_shared_files_parent", on: "shared_files", columns: ["parentId"])
@@ -706,8 +711,8 @@ struct DatabaseIntegrationTests {
 
         try db.write { db in
             try UserSharesRecord(id: sharesId, username: "alice", cachedAt: now, totalFiles: 2, totalSize: 10_000_000).insert(db)
-            try SharedFileRecord(id: UUID().uuidString, userSharesId: sharesId, parentId: nil, filename: "Music", size: 0, bitrate: nil, duration: nil, isDirectory: true, sortOrder: 0).insert(db)
-            try SharedFileRecord(id: UUID().uuidString, userSharesId: sharesId, parentId: nil, filename: "song.mp3", size: 5_000_000, bitrate: 320, duration: 240, isDirectory: false, sortOrder: 1).insert(db)
+            try SharedFileRecord(id: UUID().uuidString, userSharesId: sharesId, parentId: nil, filename: "Music", size: 0, bitrate: nil, duration: nil, isDirectory: true, sortOrder: 0, isPrivate: false).insert(db)
+            try SharedFileRecord(id: UUID().uuidString, userSharesId: sharesId, parentId: nil, filename: "song.mp3", size: 5_000_000, bitrate: 320, duration: 240, isDirectory: false, sortOrder: 1, isPrivate: false).insert(db)
         }
 
         let shares: UserSharesRecord? = try db.read { db in
@@ -753,7 +758,7 @@ struct DatabaseIntegrationTests {
 
         try db.write { db in
             try UserSharesRecord(id: oldSharesId, username: "old", cachedAt: now - 200_000, totalFiles: 1, totalSize: 1000).insert(db)
-            try SharedFileRecord(id: UUID().uuidString, userSharesId: oldSharesId, parentId: nil, filename: "f.mp3", size: 1000, bitrate: nil, duration: nil, isDirectory: false, sortOrder: 0).insert(db)
+            try SharedFileRecord(id: UUID().uuidString, userSharesId: oldSharesId, parentId: nil, filename: "f.mp3", size: 1000, bitrate: nil, duration: nil, isDirectory: false, sortOrder: 0, isPrivate: false).insert(db)
         }
 
         let cutoff = now - 86400
