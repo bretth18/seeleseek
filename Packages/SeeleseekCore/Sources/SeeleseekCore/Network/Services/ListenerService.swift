@@ -233,15 +233,6 @@ public actor ListenerService {
         logger.info("Incoming connection from \(String(describing: connection.endpoint)) (obfuscated: \(obfuscated))")
         connectionContinuation.yield((connection, obfuscated))
     }
-
-    // MARK: - Port Scanning
-
-    /// Scans for SoulSeek clients on local network
-    static func scanLocalNetwork() async -> [DiscoveredPeer] {
-        // This would use Bonjour/mDNS or port scanning
-        // UNIMPLEMENTED
-        return []
-    }
 }
 
 // MARK: - Types
@@ -260,8 +251,3 @@ enum ListenerError: Error, LocalizedError {
     }
 }
 
-struct DiscoveredPeer {
-    public let address: String
-    public let port: UInt16
-    public let username: String?
-}

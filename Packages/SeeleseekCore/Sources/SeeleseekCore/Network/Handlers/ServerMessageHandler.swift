@@ -558,6 +558,19 @@ public final class ServerMessageHandler {
 
     private var distributedParentConnection: PeerConnection?
 
+    /// Disconnect and drop the distributed-parent socket. Called from
+    /// `NetworkClient.performDisconnect` so a reconnect doesn't inherit
+    /// a live parent from the previous session — the old socket would
+    /// otherwise keep feeding distributed search traffic into the new
+    /// message handler (and would outlive the server connection that
+    /// introduced it).
+    public func tearDownDistributedParent() async {
+        if let parent = distributedParentConnection {
+            distributedParentConnection = nil
+            await parent.disconnect()
+        }
+    }
+
     private func connectToDistributedParent(username: String, ip: String, port: Int) async -> Bool {
         logger.info("Connecting to distributed parent: \(username) at \(ip):\(port)")
 

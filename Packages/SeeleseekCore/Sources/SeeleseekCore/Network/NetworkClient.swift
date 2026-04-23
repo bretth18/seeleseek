@@ -174,7 +174,94 @@ public final class NetworkClient {
     }
 
     // MARK: - Pending Status Requests (for checking if user is online before browse/download)
-    private var pendingStatusRequests: [String: CheckedContinuation<(status: UserStatus, privileged: Bool), Never>] = [:]
+    // Multi-waiter: concurrent callers for the same username all attach to
+    // one server round-trip and get the same reply. Single-continuation
+    // storage would silently orphan the earlier caller when a second call
+    // overwrote the dict slot. Matches the shape of
+    // `pendingPeerAddressRequests` — waiter identified by UUID so per-call
+    // timeouts remove exactly one slot.
+    private typealias PendingStatusWaiter = (
+        continuation: CheckedContinuation<(status: UserStatus, privileged: Bool), Never>,
+        requestID: UUID
+    )
+    private var pendingStatusRequests: [String: [PendingStatusWaiter]] = [:]
+
+    /// Test-only: attach a waiter to `pendingStatusRequests` without
+    /// sending a server round-trip. Used to exercise the multi-waiter
+    /// coalescing and teardown paths independently of a live connection.
+    internal func _awaitStatusWaiter(
+        for username: String,
+        timeout: Duration
+    ) async -> (status: UserStatus, privileged: Bool) {
+        let requestID = UUID()
+        return await withCheckedContinuation { continuation in
+            pendingStatusRequests[username, default: []]
+                .append((continuation: continuation, requestID: requestID))
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard let self else { return }
+                guard var waiters = self.pendingStatusRequests[username] else { return }
+                guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }
+                let waiter = waiters.remove(at: idx)
+                if waiters.isEmpty {
+                    self.pendingStatusRequests.removeValue(forKey: username)
+                } else {
+                    self.pendingStatusRequests[username] = waiters
+                }
+                waiter.continuation.resume(returning: (status: .offline, privileged: false))
+            }
+        }
+    }
+
+    /// Test-only: run the full disconnect peer-operation teardown without
+    /// needing a live server connection. Returns when every pending waiter
+    /// has been resolved (either thrown or resumed with `.offline`).
+    internal func _failAllPendingPeerOperationsForTest(reason: String = "test") {
+        failAllPendingPeerOperations(reason: reason)
+    }
+
+    /// Test-only: register a sentinel establishment task and return its
+    /// handle. The task is a never-returning `await` — the test can
+    /// confirm that disconnect-driven cancellation propagates into a
+    /// real in-flight handshake by checking that the handle throws
+    /// CancellationError afterwards.
+    internal func _seedSentinelEstablishmentForTest(username: String) -> Task<PeerConnection, Error> {
+        let task = Task<PeerConnection, Error> {
+            // Sleep essentially forever until cancelled.
+            try await Task.sleep(for: .seconds(3600))
+            throw NetworkError.timeout
+        }
+        pendingEstablishments[username] = task
+        return task
+    }
+
+    /// Test-only: attach a distributed child socket placeholder so tests
+    /// can confirm `clearDistributedState` wipes it on teardown. We store
+    /// a real idle PeerConnection so the disconnect call is exercised.
+    internal func _seedDistributedChildForTest() -> PeerConnection {
+        let info = PeerConnection.PeerInfo(username: "child", ip: "127.0.0.1", port: 1)
+        let child = PeerConnection(peerInfo: info, type: .distributed, token: 0)
+        distributedChildren.append(child)
+        distributedBranchLevel = 5
+        distributedBranchRoot = "root"
+        return child
+    }
+
+    internal func _distributedChildCountForTest() -> Int {
+        distributedChildren.count
+    }
+
+    internal func _distributedBranchLevelForTest() -> UInt32 {
+        distributedBranchLevel
+    }
+
+    /// Test-only: run the peer-teardown half of `performDisconnect`
+    /// (disconnectAll + distributed clear) without touching the server
+    /// connection or listener. Matches what the real teardown Task does.
+    internal func _runDisconnectTeardownForTest() async {
+        await peerConnectionPool.disconnectAll()
+        await clearDistributedState()
+    }
 
     // MARK: - Initialization
 
@@ -416,8 +503,8 @@ public final class NetworkClient {
             let connectionStream = await listenerService.newConnections
             listenerConsumerTask = Task { [weak self] in
                 guard let self else { return }
-                for await (connection, _) in connectionStream {
-                    await self.peerConnectionPool.handleIncomingConnection(connection)
+                for await (connection, obfuscated) in connectionStream {
+                    await self.peerConnectionPool.handleIncomingConnection(connection, obfuscated: obfuscated)
                 }
             }
 
@@ -459,13 +546,16 @@ public final class NetworkClient {
                     }
                 }
             } catch {
-                // Login timed out or failed — don't auto-reconnect on auth failure
+                // Login timed out or failed — don't auto-reconnect on auth failure.
+                // Route through the full teardown so the listener, NAT, peer
+                // pool, pending waiters, distributed state, and server socket
+                // all get cleaned up — previously this path only stopped the
+                // listener, leaving stale state for the next connect().
                 isConnecting = false
-                isConnected = false
                 connectionError = error.localizedDescription
                 shouldAutoReconnect = false
-                onConnectionStatusChanged?(.disconnected)
-                await listenerService.stop()
+                performDisconnect()
+                await teardownTask?.value
                 return
             }
 
@@ -530,17 +620,22 @@ public final class NetworkClient {
         } catch {
             logger.error("Connection failed: \(error.localizedDescription)")
             isConnecting = false
-            isConnected = false
             connectionError = error.localizedDescription
 
-            // Cleanup
-            await listenerService.stop()
+            // Route through the full teardown (listener + NAT + peer pool +
+            // pending waiters + distributed state + server socket) instead
+            // of only stopping the listener. Partially-established sessions
+            // can otherwise leak server connections, distributed sockets,
+            // or peer-pool entries into the next connect().
+            let wasEligibleForReconnect = shouldAutoReconnect
+            performDisconnect()
+            await teardownTask?.value
 
-            // If auto-reconnect is active, schedule retry instead of staying disconnected
-            if shouldAutoReconnect {
+            // performDisconnect fires onConnectionStatusChanged(.disconnected)
+            // itself; the scheduleReconnect path takes over status updates
+            // from here (.connecting, etc.).
+            if wasEligibleForReconnect {
                 scheduleReconnect(reason: error.localizedDescription)
-            } else {
-                onConnectionStatusChanged?(.disconnected)
             }
         }
     }
@@ -585,6 +680,13 @@ public final class NetworkClient {
             continuation.resume(throwing: ServerConnection.ConnectionError.notConnected)
         }
 
+        // Fail every in-flight peer-operation continuation so no waiter
+        // survives across a reconnect into a server context where its
+        // reply can never arrive. Previously only server/listener/NAT
+        // state was torn down, and reconnects inherited stale continuations
+        // + peer sockets — callers hung until their per-call timeout.
+        failAllPendingPeerOperations(reason: "disconnected")
+
         receiveTask?.cancel()
         receiveTask = nil
 
@@ -600,11 +702,26 @@ public final class NetworkClient {
         let priorTeardown = teardownTask
         let serverConn = serverConnection
         serverConnection = nil
-        teardownTask = Task { [listenerService, natService] in
+        let pool = peerConnectionPool
+        let handler = messageHandler
+        messageHandler = nil
+        teardownTask = Task { [listenerService, natService, weak self] in
             await priorTeardown?.value
             await serverConn?.disconnect()
             await listenerService.stop()
             await natService.removeAllMappings()
+            // Drop every peer socket. Without this, the next connect()
+            // started dialing peers while the old sockets still existed,
+            // and the pool's dict could carry ghost entries into the new
+            // session — the "stale peer sockets" half of the auditor note.
+            await pool.disconnectAll()
+            // Distributed network teardown: the parent socket lives on
+            // the server-message handler, the child sockets on self.
+            // Both survive a reconnect without this, and the old parent
+            // keeps feeding distributed search frames into the dead
+            // session.
+            await handler?.tearDownDistributedParent()
+            await self?.clearDistributedState()
         }
 
         isConnected = false
@@ -615,6 +732,76 @@ public final class NetworkClient {
         onConnectionStatusChanged?(.disconnected)
 
         logger.info("Disconnected")
+    }
+
+    /// Resume every peer-operation continuation with an error so no caller
+    /// stays blocked across a disconnect. Covers every pending-dict used in
+    /// `establishPeerConnection` / browse / status / artwork paths.
+    private func failAllPendingPeerOperations(reason: String) {
+        let error = NetworkError.connectionFailed(reason)
+
+        for (_, waiters) in pendingPeerAddressRequests {
+            for waiter in waiters {
+                waiter.continuation.resume(throwing: error)
+            }
+        }
+        pendingPeerAddressRequests.removeAll()
+
+        for (_, waiters) in pendingStatusRequests {
+            for waiter in waiters {
+                waiter.continuation.resume(returning: (status: .offline, privileged: false))
+            }
+        }
+        pendingStatusRequests.removeAll()
+
+        for (_, continuation) in pendingBrowseSharesContinuations {
+            continuation.resume(throwing: error)
+        }
+        pendingBrowseSharesContinuations.removeAll()
+
+        for (_, state) in pendingBrowseStates {
+            state.timeoutTask?.cancel()
+            state.continuation?.resume(throwing: error)
+        }
+        pendingBrowseStates.removeAll()
+
+        // Cancel each in-flight establishment task. `removeAll()` alone
+        // just drops our handle to the task — it keeps running, can
+        // complete after disconnect, and hands a live PeerConnection
+        // back to a caller whose session is already dead. Cancelling
+        // propagates cooperative cancellation into the direct-dial /
+        // PierceFirewall race so the awaiter sees CancellationError
+        // instead of a zombie connection.
+        for (_, task) in pendingEstablishments {
+            task.cancel()
+        }
+        pendingEstablishments.removeAll()
+
+        for (_, continuation) in userInfoReplyContinuations {
+            continuation.resume(throwing: error)
+        }
+        userInfoReplyContinuations.removeAll()
+        // Same story as pendingEstablishments: the inner task could be
+        // mid-handshake with a peer. Cancel before dropping so the
+        // `try await task.value` caller unwinds.
+        for (_, task) in userInfoInFlight {
+            task.cancel()
+        }
+        userInfoInFlight.removeAll()
+        // Leave `userInfoReplyCache` intact — cached peer metadata isn't
+        // invalidated by a server reconnect; users can still be looked up
+        // by the next session without a fresh round-trip.
+
+        for (_, pending) in pendingArtworkRequests {
+            artworkCallbacks.removeValue(forKey: pending.token)
+            for waiter in pending.waiters {
+                waiter(nil)
+            }
+        }
+        pendingArtworkRequests.removeAll()
+        // Any dangling artwork callbacks whose pending entry was already
+        // torn down earlier — drop them too so the next session starts clean.
+        artworkCallbacks.removeAll()
     }
 
     /// Called when connection drops unexpectedly — triggers auto-reconnect if eligible
@@ -1401,41 +1588,55 @@ public final class NetworkClient {
     }
 
     /// Check if a user is online before attempting to connect
-    /// Returns the user's status (offline, away, online) with a timeout
+    /// Returns the user's status (offline, away, online) with a timeout.
+    ///
+    /// Concurrent callers for the same username are coalesced onto one
+    /// server round-trip: the second/third caller attaches its continuation
+    /// to the same pending entry and all receive the same reply. Previously
+    /// a second caller overwrote the first caller's continuation, orphaning
+    /// them until the 5s timeout (or forever on a `disconnect` without the
+    /// teardown hook that now exists in `failAllPendingPeerOperations`).
     public func checkUserOnlineStatus(_ username: String, timeout: TimeInterval = 5.0) async throws -> (status: UserStatus, privileged: Bool) {
         guard isConnected else { throw NetworkError.notConnected }
 
-        // Check if we already have a pending request for this user
-        if pendingStatusRequests[username] != nil {
-            logger.warning("Already have pending status request for \(username)")
+        let alreadyInFlight = (pendingStatusRequests[username]?.isEmpty == false)
+        if !alreadyInFlight {
+            let message = MessageBuilder.getUserStatusMessage(username: username)
+            try await requireConnectedServerConnection().send(message)
+            logger.info("Checking online status for: \(username)")
+        } else {
+            logger.debug("Coalescing status check for \(username) onto in-flight request")
         }
 
-        // Send the status request
-        let message = MessageBuilder.getUserStatusMessage(username: username)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Checking online status for: \(username)")
-
-        // Wait for response with timeout
+        let requestID = UUID()
         return await withCheckedContinuation { continuation in
-            pendingStatusRequests[username] = continuation
+            pendingStatusRequests[username, default: []]
+                .append((continuation: continuation, requestID: requestID))
 
-            // Set up timeout
-            Task {
+            // Per-caller timeout — removes exactly this waiter by requestID.
+            Task { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
-                // If still pending, assume offline (no response = user doesn't exist or server issue)
-                if let pending = pendingStatusRequests.removeValue(forKey: username) {
-                    logger.warning("Status check timeout for \(username), assuming offline")
-                    pending.resume(returning: (status: .offline, privileged: false))
+                guard let self else { return }
+                guard var waiters = self.pendingStatusRequests[username] else { return }
+                guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }
+                let waiter = waiters.remove(at: idx)
+                if waiters.isEmpty {
+                    self.pendingStatusRequests.removeValue(forKey: username)
+                } else {
+                    self.pendingStatusRequests[username] = waiters
                 }
+                self.logger.warning("Status check timeout for \(username), assuming offline")
+                waiter.continuation.resume(returning: (status: .offline, privileged: false))
             }
         }
     }
 
-    /// Handle status response - resumes pending status checks
+    /// Handle status response - resumes every pending status check for this user
     public func handleUserStatusResponse(username: String, status: UserStatus, privileged: Bool) {
-        // Resume any pending status check for this user
-        if let continuation = pendingStatusRequests.removeValue(forKey: username) {
-            continuation.resume(returning: (status: status, privileged: privileged))
+        if let waiters = pendingStatusRequests.removeValue(forKey: username) {
+            for waiter in waiters {
+                waiter.continuation.resume(returning: (status: status, privileged: privileged))
+            }
         }
 
         // Notify all registered status handlers
@@ -1659,15 +1860,7 @@ public final class NetworkClient {
 
         logger.info("Resetting distributed network state")
 
-        // Disconnect all children
-        for child in distributedChildren {
-            await child.disconnect()
-        }
-        distributedChildren.removeAll()
-
-        // Reset branch state
-        distributedBranchLevel = 0
-        distributedBranchRoot = ""
+        await clearDistributedState()
 
         // Tell server we have no parent and need one
         do {
@@ -1684,6 +1877,20 @@ public final class NetworkClient {
         } catch {
             logger.error("Failed to send distributed reset messages: \(error.localizedDescription)")
         }
+    }
+
+    /// Drop every distributed child socket and reset branch state. Shared
+    /// between `resetDistributedNetwork` (server code 130) and
+    /// `performDisconnect` — a reconnect must not inherit live child
+    /// sockets from the previous session. Does not touch the server
+    /// connection, so it's safe to call during teardown.
+    private func clearDistributedState() async {
+        for child in distributedChildren {
+            await child.disconnect()
+        }
+        distributedChildren.removeAll()
+        distributedBranchLevel = 0
+        distributedBranchRoot = ""
     }
 
     /// Add a distributed child connection

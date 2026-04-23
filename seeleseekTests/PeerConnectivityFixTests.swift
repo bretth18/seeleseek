@@ -11,12 +11,29 @@ import Foundation
 @Suite("Peer Connectivity Fixes", .serialized)
 struct PeerConnectivityFixTests {
 
-    // MARK: - Obfuscated listener retention
+    // MARK: - Obfuscated listener plumbing
+    //
+    // The obfuscated listener is intentionally half-wired: the port binds and
+    // surfaces inbound connections to `newConnections` flagged `obfuscated:
+    // true`, but the pool rejects them because the Soulseek XOR stream cipher
+    // isn't implemented (tracked in a separate GH issue). These two tests
+    // cover both layers so neither can regress silently:
+    //
+    //  1. Listener surfaces the connection with the obfuscated flag set.
+    //  2. Pool's `handleIncomingConnection(_:obfuscated:)` cancels it.
 
-    @Test("Obfuscated listener accepts inbound connections after start()")
-    func obfuscatedListenerAcceptsInbound() async throws {
+    @Test("Listener surfaces inbound obfuscated connections with the obfuscated flag set")
+    func obfuscatedListenerSurfacesConnectionFlagged() async throws {
         let service = ListenerService()
-        let (port, obfuscatedPort) = try await service.start()
+
+        // ListenerService scans ports 2234-2240; under parallel test
+        // execution another listener-binding test can hold the whole range
+        // so `start()` throws `noAvailablePort`. `#require` here surfaces
+        // the environmental problem distinctly from a behavioral failure
+        // of the flag propagation this test actually verifies.
+        let startResult = try? await service.start()
+        let (port, obfuscatedPort) = try #require(startResult,
+            "no available port pair in 2234-2240 — likely parallel-test contention")
         defer { Task { await service.stop() } }
 
         #expect(port > 0)
@@ -51,6 +68,26 @@ struct PeerConnectivityFixTests {
         let received = await reader.value
         let unwrapped = try #require(received, "obfuscated listener did not surface the connection within 3s")
         #expect(unwrapped.1 == true, "connection should be flagged obfuscated")
+    }
+
+    @Test("Pool rejects obfuscated inbound connections (cipher not implemented)")
+    func poolRejectsObfuscatedInbound() async throws {
+        let pool = await PeerConnectionPool()
+
+        // Spin up a dummy NWConnection pointed at a loopback port that
+        // nothing listens on. The pool should cancel it before ever
+        // touching the framing layer.
+        let endpoint = NWEndpoint.hostPort(
+            host: .ipv4(.loopback),
+            port: NWEndpoint.Port(rawValue: 1)!
+        )
+        let conn = NWConnection(to: endpoint, using: .tcp)
+
+        await pool.handleIncomingConnection(conn, obfuscated: true)
+
+        // No tracking entry was created for an obfuscated rejection.
+        let count = await pool.activeConnections
+        #expect(count == 0, "pool must not track obfuscated connections")
     }
 
     // MARK: - Multi-waiter getPeerAddress
@@ -307,6 +344,194 @@ struct PeerConnectivityFixTests {
 
         #expect(await pool._connectionInfo(id: "incoming-TEST") == nil,
                 "F-connection must be removed from pool tracking after handoff")
+    }
+
+    // MARK: - Pool: per-connection keying (regression for concurrent-connections-per-user)
+
+    /// When a single user has two concurrent connections (e.g. browse socket
+    /// plus a direct download socket) the old event handler scanned the
+    /// connections dict by `hasPrefix("\(username)-")` and mutated the first
+    /// match it found — so a state change on socket A could silently close
+    /// socket B. handlePeerEvent now routes every event by `connectionId`.
+    @Test("Disconnect on one socket leaves the other socket alone when both share a username")
+    func poolStateChangedKeysByConnectionIdNotUsername() async {
+        let pool = await PeerConnectionPool()
+
+        let first = await PeerConnectionPool.PeerConnectionInfo(
+            id: "alice-1",
+            username: "alice",
+            ip: "10.0.0.1",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: Date()
+        )
+        let second = await PeerConnectionPool.PeerConnectionInfo(
+            id: "alice-2",
+            username: "alice",
+            ip: "10.0.0.1",
+            port: 2235,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: Date()
+        )
+        await pool._seedConnectionForTest(first)
+        await pool._seedConnectionForTest(second)
+
+        // Simulate .stateChanged(.disconnected) arriving for socket #2 only.
+        await pool._simulateOutgoingStateChangedForTest(
+            connectionId: "alice-2", username: "alice", state: .disconnected
+        )
+
+        let stillFirst = await pool._connectionInfo(id: "alice-1")
+        let dropped = await pool._connectionInfo(id: "alice-2")
+        #expect(stillFirst != nil, "socket #1 must survive — only #2 disconnected")
+        #expect(dropped == nil, "socket #2 must be removed")
+    }
+
+    /// Usernames can contain dashes. A prefix scan on `"bob-"` would match
+    /// `"bob-1-<token>"` when disconnecting user `"bob"` — the wrong socket.
+    /// `disconnect(username:)` now matches exact `PeerConnectionInfo.username`.
+    @Test("disconnect(username:) does not fire on dash-prefix username collisions")
+    func poolDisconnectMatchesExactUsername() async {
+        let pool = await PeerConnectionPool()
+
+        let bob = await PeerConnectionPool.PeerConnectionInfo(
+            id: "bob-1",
+            username: "bob",
+            ip: "10.0.0.1",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer
+        )
+        let bobDashOne = await PeerConnectionPool.PeerConnectionInfo(
+            id: "bob-1-42",
+            username: "bob-1",
+            ip: "10.0.0.2",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer
+        )
+        await pool._seedConnectionForTest(bob)
+        await pool._seedConnectionForTest(bobDashOne)
+
+        await pool.disconnect(username: "bob")
+
+        #expect(await pool._connectionInfo(id: "bob-1") == nil, "exact-match user should disconnect")
+        #expect(await pool._connectionInfo(id: "bob-1-42") != nil,
+                "user 'bob-1' should NOT be caught by a disconnect for 'bob'")
+    }
+
+    // MARK: - checkUserOnlineStatus multi-waiter
+
+    @Test("Concurrent status waiters all resume on a single server response")
+    func multiWaiterStatusCoalesces() async {
+        let client = await NetworkClient()
+
+        let a = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+        let b = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+        let c = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+
+        try? await Task.sleep(for: .milliseconds(50))
+        await client.handleUserStatusResponse(username: "alice", status: .online, privileged: true)
+
+        let ra = await a.value
+        let rb = await b.value
+        let rc = await c.value
+        #expect(ra.status == .online && ra.privileged)
+        #expect(rb.status == .online && rb.privileged)
+        #expect(rc.status == .online && rc.privileged)
+    }
+
+    @Test("Status waiter timeout removes only its own entry")
+    func statusWaiterTimeoutIsIsolated() async {
+        let client = await NetworkClient()
+
+        let early = Task { await client._awaitStatusWaiter(for: "bob", timeout: .seconds(10)) }
+        try? await Task.sleep(for: .milliseconds(20))
+        let late = Task { await client._awaitStatusWaiter(for: "bob", timeout: .milliseconds(100)) }
+
+        let lateResult = await late.value
+        #expect(lateResult.status == .offline, "short-timeout waiter returns offline")
+
+        await client.handleUserStatusResponse(username: "bob", status: .online, privileged: false)
+        let earlyResult = await early.value
+        #expect(earlyResult.status == .online, "long-timeout waiter gets the real reply")
+    }
+
+    // MARK: - Disconnect teardown
+
+    @Test("Disconnect resumes every pending peer-operation waiter")
+    func disconnectFailsAllPendingWaiters() async {
+        let client = await NetworkClient()
+
+        let addressWaiter = Task {
+            try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(30))
+        }
+        let statusWaiter = Task {
+            await client._awaitStatusWaiter(for: "alice", timeout: .seconds(30))
+        }
+
+        try? await Task.sleep(for: .milliseconds(50))
+        await client._failAllPendingPeerOperationsForTest()
+
+        do {
+            _ = try await addressWaiter.value
+            Issue.record("peer-address waiter should have thrown on disconnect")
+        } catch {
+            // expected
+        }
+
+        let status = await statusWaiter.value
+        #expect(status.status == .offline, "status waiter should resume with offline on disconnect")
+    }
+
+    /// `failAllPendingPeerOperations` used to call `removeAll()` on the
+    /// `pendingEstablishments` dict without cancelling the in-flight tasks.
+    /// A task mid-handshake would then complete after disconnect and hand
+    /// a live PeerConnection back to a caller in a dead session. Now we
+    /// cancel each task before dropping our reference.
+    @Test("Disconnect cancels in-flight peer-establishment tasks")
+    func disconnectCancelsPendingEstablishments() async {
+        let client = await NetworkClient()
+
+        let sentinel = await client._seedSentinelEstablishmentForTest(username: "alice")
+
+        await client._failAllPendingPeerOperationsForTest()
+
+        do {
+            _ = try await sentinel.value
+            Issue.record("sentinel establishment task should have been cancelled")
+        } catch is CancellationError {
+            // expected: Task.sleep throws CancellationError on cancel
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+    }
+
+    // MARK: - Distributed-network teardown
+
+    /// Children sockets and branch state used to survive a disconnect —
+    /// `performDisconnect` only tore down server/listener/NAT/peer pool.
+    /// A reconnect then inherited live D-connections from the previous
+    /// session, and the old parent kept feeding distributed traffic into
+    /// the new session. Teardown now wipes both.
+    @Test("Disconnect clears distributed children and branch state")
+    func disconnectClearsDistributedState() async {
+        let client = await NetworkClient()
+
+        _ = await client._seedDistributedChildForTest()
+        #expect(await client._distributedChildCountForTest() == 1,
+                "precondition: distributed child seeded")
+        #expect(await client._distributedBranchLevelForTest() == 5,
+                "precondition: branch state seeded")
+
+        await client._runDisconnectTeardownForTest()
+
+        #expect(await client._distributedChildCountForTest() == 0,
+                "children must be disconnected and dropped on teardown")
+        #expect(await client._distributedBranchLevelForTest() == 0,
+                "branch level must reset on teardown")
     }
 
     // MARK: - Pool: lastActivity bumped on event

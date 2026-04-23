@@ -213,11 +213,25 @@ public final class ShareManager {
         logger.info("Scan complete: \(self.totalFiles) files in \(self.totalFolders) folders")
     }
 
+    /// Bundle of per-folder scan outputs produced on a background task and
+    /// published back to the main actor in one atomic step. Splitting the
+    /// disk walk from the state mutation keeps large rescans off the main
+    /// thread — previously the per-file loop called `fileIndex.append`
+    /// directly under @MainActor, which on ~10k-file libraries stalled the
+    /// UI and starved other main-actor networking orchestration.
+    private struct ScanResult: Sendable {
+        let folderID: UUID
+        let indexed: [IndexedFile]
+        let fileCount: Int
+        let totalSize: UInt64
+    }
+
     private func scanFolder(_ folder: SharedFolder) async {
-        let fileManager = FileManager.default
         let folderURL = URL(fileURLWithPath: folder.path)
 
-        // Try to restore bookmark access
+        // Restore bookmark access on the main actor before handing the URL
+        // to a detached task — security-scoped resource access is per-URL
+        // and must be balanced, but the access call itself is cheap.
         if let bookmarkData = UserDefaults.standard.data(forKey: "bookmark-\(folder.path)") {
             var isStale = false
             if let url = try? URL(
@@ -230,60 +244,76 @@ public final class ShareManager {
             }
         }
 
-        guard let enumerator = fileManager.enumerator(
-            at: folderURL,
-            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        // Copy the Sendable bits the worker needs. Folder identity is a
+        // UUID and the visibility/path are value types — no main-actor
+        // references escape.
+        let folderID = folder.id
+        let folderVisibility = folder.visibility
+        let folderDisplayName = folder.displayName
+
+        let result: ScanResult? = await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            guard let enumerator = fileManager.enumerator(
+                at: folderURL,
+                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return nil
+            }
+
+            var files: [IndexedFile] = []
+            var count = 0
+            var total: UInt64 = 0
+            let basePath = folderURL.path
+
+            while let fileURL = enumerator.nextObject() as? URL {
+                do {
+                    let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+                    guard values.isDirectory != true else { continue }
+
+                    let size = UInt64(values.fileSize ?? 0)
+                    let relativePath = String(fileURL.path.dropFirst(basePath.count))
+                    let sharedPath = folderDisplayName + relativePath.replacingOccurrences(of: "/", with: "\\")
+
+                    files.append(IndexedFile(
+                        localPath: fileURL.path,
+                        sharedPath: sharedPath,
+                        size: size,
+                        bitrate: Self.extractBitrate(from: fileURL),
+                        visibility: folderVisibility,
+                        folderID: folderID
+                    ))
+                    count += 1
+                    total += size
+                } catch {
+                    // Per-file failures are silent — one unreadable file
+                    // shouldn't abort the whole rescan.
+                }
+            }
+
+            return ScanResult(folderID: folderID, indexed: files, fileCount: count, totalSize: total)
+        }.value
+
+        guard let result else {
             logger.error("Failed to enumerate folder: \(folder.path)")
             return
         }
 
-        var folderFileCount = 0
-        var folderTotalSize: UInt64 = 0
-        let basePath = folderURL.path
-
-        while let fileURL = enumerator.nextObject() as? URL {
-            do {
-                let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
-
-                guard resourceValues.isDirectory != true else { continue }
-
-                let size = UInt64(resourceValues.fileSize ?? 0)
-                let relativePath = String(fileURL.path.dropFirst(basePath.count))
-                let sharedPath = folder.displayName + relativePath.replacingOccurrences(of: "/", with: "\\")
-
-                // Extract audio metadata if it's an audio file
-                let bitrate = extractBitrate(from: fileURL)
-
-                let indexed = IndexedFile(
-                    localPath: fileURL.path,
-                    sharedPath: sharedPath,
-                    size: size,
-                    bitrate: bitrate,
-                    visibility: folder.visibility,
-                    folderID: folder.id
-                )
-
-                fileIndex.append(indexed)
-                folderFileCount += 1
-                folderTotalSize += size
-            } catch {
-                logger.debug("Failed to read file: \(fileURL.path)")
-            }
-        }
-
-        // Update folder stats
-        if let index = sharedFolders.firstIndex(where: { $0.id == folder.id }) {
-            sharedFolders[index].fileCount = folderFileCount
-            sharedFolders[index].totalSize = folderTotalSize
+        // Single publish step back on main: append the scanned batch and
+        // update folder stats in one @MainActor hop.
+        fileIndex.append(contentsOf: result.indexed)
+        if let index = sharedFolders.firstIndex(where: { $0.id == result.folderID }) {
+            sharedFolders[index].fileCount = result.fileCount
+            sharedFolders[index].totalSize = result.totalSize
             sharedFolders[index].lastScanned = Date()
         }
 
-        logger.info("Scanned \(folder.displayName): \(folderFileCount) files")
+        logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
     }
 
-    private func extractBitrate(from url: URL) -> UInt32? {
+    // Static so the detached scan task can call it without a main-actor hop.
+    // `nonisolated` is required even on a static on a @MainActor type.
+    nonisolated private static func extractBitrate(from url: URL) -> UInt32? {
         // Simple bitrate extraction - in a real app, use AVFoundation
         let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav"]
         guard audioExtensions.contains(url.pathExtension.lowercased()) else { return nil }
