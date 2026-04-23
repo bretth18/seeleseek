@@ -309,6 +309,146 @@ struct PeerConnectivityFixTests {
                 "F-connection must be removed from pool tracking after handoff")
     }
 
+    // MARK: - Pool: per-connection keying (regression for concurrent-connections-per-user)
+
+    /// When a single user has two concurrent connections (e.g. browse socket
+    /// plus a direct download socket) the old event handler scanned the
+    /// connections dict by `hasPrefix("\(username)-")` and mutated the first
+    /// match it found — so a state change on socket A could silently close
+    /// socket B. handlePeerEvent now routes every event by `connectionId`.
+    @Test("Disconnect on one socket leaves the other socket alone when both share a username")
+    func poolStateChangedKeysByConnectionIdNotUsername() async {
+        let pool = await PeerConnectionPool()
+
+        let first = await PeerConnectionPool.PeerConnectionInfo(
+            id: "alice-1",
+            username: "alice",
+            ip: "10.0.0.1",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: Date()
+        )
+        let second = await PeerConnectionPool.PeerConnectionInfo(
+            id: "alice-2",
+            username: "alice",
+            ip: "10.0.0.1",
+            port: 2235,
+            state: .connected,
+            connectionType: .peer,
+            connectedAt: Date()
+        )
+        await pool._seedConnectionForTest(first)
+        await pool._seedConnectionForTest(second)
+
+        // Simulate .stateChanged(.disconnected) arriving for socket #2 only.
+        await pool._simulateOutgoingStateChangedForTest(
+            connectionId: "alice-2", username: "alice", state: .disconnected
+        )
+
+        let stillFirst = await pool._connectionInfo(id: "alice-1")
+        let dropped = await pool._connectionInfo(id: "alice-2")
+        #expect(stillFirst != nil, "socket #1 must survive — only #2 disconnected")
+        #expect(dropped == nil, "socket #2 must be removed")
+    }
+
+    /// Usernames can contain dashes. A prefix scan on `"bob-"` would match
+    /// `"bob-1-<token>"` when disconnecting user `"bob"` — the wrong socket.
+    /// `disconnect(username:)` now matches exact `PeerConnectionInfo.username`.
+    @Test("disconnect(username:) does not fire on dash-prefix username collisions")
+    func poolDisconnectMatchesExactUsername() async {
+        let pool = await PeerConnectionPool()
+
+        let bob = await PeerConnectionPool.PeerConnectionInfo(
+            id: "bob-1",
+            username: "bob",
+            ip: "10.0.0.1",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer
+        )
+        let bobDashOne = await PeerConnectionPool.PeerConnectionInfo(
+            id: "bob-1-42",
+            username: "bob-1",
+            ip: "10.0.0.2",
+            port: 2234,
+            state: .connected,
+            connectionType: .peer
+        )
+        await pool._seedConnectionForTest(bob)
+        await pool._seedConnectionForTest(bobDashOne)
+
+        await pool.disconnect(username: "bob")
+
+        #expect(await pool._connectionInfo(id: "bob-1") == nil, "exact-match user should disconnect")
+        #expect(await pool._connectionInfo(id: "bob-1-42") != nil,
+                "user 'bob-1' should NOT be caught by a disconnect for 'bob'")
+    }
+
+    // MARK: - checkUserOnlineStatus multi-waiter
+
+    @Test("Concurrent status waiters all resume on a single server response")
+    func multiWaiterStatusCoalesces() async {
+        let client = await NetworkClient()
+
+        let a = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+        let b = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+        let c = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
+
+        try? await Task.sleep(for: .milliseconds(50))
+        await client.handleUserStatusResponse(username: "alice", status: .online, privileged: true)
+
+        let ra = await a.value
+        let rb = await b.value
+        let rc = await c.value
+        #expect(ra.status == .online && ra.privileged)
+        #expect(rb.status == .online && rb.privileged)
+        #expect(rc.status == .online && rc.privileged)
+    }
+
+    @Test("Status waiter timeout removes only its own entry")
+    func statusWaiterTimeoutIsIsolated() async {
+        let client = await NetworkClient()
+
+        let early = Task { await client._awaitStatusWaiter(for: "bob", timeout: .seconds(10)) }
+        try? await Task.sleep(for: .milliseconds(20))
+        let late = Task { await client._awaitStatusWaiter(for: "bob", timeout: .milliseconds(100)) }
+
+        let lateResult = await late.value
+        #expect(lateResult.status == .offline, "short-timeout waiter returns offline")
+
+        await client.handleUserStatusResponse(username: "bob", status: .online, privileged: false)
+        let earlyResult = await early.value
+        #expect(earlyResult.status == .online, "long-timeout waiter gets the real reply")
+    }
+
+    // MARK: - Disconnect teardown
+
+    @Test("Disconnect resumes every pending peer-operation waiter")
+    func disconnectFailsAllPendingWaiters() async {
+        let client = await NetworkClient()
+
+        let addressWaiter = Task {
+            try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(30))
+        }
+        let statusWaiter = Task {
+            await client._awaitStatusWaiter(for: "alice", timeout: .seconds(30))
+        }
+
+        try? await Task.sleep(for: .milliseconds(50))
+        await client._failAllPendingPeerOperationsForTest()
+
+        do {
+            _ = try await addressWaiter.value
+            Issue.record("peer-address waiter should have thrown on disconnect")
+        } catch {
+            // expected
+        }
+
+        let status = await statusWaiter.value
+        #expect(status.status == .offline, "status waiter should resume with offline on disconnect")
+    }
+
     // MARK: - Pool: lastActivity bumped on event
 
     @Test("touchActivity updates lastActivity so cleanup doesn't reap a live connection")

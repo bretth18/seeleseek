@@ -332,8 +332,23 @@ public final class PeerConnectionPool {
     // Callback for registering user IPs (for country flags)
     // onUserIPDiscovered replaced by PeerPoolEvent.userIPDiscovered
 
-    /// Handle an incoming connection from the listener service
-    public func handleIncomingConnection(_ nwConnection: NWConnection) async {
+    /// Handle an incoming connection from the listener service.
+    ///
+    /// `obfuscated` tracks which listener the connection arrived on. We do
+    /// not yet implement the Soulseek obfuscated-stream cipher, so any
+    /// connection on the obfuscated port is dropped here rather than being
+    /// handled as plain TCP — previously the flag was silently discarded,
+    /// which meant cipher bytes fell into the plain-text message parser
+    /// and either produced garbage or a dropped connection much later.
+    /// Keeping the port bound (but rejecting) lets us track inbound probes
+    /// without corrupting the peer protocol.
+    public func handleIncomingConnection(_ nwConnection: NWConnection, obfuscated: Bool = false) async {
+        if obfuscated {
+            logger.info("Rejecting obfuscated inbound connection from \(String(describing: nwConnection.endpoint)) — obfuscation not implemented")
+            nwConnection.cancel()
+            return
+        }
+
         // Enforce connection limit to prevent resource exhaustion
         if activeConnections >= maxConnections {
             logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
@@ -416,7 +431,13 @@ public final class PeerConnectionPool {
     }
 
     public func disconnect(username: String) async {
-        let keysToRemove = connections.keys.filter { $0.hasPrefix("\(username)-") }
+        // Match by the username recorded in PeerConnectionInfo rather than by
+        // prefix-on-key. Prefix matching misses incoming connections (keyed
+        // "incoming-*") and false-positives when one username is a dash-
+        // prefix of another (e.g. "bob-1" matching the key "bob-12-42").
+        let keysToRemove = connections.compactMap { (key, info) -> String? in
+            info.username == username ? key : nil
+        }
         for key in keysToRemove {
             connections.removeValue(forKey: key)
             if let conn = activeConnections_.removeValue(forKey: key) {
@@ -468,13 +489,18 @@ public final class PeerConnectionPool {
     }
 
     /// Get an active connection by username (first match)
-    /// Checks both outgoing connections (keyed by "username-token") and
-    /// incoming connections (keyed by "incoming-*" but with username in connection info)
+    /// Iterates PeerConnectionInfo rather than parsing the key: the key
+    /// format differs between outgoing ("username-token") and incoming
+    /// ("incoming-*"), and a prefix-match on the outgoing form could also
+    /// incorrectly match a different user whose name shares a dash-prefix
+    /// (e.g. "bob" matching "bob-1-42").
     public func getConnectionForUser(_ username: String) async -> PeerConnection? {
-        // First check outgoing connections (direct key match)
-        if let key = activeConnections_.keys.first(where: { $0.hasPrefix("\(username)-") }),
-           let connection = activeConnections_[key] {
-            // CRITICAL: Verify the connection is actually still connected
+        let matchingKeys = connections.compactMap { (key, info) -> String? in
+            info.username == username ? key : nil
+        }
+
+        for key in matchingKeys {
+            guard let connection = activeConnections_[key] else { continue }
             let isConnected = await connection.isConnected
             if isConnected {
                 return connection
@@ -482,22 +508,6 @@ public final class PeerConnectionPool {
                 logger.debug("Found stale connection for \(username) (key: \(key)), removing")
                 activeConnections_.removeValue(forKey: key)
                 connections.removeValue(forKey: key)
-            }
-        }
-
-        // Then check incoming connections by looking at the username in connection info
-        for (key, info) in connections {
-            if info.username == username, let connection = activeConnections_[key] {
-                // CRITICAL: Verify the connection is actually still connected
-                let isConnected = await connection.isConnected
-                if isConnected {
-                    logger.debug("Found existing incoming connection for \(username) (key: \(key))")
-                    return connection
-                } else {
-                    logger.debug("Found stale incoming connection for \(username) (key: \(key)), removing")
-                    activeConnections_.removeValue(forKey: key)
-                    connections.removeValue(forKey: key)
-                }
             }
         }
 
@@ -701,22 +711,20 @@ public final class PeerConnectionPool {
 
         switch event {
         case .stateChanged(let state):
-            if isIncoming {
-                if case .disconnected = state {
+            // Use connectionId — the key we assigned when tracking this exact
+            // connection — not a prefix scan on username. A prefix scan can
+            // match the wrong socket when the same user has multiple
+            // concurrent connections (browse + search + direct download),
+            // or when one username is a dash-prefix of another
+            // (e.g. "bob-1" vs "bob-12").
+            connections[connectionId]?.state = state
+            if case .disconnected = state {
+                if isIncoming {
                     decrementIPCounter(for: capturedIP)
-                    connections.removeValue(forKey: connectionId)
-                    activeConnections_.removeValue(forKey: connectionId)
-                    activeConnections = connections.count
                 }
-            } else {
-                if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-                    connections[key]?.state = state
-                    if case .disconnected = state {
-                        connections.removeValue(forKey: key)
-                        activeConnections_.removeValue(forKey: key)
-                        activeConnections = connections.count
-                    }
-                }
+                connections.removeValue(forKey: connectionId)
+                activeConnections_.removeValue(forKey: connectionId)
+                activeConnections = connections.count
             }
 
         case .searchReply(let token, let results):
@@ -727,12 +735,9 @@ public final class PeerConnectionPool {
                 await connection.disconnect()
                 if isIncoming {
                     self.decrementIPCounter(for: capturedIP)
-                    self.connections.removeValue(forKey: connectionId)
-                    self.activeConnections_.removeValue(forKey: connectionId)
-                } else if let key = self.connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
-                    self.connections.removeValue(forKey: key)
-                    self.activeConnections_.removeValue(forKey: key)
                 }
+                self.connections.removeValue(forKey: connectionId)
+                self.activeConnections_.removeValue(forKey: connectionId)
                 self.activeConnections = self.connections.count
             }
 
@@ -862,11 +867,10 @@ public final class PeerConnectionPool {
             // read: observing it only invalidates on discovery, not on
             // every connection-state or bytes update.
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
-            if isIncoming {
-                connections[connectionId]?.seeleSeekVersion = version
-            } else if let key = connections.keys.first(where: { $0.hasPrefix("\(peerUsername)-") }) {
-                connections[key]?.seeleSeekVersion = version
-            }
+            // Stamp onto the exact PeerConnectionInfo for this socket.
+            // Prefix scans on username can hit the wrong row when a user
+            // has multiple concurrent connections.
+            connections[connectionId]?.seeleSeekVersion = version
             if !peerUsername.isEmpty {
                 seeleSeekVersions[peerUsername] = version
             }
@@ -931,5 +935,23 @@ public final class PeerConnectionPool {
         connections.removeValue(forKey: connectionId)
         activeConnections_.removeValue(forKey: connectionId)
         activeConnections = connections.count
+    }
+
+    /// Drive the outgoing-stateChanged branch of `handlePeerEvent` directly.
+    /// Used by tests to prove the handler keys off `connectionId` instead of
+    /// scanning for the first key with `"\(username)-"` prefix — when the
+    /// same user has multiple concurrent connections, a prefix scan could
+    /// mutate the wrong one.
+    internal func _simulateOutgoingStateChangedForTest(
+        connectionId: String,
+        username: String,
+        state: PeerConnection.State
+    ) {
+        connections[connectionId]?.state = state
+        if case .disconnected = state {
+            connections.removeValue(forKey: connectionId)
+            activeConnections_.removeValue(forKey: connectionId)
+            activeConnections = connections.count
+        }
     }
 }
