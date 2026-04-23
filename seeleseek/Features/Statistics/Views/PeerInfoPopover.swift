@@ -114,8 +114,15 @@ struct PeerInfoPopover: View {
                 }
             }
 
-            if let lastActivity = peer.lastActivity {
-                DetailRow(label: "Last Activity", value: lastActivity.formatted(date: .omitted, time: .shortened))
+            // `lastActivity(for:)` reads non-observable shadow storage, so
+            // we need to drive our own refresh cadence — otherwise the
+            // timestamp freezes at whatever the dict held the first time
+            // the popover body ran. The value is minute-resolution, so a
+            // 1 Hz TimelineView is plenty.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                if let lastActivity = appState.networkClient.peerConnectionPool.lastActivity(for: peer.id) {
+                    DetailRow(label: "Last Activity", value: lastActivity.formatted(date: .omitted, time: .shortened))
+                }
             }
         }
     }

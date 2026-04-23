@@ -38,19 +38,34 @@ struct TransferRow: View {
     let onRemove: () -> Void
     var onMoveToTop: (() -> Void)? = nil
     var onMoveToBottom: (() -> Void)? = nil
-    /// Speed samples ordered oldest → newest, sourced from
-    /// `TransferState.speedHistory` (1Hz ring buffer). Only rendered while
-    /// the transfer is active; empty arrays show a faint baseline.
-    var speedHistory: [Int64] = []
 
     @State private var isHovered = false
 
-    /// Live peer status from the app-wide peer-status cache. Populated
-    /// for any peer currently being watched — `TransferState` auto-watches
-    /// every peer in the transfer list so this resolves for strangers
-    /// too, not just buddies.
-    private var peerStatus: BuddyStatus? {
-        appState.socialState.peerStatus(for: transfer.username)
+    /// Peer status cached in @State rather than read live from
+    /// `SocialState.peerStatuses`. The underlying dict is
+    /// `@ObservationIgnored` on `SocialState`, so no dict-wide fan-out
+    /// re-renders this row when some unrelated peer changes state.
+    /// Refreshed on appear, on username change, and — for rows whose
+    /// "Peer offline" label is actually visible — via the polling task
+    /// below. Transferring/completed rows don't poll (the label is
+    /// suppressed in those states anyway).
+    @State private var peerStatus: BuddyStatus?
+
+    private func refreshPeerStatus() {
+        peerStatus = appState.socialState.peerStatus(for: transfer.username)
+    }
+
+    /// True for statuses where `TransferInfoColumn` can surface the
+    /// "Peer offline" affordance — the single reason peer status has to
+    /// stay live on this row. Must match the predicate in
+    /// `TransferInfoColumn.peerIsOffline`.
+    private var peerStatusAffectsVisibleLabel: Bool {
+        switch transfer.status {
+        case .queued, .waiting, .failed, .cancelled:
+            return true
+        default:
+            return false
+        }
     }
 
     /// True only if the app-wide audio preview is currently playing
@@ -84,8 +99,7 @@ struct TransferRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     TransferMetadataColumn(
-                        transfer: transfer,
-                        speedHistory: speedHistory
+                        transfer: transfer
                     )
 
                     TransferActionCluster(
@@ -118,8 +132,30 @@ struct TransferRow: View {
             onTogglePreview: toggleAudioPreview,
             onEditMetadata: openMetadataEditor
         ))
-        .onAppear(perform: refreshCountryFlag)
-        .onChange(of: transfer.username) { _, _ in refreshCountryFlag() }
+        .onAppear {
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
+        .onChange(of: transfer.username) { _, _ in
+            refreshCountryFlag()
+            refreshPeerStatus()
+        }
+        .onChange(of: transfer.status) { _, _ in
+            refreshPeerStatus()
+        }
+        // Keep the `Peer offline` label current on stalled rows. The
+        // task is keyed on `peerStatusAffectsVisibleLabel` so it only
+        // runs while the label can actually render — transferring /
+        // completed rows do no polling. 2 s cadence is deliberate:
+        // the label is coarse UX, not a progress indicator.
+        .task(id: peerStatusAffectsVisibleLabel) {
+            guard peerStatusAffectsVisibleLabel else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { break }
+                refreshPeerStatus()
+            }
+        }
     }
 
     // MARK: - Context menu
@@ -420,8 +456,8 @@ private struct TransferInfoColumn: View {
 // MARK: - Metadata column (right, two tiers)
 
 private struct TransferMetadataColumn: View {
+    @Environment(\.appState) private var appState
     let transfer: Transfer
-    let speedHistory: [Int64]
 
     private var line1Width: CGFloat {
         TransferRowLayout.sparklineWidth
@@ -450,8 +486,18 @@ private struct TransferMetadataColumn: View {
     private var sparklineSlot: some View {
         Group {
             if transfer.status == .transferring {
-                TransferSparkline(values: speedHistory, tint: SeeleColors.accent)
-                    .accessibilityHidden(true)
+                // Poll the non-observable speed-history accessor every
+                // second. `speedHistory(for:)` doesn't register an
+                // Observation dependency, so only this sparkline view
+                // refreshes on each tick — the enclosing row and list
+                // stay idle even while sampling is active.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    TransferSparkline(
+                        values: appState.transferState.speedHistory(for: transfer.id),
+                        tint: SeeleColors.accent
+                    )
+                }
+                .accessibilityHidden(true)
             } else {
                 Color.clear
             }
@@ -823,13 +869,11 @@ struct TransferSparkline: View {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             TransferRow(
                 transfer: downloading,
-                onCancel: {}, onRetry: {}, onRemove: {},
-                speedHistory: sparkDownloading
+                onCancel: {}, onRetry: {}, onRemove: {}
             )
             TransferRow(
                 transfer: uploading,
-                onCancel: {}, onRetry: {}, onRemove: {},
-                speedHistory: sparkUploading
+                onCancel: {}, onRetry: {}, onRemove: {}
             )
             TransferRow(transfer: queued, onCancel: {}, onRetry: {}, onRemove: {})
             TransferRow(transfer: failed, onCancel: {}, onRetry: {}, onRemove: {})

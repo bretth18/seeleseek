@@ -1,0 +1,66 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Monday 04:23 UTC. Catches drift if a commit lands on main without
+    # going through the push trigger (e.g., a force-push or an admin
+    # bypass) and gives us one scheduled run per week regardless.
+    - cron: '23 4 * * 1'
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: CodeQL (Swift)
+    # Matches .github/workflows/build.yml — macos-26 is the runner image the
+    # app has been verified to build on. Do not switch to macos-latest without
+    # re-verifying the Xcode version ships a Swift toolchain CodeQL supports.
+    runs-on: macos-26
+    # Swift CodeQL extraction is slow; a clean build on the runner is ~10-15
+    # minutes, analysis adds another ~5-10. 60 is a generous ceiling that
+    # still catches a hang instead of burning macOS minutes indefinitely.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        # Same selection the Build and Test jobs use so we compile against an
+        # Xcode the project already runs on — avoids "works in CI, breaks in
+        # CodeQL" toolchain skew.
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: swift
+          # `manual` tells CodeQL to intercept the build we run below rather
+          # than trying to auto-detect one. Autobuild cannot drive xcodebuild
+          # for an Xcode project with nested SPM packages (Packages/SeeleseekCore).
+          build-mode: manual
+
+      - name: Build
+        # Lifted from .github/workflows/build.yml so the analysis compiles
+        # the exact same target the release path builds. Debug configuration
+        # is deliberate: Release-mode optimizations can fold away code paths
+        # CodeQL would otherwise inspect.
+        run: |
+          xcodebuild \
+            -scheme seeleseek \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            build \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:swift"

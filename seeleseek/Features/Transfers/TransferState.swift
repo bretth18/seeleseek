@@ -216,8 +216,24 @@ final class TransferState: TransferTracking {
     /// their final curve. Pruned in the removal paths
     /// (`removeTransfer` / `clearCompleted` / `clearFailed`) so the dict
     /// doesn't grow unboundedly with the lifetime cumulative transfer count.
-    private(set) var speedHistory: [UUID: [Int64]] = [:]
+    /// Per-transfer sparkline ring buffer. Kept off the @Observable surface
+    /// because it's written by the 1Hz speed timer for every active
+    /// transfer — each tick rewrote the whole dict, which invalidated
+    /// every SwiftUI view that read `speedHistory[id]` on the parent
+    /// (TransfersView passed the slice into every row), causing the entire
+    /// transfer list to re-render once per second. Sparklines now poll
+    /// via `speedHistory(for:)` inside a 1Hz TimelineView so only the
+    /// sparkline itself refreshes, not the row or the list.
+    @ObservationIgnored private var speedHistoryStore: [UUID: [Int64]] = [:]
     private static let speedHistoryLimit = 30
+
+    /// Non-observable accessor for the sparkline history. Reads from
+    /// `speedHistoryStore` so the caller registers no dependency on
+    /// @Observable state — the view drives its own refresh cadence
+    /// (typically a TimelineView).
+    func speedHistory(for id: UUID) -> [Int64] {
+        speedHistoryStore[id] ?? []
+    }
 
     // Speed update timer
     private var speedUpdateTimer: Timer?
@@ -452,7 +468,7 @@ final class TransferState: TransferTracking {
     func removeTransfer(id: UUID) {
         downloads.removeAll { $0.id == id }
         uploads.removeAll { $0.id == id }
-        speedHistory.removeValue(forKey: id)
+        speedHistoryStore.removeValue(forKey: id)
         reconcilePeerWatches()
         onDownloadTerminated?(id)
 
@@ -468,7 +484,7 @@ final class TransferState: TransferTracking {
             .map(\.id)
         downloads.removeAll { $0.status == .completed }
         uploads.removeAll { $0.status == .completed }
-        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        for id in removedIds { speedHistoryStore.removeValue(forKey: id) }
         reconcilePeerWatches()
         // Completed transfers can't have a pending retry Task, so skip
         // the onDownloadTerminated fan-out here.
@@ -485,7 +501,7 @@ final class TransferState: TransferTracking {
             .map(\.id)
         downloads.removeAll { $0.status == .failed || $0.status == .cancelled }
         uploads.removeAll { $0.status == .failed || $0.status == .cancelled }
-        for id in removedIds { speedHistory.removeValue(forKey: id) }
+        for id in removedIds { speedHistoryStore.removeValue(forKey: id) }
         reconcilePeerWatches()
         for id in removedIds { onDownloadTerminated?(id) }
 
@@ -530,11 +546,11 @@ final class TransferState: TransferTracking {
     }
 
     private func appendSample(_ value: Int64, for id: UUID) {
-        var samples = speedHistory[id] ?? []
+        var samples = speedHistoryStore[id] ?? []
         samples.append(value)
         if samples.count > Self.speedHistoryLimit {
             samples.removeFirst(samples.count - Self.speedHistoryLimit)
         }
-        speedHistory[id] = samples
+        speedHistoryStore[id] = samples
     }
 }

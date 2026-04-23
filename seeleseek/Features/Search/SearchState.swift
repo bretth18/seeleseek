@@ -17,7 +17,9 @@ final class SearchState {
     var searches: [SearchQuery] = []
 
     /// Currently selected search tab index
-    var selectedSearchIndex: Int = 0
+    var selectedSearchIndex: Int = 0 {
+        didSet { if selectedSearchIndex != oldValue { recomputeFilteredResults() } }
+    }
 
     /// The currently selected search (convenience accessor)
     var currentSearch: SearchQuery? {
@@ -139,14 +141,35 @@ final class SearchState {
     }
 
     // MARK: - Filters
-    var filterMinBitrate: Int? = nil
-    var filterMinSampleRate: Int? = nil
-    var filterMinBitDepth: Int? = nil
-    var filterMinSize: Int64? = nil
-    var filterMaxSize: Int64? = nil
-    var filterExtensions: Set<String> = []
-    var filterFreeSlotOnly: Bool = false
-    var sortOrder: SortOrder = .relevance
+    // Each filter mutator calls `recomputeFilteredResults()` via didSet so
+    // the stored `filteredResults` cache stays in sync. Without this, the
+    // computed version was re-running filter + sort on every SearchView
+    // body eval — and each streaming-result batch triggered several evals,
+    // so with 500 rows we were doing tens of thousands of ops/sec.
+    var filterMinBitrate: Int? = nil {
+        didSet { if filterMinBitrate != oldValue { recomputeFilteredResults() } }
+    }
+    var filterMinSampleRate: Int? = nil {
+        didSet { if filterMinSampleRate != oldValue { recomputeFilteredResults() } }
+    }
+    var filterMinBitDepth: Int? = nil {
+        didSet { if filterMinBitDepth != oldValue { recomputeFilteredResults() } }
+    }
+    var filterMinSize: Int64? = nil {
+        didSet { if filterMinSize != oldValue { recomputeFilteredResults() } }
+    }
+    var filterMaxSize: Int64? = nil {
+        didSet { if filterMaxSize != oldValue { recomputeFilteredResults() } }
+    }
+    var filterExtensions: Set<String> = [] {
+        didSet { if filterExtensions != oldValue { recomputeFilteredResults() } }
+    }
+    var filterFreeSlotOnly: Bool = false {
+        didSet { if filterFreeSlotOnly != oldValue { recomputeFilteredResults() } }
+    }
+    var sortOrder: SortOrder = .relevance {
+        didSet { if sortOrder != oldValue { recomputeFilteredResults() } }
+    }
     var resultGrouping: ResultGrouping = .flat
     var showFilters: Bool = false
 
@@ -255,42 +278,46 @@ final class SearchState {
         case byAlbum = "By Album"
     }
 
-    // MARK: - Computed Properties
-    var filteredResults: [SearchResult] {
-        guard let search = currentSearch else { return [] }
+    // MARK: - Filtered Results (cached)
+
+    /// Cached filter + sort output for the currently-selected search tab.
+    /// Recomputed explicitly (see `recomputeFilteredResults`) whenever any
+    /// input changes — new incoming results, filter edits, sort change,
+    /// tab switch. The view reads this as a plain stored property, so
+    /// unrelated @Observable mutations (peer status, connections, etc.)
+    /// never re-run the filter pass.
+    private(set) var filteredResults: [SearchResult] = []
+
+    private func recomputeFilteredResults() {
+        guard let search = currentSearch else {
+            filteredResults = []
+            return
+        }
 
         var results = search.results
 
-        // Apply filters
         if let minBitrate = filterMinBitrate {
             results = results.filter { ($0.bitrate ?? 0) >= UInt32(minBitrate) }
         }
-
         if let minSampleRate = filterMinSampleRate {
             results = results.filter { ($0.sampleRate ?? 0) >= UInt32(minSampleRate) }
         }
-
         if let minBitDepth = filterMinBitDepth {
             results = results.filter { ($0.bitDepth ?? 0) >= UInt32(minBitDepth) }
         }
-
         if let minSize = filterMinSize {
             results = results.filter { $0.size >= UInt64(minSize) }
         }
-
         if let maxSize = filterMaxSize {
             results = results.filter { $0.size <= UInt64(maxSize) }
         }
-
         if !filterExtensions.isEmpty {
             results = results.filter { filterExtensions.contains($0.fileExtension) }
         }
-
         if filterFreeSlotOnly {
             results = results.filter { $0.freeSlots }
         }
 
-        // Apply sorting
         switch sortOrder {
         case .relevance:
             break // Keep original order
@@ -306,7 +333,7 @@ final class SearchState {
             results.sort { $0.queueLength < $1.queueLength }
         }
 
-        return results
+        filteredResults = results
     }
 
     var canSearch: Bool {
@@ -403,6 +430,13 @@ final class SearchState {
         let newIndex = searches.count - 1
         tokenToSearchIndex[cachedQuery.token] = newIndex
         selectedSearchIndex = newIndex
+        // `selectedSearchIndex.didSet` would normally handle the
+        // recompute, but when the first tab is loaded from cache both
+        // sides of the assignment are 0 and the guard short-circuits —
+        // leaving `filteredResults` empty while `currentSearch.results`
+        // is populated. Recompute explicitly so this entry point is
+        // safe regardless of caller state.
+        recomputeFilteredResults()
 
         logger.info("Loaded cached search '\(cachedQuery.query)' with \(cachedQuery.results.count) results")
     }
@@ -438,6 +472,9 @@ final class SearchState {
         }
 
         searches[index].results.append(contentsOf: resultsToAdd)
+        if index == selectedSearchIndex {
+            recomputeFilteredResults()
+        }
         logger.info("Added \(resultsToAdd.count) results to '\(self.searches[index].query)' (total: \(self.searches[index].results.count))")
 
         // Record results count in activity tracker
@@ -483,6 +520,10 @@ final class SearchState {
         // Adjust selected index
         if selectedSearchIndex >= searches.count {
             selectedSearchIndex = max(0, searches.count - 1)
+        } else {
+            // Same index, possibly different underlying search (lower tab
+            // was closed, shifting the selection). Re-snap filter cache.
+            recomputeFilteredResults()
         }
     }
 

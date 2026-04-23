@@ -33,6 +33,14 @@ public final class PeerConnectionPool {
 
     public private(set) var connections: [String: PeerConnectionInfo] = [:]
 
+    /// SeeleSeek client versions discovered via the capability handshake,
+    /// keyed by peer username. Separate from `connections` because the
+    /// version is a sticky, per-user fact — views that care (profile sheet,
+    /// peer info popover) want to observe it without also observing every
+    /// connection state/bytes mutation. Written once per SeeleSeek peer
+    /// per session; never cleared while the app is running.
+    public private(set) var seeleSeekVersions: [String: UInt8] = [:]
+
     // CRITICAL: Store actual PeerConnection objects to keep them alive!
     // Without this, connections get deallocated immediately after creation.
     private var activeConnections_: [String: PeerConnection] = [:]
@@ -69,6 +77,16 @@ public final class PeerConnectionPool {
     // loops inside would retain the pool forever.
     @ObservationIgnored private var speedTrackingTask: Task<Void, Never>?
     @ObservationIgnored private var cleanupTask: Task<Void, Never>?
+
+    /// Per-connection last-activity timestamps, kept out of the observable
+    /// `connections` dict. Every inbound peer message used to bump
+    /// `connections[id].lastActivity`, which rewrites the dict value and
+    /// invalidates every SwiftUI observer of `connections` on every
+    /// message — a steady-state re-render storm during normal p2p traffic.
+    /// Staleness only matters to the 30s cleanup timer, so observation
+    /// buys nothing. Anything that actually wants to display the value
+    /// (e.g. PeerInfoPopover) asks via `lastActivity(for:)`.
+    @ObservationIgnored private var lastActivities: [String: Date] = [:]
 
     // Geographic distribution (when available)
     public private(set) var peerLocations: [PeerLocation] = []
@@ -110,7 +128,6 @@ public final class PeerConnectionPool {
         public var bytesReceived: UInt64 = 0
         public var bytesSent: UInt64 = 0
         public var connectedAt: Date?
-        public var lastActivity: Date?
         public var currentSpeed: Double = 0
         /// Non-nil only when the peer is a SeeleSeek client and sent our
         /// capability handshake (extension code 10000). Standard Soulseek
@@ -120,8 +137,8 @@ public final class PeerConnectionPool {
         /// to other clients using the extension code.
         public var seeleSeekVersion: UInt8?
 
-        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, lastActivity: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil) {
-            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.lastActivity = lastActivity; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion
+        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil) {
+            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion
         }
     }
 
@@ -423,8 +440,7 @@ public final class PeerConnectionPool {
                         connectionType: info.connectionType,
                         bytesReceived: info.bytesReceived,
                         bytesSent: info.bytesSent,
-                        connectedAt: info.connectedAt,
-                        lastActivity: info.lastActivity
+                        connectedAt: info.connectedAt
                     )
                     connections[key] = newInfo
                     logger.debug("Updated connection \(key) username to \(username)")
@@ -440,6 +456,7 @@ public final class PeerConnectionPool {
         }
         activeConnections_.removeAll()
         connections.removeAll()
+        lastActivities.removeAll()
         activeConnections = 0
     }
 
@@ -499,26 +516,37 @@ public final class PeerConnectionPool {
         peerInitCount += 1
     }
 
-    /// Bump `lastActivity` for the connection that just emitted an event.
+    /// Bump last-activity for the connection that just emitted an event.
+    /// Writes to the non-observable `lastActivities` dict so SwiftUI views
+    /// observing `connections` don't invalidate on every peer message.
     /// `connectionId` is the dict key for both incoming and outgoing
     /// connections (outgoing keys are `"\(username)-\(token)"`, set in
     /// `connect(...)`), so this is a direct lookup — no prefix scan.
     private func touchActivity(connectionId: String) {
-        connections[connectionId]?.lastActivity = Date()
+        lastActivities[connectionId] = Date()
+    }
+
+    /// Last-activity timestamp for a connection, or nil if the connection
+    /// has never emitted an event. Reads the non-observable shadow storage,
+    /// so callers won't be invalidated by peer traffic — they get whatever
+    /// value is current at the moment of the call. Views that need a
+    /// live-updating display (e.g. a TimelineView tick) can poll this.
+    public func lastActivity(for connectionId: String) -> Date? {
+        lastActivities[connectionId]
     }
 
     public func cleanupStaleConnections() {
         let idleCutoff = Date().addingTimeInterval(-connectionTimeout)
-        // Connections that haven't seen any event yet (lastActivity==nil) but
-        // were created more than 10s ago are considered "stuck handshake"
-        // and reaped early. With `touchActivity` bumping lastActivity on
-        // every event, a connection only ends up here if it never received
-        // a single event — i.e. it never even reached PeerInit.
+        // Connections that haven't seen any event yet (no entry in
+        // lastActivities) but were created more than 10s ago are considered
+        // "stuck handshake" and reaped early. With `touchActivity` writing
+        // on every event, a connection only ends up here if it never
+        // received a single event — i.e. it never even reached PeerInit.
         let stuckHandshakeCutoff = Date().addingTimeInterval(-10)
 
         var toRemove: [String] = []
         for (id, info) in connections {
-            if let lastActivity = info.lastActivity {
+            if let lastActivity = lastActivities[id] {
                 if lastActivity <= idleCutoff {
                     toRemove.append(id)
                 }
@@ -537,6 +565,7 @@ public final class PeerConnectionPool {
             }
             connections.removeValue(forKey: id)
             activeConnections_.removeValue(forKey: id)
+            lastActivities.removeValue(forKey: id)
         }
 
         activeConnections = connections.count
@@ -551,6 +580,13 @@ public final class PeerConnectionPool {
             guard let newest = timestamps.last else { return false }
             return newest > windowCutoff
         }
+
+        // GC orphaned lastActivities entries. Disconnect paths don't all
+        // clear this shadow — intentionally, to keep `touchActivity` off
+        // the observable-mutation hot path. The value is only ever looked
+        // up keyed by a live connection id, so orphaned entries are
+        // harmless between sweeps; they just need periodic eviction.
+        lastActivities = lastActivities.filter { connections[$0.key] != nil }
 
         if !toRemove.isEmpty {
             logger.info("Cleaned up \(toRemove.count) stale connections, \(self.activeConnections) active")
@@ -817,14 +853,20 @@ public final class PeerConnectionPool {
             eventContinuation.yield(.userInfoReply(username: peerUsername, info: info))
 
         case .seeleSeekVersionDiscovered(let version):
-            // Stamp the version onto the live PeerConnectionInfo so any
-            // observer (e.g. PeerInfoPopover) reads it from the @Observable
-            // `connections` dict on the next render. Incoming connections are
-            // keyed by connectionId; outgoing are keyed by "<username>-<token>".
+            // Stamp the version onto the live PeerConnectionInfo (for the
+            // activity-tab popover, which is already binding to the
+            // connection row) AND into the per-username `seeleSeekVersions`
+            // dict. The separate dict is what views like UserProfileSheet
+            // read: observing it only invalidates on discovery, not on
+            // every connection-state or bytes update.
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
             if isIncoming {
                 connections[connectionId]?.seeleSeekVersion = version
-            } else if let key = connections.keys.first(where: { $0.hasPrefix("\(username)-") }) {
+            } else if let key = connections.keys.first(where: { $0.hasPrefix("\(peerUsername)-") }) {
                 connections[key]?.seeleSeekVersion = version
+            }
+            if !peerUsername.isEmpty {
+                seeleSeekVersions[peerUsername] = version
             }
 
         case .artworkRequest(let token, let filePath):

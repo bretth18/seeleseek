@@ -15,11 +15,19 @@ struct SimilarUsersView: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            // Content
+            // Content. Single outer ScrollView + LazyVStack so scrolling
+            // never crosses a nested ScrollView boundary (a large
+            // render-cost regression on macOS 15). The similar-user rows
+            // are placed as direct children of the LazyVStack so its
+            // laziness actually reaches them — wrapping them in a
+            // computed-subview VStack would collapse the whole list into
+            // one eagerly-rendered LazyVStack child.
             ScrollView {
-                VStack(alignment: .leading, spacing: SeeleSpacing.xl) {
-                    similarUsersSection
-                    recommendationsSection
+                LazyVStack(alignment: .leading, spacing: SeeleSpacing.xl) {
+                    similarUsersHeader
+                    similarUsersBody
+                    recommendationsHeader
+                    recommendationsBody
                 }
                 .padding(SeeleSpacing.lg)
             }
@@ -52,8 +60,8 @@ struct SimilarUsersView: View {
         .background(SeeleColors.surface)
     }
 
-    private var similarUsersSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+    private var similarUsersHeader: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
             HStack {
                 Image(systemName: "person.2.fill")
                     .foregroundStyle(SeeleColors.accent)
@@ -70,26 +78,24 @@ struct SimilarUsersView: View {
             Text("Users with similar interests based on your likes and dislikes.")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+        }
+    }
 
-            if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
-                emptyInterestsPrompt
-            } else if socialState.similarUsers.isEmpty && !socialState.isLoadingSimilar {
-                noResultsView("No similar users found. Try adding more interests.")
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: SeeleSpacing.sm) {
-                        ForEach(socialState.similarUsers, id: \.username) { user in
-                            SimilarUserRow(username: user.username, rating: user.rating)
-                        }
-                    }
-                }
-                .frame(maxHeight: 400)
+    @ViewBuilder
+    private var similarUsersBody: some View {
+        if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
+            emptyInterestsPrompt
+        } else if socialState.similarUsers.isEmpty && !socialState.isLoadingSimilar {
+            noResultsView("No similar users found. Try adding more interests.")
+        } else {
+            ForEach(socialState.similarUsers, id: \.username) { user in
+                SimilarUserRow(username: user.username, rating: user.rating)
             }
         }
     }
 
-    private var recommendationsSection: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+    private var recommendationsHeader: some View {
+        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
             HStack {
                 Image(systemName: "sparkles")
                     .foregroundStyle(SeeleColors.accent)
@@ -106,16 +112,19 @@ struct SimilarUsersView: View {
             Text("Interests you might like based on similar users.")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+        }
+    }
 
-            if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
-                // Don't show another prompt, similar users section has it
-            } else if socialState.recommendations.isEmpty && !socialState.isLoadingRecommendations {
-                noResultsView("No recommendations found.")
-            } else {
-                FlowLayout(spacing: SeeleSpacing.sm) {
-                    ForEach(socialState.recommendations.prefix(20), id: \.item) { rec in
-                        RecommendationTag(item: rec.item, score: rec.score)
-                    }
+    @ViewBuilder
+    private var recommendationsBody: some View {
+        if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
+            EmptyView()
+        } else if socialState.recommendations.isEmpty && !socialState.isLoadingRecommendations {
+            noResultsView("No recommendations found.")
+        } else {
+            FlowLayout(spacing: SeeleSpacing.sm) {
+                ForEach(socialState.recommendations.prefix(20), id: \.item) { rec in
+                    RecommendationTag(item: rec.item, score: rec.score)
                 }
             }
         }
