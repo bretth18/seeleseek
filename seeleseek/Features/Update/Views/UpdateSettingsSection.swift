@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 import SeeleseekCore
 
 struct UpdateSettingsSection: View {
@@ -145,7 +148,14 @@ struct UpdateSettingsSection: View {
                     } else {
                         HStack {
                             Button("Download & Install") {
-                                Task { await updateState.downloadAndInstall() }
+                                Task {
+                                    guard let pkgURL = await updateState.downloadPkg() else {
+                                        return
+                                    }
+                                    #if os(macOS)
+                                    NSWorkspace.shared.open(pkgURL)
+                                    #endif
+                                }
                             }
                             .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.accent)

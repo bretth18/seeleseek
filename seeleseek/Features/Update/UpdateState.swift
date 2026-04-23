@@ -1,7 +1,6 @@
 import Foundation
 import os
 #if os(macOS)
-import AppKit
 import SeeleseekCore
 #endif
 
@@ -102,8 +101,15 @@ final class UpdateState {
         }
     }
 
-    func downloadAndInstall() async {
-        guard let pkgAsset = latestPkgURL, let version = latestVersion else { return }
+    /// Download the pkg and return a local URL on success, or nil on
+    /// failure. Does NOT hand the pkg to `NSWorkspace` — the caller is
+    /// responsible for opening it *after* closing the update-prompt
+    /// window, so macOS's window restoration doesn't re-open the prompt
+    /// on the next launch (the installer force-quits us while the window
+    /// is still on screen, and restoration then reopens it regardless of
+    /// the version comparison result). The update-nag loop lived here.
+    func downloadPkg() async -> URL? {
+        guard let pkgAsset = latestPkgURL, let version = latestVersion else { return nil }
 
         isDownloading = true
         downloadProgress = 0
@@ -123,15 +129,13 @@ final class UpdateState {
             downloadedPkgURL = pkgURL
             isDownloading = false
             downloadProgress = nil
-
-            #if os(macOS)
-            NSWorkspace.shared.open(pkgURL)
-            #endif
+            return pkgURL
         } catch {
             logger.error("Download failed: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             isDownloading = false
             downloadProgress = nil
+            return nil
         }
     }
 

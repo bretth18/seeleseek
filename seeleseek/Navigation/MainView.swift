@@ -5,6 +5,7 @@ struct MainView: View {
     @Environment(\.appState) private var appState
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
     #endif
 
     var body: some View {
@@ -18,13 +19,24 @@ struct MainView: View {
         .preferredColorScheme(.dark)
         #if os(macOS)
         .onChange(of: appState.updateState.showUpdatePrompt) { _, show in
-            if show { openWindow(id: "update-prompt") }
+            if show {
+                openWindow(id: "update-prompt")
+            } else {
+                dismissWindow(id: "update-prompt")
+            }
         }
         .task {
             // Catch the case where checkForUpdate() already flipped the flag
             // before onChange had a chance to install.
             if appState.updateState.showUpdatePrompt {
                 openWindow(id: "update-prompt")
+            } else {
+                // Defense: if macOS's window restoration re-opened the
+                // update-prompt window from a previous session (the
+                // Installer force-quit us before we could dismiss it),
+                // dismiss it now. We only reach this branch when there's
+                // no update to show, so any restored window is stale.
+                dismissWindow(id: "update-prompt")
             }
         }
         #endif
