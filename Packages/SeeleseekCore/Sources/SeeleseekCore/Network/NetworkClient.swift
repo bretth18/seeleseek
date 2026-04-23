@@ -546,13 +546,16 @@ public final class NetworkClient {
                     }
                 }
             } catch {
-                // Login timed out or failed — don't auto-reconnect on auth failure
+                // Login timed out or failed — don't auto-reconnect on auth failure.
+                // Route through the full teardown so the listener, NAT, peer
+                // pool, pending waiters, distributed state, and server socket
+                // all get cleaned up — previously this path only stopped the
+                // listener, leaving stale state for the next connect().
                 isConnecting = false
-                isConnected = false
                 connectionError = error.localizedDescription
                 shouldAutoReconnect = false
-                onConnectionStatusChanged?(.disconnected)
-                await listenerService.stop()
+                performDisconnect()
+                await teardownTask?.value
                 return
             }
 
@@ -617,17 +620,22 @@ public final class NetworkClient {
         } catch {
             logger.error("Connection failed: \(error.localizedDescription)")
             isConnecting = false
-            isConnected = false
             connectionError = error.localizedDescription
 
-            // Cleanup
-            await listenerService.stop()
+            // Route through the full teardown (listener + NAT + peer pool +
+            // pending waiters + distributed state + server socket) instead
+            // of only stopping the listener. Partially-established sessions
+            // can otherwise leak server connections, distributed sockets,
+            // or peer-pool entries into the next connect().
+            let wasEligibleForReconnect = shouldAutoReconnect
+            performDisconnect()
+            await teardownTask?.value
 
-            // If auto-reconnect is active, schedule retry instead of staying disconnected
-            if shouldAutoReconnect {
+            // performDisconnect fires onConnectionStatusChanged(.disconnected)
+            // itself; the scheduleReconnect path takes over status updates
+            // from here (.connecting, etc.).
+            if wasEligibleForReconnect {
                 scheduleReconnect(reason: error.localizedDescription)
-            } else {
-                onConnectionStatusChanged?(.disconnected)
             }
         }
     }
