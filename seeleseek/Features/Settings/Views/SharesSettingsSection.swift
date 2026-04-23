@@ -127,16 +127,19 @@ struct SharedFolderRow: View {
     let onRemove: () -> Void
     let onVisibilityChange: (ShareManager.Visibility) -> Void
 
-    // Fixed-width anchors so the three right-side columns (visibility,
-    // file count, size) line up row-to-row regardless of which option
-    // is selected or how many digits a value has. Without these the
-    // native Picker's intrinsic width varies with selected label, and
-    // variable-digit numbers shift the column's left edge per row.
-    private static let visibilityColumnWidth: CGFloat = 130
-    private static let fileCountColumnWidth: CGFloat = 64
-    private static let sizeColumnWidth: CGFloat = 72
+    // Cap the Picker width so its closed-state size doesn't depend on
+    // the selected label ("Public" is narrower than "Buddies only") —
+    // without this, switching a folder's visibility would shift the
+    // remove button on that row.
+    private static let visibilityColumnWidth: CGFloat = 112
 
     var body: some View {
+        // Single-row layout with metadata (file count, size) demoted
+        // into the subline alongside the path, matching the macOS
+        // Settings pattern used in System Settings > Sharing and in
+        // Finder's Get Info accessory rows. This frees enough
+        // horizontal space for the visibility picker + remove button
+        // to stay on screen even on narrow Settings detail panes.
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: "folder.fill")
                 .font(.system(size: SeeleSpacing.iconSizeSmall))
@@ -147,29 +150,34 @@ struct SharedFolderRow: View {
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
-                Text(folder.path)
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .lineLimit(1)
+                HStack(spacing: SeeleSpacing.xs) {
+                    Text(folder.path)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(0)
+
+                    Text("·")
+                    Text("\(folder.fileCount) files")
+                        .monospacedDigit()
+                        .layoutPriority(1)
+
+                    Text("·")
+                    Text(folder.totalSize.formattedBytes)
+                        .monospacedDigit()
+                        .layoutPriority(1)
+                }
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
             }
-
-            Spacer()
+            // Let the path/metadata subline collapse to zero width
+            // before the trailing controls get clipped.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
             visibilityPicker
                 .frame(width: Self.visibilityColumnWidth, alignment: .trailing)
-
-            Text("\(folder.fileCount) files")
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textSecondary)
-                .monospacedDigit()
-                .frame(width: Self.fileCountColumnWidth, alignment: .trailing)
-
-            Text(folder.totalSize.formattedBytes)
-                .font(SeeleTypography.mono)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .monospacedDigit()
-                .frame(width: Self.sizeColumnWidth, alignment: .trailing)
+                .layoutPriority(2)
 
             Button(action: onRemove) {
                 Image(systemName: "minus.circle.fill")
@@ -177,6 +185,7 @@ struct SharedFolderRow: View {
                     .foregroundStyle(SeeleColors.error.opacity(0.8))
             }
             .buttonStyle(.plain)
+            .layoutPriority(2)
         }
         .padding(.horizontal, SeeleSpacing.rowHorizontal)
         .padding(.vertical, SeeleSpacing.rowVertical)
