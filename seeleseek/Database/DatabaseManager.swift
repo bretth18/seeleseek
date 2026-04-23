@@ -226,6 +226,16 @@ actor DatabaseManager {
             try db.execute(sql: "ALTER TABLE transfer_history ADD COLUMN localPath TEXT")
         }
 
+        // v7: Persist buddy-only flag on cached browse results. Without
+        // this, the browse cache strips `isPrivate` on save and
+        // reconstructs every cached SharedFile with `isPrivate=false`,
+        // silently hiding the lock badge for the cache TTL (24h).
+        // Existing rows default to 0 (public) — correct for pre-feature
+        // caches; next fresh browse repopulates the real value.
+        migrator.registerMigration("v7") { db in
+            try db.execute(sql: "ALTER TABLE shared_files ADD COLUMN isPrivate INTEGER NOT NULL DEFAULT 0")
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")

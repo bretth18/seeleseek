@@ -240,8 +240,8 @@ public final class NetworkClient {
         case .userInfoReply(let username, let info):
             handleUserInfoReplyEvent(username: username, info: info)
 
-        case .artworkRequest(_, let token, let filePath, let connection):
-            Task { await handleArtworkRequest(token: token, filePath: filePath, connection: connection) }
+        case .artworkRequest(let username, let token, let filePath, let connection):
+            Task { await handleArtworkRequest(username: username, token: token, filePath: filePath, connection: connection) }
 
         case .sharesReceived(let username, let files):
             logger.info("Received \(files.count) shared files from \(username) via pool")
@@ -1734,11 +1734,17 @@ public final class NetworkClient {
 
     /// Handle incoming folder contents request - respond with our files in that folder
     private func handleFolderContentsRequest(username: String, token: UInt32, folder: String, connection: PeerConnection) async {
-        logger.info("Folder contents request from \(username) for: \(folder)")
+        let isBuddy = isBuddyChecker?(username) ?? false
+        logger.info("Folder contents request from \(username) (buddy=\(isBuddy)) for: \(folder)")
 
-        // Find files in the requested folder
+        // Find files in the requested folder, respecting per-folder
+        // visibility. Buddy-only files are dropped for non-buddies so
+        // they can't be enumerated via a folder-contents query that
+        // bypasses the shares-reply gate.
         let filesInFolder = shareManager.fileIndex.filter { file in
-            file.sharedPath.hasPrefix(folder + "\\") || file.sharedPath == folder
+            guard file.sharedPath.hasPrefix(folder + "\\") || file.sharedPath == folder else { return false }
+            if file.visibility == .buddies && !isBuddy { return false }
+            return true
         }
 
         if filesInFolder.isEmpty {
@@ -2022,7 +2028,7 @@ public final class NetworkClient {
     // MARK: - SeeleSeek Artwork Request Handling
 
     /// Handle artwork request from a SeeleSeek peer — look up the file and send back embedded artwork.
-    private func handleArtworkRequest(token: UInt32, filePath: String, connection: PeerConnection) async {
+    private func handleArtworkRequest(username: String, token: UInt32, filePath: String, connection: PeerConnection) async {
         // Find the file in our share index by SoulSeek path
         guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filePath }) else {
             logger.warning("ArtworkRequest: file not found in shares: \(filePath)")
@@ -2030,6 +2036,20 @@ public final class NetworkClient {
             let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
             try? await connection.send(reply)
             return
+        }
+
+        // Deny artwork for buddy-only files when the requester is not a
+        // buddy. Album art is embedded inside the file bytes, so leaking
+        // it is a data leak even if we stop short of serving the full
+        // upload. Matches the gate in handleSharesRequest / search.
+        if indexedFile.visibility == .buddies {
+            let isBuddy = isBuddyChecker?(username) ?? false
+            if !isBuddy {
+                logger.info("ArtworkRequest denied (buddy-only file, non-buddy requester): \(filePath)")
+                let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
+                try? await connection.send(reply)
+                return
+            }
         }
 
         let localURL = URL(fileURLWithPath: indexedFile.localPath)

@@ -103,8 +103,16 @@ public final class ShareManager {
         /// so the search / browse filters don't need a folder lookup on
         /// every hit.
         public let visibility: Visibility
+        /// Back-pointer to the owning `SharedFolder.id`. Used by
+        /// `setVisibility` (and can be used by `removeFolder`) to match
+        /// indexed files by folder identity rather than by
+        /// `localPath.hasPrefix(folder.path)` — the latter silently
+        /// matches sibling folders whose names share a prefix
+        /// (e.g. `/Music` vs `/Music_archive`), which previously caused
+        /// visibility toggles to leak across siblings.
+        public let folderID: UUID
 
-        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil, visibility: Visibility = .public) {
+        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil, visibility: Visibility = .public, folderID: UUID = UUID()) {
             self.id = UUID()
             self.localPath = localPath
             self.sharedPath = sharedPath
@@ -115,6 +123,7 @@ public final class ShareManager {
             self.fileExtension = URL(fileURLWithPath: localPath).pathExtension.lowercased()
             self.searchableText = sharedPath.lowercased()
             self.visibility = visibility
+            self.folderID = folderID
         }
     }
 
@@ -169,8 +178,10 @@ public final class ShareManager {
     public func removeFolder(_ folder: SharedFolder) {
         sharedFolders.removeAll { $0.id == folder.id }
 
-        // Remove indexed files from this folder
-        fileIndex.removeAll { $0.localPath.hasPrefix(folder.path) }
+        // Remove indexed files from this folder. Match by folderID so
+        // removing `/Music` doesn't also drop files under a sibling
+        // `/Music_archive` (same hazard that bit `setVisibility`).
+        fileIndex.removeAll { $0.folderID == folder.id }
 
         // Stop accessing security-scoped resource
         URL(fileURLWithPath: folder.path).stopAccessingSecurityScopedResource()
@@ -250,7 +261,8 @@ public final class ShareManager {
                     sharedPath: sharedPath,
                     size: size,
                     bitrate: bitrate,
-                    visibility: folder.visibility
+                    visibility: folder.visibility,
+                    folderID: folder.id
                 )
 
                 fileIndex.append(indexed)
@@ -319,14 +331,19 @@ public final class ShareManager {
 
     /// Change a folder's visibility and propagate the new flag to every
     /// `IndexedFile` already scanned from that folder (avoids a rescan).
+    ///
+    /// Matching is by `folderID`, not by `localPath` prefix. A path
+    /// prefix check would also rewrite entries from sibling folders
+    /// whose names share the target's prefix (e.g. flipping `/Music`
+    /// would also rewrite files under `/Music_archive`), silently
+    /// desyncing the UI from what peers see on the wire.
     public func setVisibility(_ visibility: Visibility, forFolderWithID id: UUID) {
         guard let idx = sharedFolders.firstIndex(where: { $0.id == id }) else { return }
         guard sharedFolders[idx].visibility != visibility else { return }
-        let folderPath = sharedFolders[idx].path
         sharedFolders[idx].visibility = visibility
         // Rewrite the subset of fileIndex that came from this folder.
         // IndexedFile fields are `let`, so we replace entries in place.
-        for i in fileIndex.indices where fileIndex[i].localPath.hasPrefix(folderPath) {
+        for i in fileIndex.indices where fileIndex[i].folderID == id {
             let f = fileIndex[i]
             fileIndex[i] = IndexedFile(
                 localPath: f.localPath,
@@ -334,7 +351,8 @@ public final class ShareManager {
                 size: f.size,
                 bitrate: f.bitrate,
                 duration: f.duration,
-                visibility: visibility
+                visibility: visibility,
+                folderID: f.folderID
             )
         }
         save()

@@ -265,6 +265,31 @@ public final class UploadManager {
             return
         }
 
+        // Visibility gate. Buddy-only files must not be served to
+        // non-buddies even if they know the sharedPath — a peer could
+        // know the path from a previous session (when they were a
+        // buddy, or when the folder was public), and without this
+        // gate the shares-reply filter is one QueueUpload message away
+        // from being bypassed. Present the same "not shared" response
+        // we use for unknown files so non-buddies can't probe for
+        // buddy-only path existence.
+        if indexedFile.visibility == .buddies {
+            let isBuddy = networkClient?.isBuddyChecker?(username) ?? false
+            if !isBuddy {
+                logger.info("QueueUpload denied (buddy-only file, non-buddy requester): \(username) \(filename)")
+                ActivityLogger.shared?.logInfo(
+                    "Denied upload of buddy-only file to \(username)",
+                    detail: filename
+                )
+                do {
+                    try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
+                } catch {
+                    logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
+                }
+                return
+            }
+        }
+
         // Check if file exists locally
         guard FileManager.default.fileExists(atPath: indexedFile.localPath) else {
             logger.warning("Local file missing: \(indexedFile.localPath)")
