@@ -101,6 +101,15 @@ final class AppState {
             return !UsernamePatternMatcher.matches(username, anyOfCompiled: patterns)
         }
 
+        // Core asks "is this requester a buddy?" when responding to
+        // shares / distributed search so it can gate buddy-only folders.
+        // Case-insensitive match mirrors `SocialState.isIgnored`.
+        client.isBuddyChecker = { [weak self] username in
+            guard let self else { return false }
+            let lower = username.lowercased()
+            return self.socialState.buddies.contains { $0.username.lowercased() == lower }
+        }
+
         client.addUserStatsHandler { [weak self] username, _, _, files, dirs in
             guard let self else { return }
             let hasQueuedUpload = self.uploadManager.queuedUploads.contains { $0.username == username }

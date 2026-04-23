@@ -308,6 +308,14 @@ public final class NetworkClient {
     // Search response filter - returns (respondToSearches, minQueryLength, maxResults)
     public var searchResponseFilter: ( () -> (enabled: Bool, minQueryLength: Int, maxResults: Int))?
 
+    /// Set by the app layer (AppState) to answer "is this username on
+    /// our buddy list?" without the core package needing to know about
+    /// SocialState. Used by the shares-reply and distributed-search
+    /// handlers to decide whether to expose folders marked `.buddies`.
+    /// Returns false when nil so shares default to public-only if the
+    /// app forgot to wire this up.
+    public var isBuddyChecker: ((String) -> Bool)?
+
     // User stats & privileges callbacks
     private var userStatusHandlers: [(String, UserStatus, Bool) -> Void] = []
     /// Register a handler for user status updates. Multiple handlers supported.
@@ -1765,43 +1773,51 @@ public final class NetworkClient {
 
     // MARK: - Shares Request Handling
 
-    /// Handle incoming shares request - respond with our shared file list
+    /// Handle incoming shares request - respond with our shared file list.
+    ///
+    /// Folders marked `.buddies` are sent in the protocol's private
+    /// directories section only when the requester is on our buddy
+    /// list. Non-buddies get public folders only.
     private func handleSharesRequest(username: String, connection: PeerConnection) async {
-        logger.info("Shares request from \(username)")
-        logger.info("Handling SharesRequest from \(username)")
+        let isBuddy = isBuddyChecker?(username) ?? false
+        logger.info("Shares request from \(username) (buddy=\(isBuddy))")
 
-        // Group files by directory
-        var directoriesMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
+        typealias DirBucket = (directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])
+
+        var publicMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
+        var privateMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
 
         for file in shareManager.fileIndex {
-            // Get the directory path
             let components = file.sharedPath.split(separator: "\\")
             guard components.count > 1 else { continue }
 
             let directory = components.dropLast().joined(separator: "\\")
             let filename = String(components.last!)
+            let entry = (filename: filename, size: file.size, bitrate: file.bitrate, duration: file.duration)
 
-            directoriesMap[directory, default: []].append((
-                filename: filename,
-                size: file.size,
-                bitrate: file.bitrate,
-                duration: file.duration
-            ))
+            switch file.visibility {
+            case .public:
+                publicMap[directory, default: []].append(entry)
+            case .buddies:
+                // Drop buddy-only files entirely for non-buddies; put
+                // them in the private section for buddies so they show
+                // up separately on the receiver.
+                if isBuddy {
+                    privateMap[directory, default: []].append(entry)
+                }
+            }
         }
 
-        // Convert to array format
-        let directories: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] =
-            directoriesMap.map { (directory: $0.key, files: $0.value) }
-                .sorted { $0.directory < $1.directory }
+        let publicDirs: [DirBucket] = publicMap.map { ($0.key, $0.value) }.sorted { $0.directory < $1.directory }
+        let privateDirs: [DirBucket] = privateMap.map { ($0.key, $0.value) }.sorted { $0.directory < $1.directory }
 
-        logger.info("Sending \(directories.count) directories with \(self.shareManager.totalFiles) total files to \(username)")
+        logger.info("Sending \(publicDirs.count) public + \(privateDirs.count) private directories to \(username)")
 
         do {
-            try await connection.sendShares(files: directories)
-            logger.info("Sent shares to \(username): \(directories.count) directories")
+            try await connection.sendShares(files: publicDirs, privateFiles: privateDirs)
+            logger.info("Sent shares to \(username)")
         } catch {
             logger.error("Failed to send shares to \(username): \(error.localizedDescription)")
-            logger.error("Failed to send shares: \(error)")
         }
     }
 

@@ -157,11 +157,20 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
             let totalSize = children.reduce(0) { $0 + $1.size }
             let totalFiles = children.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
 
+            // A folder is considered private when every descendant is
+            // private — i.e. the peer marked the whole folder buddy-only
+            // on their end. We propagate that so the browse view can
+            // show a single lock badge on the folder instead of forcing
+            // the user to expand and see a lock on every child. Empty
+            // folders default to non-private (nothing to hide).
+            let isFolderPrivate = !children.isEmpty && children.allSatisfy { $0.isPrivate }
+
             return SharedFile(
                 id: folderData.id,
                 filename: path,
                 size: totalSize,
                 isDirectory: true,
+                isPrivate: isFolderPrivate,
                 children: children,
                 fileCount: totalFiles
             )

@@ -748,21 +748,26 @@ public final class ServerMessageHandler {
         // actor (see ShareManager.search), so the remaining work after
         // the scan can stay on whatever actor this handler already runs
         // on — we just need a Task boundary to await the async call.
-        guard let shareManager = client?.shareManager else {
-            logger.debug("No share manager available for distributed search")
+        guard let client else {
+            logger.debug("No client available for distributed search")
             return
         }
+        let shareManager = client.shareManager
         let maxResults = filter.maxResults
+        // Resolve buddy status once, here on MainActor, before the
+        // detached search scan. Passing the bool in keeps ShareManager
+        // decoupled from SocialState.
+        let isBuddy = client.isBuddyChecker?(username) ?? false
 
         Task {
-            var matchingFiles = await shareManager.search(query: query)
+            var matchingFiles = await shareManager.search(query: query, includeBuddyOnly: isBuddy)
             guard !matchingFiles.isEmpty else { return }
 
             if maxResults > 0 && matchingFiles.count > maxResults {
                 matchingFiles = Array(matchingFiles.prefix(maxResults))
             }
 
-            logger.info("Distributed search '\(query)' from \(username): \(matchingFiles.count) matches")
+            logger.info("Distributed search '\(query)' from \(username) (buddy=\(isBuddy)): \(matchingFiles.count) matches")
             ActivityLogger.shared?.logDistributedSearch(query: query, matchCount: matchingFiles.count)
 
             await sendDistributedSearchResponse(
@@ -780,15 +785,15 @@ public final class ServerMessageHandler {
     ) async {
         guard let client else { return }
 
-        // Build results once (shared by direct and indirect paths)
-        let results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = files.map { file in
+        // Build results once (shared by direct and indirect paths).
+        // Split by visibility so buddy-only matches land in the
+        // protocol's "privately shared results" section — the receiver
+        // uses that split to decorate them as private on their side.
+        typealias SearchResultTuple = (filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])
+        func toTuple(_ file: ShareManager.IndexedFile) -> SearchResultTuple {
             var attributes: [(UInt32, UInt32)] = []
-            if let bitrate = file.bitrate {
-                attributes.append((0, bitrate))
-            }
-            if let duration = file.duration {
-                attributes.append((1, duration))
-            }
+            if let bitrate = file.bitrate { attributes.append((0, bitrate)) }
+            if let duration = file.duration { attributes.append((1, duration)) }
             return (
                 filename: file.sharedPath,
                 size: file.size,
@@ -796,6 +801,8 @@ public final class ServerMessageHandler {
                 attributes: attributes
             )
         }
+        let publicResults: [SearchResultTuple] = files.filter { $0.visibility == .public }.map(toTuple)
+        let privateResults: [SearchResultTuple] = files.filter { $0.visibility == .buddies }.map(toTuple)
 
         // Race direct and indirect connections simultaneously for faster delivery
         let indirectToken = UInt32.random(in: 0...UInt32.max)
@@ -845,9 +852,10 @@ public final class ServerMessageHandler {
             try await connection.sendSearchReply(
                 username: client.username,
                 token: token,
-                results: results
+                results: publicResults,
+                privateResults: privateResults
             )
-            logger.info("Sent \(files.count) search results to \(username) for token \(token)")
+            logger.info("Sent \(publicResults.count) public + \(privateResults.count) private search results to \(username) for token \(token)")
         } catch {
             client.cancelPendingBrowse(token: indirectToken)
             logger.debug("Search result delivery to \(username) failed: \(error.localizedDescription)")

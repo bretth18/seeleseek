@@ -32,9 +32,11 @@ struct SharesSettingsSection: View {
                 }
 
                 ForEach(shareManager.sharedFolders) { folder in
-                    SharedFolderRow(folder: folder) {
-                        shareManager.removeFolder(folder)
-                    }
+                    SharedFolderRow(
+                        folder: folder,
+                        onRemove: { shareManager.removeFolder(folder) },
+                        onVisibilityChange: { shareManager.setVisibility($0, forFolderWithID: folder.id) }
+                    )
                 }
 
                 // Actions row
@@ -123,6 +125,16 @@ struct SharesSettingsSection: View {
 struct SharedFolderRow: View {
     let folder: ShareManager.SharedFolder
     let onRemove: () -> Void
+    let onVisibilityChange: (ShareManager.Visibility) -> Void
+
+    // Fixed-width anchors so the three right-side columns (visibility,
+    // file count, size) line up row-to-row regardless of which option
+    // is selected or how many digits a value has. Without these the
+    // native Picker's intrinsic width varies with selected label, and
+    // variable-digit numbers shift the column's left edge per row.
+    private static let visibilityColumnWidth: CGFloat = 130
+    private static let fileCountColumnWidth: CGFloat = 64
+    private static let sizeColumnWidth: CGFloat = 72
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
@@ -144,13 +156,20 @@ struct SharedFolderRow: View {
 
             Spacer()
 
+            visibilityPicker
+                .frame(width: Self.visibilityColumnWidth, alignment: .trailing)
+
             Text("\(folder.fileCount) files")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textSecondary)
+                .monospacedDigit()
+                .frame(width: Self.fileCountColumnWidth, alignment: .trailing)
 
             Text(folder.totalSize.formattedBytes)
                 .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textTertiary)
+                .monospacedDigit()
+                .frame(width: Self.sizeColumnWidth, alignment: .trailing)
 
             Button(action: onRemove) {
                 Image(systemName: "minus.circle.fill")
@@ -162,6 +181,29 @@ struct SharedFolderRow: View {
         .padding(.horizontal, SeeleSpacing.rowHorizontal)
         .padding(.vertical, SeeleSpacing.rowVertical)
         .background(SeeleColors.surface)
+    }
+
+    /// Native pop-up button (Picker with `.menu` style) — matches the
+    /// existing `settingsPicker` idiom in `SettingsComponents.swift` and
+    /// is the macOS-native control for "pick one of N" inline per HIG.
+    /// Labels carry SF Symbols so the dropdown is skimmable; the row's
+    /// closed state shows the current label + chevron from AppKit.
+    private var visibilityPicker: some View {
+        Picker(
+            "Visibility",
+            selection: Binding(
+                get: { folder.visibility },
+                set: onVisibilityChange
+            )
+        ) {
+            Label("Public", systemImage: "globe")
+                .tag(ShareManager.Visibility.public)
+            Label("Buddies only", systemImage: "lock.fill")
+                .tag(ShareManager.Visibility.buddies)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .help("Buddies-only folders are sent in the Soulseek protocol's private section, only to peers on your buddy list. Honor-system — not cryptographically enforced.")
     }
 }
 

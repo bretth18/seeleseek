@@ -413,11 +413,14 @@ public actor PeerConnection {
     }
 
     /// Send our shared files to a peer (response to SharesRequest)
-    public func sendShares(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) async throws {
-        let message = MessageBuilder.sharesReplyMessage(files: files)
-        logger.debug("[\(self.peerInfo.username)] Sending SharesReply with \(files.count) directories")
+    public func sendShares(
+        files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])],
+        privateFiles: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] = []
+    ) async throws {
+        let message = MessageBuilder.sharesReplyMessage(files: files, privateFiles: privateFiles)
+        logger.debug("[\(self.peerInfo.username)] Sending SharesReply with \(files.count) public + \(privateFiles.count) private directories")
         try await send(message)
-        logger.info("Sent shares to \(self.peerInfo.username): \(files.count) directories")
+        logger.info("Sent shares to \(self.peerInfo.username): \(files.count) public + \(privateFiles.count) private directories")
     }
 
     public func requestUserInfo() async throws {
@@ -445,11 +448,17 @@ public actor PeerConnection {
         logger.info("Sent user info to \(self.peerInfo.username)")
     }
 
-    public func sendSearchReply(username: String, token: UInt32, results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]) async throws {
+    public func sendSearchReply(
+        username: String,
+        token: UInt32,
+        results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])],
+        privateResults: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = []
+    ) async throws {
         let message = MessageBuilder.searchReplyMessage(
             username: username,
             token: token,
-            results: results
+            results: results,
+            privateResults: privateResults
         )
         try await send(message)
     }

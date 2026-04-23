@@ -74,12 +74,15 @@ struct FileTreeRow: View {
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)
 
-            // Private/locked indicator (buddy-only)
+            // Private/locked indicator (buddy-only). For folders the
+            // flag is propagated during tree building when every
+            // descendant is private, so a fully buddy-only folder
+            // shows one lock badge without expanding.
             if file.isPrivate {
                 Image(systemName: "lock.fill")
                     .font(.system(size: SeeleSpacing.iconSizeXS))
                     .foregroundStyle(SeeleColors.warning)
-                    .help("Private file - only shared with buddies")
+                    .help(file.isDirectory ? "Private folder — only shared with buddies" : "Private file — only shared with buddies")
             }
 
             Spacer()
