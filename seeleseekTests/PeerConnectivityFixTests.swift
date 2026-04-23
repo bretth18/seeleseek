@@ -328,14 +328,14 @@ struct PeerConnectivityFixTests {
             connectedAt: staleConnectedAt
         )
         await pool._seedConnectionForTest(info)
-        #expect(await pool._connectionInfo(id: "alice-42")?.lastActivity == nil,
+        #expect(await pool.lastActivity(for: "alice-42") == nil,
                 "precondition: lastActivity unset")
 
         // Real wiring: handlePeerEvent calls this on every event.
         await pool._touchActivityForTest(connectionId: "alice-42")
 
-        let after = await pool._connectionInfo(id: "alice-42")
-        #expect(after?.lastActivity != nil, "lastActivity must be set after activity")
+        #expect(await pool.lastActivity(for: "alice-42") != nil,
+                "lastActivity must be set after activity")
         // Now run cleanup. The stuck-handshake branch only fires when
         // lastActivity is nil — with our touch, it should be skipped.
         await pool.cleanupStaleConnections()

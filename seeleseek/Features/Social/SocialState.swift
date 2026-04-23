@@ -18,7 +18,14 @@ final class SocialState: PeerWatching {
     /// `buddies[i].status` is a per-row mirror used by the buddy-list
     /// views (sorting, filtering, persistence) — both fields are written
     /// from the same MainActor handler so they cannot diverge.
-    private(set) var peerStatuses: [String: BuddyStatus] = [:]
+    ///
+    /// Deliberately `@ObservationIgnored`. Every user-status message
+    /// rewrites one entry here; views that observed the dict re-rendered
+    /// on every unrelated peer's status change. Row views that want live
+    /// updates now poll `peerStatus(for:)` via a TimelineView tick, and
+    /// the buddy list reads `buddies[i].status` directly (which is
+    /// observable and per-row).
+    @ObservationIgnored private(set) var peerStatuses: [String: BuddyStatus] = [:]
     /// Reference count per peer — the app may watch a peer because of a
     /// queued download *and* an upload simultaneously. We unwatch only
     /// when the last subscriber releases.

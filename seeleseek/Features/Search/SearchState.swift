@@ -430,6 +430,13 @@ final class SearchState {
         let newIndex = searches.count - 1
         tokenToSearchIndex[cachedQuery.token] = newIndex
         selectedSearchIndex = newIndex
+        // `selectedSearchIndex.didSet` would normally handle the
+        // recompute, but when the first tab is loaded from cache both
+        // sides of the assignment are 0 and the guard short-circuits —
+        // leaving `filteredResults` empty while `currentSearch.results`
+        // is populated. Recompute explicitly so this entry point is
+        // safe regardless of caller state.
+        recomputeFilteredResults()
 
         logger.info("Loaded cached search '\(cachedQuery.query)' with \(cachedQuery.results.count) results")
     }

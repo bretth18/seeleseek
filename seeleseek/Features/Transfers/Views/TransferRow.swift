@@ -41,16 +41,31 @@ struct TransferRow: View {
 
     @State private var isHovered = false
 
-    /// Peer status captured at row appear rather than read live from
-    /// `SocialState.peerStatuses`. Every status update mutates the whole
-    /// observable dict, which invalidated every visible row in the
-    /// transfer list — the same anti-pattern the country flag already
-    /// avoided here. Accepts minor staleness; the next appearance (scroll
-    /// off/on or username change) resamples.
+    /// Peer status cached in @State rather than read live from
+    /// `SocialState.peerStatuses`. The underlying dict is
+    /// `@ObservationIgnored` on `SocialState`, so no dict-wide fan-out
+    /// re-renders this row when some unrelated peer changes state.
+    /// Refreshed on appear, on username change, and — for rows whose
+    /// "Peer offline" label is actually visible — via the polling task
+    /// below. Transferring/completed rows don't poll (the label is
+    /// suppressed in those states anyway).
     @State private var peerStatus: BuddyStatus?
 
     private func refreshPeerStatus() {
         peerStatus = appState.socialState.peerStatus(for: transfer.username)
+    }
+
+    /// True for statuses where `TransferInfoColumn` can surface the
+    /// "Peer offline" affordance — the single reason peer status has to
+    /// stay live on this row. Must match the predicate in
+    /// `TransferInfoColumn.peerIsOffline`.
+    private var peerStatusAffectsVisibleLabel: Bool {
+        switch transfer.status {
+        case .queued, .waiting, .failed, .cancelled:
+            return true
+        default:
+            return false
+        }
     }
 
     /// True only if the app-wide audio preview is currently playing
@@ -124,6 +139,22 @@ struct TransferRow: View {
         .onChange(of: transfer.username) { _, _ in
             refreshCountryFlag()
             refreshPeerStatus()
+        }
+        .onChange(of: transfer.status) { _, _ in
+            refreshPeerStatus()
+        }
+        // Keep the `Peer offline` label current on stalled rows. The
+        // task is keyed on `peerStatusAffectsVisibleLabel` so it only
+        // runs while the label can actually render — transferring /
+        // completed rows do no polling. 2 s cadence is deliberate:
+        // the label is coarse UX, not a progress indicator.
+        .task(id: peerStatusAffectsVisibleLabel) {
+            guard peerStatusAffectsVisibleLabel else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { break }
+                refreshPeerStatus()
+            }
         }
     }
 
