@@ -409,7 +409,9 @@ public final class PeerConnectionPool {
             logger.info("Incoming connection accepted and callbacks configured")
             logger.info("Incoming connection stored: \(connectionId), receive loop started")
         } catch {
-            logger.error("Failed to handle incoming connection: \(error.localizedDescription)")
+            // Inbound timeouts / refused / resets are normal on a
+            // public-facing peer (dead peers, NAT tarpits). Debug only.
+            logger.debug("Failed to handle incoming connection: \(error.localizedDescription)")
         }
     }
 

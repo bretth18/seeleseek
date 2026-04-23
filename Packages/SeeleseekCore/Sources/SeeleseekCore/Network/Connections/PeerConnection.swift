@@ -815,9 +815,14 @@ public actor PeerConnection {
             }
 
         case .failed(let error):
-            logger.error("Peer connection failed: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
-            logger.error("Error details: \(error)")
-            logger.error("Peer connection failed: \(error.localizedDescription)")
+            // Timeouts / refused / reset for peers on the Soulseek
+            // network are normal operating conditions (firewalled or
+            // dead peers), not actionable errors. Logging each failure
+            // three times at .error level was generating ~19k lines
+            // per session and tripping os_log's 32Hz rate limit.
+            // Collapse to one .debug line; anything unexpected still
+            // lands via the .failed(error) state downstream.
+            logger.debug("Peer connection failed: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port) — \(error.localizedDescription)")
             updateState(.failed(error))
             // Cancel the connection to free resources
             connection?.cancel()

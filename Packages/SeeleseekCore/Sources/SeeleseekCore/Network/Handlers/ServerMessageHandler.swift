@@ -26,7 +26,10 @@ public final class ServerMessageHandler {
         }
 
         let code = ServerMessageCode(rawValue: codeValue)
-        logger.info("Received message: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
+        // Per-message trace — .debug so it's visible when diagnosing
+        // protocol issues but doesn't flood steady-state logs (fires
+        // on every inbound server frame).
+        logger.debug("Received message: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
 
         // Extra logging for distributed network messages
         if codeValue == 102 || codeValue == 93 || codeValue == 83 || codeValue == 84 || codeValue == 71 {
