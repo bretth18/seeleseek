@@ -366,7 +366,7 @@ struct PrivacySettingsSection: View {
                                         .font(SeeleTypography.caption)
                                         .foregroundStyle(SeeleColors.accent)
                                         .padding(.horizontal, SeeleSpacing.sm)
-                                        .padding(.vertical, 4)
+                                        .padding(.vertical, SeeleSpacing.xs)
                                         .background(SeeleColors.accent.opacity(0.1), in: Capsule())
                                 }
                                 .buttonStyle(.plain)
@@ -458,7 +458,7 @@ struct PrivacySettingsSection: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
                         .padding(.horizontal, SeeleSpacing.xs)
-                        .padding(.vertical, 2)
+                        .padding(.vertical, SeeleSpacing.xxs)
                         .background(SeeleColors.surfaceSecondary, in: Capsule())
                 }
 

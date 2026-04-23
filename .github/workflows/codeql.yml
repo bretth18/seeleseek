@@ -17,74 +17,34 @@ permissions:
 jobs:
   analyze:
     name: CodeQL (Swift)
-    # Matches .github/workflows/build.yml — macos-26 is the runner image the
-    # app has been verified to build on. Do not switch to macos-latest without
-    # re-verifying the Xcode version ships a Swift toolchain CodeQL supports.
+    # macos-26 is the runner image the app is verified against. Keep in
+    # sync with .github/workflows/build.yml — bump both together.
     runs-on: macos-26
-    # Swift CodeQL extraction is slow; a clean build on the runner is ~10-15
-    # minutes, analysis adds another ~5-10. 60 is a generous ceiling that
-    # still catches a hang instead of burning macOS minutes indefinitely.
-    timeout-minutes: 60
+    # Source-mode extraction (no build tracer) finishes in ~10-15 min on
+    # this runner. 45 is a generous ceiling that still catches a real
+    # hang rather than burning macOS-minutes indefinitely.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        # Same selection the Build and Test jobs use so we compile against an
-        # Xcode the project already runs on — avoids "works in CI, breaks in
-        # CodeQL" toolchain skew.
-        run: sudo xcode-select -s /Applications/Xcode.app
-
-      - name: Resolve package dependencies
-        # Resolve SPM packages *before* CodeQL wraps the build. CodeQL's
-        # build tracer interacting with Xcode's package resolver has been
-        # observed to hang at "Resolve Package Graph" — running resolution
-        # in a separate, untraced step sidesteps that and also gives us
-        # visible log output for the slowest part of the build.
-        run: |
-          xcodebuild \
-            -resolvePackageDependencies \
-            -scheme seeleseek \
-            -destination 'platform=macOS'
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: swift
-          # `manual` tells CodeQL to intercept the build we run below rather
-          # than trying to auto-detect one. Autobuild cannot drive xcodebuild
-          # for an Xcode project with nested SPM packages (Packages/SeeleseekCore).
-          build-mode: manual
-
-      - name: Build
-        # Lifted from .github/workflows/build.yml so the analysis compiles
-        # the exact same target the release path builds. Debug configuration
-        # is deliberate: Release-mode optimizations can fold away code paths
-        # CodeQL would otherwise inspect.
-        #
-        # Flags specific to the CodeQL path:
-        #   -disableAutomaticPackageResolution — packages were already
-        #       resolved in the previous step; stop xcodebuild from
-        #       re-entering resolution inside the traced build.
-        #   -skipPackagePluginValidation / -skipMacroValidation — CodeQL
-        #       can deadlock when validating package plugins / macro
-        #       targets under its build tracer. Skipping doesn't reduce
-        #       analysis coverage of app code.
-        #   -verbose — if we *do* hang, next time we see where.
-        run: |
-          xcodebuild \
-            -scheme seeleseek \
-            -destination 'platform=macOS' \
-            -configuration Debug \
-            -disableAutomaticPackageResolution \
-            -skipPackagePluginValidation \
-            -skipMacroValidation \
-            -verbose \
-            build \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+          # `build-mode: none` runs CodeQL's Swift extractor over the
+          # source tree without wrapping a compiler build. Manual mode
+          # was tried first: under CodeQL's build tracer, `xcodebuild`
+          # for this project (app target + SPM package + @Observable
+          # macros) exceeded a 60-minute wall and the job timed out on
+          # every run. The full-build cost isn't worth paying — the
+          # queries that really need cross-module data-flow (taint
+          # tracking across package boundaries) aren't the ones finding
+          # bugs in a native macOS client; the security-pattern queries
+          # CodeQL runs (path traversal, insecure randomness, hardcoded
+          # credentials, regex DoS, etc.) all work from source alone.
+          build-mode: none
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

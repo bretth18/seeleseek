@@ -120,7 +120,7 @@ struct RoomManagementSheet: View {
                         Spacer()
                         HStack(spacing: SeeleSpacing.xs) {
                             Image(systemName: "crown.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: SeeleSpacing.iconSizeXS))
                                 .foregroundStyle(SeeleColors.warning)
                             Text(owner)
                                 .font(SeeleTypography.body)
@@ -270,7 +270,7 @@ struct RoomManagementSheet: View {
                     HStack {
                         HStack(spacing: SeeleSpacing.xs) {
                             Image(systemName: "wrench.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: SeeleSpacing.iconSizeXS))
                                 .foregroundStyle(SeeleColors.textTertiary)
                             Text(op)
                                 .font(SeeleTypography.body)

@@ -294,7 +294,9 @@ public actor ServerConnection {
         while let (frame, consumed) = MessageParser.parseFrame(from: receiveBuffer) {
             receiveBuffer.removeFirst(consumed)
 
-            logger.info("Parsed message: code=\(frame.code) payload=\(frame.payload.count) bytes")
+            // Per-frame trace — .debug to avoid duplicating the same
+            // firehose already emitted by ServerMessageHandler.
+            logger.debug("Parsed message: code=\(frame.code) payload=\(frame.payload.count) bytes")
 
             // Build complete message with length prefix and code
             var completeMessage = Data()

@@ -413,11 +413,14 @@ public actor PeerConnection {
     }
 
     /// Send our shared files to a peer (response to SharesRequest)
-    public func sendShares(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) async throws {
-        let message = MessageBuilder.sharesReplyMessage(files: files)
-        logger.debug("[\(self.peerInfo.username)] Sending SharesReply with \(files.count) directories")
+    public func sendShares(
+        files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])],
+        privateFiles: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] = []
+    ) async throws {
+        let message = MessageBuilder.sharesReplyMessage(files: files, privateFiles: privateFiles)
+        logger.debug("[\(self.peerInfo.username)] Sending SharesReply with \(files.count) public + \(privateFiles.count) private directories")
         try await send(message)
-        logger.info("Sent shares to \(self.peerInfo.username): \(files.count) directories")
+        logger.info("Sent shares to \(self.peerInfo.username): \(files.count) public + \(privateFiles.count) private directories")
     }
 
     public func requestUserInfo() async throws {
@@ -445,11 +448,17 @@ public actor PeerConnection {
         logger.info("Sent user info to \(self.peerInfo.username)")
     }
 
-    public func sendSearchReply(username: String, token: UInt32, results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]) async throws {
+    public func sendSearchReply(
+        username: String,
+        token: UInt32,
+        results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])],
+        privateResults: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = []
+    ) async throws {
         let message = MessageBuilder.searchReplyMessage(
             username: username,
             token: token,
-            results: results
+            results: results,
+            privateResults: privateResults
         )
         try await send(message)
     }
@@ -806,9 +815,14 @@ public actor PeerConnection {
             }
 
         case .failed(let error):
-            logger.error("Peer connection failed: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
-            logger.error("Error details: \(error)")
-            logger.error("Peer connection failed: \(error.localizedDescription)")
+            // Timeouts / refused / reset for peers on the Soulseek
+            // network are normal operating conditions (firewalled or
+            // dead peers), not actionable errors. Logging each failure
+            // three times at .error level was generating ~19k lines
+            // per session and tripping os_log's 32Hz rate limit.
+            // Collapse to one .debug line; anything unexpected still
+            // lands via the .failed(error) state downstream.
+            logger.debug("Peer connection failed: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port) — \(error.localizedDescription)")
             updateState(.failed(error))
             // Cancel the connection to free resources
             connection?.cancel()

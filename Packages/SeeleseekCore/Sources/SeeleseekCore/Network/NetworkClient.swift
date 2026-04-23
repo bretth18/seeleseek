@@ -240,8 +240,8 @@ public final class NetworkClient {
         case .userInfoReply(let username, let info):
             handleUserInfoReplyEvent(username: username, info: info)
 
-        case .artworkRequest(_, let token, let filePath, let connection):
-            Task { await handleArtworkRequest(token: token, filePath: filePath, connection: connection) }
+        case .artworkRequest(let username, let token, let filePath, let connection):
+            Task { await handleArtworkRequest(username: username, token: token, filePath: filePath, connection: connection) }
 
         case .sharesReceived(let username, let files):
             logger.info("Received \(files.count) shared files from \(username) via pool")
@@ -307,6 +307,14 @@ public final class NetworkClient {
 
     // Search response filter - returns (respondToSearches, minQueryLength, maxResults)
     public var searchResponseFilter: ( () -> (enabled: Bool, minQueryLength: Int, maxResults: Int))?
+
+    /// Set by the app layer (AppState) to answer "is this username on
+    /// our buddy list?" without the core package needing to know about
+    /// SocialState. Used by the shares-reply and distributed-search
+    /// handlers to decide whether to expose folders marked `.buddies`.
+    /// Returns false when nil so shares default to public-only if the
+    /// app forgot to wire this up.
+    public var isBuddyChecker: ((String) -> Bool)?
 
     // User stats & privileges callbacks
     private var userStatusHandlers: [(String, UserStatus, Bool) -> Void] = []
@@ -1726,11 +1734,17 @@ public final class NetworkClient {
 
     /// Handle incoming folder contents request - respond with our files in that folder
     private func handleFolderContentsRequest(username: String, token: UInt32, folder: String, connection: PeerConnection) async {
-        logger.info("Folder contents request from \(username) for: \(folder)")
+        let isBuddy = isBuddyChecker?(username) ?? false
+        logger.info("Folder contents request from \(username) (buddy=\(isBuddy)) for: \(folder)")
 
-        // Find files in the requested folder
+        // Find files in the requested folder, respecting per-folder
+        // visibility. Buddy-only files are dropped for non-buddies so
+        // they can't be enumerated via a folder-contents query that
+        // bypasses the shares-reply gate.
         let filesInFolder = shareManager.fileIndex.filter { file in
-            file.sharedPath.hasPrefix(folder + "\\") || file.sharedPath == folder
+            guard file.sharedPath.hasPrefix(folder + "\\") || file.sharedPath == folder else { return false }
+            if file.visibility == .buddies && !isBuddy { return false }
+            return true
         }
 
         if filesInFolder.isEmpty {
@@ -1765,43 +1779,51 @@ public final class NetworkClient {
 
     // MARK: - Shares Request Handling
 
-    /// Handle incoming shares request - respond with our shared file list
+    /// Handle incoming shares request - respond with our shared file list.
+    ///
+    /// Folders marked `.buddies` are sent in the protocol's private
+    /// directories section only when the requester is on our buddy
+    /// list. Non-buddies get public folders only.
     private func handleSharesRequest(username: String, connection: PeerConnection) async {
-        logger.info("Shares request from \(username)")
-        logger.info("Handling SharesRequest from \(username)")
+        let isBuddy = isBuddyChecker?(username) ?? false
+        logger.info("Shares request from \(username) (buddy=\(isBuddy))")
 
-        // Group files by directory
-        var directoriesMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
+        typealias DirBucket = (directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])
+
+        var publicMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
+        var privateMap: [String: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)]] = [:]
 
         for file in shareManager.fileIndex {
-            // Get the directory path
             let components = file.sharedPath.split(separator: "\\")
             guard components.count > 1 else { continue }
 
             let directory = components.dropLast().joined(separator: "\\")
             let filename = String(components.last!)
+            let entry = (filename: filename, size: file.size, bitrate: file.bitrate, duration: file.duration)
 
-            directoriesMap[directory, default: []].append((
-                filename: filename,
-                size: file.size,
-                bitrate: file.bitrate,
-                duration: file.duration
-            ))
+            switch file.visibility {
+            case .public:
+                publicMap[directory, default: []].append(entry)
+            case .buddies:
+                // Drop buddy-only files entirely for non-buddies; put
+                // them in the private section for buddies so they show
+                // up separately on the receiver.
+                if isBuddy {
+                    privateMap[directory, default: []].append(entry)
+                }
+            }
         }
 
-        // Convert to array format
-        let directories: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] =
-            directoriesMap.map { (directory: $0.key, files: $0.value) }
-                .sorted { $0.directory < $1.directory }
+        let publicDirs: [DirBucket] = publicMap.map { ($0.key, $0.value) }.sorted { $0.directory < $1.directory }
+        let privateDirs: [DirBucket] = privateMap.map { ($0.key, $0.value) }.sorted { $0.directory < $1.directory }
 
-        logger.info("Sending \(directories.count) directories with \(self.shareManager.totalFiles) total files to \(username)")
+        logger.info("Sending \(publicDirs.count) public + \(privateDirs.count) private directories to \(username)")
 
         do {
-            try await connection.sendShares(files: directories)
-            logger.info("Sent shares to \(username): \(directories.count) directories")
+            try await connection.sendShares(files: publicDirs, privateFiles: privateDirs)
+            logger.info("Sent shares to \(username)")
         } catch {
             logger.error("Failed to send shares to \(username): \(error.localizedDescription)")
-            logger.error("Failed to send shares: \(error)")
         }
     }
 
@@ -2006,7 +2028,7 @@ public final class NetworkClient {
     // MARK: - SeeleSeek Artwork Request Handling
 
     /// Handle artwork request from a SeeleSeek peer — look up the file and send back embedded artwork.
-    private func handleArtworkRequest(token: UInt32, filePath: String, connection: PeerConnection) async {
+    private func handleArtworkRequest(username: String, token: UInt32, filePath: String, connection: PeerConnection) async {
         // Find the file in our share index by SoulSeek path
         guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filePath }) else {
             logger.warning("ArtworkRequest: file not found in shares: \(filePath)")
@@ -2014,6 +2036,20 @@ public final class NetworkClient {
             let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
             try? await connection.send(reply)
             return
+        }
+
+        // Deny artwork for buddy-only files when the requester is not a
+        // buddy. Album art is embedded inside the file bytes, so leaking
+        // it is a data leak even if we stop short of serving the full
+        // upload. Matches the gate in handleSharesRequest / search.
+        if indexedFile.visibility == .buddies {
+            let isBuddy = isBuddyChecker?(username) ?? false
+            if !isBuddy {
+                logger.info("ArtworkRequest denied (buddy-only file, non-buddy requester): \(filePath)")
+                let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
+                try? await connection.send(reply)
+                return
+            }
         }
 
         let localURL = URL(fileURLWithPath: indexedFile.localPath)

@@ -69,8 +69,8 @@ struct SearchFilterBar: View {
         Button(action: action) {
             Text(label)
                 .font(SeeleTypography.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, SeeleSpacing.sm)
+                .padding(.vertical, SeeleSpacing.xs)
                 .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
                 .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
                 .clipShape(Capsule())
@@ -183,8 +183,8 @@ struct SearchFilterPanel: View {
         Button(action: action) {
             Text(label)
                 .font(SeeleTypography.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.horizontal, SeeleSpacing.sm)
+                .padding(.vertical, SeeleSpacing.xs)
                 .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
                 .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
                 .clipShape(Capsule())

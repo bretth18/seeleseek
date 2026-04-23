@@ -42,6 +42,40 @@ enum SeeleColors {
     static let alphaMedium: Double = 0.15
     static let alphaStrong: Double = 0.3
     static let alphaHalf: Double = 0.5
+
+    // MARK: - File Type Palette
+    /// Per-format palette used by file-type visualizations (e.g. the
+    /// shares distribution chart + legend). Lifted out of
+    /// `FileTypeDistribution.swift` so the brand-adjacent colors all
+    /// live in one reviewable place. Use `fileType(for:)` for the
+    /// dispatch rather than duplicating the switch elsewhere.
+    enum FileType {
+        static let audioMP3 = Color(hex: 0xE53935)
+        static let audioFLAC = Color(hex: 0x8E24AA)
+        static let audioOGG = Color(hex: 0x5E35B1)
+        static let audioAAC = Color(hex: 0x3949AB)  // m4a, aac
+        static let audioWAV = Color(hex: 0x1E88E5)
+        static let video = Color(hex: 0x00ACC1)     // mp4, mkv
+        static let image = Color(hex: 0x43A047)     // jpg, png
+        static let archive = Color(hex: 0xFDD835)   // zip, rar
+        static let unknown = Color(hex: 0x757575)
+    }
+
+    /// Palette dispatch for a file extension (lowercase). Falls back to
+    /// `FileType.unknown` for anything unrecognized.
+    static func fileType(for ext: String) -> Color {
+        switch ext {
+        case "mp3": return FileType.audioMP3
+        case "flac": return FileType.audioFLAC
+        case "ogg": return FileType.audioOGG
+        case "m4a", "aac": return FileType.audioAAC
+        case "wav": return FileType.audioWAV
+        case "mp4", "mkv": return FileType.video
+        case "jpg", "png": return FileType.image
+        case "zip", "rar": return FileType.archive
+        default: return FileType.unknown
+        }
+    }
 }
 
 extension Color {

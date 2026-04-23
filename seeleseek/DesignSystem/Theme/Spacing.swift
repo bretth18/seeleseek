@@ -21,9 +21,38 @@ nonisolated enum SeeleSpacing {
     static let tagSpacing: CGFloat = 6
     static let dividerSpacing: CGFloat = 1   // Gap for divider lines between items
 
+    /// # Row vertical-padding hierarchy
+    ///
+    /// To keep list / settings / form rhythm consistent, pick the row
+    /// padding by the row's role — don't reach for `.sm`/`.md` ad hoc:
+    ///
+    /// - **Settings + list rows** → use `rowVertical` (6pt). This is the
+    ///   standard for `SettingsComponents.settingsRow`, `StandardListRow`,
+    ///   and `SharedFolderRow`.
+    /// - **Form rows with inline inputs** → use `listRowPadding` (8pt).
+    ///   Slightly roomier to accommodate TextField / stepper controls.
+    /// - **Primary cards / hero containers** → use `cardPadding` (12pt)
+    ///   as their inner content padding, not as row padding.
+    ///
+    /// If you find yourself wanting a different value, promote it to a
+    /// token here instead of inlining a literal.
+
+    /// # Button-style hierarchy (SwiftUI `.buttonStyle`)
+    ///
+    /// - `.borderedProminent` — **primary** CTA on a surface (download,
+    ///   install, save). At most one per surface.
+    /// - `.bordered` — **secondary** actions that still need chrome
+    ///   (Cancel, Skip, tertiary destinations).
+    /// - `.plain` — icon-only buttons, inline text links, row actions.
+    ///   Default for row-embedded controls.
+    /// - **Do not use `.borderless`.** On macOS it renders nearly
+    ///   identically to `.plain` and creates ambiguity — `.plain` wins.
+
     // MARK: - Icon Sizes
     static let iconSizeXXS: CGFloat = 8      // Overlay glyphs (e.g. private lock on a file icon)
     static let iconSizeXS: CGFloat = 10
+    static let iconSizeXSmall: CGFloat = 12  // Between XS (10) and Small (14); added to kill
+                                             // the `iconSizeSmall - 2` arithmetic in badge-sized icons.
     static let iconSizeSmall: CGFloat = 14
     static let iconSize: CGFloat = 16
     static let iconSizeMedium: CGFloat = 20

@@ -177,52 +177,57 @@ public enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    /// Build shares reply message (code 5) - zlib compressed
-    /// Format: directory count, then for each directory: name, file count, files
-    public nonisolated static func sharesReplyMessage(files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) -> Data {
+    /// Build shares reply message (code 5) - zlib compressed.
+    ///
+    /// Protocol format (see `PROTOCOL_REFERENCE_FULL.md` Peer Code 5):
+    ///   - uint32 directory count
+    ///   - iterate directories (public)
+    ///   - uint32 unknown (always 0)
+    ///   - uint32 private directory count
+    ///   - iterate directories (private / buddy-only)
+    ///
+    /// `privateFiles` is the second section. Pass empty for non-buddies;
+    /// receivers ignore it unless the entries carry meaningful content.
+    public nonisolated static func sharesReplyMessage(
+        files: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])],
+        privateFiles: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])] = []
+    ) -> Data {
         var uncompressedPayload = Data()
 
-        // Directory count
-        uncompressedPayload.appendUInt32(UInt32(files.count))
+        // Emits one "directories" block at whatever count position we choose.
+        // Captured as a closure so public and private sections share one writer.
+        func appendDirectories(_ dirs: [(directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])]) {
+            uncompressedPayload.appendUInt32(UInt32(dirs.count))
+            for dir in dirs {
+                uncompressedPayload.appendString(dir.directory)
+                uncompressedPayload.appendUInt32(UInt32(dir.files.count))
+                for file in dir.files {
+                    uncompressedPayload.appendUInt8(1) // code
+                    uncompressedPayload.appendString(file.filename)
+                    uncompressedPayload.appendUInt64(file.size)
+                    let ext = URL(fileURLWithPath: file.filename).pathExtension
+                    uncompressedPayload.appendString(ext)
 
-        for dir in files {
-            // Directory name
-            uncompressedPayload.appendString(dir.directory)
-            // File count
-            uncompressedPayload.appendUInt32(UInt32(dir.files.count))
-
-            for file in dir.files {
-                // Code byte
-                uncompressedPayload.appendUInt8(1)
-                // Filename (just the name, not full path)
-                uncompressedPayload.appendString(file.filename)
-                // Size
-                uncompressedPayload.appendUInt64(file.size)
-                // Extension
-                let ext = URL(fileURLWithPath: file.filename).pathExtension
-                uncompressedPayload.appendString(ext)
-
-                // Attributes
-                var attrs: [(UInt32, UInt32)] = []
-                if let bitrate = file.bitrate {
-                    attrs.append((0, bitrate))
-                }
-                if let duration = file.duration {
-                    attrs.append((1, duration))
-                }
-                uncompressedPayload.appendUInt32(UInt32(attrs.count))
-                for attr in attrs {
-                    uncompressedPayload.appendUInt32(attr.0)
-                    uncompressedPayload.appendUInt32(attr.1)
+                    var attrs: [(UInt32, UInt32)] = []
+                    if let bitrate = file.bitrate { attrs.append((0, bitrate)) }
+                    if let duration = file.duration { attrs.append((1, duration)) }
+                    uncompressedPayload.appendUInt32(UInt32(attrs.count))
+                    for attr in attrs {
+                        uncompressedPayload.appendUInt32(attr.0)
+                        uncompressedPayload.appendUInt32(attr.1)
+                    }
                 }
             }
         }
 
+        // Public section
+        appendDirectories(files)
+
         // Unknown uint32 (always 0 per protocol)
         uncompressedPayload.appendUInt32(0)
 
-        // Private directory count (0 = no private shares)
-        uncompressedPayload.appendUInt32(0)
+        // Private (buddy-only) section
+        appendDirectories(privateFiles)
 
         // Compress with zlib
         guard let compressed = compressZlib(uncompressedPayload) else {
@@ -274,31 +279,41 @@ public enum MessageBuilder {
         return wrapMessage(payload)
     }
 
+    /// Build a FileSearchResponse (peer code 9). `privateResults` is the
+    /// buddy-only tail section (see protocol ref Peer Code 9: it carries
+    /// both a public result list and a `number of privately shared
+    /// results` list in the same message). Pass `[]` for non-buddies.
     public nonisolated static func searchReplyMessage(
         username: String,
         token: UInt32,
         results: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])],
         hasFreeSlots: Bool = true,
         uploadSpeed: UInt32 = 0,
-        queueLength: UInt32 = 0
+        queueLength: UInt32 = 0,
+        privateResults: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])] = []
     ) -> Data {
         var uncompressedPayload = Data()
 
         uncompressedPayload.appendString(username)
         uncompressedPayload.appendUInt32(token)
-        uncompressedPayload.appendUInt32(UInt32(results.count))
 
-        for result in results {
-            uncompressedPayload.appendUInt8(1) // code
-            uncompressedPayload.appendString(result.filename)
-            uncompressedPayload.appendUInt64(result.size)
-            uncompressedPayload.appendString(result.extension_)
-            uncompressedPayload.appendUInt32(UInt32(result.attributes.count))
-            for attr in result.attributes {
-                uncompressedPayload.appendUInt32(attr.0)
-                uncompressedPayload.appendUInt32(attr.1)
+        func appendResults(_ rs: [(filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])]) {
+            uncompressedPayload.appendUInt32(UInt32(rs.count))
+            for result in rs {
+                uncompressedPayload.appendUInt8(1) // code
+                uncompressedPayload.appendString(result.filename)
+                uncompressedPayload.appendUInt64(result.size)
+                uncompressedPayload.appendString(result.extension_)
+                uncompressedPayload.appendUInt32(UInt32(result.attributes.count))
+                for attr in result.attributes {
+                    uncompressedPayload.appendUInt32(attr.0)
+                    uncompressedPayload.appendUInt32(attr.1)
+                }
             }
         }
+
+        // Public results
+        appendResults(results)
 
         uncompressedPayload.appendBool(hasFreeSlots)
         uncompressedPayload.appendUInt32(uploadSpeed)
@@ -307,8 +322,8 @@ public enum MessageBuilder {
         // Unknown uint32 (always 0 per protocol)
         uncompressedPayload.appendUInt32(0)
 
-        // Private results count (0 = no private results)
-        uncompressedPayload.appendUInt32(0)
+        // Private (buddy-only) results
+        appendResults(privateResults)
 
         // Compress with zlib
         guard let compressed = compressZlib(uncompressedPayload) else {

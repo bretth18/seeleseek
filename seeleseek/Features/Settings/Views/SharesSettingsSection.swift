@@ -32,9 +32,11 @@ struct SharesSettingsSection: View {
                 }
 
                 ForEach(shareManager.sharedFolders) { folder in
-                    SharedFolderRow(folder: folder) {
-                        shareManager.removeFolder(folder)
-                    }
+                    SharedFolderRow(
+                        folder: folder,
+                        onRemove: { shareManager.removeFolder(folder) },
+                        onVisibilityChange: { shareManager.setVisibility($0, forFolderWithID: folder.id) }
+                    )
                 }
 
                 // Actions row
@@ -52,6 +54,7 @@ struct SharesSettingsSection: View {
                             .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .help("Pick one or more folders on disk to share with peers.")
 
                         Spacer()
 
@@ -76,6 +79,7 @@ struct SharesSettingsSection: View {
                                 .foregroundStyle(SeeleColors.textSecondary)
                             }
                             .buttonStyle(.plain)
+                            .help("Re-read all shared folders and refresh the file index.")
                         }
                     }
                 }
@@ -123,8 +127,21 @@ struct SharesSettingsSection: View {
 struct SharedFolderRow: View {
     let folder: ShareManager.SharedFolder
     let onRemove: () -> Void
+    let onVisibilityChange: (ShareManager.Visibility) -> Void
+
+    // Cap the Picker width so its closed-state size doesn't depend on
+    // the selected label ("Public" is narrower than "Buddies only") —
+    // without this, switching a folder's visibility would shift the
+    // remove button on that row.
+    private static let visibilityColumnWidth: CGFloat = 112
 
     var body: some View {
+        // Single-row layout with metadata (file count, size) demoted
+        // into the subline alongside the path, matching the macOS
+        // Settings pattern used in System Settings > Sharing and in
+        // Finder's Get Info accessory rows. This frees enough
+        // horizontal space for the visibility picker + remove button
+        // to stay on screen even on narrow Settings detail panes.
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: "folder.fill")
                 .font(.system(size: SeeleSpacing.iconSizeSmall))
@@ -135,22 +152,34 @@ struct SharedFolderRow: View {
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
-                Text(folder.path)
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .lineLimit(1)
-            }
+                HStack(spacing: SeeleSpacing.xs) {
+                    Text(folder.path)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(0)
 
-            Spacer()
+                    Text("·")
+                    Text("\(folder.fileCount) files")
+                        .monospacedDigit()
+                        .layoutPriority(1)
 
-            Text("\(folder.fileCount) files")
+                    Text("·")
+                    Text(folder.totalSize.formattedBytes)
+                        .monospacedDigit()
+                        .layoutPriority(1)
+                }
                 .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text(folder.totalSize.formattedBytes)
-                .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textTertiary)
+            }
+            // Let the path/metadata subline collapse to zero width
+            // before the trailing controls get clipped.
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+
+            visibilityPicker
+                .frame(width: Self.visibilityColumnWidth, alignment: .trailing)
+                .layoutPriority(2)
 
             Button(action: onRemove) {
                 Image(systemName: "minus.circle.fill")
@@ -158,10 +187,36 @@ struct SharedFolderRow: View {
                     .foregroundStyle(SeeleColors.error.opacity(0.8))
             }
             .buttonStyle(.plain)
+            .layoutPriority(2)
+            .accessibilityLabel("Stop sharing \(folder.displayName)")
+            .help("Stop sharing this folder")
         }
         .padding(.horizontal, SeeleSpacing.rowHorizontal)
         .padding(.vertical, SeeleSpacing.rowVertical)
         .background(SeeleColors.surface)
+    }
+
+    /// Native pop-up button (Picker with `.menu` style) — matches the
+    /// existing `settingsPicker` idiom in `SettingsComponents.swift` and
+    /// is the macOS-native control for "pick one of N" inline per HIG.
+    /// Labels carry SF Symbols so the dropdown is skimmable; the row's
+    /// closed state shows the current label + chevron from AppKit.
+    private var visibilityPicker: some View {
+        Picker(
+            "Visibility",
+            selection: Binding(
+                get: { folder.visibility },
+                set: onVisibilityChange
+            )
+        ) {
+            Label("Public", systemImage: "globe")
+                .tag(ShareManager.Visibility.public)
+            Label("Buddies only", systemImage: "lock.fill")
+                .tag(ShareManager.Visibility.buddies)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .help("Buddies-only folders are sent in the Soulseek protocol's private section, only to peers on your buddy list. Honor-system — not cryptographically enforced.")
     }
 }
 

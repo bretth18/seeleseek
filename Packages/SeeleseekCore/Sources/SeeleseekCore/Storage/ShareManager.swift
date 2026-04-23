@@ -22,19 +22,57 @@ public final class ShareManager {
 
     // MARK: - Types
 
+    /// Who is allowed to see a shared folder when peers browse or search
+    /// our shares. Enforced client-side — the Soulseek protocol carries
+    /// "private" entries on the wire (see `SharedFileListResponse` and
+    /// `FileSearchResponse`) but has no auth, so this is an honor-system
+    /// affordance, same contract as Nicotine+.
+    public enum Visibility: String, Codable, Sendable, Hashable {
+        case `public`
+        case buddies
+    }
+
     public struct SharedFolder: Identifiable, Codable, Hashable {
         public let id: UUID
         public let path: String
         public var fileCount: Int
         public var totalSize: UInt64
         public var lastScanned: Date?
+        public var visibility: Visibility
 
-        public init(id: UUID = UUID(), path: String, fileCount: Int = 0, totalSize: UInt64 = 0, lastScanned: Date? = nil) {
+        public init(
+            id: UUID = UUID(),
+            path: String,
+            fileCount: Int = 0,
+            totalSize: UInt64 = 0,
+            lastScanned: Date? = nil,
+            visibility: Visibility = .public
+        ) {
             self.id = id
             self.path = path
             self.fileCount = fileCount
             self.totalSize = totalSize
             self.lastScanned = lastScanned
+            self.visibility = visibility
+        }
+
+        // Custom decoder so existing persisted JSON (no `visibility` key)
+        // decodes with a `.public` default — Swift's synthesized Codable
+        // does NOT apply property defaults on missing keys, it throws
+        // `.keyNotFound`. Without this shim, every user would lose their
+        // saved shared folders on first launch after this change.
+        private enum CodingKeys: String, CodingKey {
+            case id, path, fileCount, totalSize, lastScanned, visibility
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try c.decode(UUID.self, forKey: .id)
+            self.path = try c.decode(String.self, forKey: .path)
+            self.fileCount = try c.decode(Int.self, forKey: .fileCount)
+            self.totalSize = try c.decode(UInt64.self, forKey: .totalSize)
+            self.lastScanned = try c.decodeIfPresent(Date.self, forKey: .lastScanned)
+            self.visibility = try c.decodeIfPresent(Visibility.self, forKey: .visibility) ?? .public
         }
 
         public var displayName: String {
@@ -61,8 +99,20 @@ public final class ShareManager {
         /// driven from that loop. Precomputing the lowercased form once
         /// turns the hot path into a pure substring compare.
         public let searchableText: String
+        /// Copied from the parent `SharedFolder.visibility` at index time
+        /// so the search / browse filters don't need a folder lookup on
+        /// every hit.
+        public let visibility: Visibility
+        /// Back-pointer to the owning `SharedFolder.id`. Used by
+        /// `setVisibility` (and can be used by `removeFolder`) to match
+        /// indexed files by folder identity rather than by
+        /// `localPath.hasPrefix(folder.path)` — the latter silently
+        /// matches sibling folders whose names share a prefix
+        /// (e.g. `/Music` vs `/Music_archive`), which previously caused
+        /// visibility toggles to leak across siblings.
+        public let folderID: UUID
 
-        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil) {
+        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil, visibility: Visibility = .public, folderID: UUID) {
             self.id = UUID()
             self.localPath = localPath
             self.sharedPath = sharedPath
@@ -72,6 +122,8 @@ public final class ShareManager {
             self.duration = duration
             self.fileExtension = URL(fileURLWithPath: localPath).pathExtension.lowercased()
             self.searchableText = sharedPath.lowercased()
+            self.visibility = visibility
+            self.folderID = folderID
         }
     }
 
@@ -126,8 +178,10 @@ public final class ShareManager {
     public func removeFolder(_ folder: SharedFolder) {
         sharedFolders.removeAll { $0.id == folder.id }
 
-        // Remove indexed files from this folder
-        fileIndex.removeAll { $0.localPath.hasPrefix(folder.path) }
+        // Remove indexed files from this folder. Match by folderID so
+        // removing `/Music` doesn't also drop files under a sibling
+        // `/Music_archive` (same hazard that bit `setVisibility`).
+        fileIndex.removeAll { $0.folderID == folder.id }
 
         // Stop accessing security-scoped resource
         URL(fileURLWithPath: folder.path).stopAccessingSecurityScopedResource()
@@ -206,7 +260,9 @@ public final class ShareManager {
                     localPath: fileURL.path,
                     sharedPath: sharedPath,
                     size: size,
-                    bitrate: bitrate
+                    bitrate: bitrate,
+                    visibility: folder.visibility,
+                    folderID: folder.id
                 )
 
                 fileIndex.append(indexed)
@@ -247,17 +303,59 @@ public final class ShareManager {
     /// on main meant the UI stalled while peer traffic flowed. The
     /// `fileIndex` snapshot is a value-type array and IndexedFile is
     /// Sendable, so the detached task gets a safe copy-on-write view.
-    public func search(query: String) async -> [IndexedFile] {
+    ///
+    /// `includeBuddyOnly` controls whether folders marked `.buddies` are
+    /// visible to the requester. Callers resolve that flag from their
+    /// knowledge of the requester (buddy-list membership) before calling.
+    public func search(query: String, includeBuddyOnly: Bool) async -> [IndexedFile] {
         let snapshot = fileIndex
         return await Task.detached(priority: .utility) {
             let terms = query.lowercased().split(separator: " ").map(String.init)
             guard !terms.isEmpty else { return [] }
             return snapshot.filter { file in
+                if !includeBuddyOnly && file.visibility == .buddies { return false }
                 // `searchableText` is precomputed at index time — no
                 // per-query allocation here.
-                terms.allSatisfy { file.searchableText.contains($0) }
+                return terms.allSatisfy { file.searchableText.contains($0) }
             }
         }.value
+    }
+
+    /// Snapshot of all indexed files visible to a given requester. Used
+    /// by the shares-browse handler to partition the reply into public
+    /// and private sections.
+    public func indexedFiles(includeBuddyOnly: Bool) -> [IndexedFile] {
+        if includeBuddyOnly { return fileIndex }
+        return fileIndex.filter { $0.visibility == .public }
+    }
+
+    /// Change a folder's visibility and propagate the new flag to every
+    /// `IndexedFile` already scanned from that folder (avoids a rescan).
+    ///
+    /// Matching is by `folderID`, not by `localPath` prefix. A path
+    /// prefix check would also rewrite entries from sibling folders
+    /// whose names share the target's prefix (e.g. flipping `/Music`
+    /// would also rewrite files under `/Music_archive`), silently
+    /// desyncing the UI from what peers see on the wire.
+    public func setVisibility(_ visibility: Visibility, forFolderWithID id: UUID) {
+        guard let idx = sharedFolders.firstIndex(where: { $0.id == id }) else { return }
+        guard sharedFolders[idx].visibility != visibility else { return }
+        sharedFolders[idx].visibility = visibility
+        // Rewrite the subset of fileIndex that came from this folder.
+        // IndexedFile fields are `let`, so we replace entries in place.
+        for i in fileIndex.indices where fileIndex[i].folderID == id {
+            let f = fileIndex[i]
+            fileIndex[i] = IndexedFile(
+                localPath: f.localPath,
+                sharedPath: f.sharedPath,
+                size: f.size,
+                bitrate: f.bitrate,
+                duration: f.duration,
+                visibility: visibility,
+                folderID: f.folderID
+            )
+        }
+        save()
     }
 
     /// Convert indexed files to SharedFile format for responses

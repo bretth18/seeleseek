@@ -15,10 +15,11 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var duration: Int?
     var isDirectory: Bool
     var sortOrder: Int
+    var isPrivate: Bool
 
     // Custom coding for Bool<->Int conversion
     enum CodingKeys: String, CodingKey {
-        case id, userSharesId, parentId, filename, size, bitrate, duration, isDirectory, sortOrder
+        case id, userSharesId, parentId, filename, size, bitrate, duration, isDirectory, sortOrder, isPrivate
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +33,10 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
         duration = try container.decodeIfPresent(Int.self, forKey: .duration)
         isDirectory = (try container.decode(Int.self, forKey: .isDirectory)) != 0
         sortOrder = try container.decode(Int.self, forKey: .sortOrder)
+        // v7 migration adds this column with DEFAULT 0, so rows written
+        // before the migration (and the migration's own backfill) decode
+        // to `false` without throwing.
+        isPrivate = ((try container.decodeIfPresent(Int.self, forKey: .isPrivate)) ?? 0) != 0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -45,6 +50,7 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
         try container.encodeIfPresent(duration, forKey: .duration)
         try container.encode(isDirectory ? 1 : 0, forKey: .isDirectory)
         try container.encode(sortOrder, forKey: .sortOrder)
+        try container.encode(isPrivate ? 1 : 0, forKey: .isPrivate)
     }
 
     init(
@@ -56,7 +62,8 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
         bitrate: Int?,
         duration: Int?,
         isDirectory: Bool,
-        sortOrder: Int
+        sortOrder: Int,
+        isPrivate: Bool
     ) {
         self.id = id
         self.userSharesId = userSharesId
@@ -67,6 +74,7 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
         self.duration = duration
         self.isDirectory = isDirectory
         self.sortOrder = sortOrder
+        self.isPrivate = isPrivate
     }
 
     /// Convert flat records to hierarchical SharedFile structure
@@ -96,6 +104,7 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
                 bitrate: record.bitrate.map { UInt32($0) },
                 duration: record.duration.map { UInt32($0) },
                 isDirectory: record.isDirectory,
+                isPrivate: record.isPrivate,
                 children: children
             )
         }
@@ -119,7 +128,8 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
                 bitrate: file.bitrate.map { Int($0) },
                 duration: file.duration.map { Int($0) },
                 isDirectory: file.isDirectory,
-                sortOrder: index
+                sortOrder: index,
+                isPrivate: file.isPrivate
             )
             records.append(record)
 

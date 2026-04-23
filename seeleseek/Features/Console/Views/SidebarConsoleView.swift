@@ -44,7 +44,7 @@ struct SidebarConsoleView: View {
                                 .id(event.id)
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, SeeleSpacing.xxs)
                 }
                 .onChange(of: activityLog.events.count) { _, _ in
                     if let latest = activityLog.events.first {
