@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 import SeeleseekCore
 
 struct UpdatePromptSheet: View {
@@ -83,7 +86,23 @@ struct UpdatePromptSheet: View {
                 downloadProgress
             } else {
                 Button("Download & Install") {
-                    Task { await updateState.downloadAndInstall() }
+                    // Sequence is load-bearing: download, then dismiss
+                    // this window, *then* hand the pkg to Installer.app.
+                    // If we leave the window visible when Installer
+                    // force-quits us, macOS restores it on next launch
+                    // regardless of the version comparison result — the
+                    // long-running "update-prompt loops after install"
+                    // bug. Closing first ensures restoration won't
+                    // re-open it.
+                    Task {
+                        guard let pkgURL = await updateState.downloadPkg() else {
+                            return
+                        }
+                        close()
+                        #if os(macOS)
+                        NSWorkspace.shared.open(pkgURL)
+                        #endif
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(updateState.latestPkgURL == nil)
