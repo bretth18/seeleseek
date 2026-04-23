@@ -112,7 +112,7 @@ public final class ShareManager {
         /// visibility toggles to leak across siblings.
         public let folderID: UUID
 
-        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil, visibility: Visibility = .public, folderID: UUID = UUID()) {
+        public init(localPath: String, sharedPath: String, size: UInt64, bitrate: UInt32? = nil, duration: UInt32? = nil, visibility: Visibility = .public, folderID: UUID) {
             self.id = UUID()
             self.localPath = localPath
             self.sharedPath = sharedPath
