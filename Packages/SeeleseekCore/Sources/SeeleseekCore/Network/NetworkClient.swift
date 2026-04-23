@@ -220,6 +220,49 @@ public final class NetworkClient {
         failAllPendingPeerOperations(reason: reason)
     }
 
+    /// Test-only: register a sentinel establishment task and return its
+    /// handle. The task is a never-returning `await` — the test can
+    /// confirm that disconnect-driven cancellation propagates into a
+    /// real in-flight handshake by checking that the handle throws
+    /// CancellationError afterwards.
+    internal func _seedSentinelEstablishmentForTest(username: String) -> Task<PeerConnection, Error> {
+        let task = Task<PeerConnection, Error> {
+            // Sleep essentially forever until cancelled.
+            try await Task.sleep(for: .seconds(3600))
+            throw NetworkError.timeout
+        }
+        pendingEstablishments[username] = task
+        return task
+    }
+
+    /// Test-only: attach a distributed child socket placeholder so tests
+    /// can confirm `clearDistributedState` wipes it on teardown. We store
+    /// a real idle PeerConnection so the disconnect call is exercised.
+    internal func _seedDistributedChildForTest() -> PeerConnection {
+        let info = PeerConnection.PeerInfo(username: "child", ip: "127.0.0.1", port: 1)
+        let child = PeerConnection(peerInfo: info, type: .distributed, token: 0)
+        distributedChildren.append(child)
+        distributedBranchLevel = 5
+        distributedBranchRoot = "root"
+        return child
+    }
+
+    internal func _distributedChildCountForTest() -> Int {
+        distributedChildren.count
+    }
+
+    internal func _distributedBranchLevelForTest() -> UInt32 {
+        distributedBranchLevel
+    }
+
+    /// Test-only: run the peer-teardown half of `performDisconnect`
+    /// (disconnectAll + distributed clear) without touching the server
+    /// connection or listener. Matches what the real teardown Task does.
+    internal func _runDisconnectTeardownForTest() async {
+        await peerConnectionPool.disconnectAll()
+        await clearDistributedState()
+    }
+
     // MARK: - Initialization
 
     public init() {
@@ -652,7 +695,9 @@ public final class NetworkClient {
         let serverConn = serverConnection
         serverConnection = nil
         let pool = peerConnectionPool
-        teardownTask = Task { [listenerService, natService] in
+        let handler = messageHandler
+        messageHandler = nil
+        teardownTask = Task { [listenerService, natService, weak self] in
             await priorTeardown?.value
             await serverConn?.disconnect()
             await listenerService.stop()
@@ -662,6 +707,13 @@ public final class NetworkClient {
             // and the pool's dict could carry ghost entries into the new
             // session — the "stale peer sockets" half of the auditor note.
             await pool.disconnectAll()
+            // Distributed network teardown: the parent socket lives on
+            // the server-message handler, the child sockets on self.
+            // Both survive a reconnect without this, and the old parent
+            // keeps feeding distributed search frames into the dead
+            // session.
+            await handler?.tearDownDistributedParent()
+            await self?.clearDistributedState()
         }
 
         isConnected = false
@@ -705,12 +757,28 @@ public final class NetworkClient {
         }
         pendingBrowseStates.removeAll()
 
+        // Cancel each in-flight establishment task. `removeAll()` alone
+        // just drops our handle to the task — it keeps running, can
+        // complete after disconnect, and hands a live PeerConnection
+        // back to a caller whose session is already dead. Cancelling
+        // propagates cooperative cancellation into the direct-dial /
+        // PierceFirewall race so the awaiter sees CancellationError
+        // instead of a zombie connection.
+        for (_, task) in pendingEstablishments {
+            task.cancel()
+        }
         pendingEstablishments.removeAll()
 
         for (_, continuation) in userInfoReplyContinuations {
             continuation.resume(throwing: error)
         }
         userInfoReplyContinuations.removeAll()
+        // Same story as pendingEstablishments: the inner task could be
+        // mid-handshake with a peer. Cancel before dropping so the
+        // `try await task.value` caller unwinds.
+        for (_, task) in userInfoInFlight {
+            task.cancel()
+        }
         userInfoInFlight.removeAll()
         // Leave `userInfoReplyCache` intact — cached peer metadata isn't
         // invalidated by a server reconnect; users can still be looked up
@@ -1784,15 +1852,7 @@ public final class NetworkClient {
 
         logger.info("Resetting distributed network state")
 
-        // Disconnect all children
-        for child in distributedChildren {
-            await child.disconnect()
-        }
-        distributedChildren.removeAll()
-
-        // Reset branch state
-        distributedBranchLevel = 0
-        distributedBranchRoot = ""
+        await clearDistributedState()
 
         // Tell server we have no parent and need one
         do {
@@ -1809,6 +1869,20 @@ public final class NetworkClient {
         } catch {
             logger.error("Failed to send distributed reset messages: \(error.localizedDescription)")
         }
+    }
+
+    /// Drop every distributed child socket and reset branch state. Shared
+    /// between `resetDistributedNetwork` (server code 130) and
+    /// `performDisconnect` — a reconnect must not inherit live child
+    /// sockets from the previous session. Does not touch the server
+    /// connection, so it's safe to call during teardown.
+    private func clearDistributedState() async {
+        for child in distributedChildren {
+            await child.disconnect()
+        }
+        distributedChildren.removeAll()
+        distributedBranchLevel = 0
+        distributedBranchRoot = ""
     }
 
     /// Add a distributed child connection

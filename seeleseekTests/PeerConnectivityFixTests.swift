@@ -11,12 +11,29 @@ import Foundation
 @Suite("Peer Connectivity Fixes", .serialized)
 struct PeerConnectivityFixTests {
 
-    // MARK: - Obfuscated listener retention
+    // MARK: - Obfuscated listener plumbing
+    //
+    // The obfuscated listener is intentionally half-wired: the port binds and
+    // surfaces inbound connections to `newConnections` flagged `obfuscated:
+    // true`, but the pool rejects them because the Soulseek XOR stream cipher
+    // isn't implemented (tracked in a separate GH issue). These two tests
+    // cover both layers so neither can regress silently:
+    //
+    //  1. Listener surfaces the connection with the obfuscated flag set.
+    //  2. Pool's `handleIncomingConnection(_:obfuscated:)` cancels it.
 
-    @Test("Obfuscated listener accepts inbound connections after start()")
-    func obfuscatedListenerAcceptsInbound() async throws {
+    @Test("Listener surfaces inbound obfuscated connections with the obfuscated flag set")
+    func obfuscatedListenerSurfacesConnectionFlagged() async throws {
         let service = ListenerService()
-        let (port, obfuscatedPort) = try await service.start()
+
+        // ListenerService scans ports 2234-2240; under parallel test
+        // execution another listener-binding test can hold the whole range
+        // so `start()` throws `noAvailablePort`. `#require` here surfaces
+        // the environmental problem distinctly from a behavioral failure
+        // of the flag propagation this test actually verifies.
+        let startResult = try? await service.start()
+        let (port, obfuscatedPort) = try #require(startResult,
+            "no available port pair in 2234-2240 — likely parallel-test contention")
         defer { Task { await service.stop() } }
 
         #expect(port > 0)
@@ -51,6 +68,26 @@ struct PeerConnectivityFixTests {
         let received = await reader.value
         let unwrapped = try #require(received, "obfuscated listener did not surface the connection within 3s")
         #expect(unwrapped.1 == true, "connection should be flagged obfuscated")
+    }
+
+    @Test("Pool rejects obfuscated inbound connections (cipher not implemented)")
+    func poolRejectsObfuscatedInbound() async throws {
+        let pool = await PeerConnectionPool()
+
+        // Spin up a dummy NWConnection pointed at a loopback port that
+        // nothing listens on. The pool should cancel it before ever
+        // touching the framing layer.
+        let endpoint = NWEndpoint.hostPort(
+            host: .ipv4(.loopback),
+            port: NWEndpoint.Port(rawValue: 1)!
+        )
+        let conn = NWConnection(to: endpoint, using: .tcp)
+
+        await pool.handleIncomingConnection(conn, obfuscated: true)
+
+        // No tracking entry was created for an obfuscated rejection.
+        let count = await pool.activeConnections
+        #expect(count == 0, "pool must not track obfuscated connections")
     }
 
     // MARK: - Multi-waiter getPeerAddress
@@ -447,6 +484,54 @@ struct PeerConnectivityFixTests {
 
         let status = await statusWaiter.value
         #expect(status.status == .offline, "status waiter should resume with offline on disconnect")
+    }
+
+    /// `failAllPendingPeerOperations` used to call `removeAll()` on the
+    /// `pendingEstablishments` dict without cancelling the in-flight tasks.
+    /// A task mid-handshake would then complete after disconnect and hand
+    /// a live PeerConnection back to a caller in a dead session. Now we
+    /// cancel each task before dropping our reference.
+    @Test("Disconnect cancels in-flight peer-establishment tasks")
+    func disconnectCancelsPendingEstablishments() async {
+        let client = await NetworkClient()
+
+        let sentinel = await client._seedSentinelEstablishmentForTest(username: "alice")
+
+        await client._failAllPendingPeerOperationsForTest()
+
+        do {
+            _ = try await sentinel.value
+            Issue.record("sentinel establishment task should have been cancelled")
+        } catch is CancellationError {
+            // expected: Task.sleep throws CancellationError on cancel
+        } catch {
+            Issue.record("expected CancellationError, got \(error)")
+        }
+    }
+
+    // MARK: - Distributed-network teardown
+
+    /// Children sockets and branch state used to survive a disconnect —
+    /// `performDisconnect` only tore down server/listener/NAT/peer pool.
+    /// A reconnect then inherited live D-connections from the previous
+    /// session, and the old parent kept feeding distributed traffic into
+    /// the new session. Teardown now wipes both.
+    @Test("Disconnect clears distributed children and branch state")
+    func disconnectClearsDistributedState() async {
+        let client = await NetworkClient()
+
+        _ = await client._seedDistributedChildForTest()
+        #expect(await client._distributedChildCountForTest() == 1,
+                "precondition: distributed child seeded")
+        #expect(await client._distributedBranchLevelForTest() == 5,
+                "precondition: branch state seeded")
+
+        await client._runDisconnectTeardownForTest()
+
+        #expect(await client._distributedChildCountForTest() == 0,
+                "children must be disconnected and dropped on teardown")
+        #expect(await client._distributedBranchLevelForTest() == 0,
+                "branch level must reset on teardown")
     }
 
     // MARK: - Pool: lastActivity bumped on event
