@@ -188,7 +188,7 @@ shareManager.addFolder(musicFolderURL)
 await shareManager.rescanAll()
 
 // Search your shares (used for responding to network searches)
-let matches = shareManager.search(query: "boards of canada")
+let matches = await shareManager.search(query: "boards of canada")
 
 // Get share stats
 shareManager.totalFiles    // Total indexed files
