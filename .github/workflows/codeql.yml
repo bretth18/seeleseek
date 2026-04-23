@@ -1,12 +1,12 @@
 name: CodeQL
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   schedule:
-    # Monday 04:23 UTC. Catches drift if a commit lands on main without a PR.
+    # Monday 04:23 UTC. Catches drift if a commit lands on main without
+    # going through the push trigger (e.g., a force-push or an admin
+    # bypass) and gives us one scheduled run per week regardless.
     - cron: '23 4 * * 1'
 
 permissions:
