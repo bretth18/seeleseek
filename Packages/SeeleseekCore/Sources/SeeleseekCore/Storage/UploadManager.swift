@@ -27,9 +27,23 @@ public final class UploadManager {
     private var transferResponseTimeouts: [UInt32: Task<Void, Never>] = [:]
 
     // Configuration
-    public var maxConcurrentUploads = 3
+    public private(set) var maxConcurrentUploads = 5
     public var maxQueuedPerUser = 50  // Max files queued per user (nicotine+ default)
     public var uploadSpeedLimit: Int64? = nil  // bytes per second, nil = unlimited
+
+    /// Update the concurrent-upload cap. If the cap grew, kick `processQueue()`
+    /// so waiting uploads can pick up the newly freed slots without having to
+    /// wait for the next QueueUpload / TransferResponse to arrive.
+    public func setMaxConcurrentUploads(_ value: Int) {
+        let clamped = max(1, value)
+        guard clamped != maxConcurrentUploads else { return }
+        let grew = clamped > maxConcurrentUploads
+        maxConcurrentUploads = clamped
+        logger.info("maxConcurrentUploads set to \(clamped)")
+        if grew {
+            Task { await self.processQueue() }
+        }
+    }
 
     /// Highest valid upload-speed sample observed this session, in B/s.
     /// Used to avoid overwriting our server-side profile speed with noisy

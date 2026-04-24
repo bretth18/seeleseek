@@ -174,8 +174,15 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onMaxUploadSlotsChange?(maxUploadSlots)
         }
     }
+
+    /// Live push from the settings UI to UploadManager. Wired by AppState
+    /// at startup — without this, the stepper would only affect a fresh
+    /// launch (and historically didn't affect anything at all: the cap
+    /// was hardcoded to 3).
+    var onMaxUploadSlotsChange: ((Int) -> Void)?
     var uploadSpeedLimit: Int = 0 {
         didSet {
             guard !isLoading else { return }

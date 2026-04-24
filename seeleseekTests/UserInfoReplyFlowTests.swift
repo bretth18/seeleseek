@@ -179,3 +179,35 @@ struct UploadManagerRejectStatusTests {
         #expect(UploadManager.status(forReject: "User is offline") == .failed)
     }
 }
+
+// MARK: - setMaxConcurrentUploads
+
+@MainActor
+@Suite("UploadManager.setMaxConcurrentUploads")
+struct UploadManagerSlotSetterTests {
+
+    @Test("Setter applies clamped value")
+    func testAppliesValue() {
+        let manager = UploadManager()
+        manager.setMaxConcurrentUploads(7)
+        #expect(manager.maxConcurrentUploads == 7)
+    }
+
+    @Test("Values below 1 are clamped to 1")
+    func testClampsFloor() {
+        let manager = UploadManager()
+        manager.setMaxConcurrentUploads(0)
+        #expect(manager.maxConcurrentUploads == 1)
+        manager.setMaxConcurrentUploads(-3)
+        #expect(manager.maxConcurrentUploads == 1)
+    }
+
+    @Test("Repeated set to same value is a no-op")
+    func testNoOpOnRepeat() {
+        let manager = UploadManager()
+        manager.setMaxConcurrentUploads(5)
+        #expect(manager.maxConcurrentUploads == 5)
+        manager.setMaxConcurrentUploads(5)
+        #expect(manager.maxConcurrentUploads == 5)
+    }
+}

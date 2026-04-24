@@ -70,6 +70,14 @@ final class AppState {
         downloadManager.configure(networkClient: client, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
         uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
 
+        // Push the settings stepper's value into UploadManager and keep them
+        // in sync as the user changes it. Pre-refactor `maxConcurrentUploads`
+        // was hardcoded to 3 and the stepper was cosmetic — this is the wire.
+        uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
+        settings.onMaxUploadSlotsChange = { [weak uploadManager] newValue in
+            uploadManager?.setMaxConcurrentUploads(newValue)
+        }
+
         // Peer-status watcher — SocialState tracks live online/away/offline
         // state for any peer currently in the transfer list (not just
         // buddies), so rows can surface offline state even for strangers.
@@ -460,6 +468,11 @@ final class AppState {
     private func loadPersistedState() async {
         // Load settings from database
         await settings.loadFromDatabase()
+
+        // `loadFromDatabase` sets `isLoading = true`, so the `didSet` hook
+        // that normally pushes maxUploadSlots to UploadManager is suppressed.
+        // Re-apply after the load completes.
+        uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
 
         // Load resumable transfers
         await transferState.loadPersisted()
