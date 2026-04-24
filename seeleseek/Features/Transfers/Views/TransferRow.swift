@@ -1,6 +1,34 @@
 import SwiftUI
 import SeeleseekCore
 
+// MARK: - Pending-retry detection
+
+/// Both `DownloadManager.scheduleRetry` and `UploadManager.scheduleUploadRetry`
+/// stamp the row's `error` with `"Retrying in <delay>..."` while the row sits
+/// in `.failed` waiting for the next attempt. The row treats that prefix as
+/// the "pending retry" signal so the UI can show a clock + delay instead of
+/// a red `Failed`. Couples to the format the managers produce — keep these in
+/// sync if either retry scheduler changes the string. Internal (not
+/// fileprivate) so unit tests can lock in the contract.
+extension Transfer {
+    /// True when the row is `.failed` but a retry Task is sleeping with a
+    /// scheduled wake-up.
+    var isPendingRetry: Bool {
+        guard status == .failed, let error = error else { return false }
+        return error.hasPrefix("Retrying in ")
+    }
+
+    /// Extract the delay token (e.g. `"2m"`) from the retry-pending error.
+    /// Returns nil for non-pending rows.
+    var pendingRetryDelay: String? {
+        guard isPendingRetry, let error = error else { return nil }
+        let inner = error.dropFirst("Retrying in ".count)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .trimmingCharacters(in: .whitespaces)
+        return inner.isEmpty ? nil : inner
+    }
+}
+
 // MARK: - Layout anchors
 
 /// Fixed widths so the same field lands at the same X coordinate on every
@@ -335,11 +363,15 @@ private struct TransferInfoColumn: View {
     /// Detail shown to the right of the peer cluster. Only one of the
     /// following renders, in priority order:
     ///   1. Explicit "Peer offline/away" when the server told us so.
-    ///   2. `transfer.error` (e.g. "Upload failed on peer side").
-    ///   3. Folder path (for context on active/queued transfers).
-    ///   4. Retry count badge.
-    /// Wasteful 168pt outer peer-cell only kicks in for case 3 — where
-    /// cross-row folder-path alignment matters. Cases 1/2/4 use intrinsic
+    ///   2. Retry-waiting (warning, clock icon) — `transfer.error` carries
+    ///      `"Retrying in 2m..."`. Higher priority than the generic error
+    ///      branch so the row reads as "scheduled retry" rather than red
+    ///      "failure".
+    ///   3. `transfer.error` (e.g. "Upload failed on peer side").
+    ///   4. Folder path (for context on active/queued transfers).
+    ///   5. Retry count badge.
+    /// Wasteful 168pt outer peer-cell only kicks in for case 4 — where
+    /// cross-row folder-path alignment matters. Other cases use intrinsic
     /// peer-cluster width so the detail butts up right after the username.
     @ViewBuilder
     private var contextLine: some View {
@@ -347,6 +379,12 @@ private struct TransferInfoColumn: View {
             HStack(spacing: SeeleSpacing.md) {
                 peerCluster
                 offlineLabel
+                Spacer(minLength: 0)
+            }
+        } else if transfer.isPendingRetry, let error = transfer.error {
+            HStack(spacing: SeeleSpacing.md) {
+                peerCluster
+                retryWaitingLabel(error)
                 Spacer(minLength: 0)
             }
         } else if let error = transfer.error, !error.isEmpty {
@@ -435,6 +473,27 @@ private struct TransferInfoColumn: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .help(error)
+        }
+    }
+
+    /// Pending-retry variant of `errorLabel`: orange clock instead of red
+    /// triangle so a scheduled-retry row doesn't look like a permanent
+    /// failure. The text still shows the manager-stamped countdown
+    /// ("Retrying in 2m...") for the user to see exactly how long they're
+    /// waiting.
+    private func retryWaitingLabel(_ message: String) -> some View {
+        HStack(spacing: SeeleSpacing.xs) {
+            Image(systemName: "clock")
+                .font(.system(size: SeeleSpacing.iconSizeXS))
+                .foregroundStyle(SeeleColors.warning)
+                .accessibilityHidden(true)
+
+            Text(message)
+                .font(SeeleTypography.monoSmall)
+                .foregroundStyle(SeeleColors.warning)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(message)
         }
     }
 
@@ -543,9 +602,23 @@ private struct TransferMetadataColumn: View {
             }
             .foregroundStyle(SeeleColors.success)
         case .failed:
-            Text("Failed")
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.error)
+            if let delay = transfer.pendingRetryDelay {
+                // Pending automatic retry — primary cue switches from
+                // "Failed" (red, terminal) to "Retry in 2m" (orange,
+                // pending) so the user sees the row is still in flight.
+                HStack(spacing: SeeleSpacing.xxs) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: SeeleSpacing.iconSizeXS))
+                    Text("Retry in \(delay)")
+                        .font(SeeleTypography.monoSmall)
+                        .monospacedDigit()
+                }
+                .foregroundStyle(SeeleColors.warning)
+            } else {
+                Text("Failed")
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.error)
+            }
         case .cancelled:
             Text("Cancelled")
                 .font(SeeleTypography.monoSmall)

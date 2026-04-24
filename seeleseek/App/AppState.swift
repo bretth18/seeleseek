@@ -86,9 +86,13 @@ final class AppState {
         // Cancel any pending retry Task when the user takes a transfer out
         // of a retriable state (cancel, remove, manual retry, clear failed).
         // Without this the retry Task sleeps up to 30 min before self-skipping
-        // via its status guard.
+        // via its status guard. Both managers maintain their own retry table
+        // — same callback fans out to both since `transferId` is unique
+        // across directions and the lookup is a no-op when there's no
+        // pending entry.
         transferState.onDownloadTerminated = { [weak self] transferId in
             self?.downloadManager.cancelRetry(transferId: transferId)
+            self?.uploadManager.cancelRetry(transferId: transferId)
         }
 
         uploadManager.uploadPermissionChecker = { [weak self] username in

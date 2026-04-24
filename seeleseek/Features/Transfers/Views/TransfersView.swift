@@ -289,6 +289,8 @@ struct TransfersView: View {
                             transferState.retryTransfer(id: transfer.id)
                             if transfer.direction == .download {
                                 appState.downloadManager.retryFailedDownload(transferId: transfer.id)
+                            } else {
+                                appState.uploadManager.retryFailedUpload(transferId: transfer.id)
                             }
                         },
                         onRemove: { transferState.removeTransfer(id: transfer.id) },
