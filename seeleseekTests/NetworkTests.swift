@@ -107,15 +107,30 @@ struct NetworkTests {
         #expect(data[3] == 0x01)
     }
 
+    /// Random port in a high-entropy range that production code never uses.
+    /// Concurrent tests stepping on each other across the fixed 2234-2240
+    /// production range was a long-standing flake source; randomizing here
+    /// gives each test its own pair of consecutive ports.
+    static func randomTestPort() -> UInt16 {
+        // Keep even so `port + 1` (the obfuscated pair) stays in the same
+        // band. Upper bound leaves headroom below the ephemeral-port ceiling.
+        UInt16(Int.random(in: 40000...59998) & ~1)
+    }
+
     // MARK: - Local Loopback Connection Tests
 
     @Test("Listener starts on available port")
     func listenerStartsOnAvailablePort() async throws {
         let listener = ListenerService()
 
-        let ports = try await listener.start()
+        // High-entropy random port keeps concurrent test suites off the
+        // production 2234-2240 range. fallback=false turns a collision into
+        // a clean error instead of falling through to that fixed range and
+        // contending with other tests.
+        let preferred = Self.randomTestPort()
+        let ports = try await listener.start(preferredPort: preferred, fallbackToDefaultRange: false)
 
-        #expect(ports.port > 0, "Should bind to a port")
+        #expect(ports.port == preferred, "Should bind to the preferred port")
         #expect(ports.obfuscatedPort == ports.port + 1, "Obfuscated port should be port + 1")
 
         await listener.stop()
@@ -133,7 +148,7 @@ struct NetworkTests {
             }
         }
 
-        let ports = try await listener.start()
+        let ports = try await listener.start(preferredPort: Self.randomTestPort(), fallbackToDefaultRange: false)
 
         // Connect to ourselves
         let peerInfo = PeerConnection.PeerInfo(username: "localtest", ip: "127.0.0.1", port: Int(ports.port))
@@ -155,7 +170,7 @@ struct NetworkTests {
         let listener = ListenerService()
         var receivedData: Data?
 
-        let ports = try await listener.start()
+        let ports = try await listener.start(preferredPort: Self.randomTestPort(), fallbackToDefaultRange: false)
 
         await confirmation("Receive PierceFirewall") { confirm in
             Task {

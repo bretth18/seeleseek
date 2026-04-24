@@ -520,7 +520,12 @@ public final class UploadManager {
         let ip: String
         let port: Int
         do {
-            (ip, port) = try await networkClient.getPeerAddress(for: pending.username, timeout: .seconds(10))
+            // F (file) connections use raw TCP with no peer-message framing after
+            // the opening PierceFirewall, so the obfuscated P-port is not used
+            // here — upload to the peer's advertised plain listen port.
+            let address = try await networkClient.getPeerAddress(for: pending.username, timeout: .seconds(10))
+            ip = address.ip
+            port = address.port
         } catch {
             logger.error("Failed to get peer address: \(error.localizedDescription)")
             transferState?.updateTransfer(id: pending.transferId) { t in

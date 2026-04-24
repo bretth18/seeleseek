@@ -37,13 +37,28 @@ public actor ListenerService {
     /// Exposed for regression tests of the retention fix.
     internal var obfuscatedListenerIsActive: Bool { obfuscatedListener != nil }
 
-    public func start(preferredPort: UInt16? = nil) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
+    /// Start the listener.
+    ///
+    /// - Parameters:
+    ///   - preferredPort: Try this port first. If nil, scan `defaultPortRange`.
+    ///   - fallbackToDefaultRange: When true (production default), falls back to
+    ///     scanning `defaultPortRange` if `preferredPort` is busy. Tests pass
+    ///     `false` with a high-entropy random port so concurrent test suites
+    ///     don't contend on the fixed 2234-2240 range.
+    public func start(
+        preferredPort: UInt16? = nil,
+        fallbackToDefaultRange: Bool = true
+    ) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
         logger.info("ListenerService.start() called")
 
         // Try preferred port first, then scan for available port
         let portsToTry: [UInt16]
         if let preferred = preferredPort {
-            portsToTry = [preferred] + Array(Self.defaultPortRange).filter { $0 != preferred }
+            if fallbackToDefaultRange {
+                portsToTry = [preferred] + Array(Self.defaultPortRange).filter { $0 != preferred }
+            } else {
+                portsToTry = [preferred]
+            }
         } else {
             portsToTry = Array(Self.defaultPortRange)
         }
