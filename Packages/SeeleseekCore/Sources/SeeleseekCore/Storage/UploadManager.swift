@@ -1362,6 +1362,20 @@ public final class UploadManager {
             t.retryCount = retryCount
         }
 
+        // Dedup against an in-flight (scheduled retry that already fired)
+        // or already-queued entry for the same (user, file). Without this,
+        // a manual Retry click landing within milliseconds of the
+        // scheduled wake-up — or while the same file is already pending
+        // / active for this user — would double-enqueue and we'd send
+        // two TransferRequests for one row.
+        let alreadyKnown = uploadQueue.contains(where: { $0.username == username && $0.filename == filename })
+            || pendingTransfers.values.contains(where: { $0.username == username && $0.filename == filename })
+            || activeUploads.values.contains(where: { $0.username == username && $0.filename == filename })
+        if alreadyKnown {
+            logger.debug("Upload retry skipped (already pending/queued/active): \(filename)")
+            return
+        }
+
         let queued = QueuedUpload(
             username: username,
             filename: filename,
