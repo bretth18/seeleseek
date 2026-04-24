@@ -240,7 +240,7 @@ public final class PeerConnectionPool {
     ///   - port: Peer's port
     ///   - token: Connection token
     ///   - isIndirect: If true, this is an indirect connection (responding to ConnectToPeer) - don't send PeerInit
-    public func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false) async throws -> PeerConnection {
+    public func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false, obfuscated: Bool = false) async throws -> PeerConnection {
         // Reject outbound dials to blocked usernames (e.g. bot patterns like `slsk_*`).
         // Most outbound connections here are server-instructed ConnectToPeer responses,
         // which are effectively remote-initiated — we have no reason to dial a blocked user.
@@ -268,7 +268,7 @@ public final class PeerConnectionPool {
         // starts. There's no NAT-hole-punching benefit here either: peers
         // reach us via PierceFirewall on the listen port, not by dialing the
         // ephemeral source port of one of our outbound TCP sessions.
-        let connection = PeerConnection(peerInfo: peerInfo, token: token)
+        let connection = PeerConnection(peerInfo: peerInfo, token: token, isObfuscated: obfuscated)
 
         // Start consuming events BEFORE connecting to avoid missing early events
         let outgoingId = "\(username)-\(token)"
@@ -318,7 +318,12 @@ public final class PeerConnectionPool {
 
     public func acceptIncoming(_ nwConnection: NWConnection, obfuscated: Bool) async throws -> PeerConnection {
         // Create with autoStartReceiving = false so we can set up callbacks first
-        let connection = PeerConnection(connection: nwConnection, isIncoming: true, autoStartReceiving: false)
+        let connection = PeerConnection(
+            connection: nwConnection,
+            isIncoming: true,
+            autoStartReceiving: false,
+            isObfuscated: obfuscated
+        )
 
         try await connection.accept()
 
@@ -334,21 +339,12 @@ public final class PeerConnectionPool {
 
     /// Handle an incoming connection from the listener service.
     ///
-    /// `obfuscated` tracks which listener the connection arrived on. We do
-    /// not yet implement the Soulseek obfuscated-stream cipher, so any
-    /// connection on the obfuscated port is dropped here rather than being
-    /// handled as plain TCP — previously the flag was silently discarded,
-    /// which meant cipher bytes fell into the plain-text message parser
-    /// and either produced garbage or a dropped connection much later.
-    /// Keeping the port bound (but rejecting) lets us track inbound probes
-    /// without corrupting the peer protocol.
+    /// `obfuscated` tracks which listener the connection arrived on. When
+    /// true, the resulting PeerConnection is constructed with `isObfuscated`,
+    /// which plumbs the Museek+-compatible ROTATED cipher through its
+    /// send/receive paths. Plain and obfuscated inbound share all other
+    /// admission limits (per-IP, global, rate-limit).
     public func handleIncomingConnection(_ nwConnection: NWConnection, obfuscated: Bool = false) async {
-        if obfuscated {
-            logger.info("Rejecting obfuscated inbound connection from \(String(describing: nwConnection.endpoint)) — obfuscation not implemented")
-            nwConnection.cancel()
-            return
-        }
-
         // Enforce connection limit to prevent resource exhaustion
         if activeConnections >= maxConnections {
             logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
@@ -393,7 +389,7 @@ public final class PeerConnectionPool {
         }
 
         do {
-            let connection = try await acceptIncoming(nwConnection, obfuscated: false)
+            let connection = try await acceptIncoming(nwConnection, obfuscated: obfuscated)
 
             let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 

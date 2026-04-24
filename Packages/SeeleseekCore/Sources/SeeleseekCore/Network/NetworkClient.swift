@@ -94,6 +94,15 @@ public final class NetworkClient {
         return .unknown
     }
 
+    // MARK: - Obfuscation
+    /// When true, the client (a) advertises the obfuscated listen port to the
+    /// server via SetWaitPort and (b) prefers a peer's obfuscated port for
+    /// outbound P-connection dials. Defaults to false while the ROTATED codec
+    /// is newly wired — flip in settings to opt in. Inbound obfuscated
+    /// connections are accepted regardless; the gate only affects what we
+    /// advertise and how we dial.
+    public var enableObfuscation = false
+
     // MARK: - Distributed Network
     public var acceptDistributedChildren = true  // Participate in distributed search network
     public private(set) var distributedBranchLevel: UInt32 = 0
@@ -144,7 +153,7 @@ public final class NetworkClient {
 
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
     // Uses (continuation, requestID) to prevent double-resume when same user is requested multiple times
-    private var pendingPeerAddressRequests: [String: [(continuation: CheckedContinuation<(ip: String, port: Int), Error>, requestID: UUID)]] = [:]
+    private var pendingPeerAddressRequests: [String: [(continuation: CheckedContinuation<(ip: String, port: Int, obfuscatedPort: Int), Error>, requestID: UUID)]] = [:]
 
     /// Test-only: register a waiter without kicking off a server round-trip.
     /// Used to exercise the multi-waiter / timeout path independently of a
@@ -152,7 +161,7 @@ public final class NetworkClient {
     internal func _awaitPeerAddressWaiter(
         for username: String,
         timeout: Duration
-    ) async throws -> (ip: String, port: Int) {
+    ) async throws -> (ip: String, port: Int, obfuscatedPort: Int) {
         let requestID = UUID()
         return try await withCheckedThrowingContinuation { continuation in
             pendingPeerAddressRequests[username, default: []].append(
@@ -562,7 +571,15 @@ public final class NetworkClient {
             if loginSuccess {
                 // Step 5: Send listen port to server
                 logger.info("Sending listen port...")
-                let portMessage = MessageBuilder.setListenPortMessage(port: UInt32(listenPort))
+                // Only advertise the obfuscated port when the user opts in.
+                // Advertising it without being willing to accept obfuscated
+                // outbound would push peers toward obfuscated dials we wouldn't
+                // reciprocate.
+                let advertisedObfuscated: UInt32 = enableObfuscation ? UInt32(obfuscatedPort) : 0
+                let portMessage = MessageBuilder.setListenPortMessage(
+                    port: UInt32(listenPort),
+                    obfuscatedPort: advertisedObfuscated
+                )
                 try await connection.send(portMessage)
 
                 // Step 6: Set online status
@@ -1169,13 +1186,13 @@ public final class NetworkClient {
     // MARK: - Peer Address Response Handling
 
     /// Internal handler for peer address responses - dispatches to pending requests AND all registered handlers
-    public func handlePeerAddressResponse(username: String, ip: String, port: Int) {
-        logger.debug("handlePeerAddressResponse: \(username) @ \(ip):\(port)")
+    public func handlePeerAddressResponse(username: String, ip: String, port: Int, obfuscatedPort: Int = 0) {
+        logger.debug("handlePeerAddressResponse: \(username) @ \(ip):\(port) obfuscatedPort=\(obfuscatedPort)")
 
         if let waiters = pendingPeerAddressRequests.removeValue(forKey: username) {
             logger.debug("Resuming \(waiters.count) pending getPeerAddress continuation(s) for \(username)")
             for waiter in waiters {
-                waiter.continuation.resume(returning: (ip, port))
+                waiter.continuation.resume(returning: (ip, port, obfuscatedPort))
             }
         }
 
@@ -1200,7 +1217,7 @@ public final class NetworkClient {
 
     /// Request peer address and wait for response (concurrent-safe)
     /// Can be called from multiple places concurrently - each request gets its own continuation
-    public func getPeerAddress(for username: String, timeout: Duration = .seconds(10)) async throws -> (ip: String, port: Int) {
+    public func getPeerAddress(for username: String, timeout: Duration = .seconds(10)) async throws -> (ip: String, port: Int, obfuscatedPort: Int) {
         let requestID = UUID()
         let alreadyInFlight = (pendingPeerAddressRequests[username]?.isEmpty == false)
 
@@ -2183,7 +2200,13 @@ public final class NetworkClient {
         registerPendingBrowse(token: token, username: username, timeout: 30)
         await sendConnectToPeer(token: token, username: username, connectionType: "P")
 
-        let (ip, port) = try await getPeerAddress(for: username)
+        let (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
+
+        // Dial the obfuscated port only when the user has opted in AND the peer
+        // advertised one. Peers always advertise the plain port, so falling back
+        // to plain is safe.
+        let useObfuscated = enableObfuscation && obfuscatedPort > 0
+        let dialPort = useObfuscated ? obfuscatedPort : port
 
         var connection: PeerConnection
         var isIndirect = false
@@ -2191,7 +2214,7 @@ public final class NetworkClient {
             connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
                 group.addTask {
                     let conn = try await self.peerConnectionPool.connect(
-                        to: username, ip: ip, port: port, token: token
+                        to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
                     )
                     // Handshake must also complete — the peer may not respond
                     // via PeerInit on the direct connection if they already

@@ -59,9 +59,16 @@ public actor PeerConnection {
     public nonisolated let connectionType: ConnectionType
     public nonisolated let isIncoming: Bool
     public nonisolated let token: UInt32
+    /// Whether this connection uses the Soulseek "ROTATED" obfuscated wire format.
+    /// Set at construction; the receive and send paths branch on this.
+    public nonisolated let isObfuscated: Bool
 
     private var connection: NWConnection?
     private var receiveBuffer = Data()
+    /// Raw wire bytes still to be decoded, only populated when `isObfuscated` is true.
+    /// Decoded plain messages (length-prefixed) flow into `receiveBuffer` for the
+    /// existing framing parser to consume.
+    private var obfuscatedBuffer = Data()
     private(set) var state: State = .disconnected
 
     /// Check if the connection is currently connected and usable
@@ -128,7 +135,7 @@ public actor PeerConnection {
     /// Local port to bind outgoing connections to (for NAT traversal)
     private var localPort: UInt16 = 0
 
-    public init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0) {
+    public init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0, isObfuscated: Bool = false) {
         let (stream, continuation) = AsyncStream.makeStream(of: PeerConnectionEvent.self)
         self.events = stream
         self.eventContinuation = continuation
@@ -137,9 +144,10 @@ public actor PeerConnection {
         self.token = token
         self.isIncoming = isIncoming
         self.localPort = localPort
+        self.isObfuscated = isObfuscated
     }
 
-    public init(connection: NWConnection, isIncoming: Bool = true, autoStartReceiving: Bool = true) {
+    public init(connection: NWConnection, isIncoming: Bool = true, autoStartReceiving: Bool = true, isObfuscated: Bool = false) {
         let (stream, continuation) = AsyncStream.makeStream(of: PeerConnectionEvent.self)
         self.events = stream
         self.eventContinuation = continuation
@@ -178,6 +186,7 @@ public actor PeerConnection {
         self.connectionType = .peer
         self.token = 0
         self.isIncoming = isIncoming
+        self.isObfuscated = isObfuscated
         self.connection = connection
         self.autoStartReceiving = autoStartReceiving
     }
@@ -537,17 +546,33 @@ public actor PeerConnection {
             throw PeerError.notConnected
         }
 
-        logger.debug("[\(self.peerInfo.username)] Sending \(data.count) bytes")
+        // On obfuscated connections, re-frame the message: the wire format is
+        // key[4] || enc(len_le32) || enc(payload). MessageBuilder output is
+        // already `len_le32 || payload`; strip its length prefix and let the
+        // codec emit the fresh wire bytes. A 4-byte-or-shorter `data` cannot
+        // carry a payload, so guard against underflow.
+        let wire: Data
+        if isObfuscated {
+            guard data.count >= 4 else {
+                logger.error("[\(self.peerInfo.username)] obfuscated send: data shorter than 4 bytes, no length prefix")
+                throw PeerError.notConnected
+            }
+            wire = ObfuscationCodec.encodeMessage(payload: Data(data.dropFirst(4)))
+        } else {
+            wire = data
+        }
+
+        logger.debug("[\(self.peerInfo.username)] Sending \(wire.count) bytes (obfuscated=\(self.isObfuscated))")
 
         return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: data, completion: .contentProcessed { [weak self] error in
+            connection.send(content: wire, completion: .contentProcessed { [weak self] error in
                 if let error {
                     self?.logger.error("[\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
                     self?.logger.debug("[\(self?.peerInfo.username ?? "??")] send succeeded")
                     Task {
-                        await self?.recordSent(data.count)
+                        await self?.recordSent(wire.count)
                     }
                     continuation.resume()
                 }
@@ -989,9 +1014,42 @@ public actor PeerConnection {
     private static let maxReceiveBufferSize = 150 * 1024 * 1024  // 150MB
 
     private func handleReceivedData(_ data: Data) async {
-        receiveBuffer.append(data)
         bytesReceived += UInt64(data.count)
         lastActivityAt = Date()
+
+        if isObfuscated {
+            obfuscatedBuffer.append(data)
+            // SECURITY: guard the raw wire buffer the same way as the plain one.
+            guard obfuscatedBuffer.count <= Self.maxReceiveBufferSize else {
+                logger.error("SECURITY: [\(self.peerInfo.username)] obfuscated wire buffer exceeded limit, disconnecting")
+                obfuscatedBuffer.removeAll()
+                disconnect()
+                return
+            }
+            // Drain as many complete obfuscated messages as we can into the plain
+            // receiveBuffer, re-prepending the length so the existing length-prefixed
+            // parser below sees them exactly the way it sees plain messages.
+            while true {
+                do {
+                    guard let decoded = try ObfuscationCodec.decodeMessage(from: obfuscatedBuffer) else {
+                        break
+                    }
+                    obfuscatedBuffer.removeFirst(decoded.bytesConsumed)
+                    var plain = Data()
+                    plain.appendUInt32(UInt32(decoded.payload.count))
+                    plain.append(decoded.payload)
+                    receiveBuffer.append(plain)
+                } catch {
+                    logger.error("[\(self.peerInfo.username)] obfuscated decode failed: \(String(describing: error)), disconnecting")
+                    obfuscatedBuffer.removeAll()
+                    receiveBuffer.removeAll()
+                    disconnect()
+                    return
+                }
+            }
+        } else {
+            receiveBuffer.append(data)
+        }
 
         // SECURITY: Check buffer size to prevent memory exhaustion
         guard receiveBuffer.count <= Self.maxReceiveBufferSize else {

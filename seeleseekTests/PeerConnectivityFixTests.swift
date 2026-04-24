@@ -13,14 +13,15 @@ struct PeerConnectivityFixTests {
 
     // MARK: - Obfuscated listener plumbing
     //
-    // The obfuscated listener is intentionally half-wired: the port binds and
-    // surfaces inbound connections to `newConnections` flagged `obfuscated:
-    // true`, but the pool rejects them because the Soulseek XOR stream cipher
-    // isn't implemented (tracked in a separate GH issue). These two tests
-    // cover both layers so neither can regress silently:
+    // Obfuscated inbound is end-to-end wired: the listener surfaces inbound
+    // connections to `newConnections` flagged `obfuscated: true`, the pool
+    // accepts them, and the resulting PeerConnection is constructed with
+    // `isObfuscated = true` so its send/receive paths run the ROTATED cipher.
+    // These tests cover both layers so the flag cannot be dropped silently:
     //
     //  1. Listener surfaces the connection with the obfuscated flag set.
-    //  2. Pool's `handleIncomingConnection(_:obfuscated:)` cancels it.
+    //  2. `acceptIncoming(_, obfuscated: true)` propagates the flag to the
+    //     returned PeerConnection.
 
     @Test("Listener surfaces inbound obfuscated connections with the obfuscated flag set")
     func obfuscatedListenerSurfacesConnectionFlagged() async throws {
@@ -70,27 +71,74 @@ struct PeerConnectivityFixTests {
         #expect(unwrapped.1 == true, "connection should be flagged obfuscated")
     }
 
-    @Test("Pool rejects obfuscated inbound connections (cipher not implemented)")
-    func poolRejectsObfuscatedInbound() async throws {
-        let pool = await PeerConnectionPool()
+    @Test("acceptIncoming propagates the obfuscated flag to the PeerConnection")
+    func acceptIncomingPropagatesObfuscatedFlag() async throws {
+        // Loopback listener → dial → pass the listener's inbound NWConnection
+        // into the pool with obfuscated: true. The returned PeerConnection
+        // should carry isObfuscated = true.
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inboundStream = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { connection in
+                continuation.yield(connection)
+            }
+        }
+        let boundPort = await withCheckedContinuation { (cont: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    cont.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+        defer { listener.cancel() }
 
-        // Spin up a dummy NWConnection pointed at a loopback port that
-        // nothing listens on. The pool should cancel it before ever
-        // touching the framing layer.
-        let endpoint = NWEndpoint.hostPort(
-            host: .ipv4(.loopback),
-            port: NWEndpoint.Port(rawValue: 1)!
+        let client = NWConnection(
+            to: .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: boundPort)!),
+            using: .tcp
         )
-        let conn = NWConnection(to: endpoint, using: .tcp)
+        client.start(queue: .global())
+        defer { client.cancel() }
 
-        await pool.handleIncomingConnection(conn, obfuscated: true)
+        var iterator = inboundStream.makeAsyncIterator()
+        let inbound = try #require(await iterator.next(), "listener did not surface inbound connection")
 
-        // No tracking entry was created for an obfuscated rejection.
-        let count = await pool.activeConnections
-        #expect(count == 0, "pool must not track obfuscated connections")
+        let pool = await PeerConnectionPool()
+        let peer = try await pool.acceptIncoming(inbound, obfuscated: true)
+        #expect(peer.isObfuscated == true, "PeerConnection must carry isObfuscated=true when accepted from obfuscated listener")
+
+        // And the plain acceptIncoming path must NOT set the flag by accident.
+        let client2 = NWConnection(
+            to: .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: boundPort)!),
+            using: .tcp
+        )
+        client2.start(queue: .global())
+        defer { client2.cancel() }
+        let inbound2 = try #require(await iterator.next(), "listener did not surface second inbound connection")
+        let peer2 = try await pool.acceptIncoming(inbound2, obfuscated: false)
+        #expect(peer2.isObfuscated == false, "plain accept must leave isObfuscated=false")
     }
 
     // MARK: - Multi-waiter getPeerAddress
+
+    @Test("Peer address response propagates obfuscated port to waiters (defaults to 0 when omitted)")
+    func peerAddressResponseCarriesObfuscatedPort() async throws {
+        let client = await NetworkClient()
+
+        // With obfuscated port omitted, the tuple's third component is 0.
+        let plainWaiter = Task { try await client._awaitPeerAddressWaiter(for: "plain", timeout: .seconds(5)) }
+        try? await Task.sleep(for: .milliseconds(50))
+        await client.handlePeerAddressResponse(username: "plain", ip: "10.0.0.1", port: 2234)
+        let plain = try await plainWaiter.value
+        #expect(plain.obfuscatedPort == 0)
+
+        // With obfuscated port advertised, it propagates through to the waiter.
+        let obfWaiter = Task { try await client._awaitPeerAddressWaiter(for: "obf", timeout: .seconds(5)) }
+        try? await Task.sleep(for: .milliseconds(50))
+        await client.handlePeerAddressResponse(username: "obf", ip: "10.0.0.2", port: 2234, obfuscatedPort: 2235)
+        let obf = try await obfWaiter.value
+        #expect(obf.obfuscatedPort == 2235, "obfuscated port should flow through handlePeerAddressResponse to waiter")
+        #expect(obf.ip == "10.0.0.2" && obf.port == 2234)
+    }
 
     @Test("Concurrent peer-address waiters all resume on single response")
     func multiWaiterPeerAddressCoalesces() async throws {

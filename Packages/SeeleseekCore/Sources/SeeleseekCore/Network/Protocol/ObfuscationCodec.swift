@@ -12,6 +12,14 @@ import Foundation
 // (== right by 31) at each 4-byte block boundary, starting at block 0. Byte
 // `i` of the encoded stream is `plain[i] ^ key[i % 4]`, where `key` has been
 // rotated `(i / 4) + 1` times since reset.
+/// Obfuscation type codes that appear on the server wire (SetWaitPort,
+/// GetPeerAddress reply, ConnectToPeer). Defined in the Soulseek server
+/// protocol — `none` = 0, `rotated` = 1.
+public enum ObfuscationType: UInt32, Sendable {
+    case none = 0
+    case rotated = 1
+}
+
 public enum ObfuscationCodec {
     static let keyLength = 4
 

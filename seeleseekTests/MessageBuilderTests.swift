@@ -23,6 +23,33 @@ struct MessageBuilderTests {
         #expect(code == ServerMessageCode.login.rawValue)
     }
 
+    @Test("setListenPort without obfuscated port sends only the main port")
+    func testSetListenPortPlainOnly() {
+        let message = MessageBuilder.setListenPortMessage(port: 2234)
+        // length + code(4) + port(4) = 12 bytes total
+        #expect(message.count == 12)
+        #expect(message.readUInt32(at: 4) == ServerMessageCode.setListenPort.rawValue)
+        #expect(message.readUInt32(at: 8) == 2234)
+    }
+
+    @Test("setListenPort with obfuscated port appends obfuscation block")
+    func testSetListenPortWithObfuscated() {
+        let message = MessageBuilder.setListenPortMessage(port: 2234, obfuscatedPort: 2235)
+        // length + code(4) + port(4) + obfuscation_type(4) + obfuscated_port(4) = 20 bytes total
+        #expect(message.count == 20)
+        #expect(message.readUInt32(at: 4) == ServerMessageCode.setListenPort.rawValue)
+        #expect(message.readUInt32(at: 8) == 2234)
+        #expect(message.readUInt32(at: 12) == ObfuscationType.rotated.rawValue)
+        #expect(message.readUInt32(at: 16) == 2235)
+    }
+
+    @Test("setListenPort with obfuscatedPort=0 omits the obfuscation block")
+    func testSetListenPortZeroObfuscatedOmitsBlock() {
+        // 0 means no obfuscated listener bound — don't advertise a dead port.
+        let message = MessageBuilder.setListenPortMessage(port: 2234, obfuscatedPort: 0)
+        #expect(message.count == 12, "obfuscatedPort=0 must not append the obfuscation block")
+    }
+
     @Test("Build ping message")
     func testPingMessage() {
         let message = MessageBuilder.pingMessage()

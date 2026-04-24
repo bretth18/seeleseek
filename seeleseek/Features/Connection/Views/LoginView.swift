@@ -141,6 +141,7 @@ struct LoginView: View {
         }
 
         appState.networkClient.acceptDistributedChildren = appState.settings.respondToSearches
+        appState.networkClient.enableObfuscation = appState.settings.enableObfuscation
 
         await appState.networkClient.connect(
             server: ServerConnection.defaultHost,

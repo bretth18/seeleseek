@@ -317,6 +317,20 @@ public final class ServerMessageHandler {
         offset += 4
 
         guard let port = data.readUInt32(at: offset) else { return }
+        offset += 4
+
+        // Optional obfuscation block per the server protocol:
+        //   uint32 obfuscation_type  (0 = none, 1 = rotated)
+        //   uint16 obfuscated_port
+        // Note the asymmetry with SetWaitPort, which uses uint32 for the
+        // obfuscated port. Only treat the advertised port as real when the
+        // type is rotated — a `none` type with a non-zero port would be a
+        // malformed reply.
+        var obfuscatedPort: Int = 0
+        if let obfType = data.readUInt32(at: offset), obfType == ObfuscationType.rotated.rawValue,
+           let obfPort = data.readUInt16(at: offset + 4) {
+            obfuscatedPort = Int(obfPort)
+        }
 
         let ipAddress = ipString(from: ip)
 
@@ -324,7 +338,7 @@ public final class ServerMessageHandler {
         client?.userInfoCache.registerIP(ipAddress, for: username)
 
         // Use internal handler that dispatches to both pending requests AND external callback
-        client?.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port))
+        client?.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port), obfuscatedPort: obfuscatedPort)
     }
 
     private func handleWatchUser(_ data: Data) {
@@ -833,11 +847,13 @@ public final class ServerMessageHandler {
                 group.addTask {
                     let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
                     let connectionToken = UInt32.random(in: 0...UInt32.max)
+                    let useObf = (await client.enableObfuscation) && address.obfuscatedPort > 0
                     let conn = try await client.peerConnectionPool.connect(
                         to: username,
                         ip: address.ip,
-                        port: address.port,
-                        token: connectionToken
+                        port: useObf ? address.obfuscatedPort : address.port,
+                        token: connectionToken,
+                        obfuscated: useObf
                     )
                     try await conn.waitForPeerHandshake(timeout: .seconds(8))
                     return conn

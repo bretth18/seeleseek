@@ -53,6 +53,7 @@ struct NetworkSettingsSection: View {
                     portApplyErrorRow(portApplyError)
                 }
                 settingsToggle("Enable UPnP", isOn: $settings.enableUPnP)
+                settingsToggle("Use Obfuscated Peer Protocol", isOn: $settings.enableObfuscation)
             }
 
             settingsGroup("Transfer Slots") {

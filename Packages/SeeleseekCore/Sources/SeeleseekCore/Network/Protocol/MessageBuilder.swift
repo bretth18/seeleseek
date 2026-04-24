@@ -29,10 +29,17 @@ public enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    public nonisolated static func setListenPortMessage(port: UInt32) -> Data {
+    public nonisolated static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.setListenPort.rawValue)
         payload.appendUInt32(port)
+        // The obfuscation block is optional on the wire. Only advertise if we
+        // actually have a listener on the obfuscated port — otherwise peers
+        // attempting obfuscated inbound would hit a dead port.
+        if obfuscatedPort > 0 {
+            payload.appendUInt32(ObfuscationType.rotated.rawValue)
+            payload.appendUInt32(obfuscatedPort)
+        }
         return wrapMessage(payload)
     }
 
