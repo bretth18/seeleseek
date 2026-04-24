@@ -1013,6 +1013,11 @@ public actor PeerConnection {
     /// Must be larger than max message size (100MB) to allow buffering of large share lists
     private static let maxReceiveBufferSize = 150 * 1024 * 1024  // 150MB
 
+    /// Maximum peer-message payload length we'll accept. Matches the plain-path
+    /// ceiling at line 1075 so obfuscated connections don't silently reject
+    /// large browse/share-list responses that would succeed plain.
+    private static let maxPeerMessageLength = 100_000_000  // 100MB
+
     private func handleReceivedData(_ data: Data) async {
         bytesReceived += UInt64(data.count)
         lastActivityAt = Date()
@@ -1031,7 +1036,10 @@ public actor PeerConnection {
             // parser below sees them exactly the way it sees plain messages.
             while true {
                 do {
-                    guard let decoded = try ObfuscationCodec.decodeMessage(from: obfuscatedBuffer) else {
+                    guard let decoded = try ObfuscationCodec.decodeMessage(
+                        from: obfuscatedBuffer,
+                        maxPayloadLength: Self.maxPeerMessageLength
+                    ) else {
                         break
                     }
                     obfuscatedBuffer.removeFirst(decoded.bytesConsumed)

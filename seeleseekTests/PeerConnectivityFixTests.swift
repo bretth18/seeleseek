@@ -27,17 +27,17 @@ struct PeerConnectivityFixTests {
     func obfuscatedListenerSurfacesConnectionFlagged() async throws {
         let service = ListenerService()
 
-        // ListenerService scans ports 2234-2240; under parallel test
-        // execution another listener-binding test can hold the whole range
-        // so `start()` throws `noAvailablePort`. `#require` here surfaces
-        // the environmental problem distinctly from a behavioral failure
-        // of the flag propagation this test actually verifies.
-        let startResult = try? await service.start()
-        let (port, obfuscatedPort) = try #require(startResult,
-            "no available port pair in 2234-2240 — likely parallel-test contention")
+        // Pin to a high-entropy random port with the default-range fallback
+        // disabled so this test never contends with other listener-using
+        // tests on the production 2234-2240 range.
+        let preferred = UInt16(Int.random(in: 40000...59998) & ~1)
+        let (port, obfuscatedPort) = try await service.start(
+            preferredPort: preferred,
+            fallbackToDefaultRange: false
+        )
         defer { Task { await service.stop() } }
 
-        #expect(port > 0)
+        #expect(port == preferred)
         #expect(obfuscatedPort == port + 1)
 
         // If the obfuscated port couldn't be bound (common in CI when a prior

@@ -847,7 +847,7 @@ public final class ServerMessageHandler {
                 group.addTask {
                     let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
                     let connectionToken = UInt32.random(in: 0...UInt32.max)
-                    let useObf = (await client.enableObfuscation) && address.obfuscatedPort > 0
+                    let useObf = address.obfuscatedPort > 0
                     let conn = try await client.peerConnectionPool.connect(
                         to: username,
                         ip: address.ip,

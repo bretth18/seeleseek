@@ -94,15 +94,6 @@ public final class NetworkClient {
         return .unknown
     }
 
-    // MARK: - Obfuscation
-    /// When true, the client (a) advertises the obfuscated listen port to the
-    /// server via SetWaitPort and (b) prefers a peer's obfuscated port for
-    /// outbound P-connection dials. Defaults to false while the ROTATED codec
-    /// is newly wired — flip in settings to opt in. Inbound obfuscated
-    /// connections are accepted regardless; the gate only affects what we
-    /// advertise and how we dial.
-    public var enableObfuscation = false
-
     // MARK: - Distributed Network
     public var acceptDistributedChildren = true  // Participate in distributed search network
     public private(set) var distributedBranchLevel: UInt32 = 0
@@ -571,14 +562,13 @@ public final class NetworkClient {
             if loginSuccess {
                 // Step 5: Send listen port to server
                 logger.info("Sending listen port...")
-                // Only advertise the obfuscated port when the user opts in.
-                // Advertising it without being willing to accept obfuscated
-                // outbound would push peers toward obfuscated dials we wouldn't
-                // reciprocate.
-                let advertisedObfuscated: UInt32 = enableObfuscation ? UInt32(obfuscatedPort) : 0
+                // Advertise the obfuscated port whenever the listener managed
+                // to bind it. SoulseekQt / Museek+ also default this on; if
+                // the codec ever misbehaves the right fix is to fix it, not
+                // to hide a toggle behind a settings UI.
                 let portMessage = MessageBuilder.setListenPortMessage(
                     port: UInt32(listenPort),
-                    obfuscatedPort: advertisedObfuscated
+                    obfuscatedPort: UInt32(obfuscatedPort)
                 )
                 try await connection.send(portMessage)
 
@@ -2202,10 +2192,10 @@ public final class NetworkClient {
 
         let (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
 
-        // Dial the obfuscated port only when the user has opted in AND the peer
-        // advertised one. Peers always advertise the plain port, so falling back
-        // to plain is safe.
-        let useObfuscated = enableObfuscation && obfuscatedPort > 0
+        // Prefer the peer's obfuscated port whenever they advertise one.
+        // Peers always advertise the plain port too, so falling back to plain
+        // is safe when a peer doesn't advertise obfuscation.
+        let useObfuscated = obfuscatedPort > 0
         let dialPort = useObfuscated ? obfuscatedPort : port
 
         var connection: PeerConnection

@@ -47,6 +47,21 @@ struct ObfuscationCodecTests {
         #expect(decoded.payload == payload)
     }
 
+    @Test("Codec accepts payloads above the default 16MB cap when the caller lifts it")
+    func largePayloadAboveDefaultCapRoundTrip() throws {
+        // Regression guard: PeerConnection passes `maxPeerMessageLength = 100MB`
+        // to match its plain-path ceiling. If this test fails because the
+        // codec's default 16MB cap has spread to callers, obfuscated peers
+        // will silently drop large browse/share-list responses that plain
+        // peers accept. Kept at 20MB to stay fast while still being above
+        // the default.
+        let size = 20 * 1024 * 1024
+        let payload = Data(count: size)
+        let wire = ObfuscationCodec.encodeMessage(payload: payload)
+        let decoded = try #require(try ObfuscationCodec.decodeMessage(from: wire, maxPayloadLength: 100_000_000))
+        #expect(decoded.payload.count == size)
+    }
+
     @Test("Many random round-trips")
     func fuzzRoundTrip() throws {
         for _ in 0..<50 {

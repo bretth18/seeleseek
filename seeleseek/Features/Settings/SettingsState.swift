@@ -93,7 +93,6 @@ final class SettingsState: DownloadSettingsProviding {
     private let notificationSoundNameKey = "settingsNotificationSoundName"
     private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
     private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
-    private let enableObfuscationKey = "settingsEnableObfuscation"
 
     /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
     /// created by "streaming-service" apps that queue uploads en masse without sharing.
@@ -184,16 +183,6 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
     var downloadSpeedLimit: Int = 0 {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
-    }
-    /// Opt-in Soulseek obfuscated peer protocol (ROTATED XOR stream). When on,
-    /// we advertise our obfuscated port to the server and prefer peers'
-    /// obfuscated ports for outbound P-connections. Off by default while the
-    /// codec is newly wired — bug surface is limited until there's field time.
-    var enableObfuscation: Bool = false {
         didSet {
             guard !isLoading else { return }
             save()
@@ -347,7 +336,6 @@ final class SettingsState: DownloadSettingsProviding {
         maxUploadSlots = 5
         uploadSpeedLimit = 0
         downloadSpeedLimit = 0
-        enableObfuscation = false
         maxSearchResults = 500
         respondToSearches = true
         minSearchQueryLength = 3
@@ -409,7 +397,6 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
         UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
         UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
-        UserDefaults.standard.set(enableObfuscation, forKey: enableObfuscationKey)
 
         // Save to database asynchronously
         Task {
@@ -432,7 +419,6 @@ final class SettingsState: DownloadSettingsProviding {
             try await SettingsRepository.set("maxSearchResponseResults", value: maxSearchResponseResults)
             try await SettingsRepository.set("downloadFolderFormat", value: downloadFolderFormat.rawValue)
             try await SettingsRepository.set("downloadFolderTemplate", value: downloadFolderTemplate)
-            try await SettingsRepository.set("enableObfuscation", value: enableObfuscation)
             logger.debug("Settings saved to database")
         } catch {
             logger.error("Failed to save settings to database: \(error.localizedDescription)")
@@ -508,9 +494,6 @@ final class SettingsState: DownloadSettingsProviding {
         if let patterns = UserDefaults.standard.stringArray(forKey: blockedUsernamePatternsKey) {
             blockedUsernamePatterns = patterns
         }
-        if UserDefaults.standard.object(forKey: enableObfuscationKey) != nil {
-            enableObfuscation = UserDefaults.standard.bool(forKey: enableObfuscationKey)
-        }
     }
 
     /// Load settings from database (called after DB initialization)
@@ -537,7 +520,6 @@ final class SettingsState: DownloadSettingsProviding {
                 downloadFolderFormat = format
             }
             downloadFolderTemplate = try await SettingsRepository.get("downloadFolderTemplate", default: downloadFolderTemplate)
-            enableObfuscation = try await SettingsRepository.get("enableObfuscation", default: enableObfuscation)
 
             logger.info("Settings loaded from database")
         } catch {
