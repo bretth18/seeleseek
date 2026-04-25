@@ -54,11 +54,15 @@ struct UploadRetryRowReuseTests {
     @Test("Retry reuses the existing transferId — no duplicate row added")
     func retryReusesTransferRow() async {
         let original = makeFailedTransfer()
-        let (manager, tracking, _) = makeSetup(
+        let (manager, tracking, shares) = makeSetup(
             file: makeIndexedFile(sharedPath: original.filename, localPath: "/tmp/song.mp3", size: original.size)
         )
         tracking.uploads.append(original)
 
+        // `shareManager` is held weakly by `UploadManager`. Keep it alive
+        // for the duration of the test so the retry's file-lookup hits
+        // the seeded fileIndex rather than going through a freed weak ref.
+        _ = shares
         manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
@@ -83,9 +87,13 @@ struct UploadRetryRowReuseTests {
         // No file seeded — ShareManager.fileIndex is empty so the lookup
         // fails and the retry should mark the row terminal rather than
         // adding a duplicate.
-        let (manager, tracking, _) = makeSetup(file: nil)
+        let (manager, tracking, shares) = makeSetup(file: nil)
         tracking.uploads.append(original)
 
+        // `shareManager` is held weakly by `UploadManager`. Keep it alive
+        // for the duration of the test so the retry's file-lookup hits
+        // the seeded fileIndex rather than going through a freed weak ref.
+        _ = shares
         manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
@@ -105,7 +113,7 @@ struct UploadRetryRowReuseTests {
     @Test("Dedup short-circuits without mutating row state when transfer already in flight")
     func dedupPreservesInflightRow() async {
         let original = makeFailedTransfer(retryCount: 1, error: "Peer unreachable (firewall)")
-        let (manager, tracking, _) = makeSetup(
+        let (manager, tracking, shares) = makeSetup(
             file: makeIndexedFile(sharedPath: original.filename, localPath: "/tmp/song.mp3", size: original.size)
         )
         tracking.uploads.append(original)
@@ -125,6 +133,10 @@ struct UploadRetryRowReuseTests {
         )
 
         // A racing manual click lands here.
+        // `shareManager` is held weakly by `UploadManager`. Keep it alive
+        // for the duration of the test so the retry's file-lookup hits
+        // the seeded fileIndex rather than going through a freed weak ref.
+        _ = shares
         manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
