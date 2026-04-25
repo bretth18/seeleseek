@@ -56,6 +56,10 @@ public enum ActivityLogger {
 @MainActor
 public protocol TransferTracking: AnyObject, Sendable {
     var downloads: [Transfer] { get }
+    /// Symmetric to `downloads`. Required by `UploadManager.resumeUploadsOnConnect`
+    /// so it can sweep persisted `.failed` upload rows from prior sessions
+    /// and re-drive the retriable ones.
+    var uploads: [Transfer] { get }
     func addDownload(_ transfer: Transfer)
     func addUpload(_ transfer: Transfer)
     func updateTransfer(id: UUID, update: (inout Transfer) -> Void)

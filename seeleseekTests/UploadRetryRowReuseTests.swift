@@ -110,6 +110,70 @@ struct UploadRetryRowReuseTests {
 
     // MARK: - Issue 2: dedup must not strand the row
 
+    // MARK: - resumeUploadsOnConnect
+
+    @Test("resumeUploadsOnConnect resets retryCount on retriable failed rows")
+    func resumeResetsRetryCount() async {
+        var retriable = makeFailedTransfer(retryCount: 4, error: "Peer disconnected")
+        retriable = Transfer(
+            id: retriable.id,
+            username: retriable.username,
+            filename: retriable.filename,
+            size: retriable.size,
+            direction: .upload,
+            status: .failed,
+            error: retriable.error,
+            retryCount: 4
+        )
+        let terminal = Transfer(
+            id: UUID(),
+            username: "bob",
+            filename: "@@m\\b.mp3",
+            size: 1,
+            direction: .upload,
+            status: .failed,
+            error: "Cancelled",
+            retryCount: 4
+        )
+
+        let (manager, tracking, shares) = makeSetup(file: nil)
+        _ = shares
+        tracking.uploads.append(retriable)
+        tracking.uploads.append(terminal)
+
+        manager.resumeUploadsOnConnect()
+
+        // Synchronous reset hits the retriable row only. The terminal
+        // ("Cancelled") row keeps its retryCount untouched — it's not
+        // eligible to be resumed.
+        let resumed = tracking.uploads.first { $0.id == retriable.id }
+        let untouched = tracking.uploads.first { $0.id == terminal.id }
+        #expect(resumed?.retryCount == 0, "retriable row's retryCount must be reset")
+        #expect(untouched?.retryCount == 4, "terminal row must not be touched")
+    }
+
+    @Test("resumeUploadsOnConnect with no retriable rows is a no-op")
+    func resumeWithoutRetriableIsNoOp() async {
+        let cancelled = Transfer(
+            id: UUID(),
+            username: "alice",
+            filename: "@@music\\song.mp3",
+            size: 1,
+            direction: .upload,
+            status: .failed,
+            error: "Cancelled",
+            retryCount: 2
+        )
+
+        let (manager, tracking, shares) = makeSetup(file: nil)
+        _ = shares
+        tracking.uploads.append(cancelled)
+
+        manager.resumeUploadsOnConnect()
+
+        #expect(tracking.uploads.first?.retryCount == 2, "no row mutations when nothing is retriable")
+    }
+
     @Test("Dedup short-circuits without mutating row state when transfer already in flight")
     func dedupPreservesInflightRow() async {
         let original = makeFailedTransfer(retryCount: 1, error: "Peer unreachable (firewall)")

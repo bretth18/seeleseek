@@ -1454,6 +1454,78 @@ public final class UploadManager {
         )
     }
 
+    /// Resume retriable failed uploads from a prior session.
+    ///
+    /// `pendingRetries` is in-memory, so a quit during the 30-min backoff
+    /// window leaves the persisted `.failed` row stranded. This is the
+    /// upload-side counterpart to `DownloadManager.resumeDownloadsOnConnect`.
+    /// Called from `LoginView` once the server connection is `.connected`.
+    ///
+    /// `ShareManager.fileIndex` may still be empty when this fires (rescan
+    /// runs async at app launch). Without coordinating with the rescan
+    /// we'd see every retriable row as "File no longer shared" and mark
+    /// it terminal, defeating the resume. So we wait for `isScanning ==
+    /// false` before sweeping.
+    public func resumeUploadsOnConnect() {
+        guard let transferState else {
+            logger.error("TransferState not configured for upload resume")
+            return
+        }
+
+        let retriable = transferState.uploads.filter {
+            $0.status == .failed
+                && $0.direction == .upload
+                && Self.isRetriableError($0.error)
+        }
+        guard !retriable.isEmpty else {
+            logger.info("No uploads to resume on connect")
+            return
+        }
+
+        logger.info("Resuming \(retriable.count) failed uploads on connect")
+
+        // Reset the persisted retry counter — these are stale from a
+        // prior session, so each row gets a fresh four-attempt budget.
+        // Mirrors `resumeDownloadsOnConnect`.
+        for transfer in retriable {
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.retryCount = 0
+            }
+        }
+
+        // If shareManager is still rescanning, wait. Polling is enough
+        // here — there's no rescan-complete callback today and the worst
+        // case is one polling Task that exits on its own.
+        Task { [weak self] in
+            while let manager = self?.shareManager, manager.isScanning {
+                try? await Task.sleep(for: .seconds(2))
+            }
+            guard let self else { return }
+            await MainActor.run {
+                // Stagger to avoid a connection storm. retryUploadInternal
+                // is dedup-safe via transferId, so a duplicate trigger
+                // (e.g. user reconnects twice fast) just no-ops.
+                for (index, transfer) in retriable.enumerated() {
+                    let delay = Double(index) * 0.5
+                    Task {
+                        if delay > 0 {
+                            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+                        }
+                        await MainActor.run {
+                            self.retryUploadInternal(
+                                transferId: transfer.id,
+                                username: transfer.username,
+                                filename: transfer.filename,
+                                size: transfer.size,
+                                retryCount: 1
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Drop a sleeping retry Task. Called by `AppState` whenever the
     /// user takes the transfer out of a retriable state.
     public func cancelRetry(transferId: UUID) {
