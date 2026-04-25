@@ -78,6 +78,12 @@ public final class UploadManager {
         public let localPath: String
         public let size: UInt64
         public let queuedAt: Date
+        /// Set on retries so `startUpload` reuses the original Transfer
+        /// record instead of allocating a fresh one. Without this, every
+        /// auto-retry leaves the original row stuck at `.queued` and
+        /// spawns a duplicate upload row, polluting persisted history.
+        /// Nil for fresh QueueUpload requests from a peer.
+        public let existingTransferId: UUID?
         // We deliberately do NOT cache a PeerConnection here. The cached
         // connection is the one the peer used at the moment of QueueUpload;
         // by the time we get around to broadcasting queue positions or
@@ -85,6 +91,22 @@ public final class UploadManager {
         // on a closed connection. Resolve via
         // `peerConnectionPool.getConnectionForUser(username)` at every send
         // site instead. Same fix as the DownloadManager refactor.
+
+        public init(
+            username: String,
+            filename: String,
+            localPath: String,
+            size: UInt64,
+            queuedAt: Date,
+            existingTransferId: UUID? = nil
+        ) {
+            self.username = username
+            self.filename = filename
+            self.localPath = localPath
+            self.size = size
+            self.queuedAt = queuedAt
+            self.existingTransferId = existingTransferId
+        }
     }
 
     public struct ActiveUpload {
@@ -403,19 +425,34 @@ public final class UploadManager {
 
         let token = UInt32.random(in: 0...UInt32.max)
 
-        // Create transfer record
-        let transfer = Transfer(
-            username: upload.username,
-            filename: upload.filename,
-            size: upload.size,
-            direction: .upload,
-            status: .connecting
-        )
-        transferState?.addUpload(transfer)
+        // Reuse the existing transfer record on retries; otherwise create
+        // a fresh one. Without this, a retry spawns a duplicate row and
+        // strands the original at `.queued`.
+        let transferId: UUID
+        if let existing = upload.existingTransferId {
+            transferId = existing
+            transferState?.updateTransfer(id: existing) { t in
+                t.status = .connecting
+                t.error = nil
+                t.bytesTransferred = 0
+                t.startTime = nil
+                t.speed = 0
+            }
+        } else {
+            let transfer = Transfer(
+                username: upload.username,
+                filename: upload.filename,
+                size: upload.size,
+                direction: .upload,
+                status: .connecting
+            )
+            transferState?.addUpload(transfer)
+            transferId = transfer.id
+        }
 
         // Track pending transfer
         let pending = PendingUpload(
-            transferId: transfer.id,
+            transferId: transferId,
             username: upload.username,
             filename: upload.filename,
             localPath: upload.localPath,
@@ -430,7 +467,7 @@ public final class UploadManager {
         // send QueueUpload may have died waiting in our queue.
         guard let connection = await networkClient?.peerConnectionPool.getConnectionForUser(upload.username) else {
             logger.warning("No active connection to \(upload.username), upload cannot proceed")
-            failUpload(transferId: transfer.id, error: "Peer disconnected")
+            failUpload(transferId: transferId, error: "Peer disconnected")
             pendingTransfers.removeValue(forKey: token)
             await processQueue()
             return
@@ -461,7 +498,7 @@ public final class UploadManager {
             }
         } catch {
             logger.error("Failed to send TransferRequest: \(error.localizedDescription)")
-            failUpload(transferId: transfer.id, error: error.localizedDescription)
+            failUpload(transferId: transferId, error: error.localizedDescription)
             pendingTransfers.removeValue(forKey: token)
             transferResponseTimeouts.removeValue(forKey: token)?.cancel()
         }
@@ -1331,6 +1368,17 @@ public final class UploadManager {
 
     /// Re-resolve the file via `ShareManager` and put it back on the queue.
     /// Shared by the scheduled-retry path and `retryFailedUpload`.
+    ///
+    /// Dedup is keyed on `transferId`, not `(username, filename)`: if THIS
+    /// row is already queued/pending/active (a scheduled retry fired moments
+    /// before a manual click, or vice versa) we just bail without touching
+    /// the row state — the in-flight attempt will resolve it. Mutating to
+    /// `.queued` *before* the dedup check (the previous shape) would strand
+    /// the row at `.queued` because the in-flight attempt owns a different
+    /// `pendingTransfers` token / `activeUploads` slot and never updates
+    /// this transferId. A genuine `(username, filename)` duplicate with a
+    /// different transferId is a separate row from the user's perspective
+    /// and is intentionally not dedup'd here.
     private func retryUploadInternal(
         transferId: UUID,
         username: String,
@@ -1338,11 +1386,18 @@ public final class UploadManager {
         size: UInt64,
         retryCount: Int
     ) {
-        // The retry path reuses the original share's `localPath`, which
-        // isn't on the Transfer record. Re-resolve via shareManager — same
-        // lookup `handleQueueUpload` uses on first request. If the file
-        // has been removed from shares between attempts, drop the retry
-        // and leave the row terminal so it doesn't loop.
+        let alreadyDriven = uploadQueue.contains(where: { $0.existingTransferId == transferId })
+            || pendingTransfers.values.contains(where: { $0.transferId == transferId })
+            || activeUploads.keys.contains(transferId)
+        if alreadyDriven {
+            logger.debug("Upload retry skipped (transfer already in flight): \(filename)")
+            return
+        }
+
+        // Re-resolve the share's `localPath` (not on the Transfer record).
+        // Same lookup `handleQueueUpload` uses on first request. If the
+        // file has been removed from shares between attempts, drop the
+        // retry and leave the row terminal so it doesn't loop.
         guard let shareManager,
               let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("Upload retry aborted, file no longer shared: \(filename)")
@@ -1362,26 +1417,16 @@ public final class UploadManager {
             t.retryCount = retryCount
         }
 
-        // Dedup against an in-flight (scheduled retry that already fired)
-        // or already-queued entry for the same (user, file). Without this,
-        // a manual Retry click landing within milliseconds of the
-        // scheduled wake-up — or while the same file is already pending
-        // / active for this user — would double-enqueue and we'd send
-        // two TransferRequests for one row.
-        let alreadyKnown = uploadQueue.contains(where: { $0.username == username && $0.filename == filename })
-            || pendingTransfers.values.contains(where: { $0.username == username && $0.filename == filename })
-            || activeUploads.values.contains(where: { $0.username == username && $0.filename == filename })
-        if alreadyKnown {
-            logger.debug("Upload retry skipped (already pending/queued/active): \(filename)")
-            return
-        }
-
+        // existingTransferId routes startUpload to reuse this row instead
+        // of allocating a new Transfer + addUpload, which would leave the
+        // original behind in `.queued` forever.
         let queued = QueuedUpload(
             username: username,
             filename: filename,
             localPath: indexedFile.localPath,
             size: indexedFile.size,
-            queuedAt: Date()
+            queuedAt: Date(),
+            existingTransferId: transferId
         )
         uploadQueue.append(queued)
         Task { await self.processQueue() }
@@ -1416,6 +1461,47 @@ public final class UploadManager {
             task.cancel()
             logger.info("Cancelled pending upload retry for \(transferId)")
         }
+    }
+
+    // MARK: - Test-only seams
+
+    /// Inject a `TransferTracking` without going through `configure`. Used
+    /// by retry-row-reuse tests to drive `retryUploadInternal` against a
+    /// MockTransferTracking, mirroring `DownloadManager._setTransferStateForTest`.
+    internal func _setTransferStateForTest(_ state: any TransferTracking) {
+        self.transferState = state
+    }
+
+    internal func _setShareManagerForTest(_ manager: ShareManager) {
+        self.shareManager = manager
+    }
+
+    /// Direct entry point for retry-internal tests. Real callers go through
+    /// `failUpload` (auto) or `retryFailedUpload` (manual).
+    internal func _retryUploadForTest(
+        transferId: UUID,
+        username: String,
+        filename: String,
+        size: UInt64,
+        retryCount: Int
+    ) {
+        retryUploadInternal(
+            transferId: transferId,
+            username: username,
+            filename: filename,
+            size: size,
+            retryCount: retryCount
+        )
+    }
+
+    /// Read the in-memory upload queue (for assertions about
+    /// `existingTransferId` routing).
+    internal var _uploadQueueForTest: [QueuedUpload] { uploadQueue }
+
+    /// Seed a pending entry to exercise the dedup branch of
+    /// `retryUploadInternal` without driving a real handshake.
+    internal func _seedPendingUploadForTest(_ pending: PendingUpload, token: UInt32) {
+        pendingTransfers[token] = pending
     }
 
     /// Maps a TransferReply rejection `reason` string to the closest
