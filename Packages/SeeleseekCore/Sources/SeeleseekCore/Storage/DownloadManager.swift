@@ -2274,10 +2274,17 @@ public final class DownloadManager {
         }
     }
 
-    /// Public method to manually retry a failed download
+    /// Public method to manually retry a failed download.
+    ///
+    /// `.queued` is in the eligible set because `TransfersView`'s Retry
+    /// button calls `transferState.retryTransfer(id:)` first — which sets
+    /// status to `.queued` — and THEN calls this method. Pre-fix the
+    /// guard rejected `.queued` and the manual retry was a silent no-op
+    /// (the row went `.failed → .queued` and just sat there until the
+    /// next reconnect, where `resumeDownloadsOnConnect` picked it up).
     public func retryFailedDownload(transferId: UUID) {
         guard let transfer = transferState?.getTransfer(id: transferId),
-              transfer.status == .failed || transfer.status == .cancelled else {
+              transfer.status == .failed || transfer.status == .cancelled || transfer.status == .queued else {
             return
         }
 

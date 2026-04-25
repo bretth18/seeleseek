@@ -126,6 +126,9 @@ struct LoginView: View {
                 )
                 // Resume all retriable downloads from previous session
                 appState.downloadManager.resumeDownloadsOnConnect()
+                // Same on the upload side: persisted `.failed` rows
+                // whose error is retriable get a fresh 4-attempt budget.
+                appState.uploadManager.resumeUploadsOnConnect()
                 // Re-send peer-status watches (earlier attempts made
                 // during the connecting phase may have been dropped).
                 appState.socialState.resubscribeWatchedPeers()

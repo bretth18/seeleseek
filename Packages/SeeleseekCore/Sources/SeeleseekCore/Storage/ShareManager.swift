@@ -450,6 +450,15 @@ public final class ShareManager {
         return result
     }
 
+    // MARK: - Test seams
+
+    /// Inject a synthetic file index without going through `addFolder` /
+    /// `rescanAll`. Used by upload retry tests so they don't have to spin
+    /// up the disk-walk code path.
+    internal func _seedFileIndexForTest(_ files: [IndexedFile]) {
+        fileIndex = files
+    }
+
     // MARK: - Persistence
 
     private func save() {
