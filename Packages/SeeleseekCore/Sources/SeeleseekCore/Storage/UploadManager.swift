@@ -1362,10 +1362,16 @@ public final class UploadManager {
     ) {
         guard retryCount < self.maxRetries else { return }
         let delay = retryDelays[retryCount]
+        let fireAt = Date().addingTimeInterval(delay)
         logger.info("Scheduling upload retry #\(retryCount + 1) for \(filename) in \(delay)s")
 
+        // `nextRetryAt` is persisted so a quit + relaunch in the middle of
+        // a 30-minute backoff still honors the original schedule (see
+        // `rearmPersistedRetries`). The error string is the format
+        // contract `TransferRow` parses for the "Retrying in 2m" badge.
         transferState?.updateTransfer(id: transferId) { t in
             t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
+            t.nextRetryAt = fireAt
         }
 
         // Cancel any prior retry Task before overwriting the dict slot —
@@ -1439,6 +1445,7 @@ public final class UploadManager {
                 t.status = .failed
                 t.error = "File no longer shared"
                 t.retryCount = retryCount
+                t.nextRetryAt = nil
             }
             return
         }
@@ -1449,6 +1456,7 @@ public final class UploadManager {
             t.error = nil
             t.bytesTransferred = 0
             t.retryCount = retryCount
+            t.nextRetryAt = nil
         }
 
         // existingTransferId routes startUpload to reuse this row instead
@@ -1561,11 +1569,67 @@ public final class UploadManager {
     }
 
     /// Drop a sleeping retry Task. Called by `AppState` whenever the
-    /// user takes the transfer out of a retriable state.
+    /// user takes the transfer out of a retriable state. Also clears
+    /// the persisted `nextRetryAt` so a subsequent rearm-on-launch
+    /// doesn't resurrect this scheduled retry on top of the new flow
+    /// that just took the row out of a retriable state.
     public func cancelRetry(transferId: UUID) {
         if let task = pendingRetries.removeValue(forKey: transferId) {
             task.cancel()
             logger.info("Cancelled pending upload retry for \(transferId)")
+        }
+        transferState?.updateTransfer(id: transferId) { t in
+            t.nextRetryAt = nil
+        }
+    }
+
+    /// Rearm in-memory retry timers for any persisted `.failed` upload
+    /// rows that were mid-backoff when the app last quit. Mirrors
+    /// `DownloadManager.rearmPersistedRetries` — see that method for
+    /// motivation. Call once at startup after
+    /// `transferState.loadPersisted()` completes.
+    public func rearmPersistedRetries() {
+        guard let transferState else { return }
+        let now = Date()
+        let candidates = transferState.uploads.filter {
+            $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
+        }
+        guard !candidates.isEmpty else { return }
+        logger.info("Rearming \(candidates.count) persisted upload retries")
+        for (index, transfer) in candidates.enumerated() {
+            guard let fireAt = transfer.nextRetryAt else { continue }
+            let remaining = fireAt.timeIntervalSince(now)
+            let stagger = remaining <= 0 ? Double(index) * 0.5 : 0
+            let delay = max(0, remaining) + stagger
+            let transferId = transfer.id
+            let username = transfer.username
+            let filename = transfer.filename
+            let size = transfer.size
+            let retryCount = transfer.retryCount
+
+            if let existing = pendingRetries.removeValue(forKey: transferId) {
+                existing.cancel()
+            }
+            let task = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.pendingRetries.removeValue(forKey: transferId)
+                    guard let current = self.transferState?.getTransfer(id: transferId),
+                          current.status == .failed else {
+                        self.logger.info("Skipping rearmed upload retry for \(filename): no longer in .failed state")
+                        return
+                    }
+                    self.retryUploadInternal(
+                        transferId: transferId,
+                        username: username,
+                        filename: filename,
+                        size: size,
+                        retryCount: retryCount + 1
+                    )
+                }
+            }
+            pendingRetries[transferId] = task
         }
     }
 

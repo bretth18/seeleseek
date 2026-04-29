@@ -2196,11 +2196,15 @@ public final class DownloadManager {
         }
 
         let delay = retryDelays[retryCount]
+        let fireAt = Date().addingTimeInterval(delay)
         logger.info("Scheduling retry #\(retryCount + 1) for \(filename) in \(delay)s")
 
-        // Update status to show pending retry
+        // Update status to show pending retry. `nextRetryAt` is persisted
+        // so a quit + relaunch in the middle of a 30-minute backoff still
+        // honors the original schedule (see `rearmPersistedRetries`).
         transferState?.updateTransfer(id: transferId) { t in
             t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
+            t.nextRetryAt = fireAt
         }
 
         // Cancel any prior pending retry for this transfer first —
@@ -2256,11 +2260,14 @@ public final class DownloadManager {
 
         // Update the existing transfer record. Reset to .queued so
         // `startDownload` (which sets it to .connecting) sees a clean slate.
+        // Clear `nextRetryAt` — the scheduled retry just fired and the row
+        // is moving forward, so the persisted timestamp is stale.
         transferState?.updateTransfer(id: transferId) { t in
             t.status = .queued
             t.error = nil
             t.bytesTransferred = 0
             t.retryCount = retryCount
+            t.nextRetryAt = nil
         }
 
         // Re-initiate via the normal startDownload path so the retry uses
@@ -2305,11 +2312,71 @@ public final class DownloadManager {
         )
     }
 
-    /// Cancel a pending retry
+    /// Cancel a pending retry. Drops the in-memory `Task` AND clears the
+    /// persisted `nextRetryAt` so a subsequent rearm-on-launch doesn't
+    /// resurrect this scheduled retry on top of the new flow that just
+    /// took the row out of a retriable state.
     public func cancelRetry(transferId: UUID) {
         if let task = pendingRetries.removeValue(forKey: transferId) {
             task.cancel()
             logger.info("Cancelled pending retry for transfer \(transferId)")
+        }
+        transferState?.updateTransfer(id: transferId) { t in
+            t.nextRetryAt = nil
+        }
+    }
+
+    /// Rearm in-memory retry timers for any persisted `.failed` rows that
+    /// were mid-backoff when the app last quit. Without this, a row that
+    /// was scheduled to retry in 28 minutes but interrupted by a quit
+    /// just sits at `.failed` forever (the in-memory Task died). Past-due
+    /// rows fire immediately with a small per-row stagger so 50 pending
+    /// retries don't flood the network on launch. Call once at startup
+    /// after `transferState.loadPersisted()` completes.
+    public func rearmPersistedRetries() {
+        guard let transferState else { return }
+        let now = Date()
+        let candidates = transferState.downloads.filter {
+            $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
+        }
+        guard !candidates.isEmpty else { return }
+        logger.info("Rearming \(candidates.count) persisted download retries")
+        for (index, transfer) in candidates.enumerated() {
+            guard let fireAt = transfer.nextRetryAt else { continue }
+            let remaining = fireAt.timeIntervalSince(now)
+            // Stagger past-due rows by 0.5s each. Future rows already
+            // have a natural spread from the original scheduling.
+            let stagger = remaining <= 0 ? Double(index) * 0.5 : 0
+            let delay = max(0, remaining) + stagger
+            let transferId = transfer.id
+            let username = transfer.username
+            let filename = transfer.filename
+            let size = transfer.size
+            let retryCount = transfer.retryCount
+
+            if let existing = pendingRetries.removeValue(forKey: transferId) {
+                existing.cancel()
+            }
+            let task = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard let self, !Task.isCancelled else { return }
+                await MainActor.run {
+                    self.pendingRetries.removeValue(forKey: transferId)
+                    guard let current = self.transferState?.getTransfer(id: transferId),
+                          current.status == .failed else {
+                        self.logger.info("Skipping rearmed retry for \(filename): no longer in .failed state")
+                        return
+                    }
+                    self.retryDownload(
+                        transferId: transferId,
+                        username: username,
+                        filename: filename,
+                        size: size,
+                        retryCount: retryCount + 1
+                    )
+                }
+            }
+            pendingRetries[transferId] = task
         }
     }
 

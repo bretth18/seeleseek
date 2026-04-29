@@ -481,6 +481,16 @@ final class AppState {
         // Load resumable transfers
         await transferState.loadPersisted()
 
+        // Rearm any retry timers that were mid-backoff when the app last
+        // quit. Without this, a row scheduled to retry in 28 minutes but
+        // interrupted by a quit just sits at `.failed` forever — the
+        // in-memory `Task` died with the process. Past-due rows fire
+        // immediately with a small stagger; future rows reschedule with
+        // the remaining delay. Must run after `loadPersisted` so the
+        // managers can read `transferState.downloads`/`.uploads`.
+        downloadManager.rearmPersistedRetries()
+        uploadManager.rearmPersistedRetries()
+
         // Load wishlist items
         await wishlistState.loadFromDatabase()
 

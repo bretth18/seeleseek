@@ -14,6 +14,13 @@ public struct Transfer: Identifiable, Hashable, Sendable {
     public var error: String?
     public var localPath: URL?  // Local file path after download completes
     public var retryCount: Int  // Number of retry attempts (nicotine+ style)
+    /// When the next scheduled retry should fire. Persisted so an in-flight
+    /// retry survives an app quit — without this, the in-memory retry Task
+    /// dies on quit and the row sits at `.failed` with a stale "Retrying
+    /// in 28m..." string forever. `nil` means no retry pending. Cleared by
+    /// the manager when the retry fires, the row moves out of `.failed`,
+    /// or the user cancels.
+    public var nextRetryAt: Date?
 
     public enum TransferDirection: String, Sendable {
         case download
@@ -54,7 +61,8 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         queuePosition: Int? = nil,
         error: String? = nil,
         localPath: URL? = nil,
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        nextRetryAt: Date? = nil
     ) {
         self.id = id
         self.username = username
@@ -69,6 +77,7 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         self.error = error
         self.localPath = localPath
         self.retryCount = retryCount
+        self.nextRetryAt = nextRetryAt
     }
 
     public var displayFilename: String {

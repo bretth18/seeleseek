@@ -236,6 +236,14 @@ actor DatabaseManager {
             try db.execute(sql: "ALTER TABLE shared_files ADD COLUMN isPrivate INTEGER NOT NULL DEFAULT 0")
         }
 
+        // v8: Persist the next-retry timestamp so a scheduled retry
+        // survives an app quit. Without this, the in-memory retry Task
+        // dies on quit and the row sits at `.failed` with a stale
+        // "Retrying in 28m..." string. NULL = no retry pending.
+        migrator.registerMigration("v8") { db in
+            try db.execute(sql: "ALTER TABLE transfers ADD COLUMN nextRetryAt REAL")
+        }
+
         try migrator.migrate(dbPool)
 
         logger.info("Database migrations completed")
