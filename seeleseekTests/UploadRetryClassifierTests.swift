@@ -57,6 +57,14 @@ struct UploadRetryClassifierTests {
             "File not found",
             "File not available",
             "Too many queued uploads",
+            // Closed in the second-pass classifier audit. Retrying these
+            // wastes the full ladder for a transfer that has zero chance
+            // of succeeding.
+            "Banned by uploader",
+            "Banned",
+            "Blocked country",
+            "Disallowed extension",
+            "Pending shutdown.",
         ])
     func peerStopReasonsAreTerminal(message: String) {
         #expect(UploadManager.isRetriableError(message) == false)

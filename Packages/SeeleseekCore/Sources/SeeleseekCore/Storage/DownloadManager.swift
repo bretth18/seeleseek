@@ -30,11 +30,13 @@ public final class DownloadManager {
     private var iconAppliedDirs: Set<URL> = []
 
     // MARK: - Retry Configuration
-    // Soulseek peer upload queues are commonly measured in minutes to hours.
-    // The previous 5s/15s/45s ladder exhausted in ~65s — long before a busy
-    // peer's queue ever drained — so the eventual TransferRequest arrived
-    // after pendingDownloads had been swept and was silently dropped.
-    private let retryDelays: [TimeInterval] = [30, 120, 600, 1800]  // 30s, 2m, 10m, 30m
+    // Mixed ladder: a quick 10s first retry catches transient blips (TCP
+    // resets, brief connectivity flaps, momentary peer slowness) without
+    // making the user wait. Subsequent delays climb into minutes/hours
+    // because Soulseek peer upload queues commonly drain on that timescale
+    // — a retry too soon arrives before the queue has moved and gets
+    // silently dropped from `pendingDownloads`.
+    private let retryDelays: [TimeInterval] = [10, 30, 120, 600, 1800]  // 10s, 30s, 2m, 10m, 30m
     private var maxRetries: Int { retryDelays.count }
     private var pendingRetries: [UUID: Task<Void, Never>] = [:]  // Track retry tasks
     private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer (60s)
@@ -2155,7 +2157,7 @@ public final class DownloadManager {
 
         // Known terminal reasons — user action or peer-side decisions
         // that re-asking won't change. `cancel` (bare stem) matches both
-        // "cancelled" and "canceled" spellings.
+        // "cancelled" and "canceled" spellings. Mirror UploadManager.
         let terminalPatterns = [
             "cancel",
             "denied",
@@ -2163,6 +2165,10 @@ public final class DownloadManager {
             "not available",
             "file not found",
             "too many",
+            "banned",
+            "blocked",
+            "disallowed",
+            "pending shutdown",
         ]
         for pattern in terminalPatterns {
             if lowered.contains(pattern) { return false }

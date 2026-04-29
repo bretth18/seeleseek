@@ -56,7 +56,7 @@ public final class UploadManager {
     /// Backoff schedule mirrors `DownloadManager.retryDelays`. Length sets
     /// `maxRetries`; after `maxRetries` attempts the upload is left
     /// permanently `.failed` (the user can still retry manually).
-    private let retryDelays: [TimeInterval] = [30, 120, 600, 1800]
+    private let retryDelays: [TimeInterval] = [10, 30, 120, 600, 1800]
     private var maxRetries: Int { retryDelays.count }
     /// Sleeping retry tasks keyed by transferId. Cancelled when the user
     /// takes the row out of a retriable state (cancel, remove, manual retry,
@@ -1292,13 +1292,21 @@ public final class UploadManager {
         guard let lowered = error?.lowercased(), !lowered.isEmpty else {
             return false
         }
+        // Soulseek peer rejection reasons that can never succeed on retry.
+        // Retrying these wastes the full 30-minute backoff ladder and leaves
+        // the user staring at "Retrying in 10m..." for a transfer that
+        // wouldn't have a chance even if we waited a year.
         let terminalPatterns = [
-            "cancel",
-            "denied",
-            "not shared",
-            "not available",
-            "file not found",
-            "too many",
+            "cancel",          // user-driven (both spellings: cancelled / canceled)
+            "denied",          // peer ACL rejection
+            "not shared",      // file not in peer's shares
+            "not available",   // file not available
+            "file not found",  // file gone
+            "too many",        // peer's queue / per-user cap reached
+            "banned",          // peer banned us
+            "blocked",         // peer's country/IP block
+            "disallowed",      // disallowed extension etc
+            "pending shutdown",// peer is shutting down
         ]
         for pattern in terminalPatterns where lowered.contains(pattern) {
             return false
