@@ -802,8 +802,11 @@ public final class UploadManager {
                     break
                 }
 
-                // Send chunk
-                try await sendData(connection: connection, data: chunk)
+                // Send chunk with a stall timeout so a wedged TCP write
+                // can't freeze the transfer indefinitely.
+                try await sendChunkWithTimeout {
+                    try await self.sendData(connection: connection, data: chunk)
+                }
                 bytesSent += UInt64(chunk.count)
                 networkClient?.peerConnectionPool.recordBytesSent(UInt64(chunk.count))
 
@@ -908,6 +911,24 @@ public final class UploadManager {
                     continuation.resume()
                 }
             })
+        }
+    }
+
+    /// Send-side stall watchdog. Throws `UploadError.timeout` if `send` has
+    /// not returned within `timeout` seconds. Wraps every per-chunk send so
+    /// a TCP-wedged peer can't freeze a transfer indefinitely — without
+    /// this, `connection.send` on a half-dead peer waits forever for a
+    /// callback that never fires and the row sits at e.g. 30% until the
+    /// user manually clicks Retry.
+    func sendChunkWithTimeout(_ timeout: TimeInterval = 30, _ send: @Sendable @escaping () async throws -> Void) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await send() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw UploadError.timeout
+            }
+            _ = try await group.next()
+            group.cancelAll()
         }
     }
 
@@ -1175,8 +1196,13 @@ public final class UploadManager {
                     break
                 }
 
-                // Send chunk - AWAIT the send to ensure ordering and catch errors
-                try await connection.sendRaw(chunk)
+                // Send chunk with a stall timeout. PeerConnection.sendRaw
+                // bottoms out at the same NWConnection.send used above, so
+                // it has the same wedge-forever failure mode without the
+                // watchdog.
+                try await sendChunkWithTimeout {
+                    try await connection.sendRaw(chunk)
+                }
                 bytesSent += UInt64(chunk.count)
 
                 // Update progress periodically

@@ -23,6 +23,10 @@ struct UploadRetryClassifierTests {
             "Failed to initiate file transfer",
             "Failed to start file transfer",
             "Connection reset by peer",
+            // Stall watchdog produces this when a per-chunk send hangs
+            // longer than the threshold. Must be retriable so the row
+            // doesn't get stuck after a wedged TCP write.
+            "Transfer timed out",
           ])
     func networkErrorsRetry(message: String) {
         #expect(UploadManager.isRetriableError(message) == true)

@@ -1615,14 +1615,16 @@ public final class DownloadManager {
             // Receive data - no artificial timeout that returns fake completion
             let chunkResult: PeerConnection.FileChunkResult
             do {
-                // Use a long timeout (60s) just to prevent infinite hangs on dead connections
-                // This throws an error on timeout rather than returning fake completion
+                // 30s no-data window matches Nicotine+'s stall threshold. The
+                // previous 60s value let half-dead peers freeze the row at e.g.
+                // 30% for a full minute before the row failed and retry kicked
+                // in — by then the user had already clicked "Retry" twice.
                 chunkResult = try await withThrowingTaskGroup(of: PeerConnection.FileChunkResult.self) { group in
                     group.addTask {
                         try await connection.receiveFileChunk()
                     }
                     group.addTask {
-                        try await Task.sleep(for: .seconds(60))
+                        try await Task.sleep(for: .seconds(30))
                         throw DownloadError.timeout
                     }
                     guard let result = try await group.next() else {
