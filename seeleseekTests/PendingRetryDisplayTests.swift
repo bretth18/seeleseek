@@ -13,14 +13,15 @@ import Foundation
 @Suite("Transfer pending-retry display helpers")
 struct PendingRetryDisplayTests {
 
-    private func makeFailed(error: String?) -> Transfer {
+    private func makeFailed(error: String? = nil, nextRetryAt: Date? = nil) -> Transfer {
         Transfer(
             username: "alice",
             filename: "song.mp3",
             size: 1024,
             direction: .download,
             status: .failed,
-            error: error
+            error: error,
+            nextRetryAt: nextRetryAt
         )
     }
 
@@ -60,5 +61,57 @@ struct PendingRetryDisplayTests {
         var t = makeFailed(error: "Retrying in 1m...")
         t.status = .queued
         #expect(t.isPendingRetry == false)
+    }
+
+    // MARK: - Live countdown from nextRetryAt
+
+    @Test("nextRetryAt drives a live countdown that ticks down")
+    func nextRetryAtDrivesLiveCountdown() {
+        let now = Date()
+        let t = makeFailed(nextRetryAt: now.addingTimeInterval(125))
+        // 125s from `now` → "2m 5s"
+        #expect(t.retryCountdownString(now: now) == "2m 5s")
+        // 60s later → "1m 5s"
+        #expect(t.retryCountdownString(now: now.addingTimeInterval(60)) == "1m 5s")
+        // Past the deadline → "now"
+        #expect(t.retryCountdownString(now: now.addingTimeInterval(200)) == "now")
+    }
+
+    @Test("hasScheduledRetry only true when both .failed and nextRetryAt is set")
+    func hasScheduledRetryGate() {
+        let now = Date()
+        let stamped = makeFailed(nextRetryAt: now.addingTimeInterval(60))
+        #expect(stamped.hasScheduledRetry == true)
+        #expect(stamped.isPendingRetry == true)
+
+        let unstamped = makeFailed()
+        #expect(unstamped.hasScheduledRetry == false)
+
+        var queued = makeFailed(nextRetryAt: now.addingTimeInterval(60))
+        queued.status = .queued
+        #expect(queued.hasScheduledRetry == false, "non-failed status invalidates the schedule")
+    }
+
+    @Test("retryCountdownString falls back to legacy pendingRetryDelay when nextRetryAt is nil")
+    func legacyFallback() {
+        let t = makeFailed(error: "Retrying in 30s...")
+        // No nextRetryAt: falls back to the static format-string delay
+        // for pre-v8 rows that haven't been re-scheduled yet.
+        #expect(t.retryCountdownString() == "30s")
+    }
+
+    @Test("formatRetryCountdown produces the same units the manager stamps",
+          arguments: [
+            (5.0, "5s"),
+            (30.0, "30s"),
+            (59.0, "59s"),
+            (60.0, "1m"),
+            (90.0, "1m 30s"),
+            (120.0, "2m"),
+            (3600.0, "1h"),
+            (3660.0, "1h 1m"),
+          ] as [(TimeInterval, String)])
+    func formatCountdownUnits(seconds: TimeInterval, expected: String) {
+        #expect(Transfer.formatRetryCountdown(seconds) == expected)
     }
 }

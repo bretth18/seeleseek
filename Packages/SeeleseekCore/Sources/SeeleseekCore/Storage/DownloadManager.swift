@@ -232,6 +232,15 @@ public final class DownloadManager {
                 await startDownload(transfer: transfer)
             }
         }
+
+        // Refresh queue positions for any `.waiting` downloads right
+        // away. Without this, positions are stale until the 5-minute
+        // `queuePositionTimer` fires — so the user reconnects, sees
+        // last-known position from minutes/hours ago, and has no way to
+        // tell whether the queue has moved.
+        Task { [weak self] in
+            await self?.updateQueuePositions()
+        }
     }
 
     /// Queue a file for download

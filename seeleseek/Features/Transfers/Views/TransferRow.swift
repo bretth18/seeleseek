@@ -3,29 +3,76 @@ import SeeleseekCore
 
 // MARK: - Pending-retry detection
 
-/// Both `DownloadManager.scheduleRetry` and `UploadManager.scheduleUploadRetry`
-/// stamp the row's `error` with `"Retrying in <delay>..."` while the row sits
-/// in `.failed` waiting for the next attempt. The row treats that prefix as
-/// the "pending retry" signal so the UI can show a clock + delay instead of
-/// a red `Failed`. Couples to the format the managers produce — keep these in
-/// sync if either retry scheduler changes the string. Internal (not
-/// fileprivate) so unit tests can lock in the contract.
+/// Two pending-retry signals on a `.failed` row:
+///   1. `nextRetryAt` (structural, persisted) — the schedulers stamp this
+///      with the absolute fire time. Drives a live ticking countdown that
+///      survives quit/relaunch.
+///   2. The legacy `error == "Retrying in <delay>..."` format-string. Kept
+///      as a fallback so rows that were `.failed` before the v8 schema
+///      upgrade still surface a countdown until they're cleared.
+/// Couples to the format the managers produce — keep these in sync if
+/// either retry scheduler changes the string. Internal (not fileprivate)
+/// so unit tests can lock in the contract.
 extension Transfer {
+    /// True when the row has a structurally-known scheduled retry. The
+    /// presence of `nextRetryAt` is the post-v8 signal — independent of
+    /// the format-string contract that `isPendingRetry` checks.
+    var hasScheduledRetry: Bool {
+        status == .failed && nextRetryAt != nil
+    }
+
     /// True when the row is `.failed` but a retry Task is sleeping with a
-    /// scheduled wake-up.
+    /// scheduled wake-up. Matches *either* `nextRetryAt` (preferred) or
+    /// the legacy format-string fallback.
     var isPendingRetry: Bool {
-        guard status == .failed, let error = error else { return false }
+        guard status == .failed else { return false }
+        if nextRetryAt != nil { return true }
+        guard let error = error else { return false }
         return error.hasPrefix("Retrying in ")
     }
 
     /// Extract the delay token (e.g. `"2m"`) from the retry-pending error.
-    /// Returns nil for non-pending rows.
+    /// Returns nil for non-pending rows. Legacy fallback for rows without
+    /// `nextRetryAt`; new rows should call `retryCountdownString(now:)`
+    /// for a live tick-by-tick value instead.
     var pendingRetryDelay: String? {
-        guard isPendingRetry, let error = error else { return nil }
+        guard status == .failed, let error = error,
+              error.hasPrefix("Retrying in ") else { return nil }
         let inner = error.dropFirst("Retrying in ".count)
             .trimmingCharacters(in: CharacterSet(charactersIn: "."))
             .trimmingCharacters(in: .whitespaces)
         return inner.isEmpty ? nil : inner
+    }
+
+    /// Live countdown to the next scheduled retry. Pass the current time
+    /// so callers can drive a per-tick refresh via `TimelineView`. Falls
+    /// back to the parsed legacy `pendingRetryDelay` when `nextRetryAt`
+    /// is nil. Returns nil when the row isn't `.failed` or has no
+    /// pending retry.
+    func retryCountdownString(now: Date = Date()) -> String? {
+        guard status == .failed else { return nil }
+        if let fireAt = nextRetryAt {
+            let remaining = fireAt.timeIntervalSince(now)
+            if remaining <= 0 { return "now" }
+            return Self.formatRetryCountdown(remaining)
+        }
+        return pendingRetryDelay
+    }
+
+    static func formatRetryCountdown(_ seconds: TimeInterval) -> String {
+        // Round up so a 1.2s remaining still reads as "2s" rather than
+        // flicking to "1s" then "now". Avoids visible undershoot when
+        // the timer fires slightly after the displayed second boundary.
+        let total = Int(seconds.rounded(.up))
+        if total < 60 { return "\(total)s" }
+        if total < 3600 {
+            let m = total / 60
+            let s = total % 60
+            return s > 0 ? "\(m)m \(s)s" : "\(m)m"
+        }
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        return m > 0 ? "\(h)h \(m)m" : "\(h)h"
     }
 }
 
@@ -381,10 +428,10 @@ private struct TransferInfoColumn: View {
                 offlineLabel
                 Spacer(minLength: 0)
             }
-        } else if transfer.isPendingRetry, let error = transfer.error {
+        } else if transfer.isPendingRetry {
             HStack(spacing: SeeleSpacing.md) {
                 peerCluster
-                retryWaitingLabel(error)
+                retryWaitingLabel
                 Spacer(minLength: 0)
             }
         } else if let error = transfer.error, !error.isEmpty {
@@ -478,22 +525,24 @@ private struct TransferInfoColumn: View {
 
     /// Pending-retry variant of `errorLabel`: orange clock instead of red
     /// triangle so a scheduled-retry row doesn't look like a permanent
-    /// failure. The text still shows the manager-stamped countdown
-    /// ("Retrying in 2m...") for the user to see exactly how long they're
-    /// waiting.
-    private func retryWaitingLabel(_ message: String) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "clock")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.warning)
-                .accessibilityHidden(true)
+    /// failure. The countdown ticks down every second so the user can
+    /// watch the wait shrink rather than reading a snapshot value
+    /// stamped at scheduling time.
+    private var retryWaitingLabel: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let countdown = transfer.retryCountdownString(now: context.date) ?? "soon"
+            HStack(spacing: SeeleSpacing.xs) {
+                Image(systemName: "clock")
+                    .font(.system(size: SeeleSpacing.iconSizeXS))
+                    .foregroundStyle(SeeleColors.warning)
+                    .accessibilityHidden(true)
 
-            Text(message)
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.warning)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(message)
+                Text("Retrying in \(countdown)")
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.warning)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
     }
 
@@ -590,9 +639,25 @@ private struct TransferMetadataColumn: View {
                 .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.info)
         case .queued:
-            Text("Queued")
-                .font(SeeleTypography.monoSmall)
+            // Show peer-reported queue position when known. Without this,
+            // a row that was previously `.waiting` at #5 looks identical
+            // to a freshly-queued row even though the peer told us where
+            // we sit — which is the most useful information on a
+            // multi-hour queue.
+            if let pos = transfer.queuePosition {
+                HStack(spacing: SeeleSpacing.xxs) {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: SeeleSpacing.iconSizeXS))
+                    Text("#\(pos)")
+                        .font(SeeleTypography.monoSmall)
+                        .monospacedDigit()
+                }
                 .foregroundStyle(SeeleColors.warning)
+            } else {
+                Text("Queued")
+                    .font(SeeleTypography.monoSmall)
+                    .foregroundStyle(SeeleColors.warning)
+            }
         case .completed:
             HStack(spacing: SeeleSpacing.xxs) {
                 Image(systemName: "checkmark.circle.fill")
@@ -602,18 +667,23 @@ private struct TransferMetadataColumn: View {
             }
             .foregroundStyle(SeeleColors.success)
         case .failed:
-            if let delay = transfer.pendingRetryDelay {
+            if transfer.isPendingRetry {
                 // Pending automatic retry — primary cue switches from
-                // "Failed" (red, terminal) to "Retry in 2m" (orange,
+                // "Failed" (red, terminal) to "Retry in 2m 15s" (orange,
                 // pending) so the user sees the row is still in flight.
-                HStack(spacing: SeeleSpacing.xxs) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: SeeleSpacing.iconSizeXS))
-                    Text("Retry in \(delay)")
-                        .font(SeeleTypography.monoSmall)
-                        .monospacedDigit()
+                // `TimelineView` re-evaluates every second so the
+                // countdown ticks down rather than displaying the
+                // schedule-time delay forever.
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: SeeleSpacing.xxs) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
+                        Text("Retry in \(transfer.retryCountdownString(now: context.date) ?? "soon")")
+                            .font(SeeleTypography.monoSmall)
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(SeeleColors.warning)
                 }
-                .foregroundStyle(SeeleColors.warning)
             } else {
                 Text("Failed")
                     .font(SeeleTypography.monoSmall)
