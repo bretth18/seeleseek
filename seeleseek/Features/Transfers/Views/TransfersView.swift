@@ -4,6 +4,7 @@ import SeeleseekCore
 struct TransfersView: View {
     @Environment(\.appState) private var appState
     @State private var selectedTab: TransferTab = .downloads
+    @State private var isDashboardPresented = false
 
     private var transferState: TransferState { appState.transferState }
 
@@ -43,6 +44,9 @@ struct TransfersView: View {
         )) {
             MetadataEditorSheet(state: appState.metadataState)
         }
+        .sheet(isPresented: $isDashboardPresented) {
+            QueueDashboardSheet()
+        }
     }
 
     private var header: some View {
@@ -67,6 +71,16 @@ struct TransfersView: View {
                 }
 
                 Spacer()
+
+                Button {
+                    isDashboardPresented = true
+                } label: {
+                    Label("Dashboard", systemImage: "chart.bar.xaxis")
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open queue dashboard")
 
                 if !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty {
                     Menu {

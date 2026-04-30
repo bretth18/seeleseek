@@ -546,11 +546,16 @@ public final class PeerConnectionPool {
     public func cleanupStaleConnections() {
         let idleCutoff = Date().addingTimeInterval(-connectionTimeout)
         // Connections that haven't seen any event yet (no entry in
-        // lastActivities) but were created more than 10s ago are considered
+        // lastActivities) but were created more than 30s ago are considered
         // "stuck handshake" and reaped early. With `touchActivity` writing
-        // on every event, a connection only ends up here if it never
-        // received a single event — i.e. it never even reached PeerInit.
-        let stuckHandshakeCutoff = Date().addingTimeInterval(-10)
+        // on every event (including `.stateChanged(.connected)`), a healthy
+        // TCP connect transitions out of this branch within milliseconds.
+        // Anything stuck here is genuinely wedged — but 30s gives a slow
+        // network or a backlogged peer enough time to send their first
+        // byte before we give up. Previously 10s, which could reap an
+        // outgoing F-connection that was waiting on a slow peer's
+        // FileOffset reply.
+        let stuckHandshakeCutoff = Date().addingTimeInterval(-30)
 
         var toRemove: [String] = []
         for (id, info) in connections {
