@@ -17,7 +17,10 @@ struct DatabaseIntegrationTests {
         try db.write { db in
             try db.execute(sql: "PRAGMA foreign_keys = ON")
 
-            // v1: Initial schema
+            // v1: Initial schema. Mirrors DatabaseManager — the test DB
+            // bypasses the migrator and builds schema inline, so it has
+            // to include every column a Record touches (e.g. the v8
+            // `nextRetryAt` column that backs retry persistence).
             try db.create(table: "transfers") { t in
                 t.column("id", .text).primaryKey()
                 t.column("username", .text).notNull()
@@ -34,6 +37,7 @@ struct DatabaseIntegrationTests {
                 t.column("retryCount", .integer).defaults(to: 0)
                 t.column("createdAt", .double).notNull()
                 t.column("updatedAt", .double).notNull()
+                t.column("nextRetryAt", .double)
             }
             try db.create(index: "idx_transfers_status", on: "transfers", columns: ["status"])
 

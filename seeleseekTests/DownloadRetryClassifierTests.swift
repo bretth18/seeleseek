@@ -62,6 +62,13 @@ struct DownloadRetryClassifierTests {
             "File not found",
             "File not available",
             "Too many queued uploads",
+            // Mirror UploadManager terminal patterns — added in the
+            // second-pass classifier audit.
+            "Banned by uploader",
+            "Banned",
+            "Blocked country",
+            "Disallowed extension",
+            "Pending shutdown.",
           ])
     func peerStopReasonsAreTerminal(message: String) {
         #expect(DownloadManager.isRetriableError(message) == false)

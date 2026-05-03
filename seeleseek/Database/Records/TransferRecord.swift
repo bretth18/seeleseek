@@ -19,6 +19,9 @@ struct TransferRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var error: String?
     var localPath: String?
     var retryCount: Int
+    /// Defaulted to nil so existing test call sites that build `TransferRecord`
+    /// positionally don't have to thread the new field through every fixture.
+    var nextRetryAt: Double? = nil
     var createdAt: Double
     var updatedAt: Double
 
@@ -37,7 +40,8 @@ struct TransferRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
             queuePosition: queuePosition,
             error: error,
             localPath: localPath.map { URL(fileURLWithPath: $0) },
-            retryCount: retryCount
+            retryCount: retryCount,
+            nextRetryAt: nextRetryAt.map { Date(timeIntervalSince1970: $0) }
         )
     }
 
@@ -58,6 +62,7 @@ struct TransferRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
             error: transfer.error,
             localPath: transfer.localPath?.path,
             retryCount: transfer.retryCount,
+            nextRetryAt: transfer.nextRetryAt?.timeIntervalSince1970,
             createdAt: now,
             updatedAt: now
         )
