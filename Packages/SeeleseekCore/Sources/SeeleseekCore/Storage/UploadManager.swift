@@ -1668,6 +1668,15 @@ public final class UploadManager {
     /// `existingTransferId` routing).
     internal var _uploadQueueForTest: [QueuedUpload] { uploadQueue }
 
+    /// Hand back the in-flight rearm/retry Task for `transferId` so tests
+    /// can `await task.value` instead of polling for side-effects. Lets
+    /// rearm tests be deterministic without making production code
+    /// inline-fire (CI's contended MainActor was starving the rearm
+    /// Task's continuation past a 5s polling deadline).
+    internal func _pendingRetryTaskForTest(transferId: UUID) -> Task<Void, Never>? {
+        pendingRetries[transferId]
+    }
+
     /// Seed a pending entry to exercise the dedup branch of
     /// `retryUploadInternal` without driving a real handshake.
     internal func _seedPendingUploadForTest(_ pending: PendingUpload, token: UInt32) {

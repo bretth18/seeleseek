@@ -76,24 +76,21 @@ struct UploadRetryPersistenceTests {
 
         manager.rearmPersistedRetries()
 
-        // Allow the rearmed Task (delay=0) + MainActor hop + the full
-        // retryUploadInternal → processQueue → startUpload cascade to
-        // run. With no networkClient configured, startUpload's
-        // peer-lookup fails and the row ends up back in `.failed` with a
-        // freshly-scheduled retry. So we don't pin the final status —
-        // we observe the proof rearm fired:
+        // Deterministically wait for the rearm Task to finish its body
+        // (Task.sleep(0) → MainActor.run → retryUploadInternal). Polling
+        // a fixed window flaked on CI when other parallel @MainActor
+        // suites were starving the rearm continuation past 5s. With the
+        // task value awaited directly, we observe the proof rearm fired:
         //   1. The same transferId is preserved (no duplicate row).
         //   2. retryCount is at least 2 (retryUploadInternal bumped it
         //      from 1 → 2 before processQueue cascaded).
-        //
-        // Poll instead of sleeping a fixed window — CI under load takes
-        // longer than a Mac Studio to drain MainActor work, and a fixed
-        // 500ms wait flaked there. 5s is the upper bound; the assertion
-        // runs as soon as retryCount bumps.
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if (tracking.uploads.first?.retryCount ?? 0) >= 2 { break }
-            try? await Task.sleep(for: .milliseconds(50))
+        // retryUploadInternal also kicks off a processQueue Task that
+        // can asynchronously cascade through startUpload → failUpload →
+        // scheduleUploadRetry, but retryCount is stamped synchronously
+        // inside retryUploadInternal so it's stable by the time rearm's
+        // task body completes.
+        if let task = manager._pendingRetryTaskForTest(transferId: pastDue.id) {
+            await task.value
         }
 
         #expect(tracking.uploads.count == 1, "rearm must reuse the existing transferId, not spawn a duplicate row")
