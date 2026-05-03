@@ -187,6 +187,56 @@ struct ObfuscationCodecTests {
         #expect(secondDecoded.payload == Data([0xDD]))
     }
 
+    /// Regression for the v1.1(9) crash report: PeerConnection feeds the
+    /// raw wire stream into a single `Data` and calls
+    /// `obfuscatedBuffer.removeFirst(decoded.bytesConsumed)` between
+    /// decodes. After `removeFirst`, `Data.startIndex` is no longer 0 —
+    /// it advances by the number of bytes removed. `decodeMessage` was
+    /// indexing absolutely (`subdata(in: 0..<keyLength)`), so the second
+    /// decode trapped in `Data._Representation.subscript.getter` with
+    /// `EXC_BREAKPOINT` once enough bytes had flowed through to push
+    /// `startIndex` past `keyLength`.
+    @Test("Decode tolerates a non-zero startIndex (post-removeFirst buffer)")
+    func decodeAfterRemoveFirstStream() throws {
+        // Build the same buffer-reuse pattern PeerConnection uses, with
+        // enough decode/remove cycles that startIndex grows past
+        // `keyLength + 4` (the literal range the old code passed to
+        // subdata).
+        var buffer = Data()
+        var expected: [Data] = []
+        for i in 0..<8 {
+            let payload = Data(repeating: UInt8(0x40 + i), count: 16 + i)
+            expected.append(payload)
+            buffer.append(ObfuscationCodec.encodeMessage(payload: payload))
+        }
+
+        for payload in expected {
+            let decoded = try #require(try ObfuscationCodec.decodeMessage(from: buffer))
+            #expect(decoded.payload == payload)
+            buffer.removeFirst(decoded.bytesConsumed)
+        }
+        #expect(buffer.isEmpty)
+    }
+
+    /// Same shape as above but with a `Data` slice — the other route
+    /// callers can take that produces a non-zero startIndex without
+    /// mutating the buffer.
+    @Test("Decode tolerates a sliced Data input (non-zero startIndex)")
+    func decodeOnSlicedData() throws {
+        let prefix = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        let payload = Data([0x11, 0x22, 0x33, 0x44, 0x55])
+        let wire = ObfuscationCodec.encodeMessage(payload: payload)
+        let combined = prefix + wire
+
+        // `combined.suffix(from: prefix.count)` is a Data slice with
+        // startIndex == 4. Decoding directly from the slice (no `Data(...)`
+        // rebase) must still work.
+        let slice = combined.suffix(from: prefix.count)
+        let decoded = try #require(try ObfuscationCodec.decodeMessage(from: slice))
+        #expect(decoded.payload == payload)
+        #expect(decoded.bytesConsumed == wire.count)
+    }
+
     // MARK: - Key generation
 
     @Test("Generated keys are 4 bytes, all nonzero")

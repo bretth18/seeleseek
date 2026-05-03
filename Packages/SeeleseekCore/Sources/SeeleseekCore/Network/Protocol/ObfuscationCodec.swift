@@ -108,10 +108,16 @@ public enum ObfuscationCodec {
     ) throws -> (payload: Data, bytesConsumed: Int)? {
         guard buffer.count >= keyLength + 4 else { return nil }
 
+        // `Data` keeps absolute indices when sliced or after `removeFirst`,
+        // so `subdata(in:)` must be expressed relative to `startIndex` — not
+        // 0. The peer receive loop calls `obfuscatedBuffer.removeFirst(...)`
+        // between decodes; once it has, startIndex is non-zero and a literal
+        // `0..<keyLength` range traps in the Foundation bounds check.
+        let base = buffer.startIndex
         let keyBytes = Array(buffer.prefix(keyLength))
         var stream = Stream(key: keyBytes)
 
-        let encodedLen = buffer.subdata(in: keyLength..<(keyLength + 4))
+        let encodedLen = buffer.subdata(in: (base + keyLength)..<(base + keyLength + 4))
         let lenBytes = stream.transform(encodedLen)
         let payloadLen = lenBytes.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self))) }
 
@@ -122,7 +128,7 @@ public enum ObfuscationCodec {
         let totalNeeded = keyLength + 4 + payloadLen
         guard buffer.count >= totalNeeded else { return nil }
 
-        let encodedPayload = buffer.subdata(in: (keyLength + 4)..<totalNeeded)
+        let encodedPayload = buffer.subdata(in: (base + keyLength + 4)..<(base + totalNeeded))
         let payload = stream.transform(encodedPayload)
         return (payload, totalNeeded)
     }
