@@ -21,7 +21,7 @@ import Foundation
 ///      pending retries doesn't slam the network); future rows
 ///      reschedule with the remaining delay.
 @MainActor
-@Suite("UploadManager retry persistence + rearm")
+@Suite("UploadManager retry persistence + rearm", .serialized)
 struct UploadRetryPersistenceTests {
 
     private func makeFailed(retryCount: Int = 1, nextRetryAt: Date?) -> Transfer {
@@ -85,7 +85,16 @@ struct UploadRetryPersistenceTests {
         //   1. The same transferId is preserved (no duplicate row).
         //   2. retryCount is at least 2 (retryUploadInternal bumped it
         //      from 1 → 2 before processQueue cascaded).
-        try? await Task.sleep(for: .milliseconds(500))
+        //
+        // Poll instead of sleeping a fixed window — CI under load takes
+        // longer than a Mac Studio to drain MainActor work, and a fixed
+        // 500ms wait flaked there. 5s is the upper bound; the assertion
+        // runs as soon as retryCount bumps.
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if (tracking.uploads.first?.retryCount ?? 0) >= 2 { break }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
 
         #expect(tracking.uploads.count == 1, "rearm must reuse the existing transferId, not spawn a duplicate row")
         let row = tracking.uploads.first
