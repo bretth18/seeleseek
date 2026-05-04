@@ -517,11 +517,14 @@ public final class DownloadManager {
                 logger.info("Sent transfer reply accepting upload for token \(request.token)")
             } catch {
                 logger.error("Failed to send transfer reply: \(error.localizedDescription)")
-                transferState.updateTransfer(id: pending.transferId) { t in
-                    t.status = .failed
-                    t.error = "Failed to accept transfer"
-                }
                 pendingDownloads.removeValue(forKey: token)
+                failDownload(
+                    transferId: pending.transferId,
+                    username: pending.username,
+                    filename: pending.filename,
+                    size: pending.size,
+                    reason: "Failed to accept transfer: \(error.localizedDescription)"
+                )
                 return
             }
 
@@ -936,6 +939,7 @@ public final class DownloadManager {
     // MARK: - Helpers
 
     private func getDownloadDirectory() -> URL {
+        if let override = _downloadDirectoryOverride { return override }
         let paths = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
         let downloadsDir = paths[0].appendingPathComponent("SeeleSeek")
 
@@ -2047,15 +2051,25 @@ public final class DownloadManager {
             return
         }
 
-        // Ignore late "denied" messages for transfers we already finished /
-        // cancelled. Without this, a stray message arriving after success
-        // would mark a `.completed` row as `.failed` (and kick off the
-        // retry chain). Just clean the stale pendingDownloads entry.
-        if let current = transferState?.getTransfer(id: pending.transferId),
-           !current.status.isLiveDownloadAttempt {
-            logger.info("Ignoring late upload-denied for \(filename): transfer is .\(String(describing: current.status))")
-            pendingDownloads.removeValue(forKey: token)
-            return
+        if let current = transferState?.getTransfer(id: pending.transferId) {
+            // Bytes already flowing — the F-connection receive loop is the
+            // authoritative source of truth. An UploadDenied here is either
+            // stale (for an earlier attempt) or redundant with a connection
+            // close that will trigger the receive loop's own retry path.
+            // Drop the message but DO NOT remove pendingDownloads — the
+            // receive loop is still using that entry.
+            if current.status == .transferring {
+                logger.info("Ignoring upload-denied for \(filename): transfer is .transferring")
+                return
+            }
+            // Late message for a row whose fate is already decided
+            // (`.completed` / `.failed` / `.cancelled`). Drop and clean
+            // the stale pendingDownloads entry so it doesn't leak.
+            if !current.status.isLiveDownloadAttempt {
+                logger.info("Ignoring late upload-denied for \(filename): transfer is .\(String(describing: current.status))")
+                pendingDownloads.removeValue(forKey: token)
+                return
+            }
         }
 
         logger.warning("Download denied for \(filename): \(reason)")
@@ -2077,16 +2091,23 @@ public final class DownloadManager {
             return
         }
 
-        // Same protection as handleUploadDenied above: a late "upload
-        // failed" message for an already-completed transfer would
-        // otherwise delete the local file (see the resume branch below)
-        // and reset the transfer to `.queued` with bytes=0, kicking
-        // off a fresh retry. Drop the stale message.
-        if let current = transferState?.getTransfer(id: pending.transferId),
-           !current.status.isLiveDownloadAttempt {
-            logger.info("Ignoring late upload-failed for \(filename): transfer is .\(String(describing: current.status))")
-            pendingDownloads.removeValue(forKey: token)
-            return
+        if let current = transferState?.getTransfer(id: pending.transferId) {
+            // Bytes already flowing — defer to the F-connection receive
+            // loop. See `handleUploadDenied` for the same guard's
+            // rationale. Note: must NOT remove pendingDownloads while
+            // the receive loop is still reading from it.
+            if current.status == .transferring {
+                logger.info("Ignoring upload-failed for \(filename): transfer is .transferring")
+                return
+            }
+            // Late "upload failed" for an already-finalized transfer
+            // would otherwise delete the local file (see the resume
+            // branch below) and reset the row to `.queued` with bytes=0.
+            if !current.status.isLiveDownloadAttempt {
+                logger.info("Ignoring late upload-failed for \(filename): transfer is .\(String(describing: current.status))")
+                pendingDownloads.removeValue(forKey: token)
+                return
+            }
         }
 
         // Check if we attempted a resume - if so, delete partial and retry from scratch
@@ -2139,13 +2160,17 @@ public final class DownloadManager {
     // MARK: - Retry Logic (nicotine+ style)
 
     private func pendingDownloadEntry(username: String, filename: String) -> (UInt32, PendingDownload)? {
-        if !username.isEmpty,
-           let exact = pendingDownloads.first(where: {
-               $0.value.username == username && $0.value.filename == filename
-           }) {
-            return exact
+        // Username is authoritative — `PeerConnectionPool` fills it from
+        // its connection-level `username` parameter before the event
+        // reaches us. An empty value here means we genuinely don't know
+        // who sent the message, so dropping is safer than guessing: the
+        // old filename-only fallback would mark the wrong row failed
+        // when the same file was queued from multiple peers.
+        guard !username.isEmpty else {
+            logger.warning("Dropping upload-failure message for \(filename): empty peer username")
+            return nil
         }
-        return pendingDownloads.first { $0.value.filename == filename }
+        return pendingDownloads.first { $0.value.username == username && $0.value.filename == filename }
     }
 
     private func failDownload(
@@ -2515,4 +2540,13 @@ public final class DownloadManager {
     }
 
     private var _testStrongTransferState: (any TransferTracking)?
+
+    /// Redirect `getDownloadDirectory()` to a test-controlled URL so file
+    /// I/O paths (resume detection, partial-file deletion) can run against
+    /// a temp directory instead of `~/Downloads/SeeleSeek`.
+    internal func _setDownloadDirectoryOverrideForTest(_ url: URL?) {
+        _downloadDirectoryOverride = url
+    }
+
+    private var _downloadDirectoryOverride: URL?
 }
