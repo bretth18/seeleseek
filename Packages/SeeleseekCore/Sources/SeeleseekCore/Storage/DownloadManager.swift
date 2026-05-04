@@ -141,16 +141,16 @@ public final class DownloadManager {
         }
 
         // Set up callback for upload denied
-        networkClient.onUploadDenied = { [weak self] filename, reason in
+        networkClient.onUploadDenied = { [weak self] username, filename, reason in
             Task { @MainActor in
-                self?.handleUploadDenied(filename: filename, reason: reason)
+                self?.handleUploadDenied(username: username, filename: filename, reason: reason)
             }
         }
 
         // Set up callback for upload failed
-        networkClient.onUploadFailed = { [weak self] filename in
+        networkClient.onUploadFailed = { [weak self] username, filename in
             Task { @MainActor in
-                self?.handleUploadFailed(filename: filename)
+                self?.handleUploadFailed(username: username, filename: filename)
             }
         }
 
@@ -596,12 +596,13 @@ public final class DownloadManager {
                 // If still pending after total 60 seconds, mark as failed
                 if self.removePendingFileTransfer(username: peerUsername, transferToken: transferToken) != nil {
                     pendingDownloads.removeValue(forKey: token)
-                    await MainActor.run {
-                        transferState.updateTransfer(id: pending.transferId) { t in
-                            t.status = .failed
-                            t.error = "File connection timeout"
-                        }
-                    }
+                    self.failDownload(
+                        transferId: pending.transferId,
+                        username: pending.username,
+                        filename: pending.filename,
+                        size: pending.size,
+                        reason: "File connection timeout"
+                    )
                 }
             }
         }
@@ -1527,22 +1528,15 @@ public final class DownloadManager {
             let errorMsg = error.localizedDescription
             let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
 
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .failed
-                t.error = errorMsg
-            }
             pendingDownloads.removeValue(forKey: pending.downloadToken)
-
-            // Auto-retry for retriable errors (nicotine+ style)
-            if isRetriableError(errorMsg) && currentRetryCount < maxRetries {
-                scheduleRetry(
-                    transferId: pending.transferId,
-                    username: pending.username,
-                    filename: pending.filename,
-                    size: pending.size,
-                    retryCount: currentRetryCount
-                )
-            }
+            failDownload(
+                transferId: pending.transferId,
+                username: pending.username,
+                filename: pending.filename,
+                size: pending.size,
+                reason: errorMsg,
+                retryCount: currentRetryCount
+            )
         }
     }
 
@@ -2045,12 +2039,11 @@ public final class DownloadManager {
     // MARK: - Upload Denied/Failed Handling
 
     /// Called when peer denies our download request
-    public func handleUploadDenied(filename: String, reason: String) {
-        logger.info("Upload denied: \(filename) - \(reason)")
+    public func handleUploadDenied(username: String, filename: String, reason: String) {
+        logger.info("Upload denied from \(username): \(filename) - \(reason)")
 
-        // Find pending download by filename
-        guard let (token, pending) = pendingDownloads.first(where: { $0.value.filename == filename }) else {
-            logger.debug("No pending download for denied file: \(filename)")
+        guard let (token, pending) = pendingDownloadEntry(username: username, filename: filename) else {
+            logger.debug("No pending download for denied file: \(filename) from \(username)")
             return
         }
 
@@ -2076,12 +2069,11 @@ public final class DownloadManager {
     }
 
     /// Called when peer's upload to us fails
-    public func handleUploadFailed(filename: String) {
-        logger.info("Upload failed: \(filename)")
+    public func handleUploadFailed(username: String, filename: String) {
+        logger.info("Upload failed from \(username): \(filename)")
 
-        // Find pending download by filename
-        guard let (token, pending) = pendingDownloads.first(where: { $0.value.filename == filename }) else {
-            logger.debug("No pending download for failed file: \(filename)")
+        guard let (token, pending) = pendingDownloadEntry(username: username, filename: filename) else {
+            logger.debug("No pending download for failed file: \(filename) from \(username)")
             return
         }
 
@@ -2134,15 +2126,55 @@ public final class DownloadManager {
 
         logger.warning("Upload failed for \(filename)")
 
-        transferState?.updateTransfer(id: pending.transferId) { t in
-            t.status = .failed
-            t.error = "Upload failed on peer side"
-        }
-
         pendingDownloads.removeValue(forKey: token)
+        failDownload(
+            transferId: pending.transferId,
+            username: pending.username,
+            filename: pending.filename,
+            size: pending.size,
+            reason: "Upload failed on peer side"
+        )
     }
 
     // MARK: - Retry Logic (nicotine+ style)
+
+    private func pendingDownloadEntry(username: String, filename: String) -> (UInt32, PendingDownload)? {
+        if !username.isEmpty,
+           let exact = pendingDownloads.first(where: {
+               $0.value.username == username && $0.value.filename == filename
+           }) {
+            return exact
+        }
+        return pendingDownloads.first { $0.value.filename == filename }
+    }
+
+    private func failDownload(
+        transferId: UUID,
+        username: String,
+        filename: String,
+        size: UInt64,
+        reason: String,
+        retryCount explicitRetryCount: Int? = nil
+    ) {
+        let currentRetryCount = explicitRetryCount
+            ?? transferState?.getTransfer(id: transferId)?.retryCount
+            ?? 0
+
+        transferState?.updateTransfer(id: transferId) { t in
+            t.status = .failed
+            t.error = reason
+        }
+
+        if isRetriableError(reason) && currentRetryCount < maxRetries {
+            scheduleRetry(
+                transferId: transferId,
+                username: username,
+                filename: filename,
+                size: size,
+                retryCount: currentRetryCount
+            )
+        }
+    }
 
     /// Classify a download-failure reason as retriable. Used by both the
     /// scheduled-retry path (after a transient failure) and
