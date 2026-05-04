@@ -819,13 +819,15 @@ public final class PeerConnectionPool {
             activeConnections = connections.count
             eventContinuation.yield(.pierceFirewall(token: token, connection: connection))
 
-        case .uploadDenied(let filename, let reason):
-            logger.warning("Upload denied: \(filename) - \(reason)")
-            eventContinuation.yield(.uploadDenied(filename: filename, reason: reason))
+        case .uploadDenied(let peerUsername, let filename, let reason):
+            let eventUsername = peerUsername.isEmpty ? username : peerUsername
+            logger.warning("Upload denied from \(eventUsername): \(filename) - \(reason)")
+            eventContinuation.yield(.uploadDenied(username: eventUsername, filename: filename, reason: reason))
 
-        case .uploadFailed(let filename):
-            logger.warning("Upload failed: \(filename)")
-            eventContinuation.yield(.uploadFailed(filename: filename))
+        case .uploadFailed(let peerUsername, let filename):
+            let eventUsername = peerUsername.isEmpty ? username : peerUsername
+            logger.warning("Upload failed from \(eventUsername): \(filename)")
+            eventContinuation.yield(.uploadFailed(username: eventUsername, filename: filename))
 
         case .queueUpload(let peerUsername, let filename):
             logger.info("QueueUpload from \(peerUsername): \(filename)")

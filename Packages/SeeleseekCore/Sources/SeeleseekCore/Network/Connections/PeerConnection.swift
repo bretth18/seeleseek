@@ -1551,15 +1551,16 @@ public actor PeerConnection {
         guard let (filename, _) = data.readString(at: 0) else { return }
         let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
         logger.warning("UploadFailed from \(username): \(filename)")
-        eventContinuation.yield(.uploadFailed(filename: filename))
+        eventContinuation.yield(.uploadFailed(username: username, filename: filename))
     }
 
     private func handleUploadDenied(_ data: Data) async {
         guard let (filename, filenameLen) = data.readString(at: 0) else { return }
         let reason = data.readString(at: filenameLen)?.string ?? "Unknown reason"
-        logger.warning("Upload denied for \(filename): \(reason)")
+        let username = self.peerUsername.isEmpty ? self.peerInfo.username : self.peerUsername
+        logger.warning("UploadDenied from \(username) for \(filename): \(reason)")
         logger.warning("UploadDenied: \(filename) - \(reason)")
-        eventContinuation.yield(.uploadDenied(filename: filename, reason: reason))
+        eventContinuation.yield(.uploadDenied(username: username, filename: filename, reason: reason))
     }
 
     private func handleFolderContentsRequest(_ data: Data) async {

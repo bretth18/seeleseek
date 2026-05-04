@@ -291,11 +291,11 @@ public final class NetworkClient {
             if handlePierceFirewallForBrowse(token: token, connection: connection) { return }
             Task { await onPierceFirewall?(token, connection) }
 
-        case .uploadDenied(let filename, let reason):
-            onUploadDenied?(filename, reason)
+        case .uploadDenied(let username, let filename, let reason):
+            onUploadDenied?(username, filename, reason)
 
-        case .uploadFailed(let filename):
-            onUploadFailed?(filename)
+        case .uploadFailed(let username, let filename):
+            onUploadFailed?(username, filename)
 
         case .queueUpload(let username, let filename, let connection):
             Task { await onQueueUpload?(username, filename, connection) }
@@ -371,8 +371,8 @@ public final class NetworkClient {
     }
     public var onFileTransferConnection: ((String, UInt32, PeerConnection) async -> Void)?  // (username, token, connection)
     public var onPierceFirewall: ((UInt32, PeerConnection) async -> Void)?  // (token, connection)
-    public var onUploadDenied: ((String, String) -> Void)?  // (filename, reason)
-    public var onUploadFailed: ((String) -> Void)?  // filename
+    public var onUploadDenied: ((String, String, String) -> Void)?  // (username, filename, reason)
+    public var onUploadFailed: ((String, String) -> Void)?  // (username, filename)
     public var onQueueUpload: ((String, String, PeerConnection) async -> Void)?  // (username, filename, connection) - peer wants to download from us
     public var onTransferResponse: ((UInt32, Bool, UInt64?, String?, PeerConnection) async -> Void)?  // (token, allowed, filesize?, reason?, connection)
     public var onFolderContentsRequest: ((String, UInt32, String, PeerConnection) async -> Void)?  // (username, token, folder, connection) - peer wants folder contents
