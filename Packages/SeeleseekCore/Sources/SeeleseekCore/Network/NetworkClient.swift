@@ -288,8 +288,15 @@ public final class NetworkClient {
             Task { await onFileTransferConnection?(username, token, connection) }
 
         case .pierceFirewall(let token, let connection):
-            if handlePierceFirewallForBrowse(token: token, connection: connection) { return }
-            Task { await onPierceFirewall?(token, connection) }
+            // Wrap in a Task because handlePoolEvent is sync (driven from a
+            // for-await loop). The handler chain is short — setPeerUsername
+            // + the optional onPierceFirewall delegate — so even on a busy
+            // event stream this completes well within the time-to-next-event.
+            Task { [weak self] in
+                guard let self else { return }
+                if await self.handlePierceFirewallForBrowse(token: token, connection: connection) { return }
+                await self.onPierceFirewall?(token, connection)
+            }
 
         case .uploadDenied(let username, let filename, let reason):
             onUploadDenied?(username, filename, reason)
@@ -1366,9 +1373,16 @@ public final class NetworkClient {
                     }
                 }
             }
+            // Clear any leftover username pre-registration.
+            self.peerConnectionPool.clearExpectedPierceFirewallUsername(token: token)
         }
 
         pendingBrowseStates[token] = state
+        // Pre-register the username the pool should stamp on whatever indirect
+        // connection arrives bearing this token. Done here so it's set BEFORE
+        // we send ConnectToPeer (next call from the caller). See
+        // `pierceFirewallExpectedUsernames` for the rationale.
+        peerConnectionPool.registerExpectedPierceFirewallUsername(token: token, username: username)
     }
 
     /// Wait for a previously registered pending browse to receive PierceFirewall
@@ -1424,6 +1438,7 @@ public final class NetworkClient {
         guard var state = pendingBrowseStates[token] else { return }
         state.timeoutTask?.cancel()
         state.failureReason = reason
+        peerConnectionPool.clearExpectedPierceFirewallUsername(token: token)
         if let continuation = state.continuation {
             state.continuation = nil
             pendingBrowseStates.removeValue(forKey: token)
@@ -1439,19 +1454,26 @@ public final class NetworkClient {
             state.timeoutTask?.cancel()
             // Don't resume continuation - caller will handle the success case
         }
+        peerConnectionPool.clearExpectedPierceFirewallUsername(token: token)
     }
 
     /// Called when PierceFirewall is received - check if it matches a pending browse request
-    /// Returns true if it was handled as a browse request
-    public func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) -> Bool {
+    /// Returns true if it was handled as a browse request.
+    ///
+    /// Async because we await `setPeerUsername` before resuming the browse
+    /// waiter — by the time the waiter gets the connection back, the
+    /// username is already stamped (the pool also stamps it pre-yield, so
+    /// in practice this is defense in depth: the local stamp guarantees
+    /// it even if the pool's pre-registration map was cleared).
+    public func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) async -> Bool {
         if var state = pendingBrowseStates[token] {
             logger.debug("Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
 
-            // Set the username on the connection (PierceFirewall doesn't include PeerInit with username)
-            Task {
-                await connection.setPeerUsername(state.username)
-                logger.debug("Browse: Set username '\(state.username)' on indirect connection")
-            }
+            // Stamp username synchronously — must complete BEFORE we resume
+            // any waiter so callers always see a connection whose
+            // `peerInfo.username` matches the user they asked for.
+            await connection.setPeerUsername(state.username)
+            logger.debug("Browse: Set username '\(state.username)' on indirect connection")
 
             // Store the connection
             state.receivedConnection = connection

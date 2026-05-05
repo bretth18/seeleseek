@@ -648,31 +648,42 @@ public actor PeerConnection {
         let bufferedData = fileTransferBuffer
         fileTransferBuffer.removeAll()
 
+        // Cancel the underlying NWConnection on timeout. Without this, the
+        // timeout child throws but the receive continuation stays pending —
+        // `withThrowingTaskGroup` then waits on the orphan child forever, so
+        // the "timeout" never actually returns and the caller sits wedged.
         return try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask { [self] in
-                try await withCheckedThrowingContinuation { continuation in
-                    connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
-                        if let error {
-                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
-                            continuation.resume(throwing: error)
-                        } else if let data, data.count >= neededFromNetwork {
-                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
-                            Task {
-                                await self?.recordReceived(data.count)
-                            }
-                            // Combine buffered data with newly received data
-                            if !bufferedData.isEmpty {
-                                var combined = bufferedData
-                                combined.append(data)
-                                continuation.resume(returning: Data(combined.prefix(count)))
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
+                            if let error {
+                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
+                                continuation.resume(throwing: error)
+                            } else if let data, data.count >= neededFromNetwork {
+                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
+                                Task {
+                                    await self?.recordReceived(data.count)
+                                }
+                                // Combine buffered data with newly received data
+                                if !bufferedData.isEmpty {
+                                    var combined = bufferedData
+                                    combined.append(data)
+                                    continuation.resume(returning: Data(combined.prefix(count)))
+                                } else {
+                                    continuation.resume(returning: data)
+                                }
                             } else {
-                                continuation.resume(returning: data)
+                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
+                                continuation.resume(throwing: PeerError.connectionClosed)
                             }
-                        } else {
-                            self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
-                            continuation.resume(throwing: PeerError.connectionClosed)
                         }
                     }
+                } onCancel: {
+                    // Force the pending receive to fire its callback (with an
+                    // error) so the continuation resolves and this child task
+                    // can finish. cancel() is sync and Sendable.
+                    connection.cancel()
                 }
             }
 
@@ -718,9 +729,17 @@ public actor PeerConnection {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            // Use minimumIncompleteLength: 0 to return whatever is available
-            // This helps drain the buffer when connection is closing
-            connection.receive(minimumIncompleteLength: 0, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
+            // `minimumIncompleteLength: 1` blocks until at least one byte is
+            // available (or the connection closes), so we never spin returning
+            // empty `.data(Data())` while the socket is still open. With
+            // `0`, NWConnection happily returns immediately with empty data,
+            // and the receive loop in `receiveFileDataFromPeer` would burn
+            // through that as another iteration — pinning a CPU core and
+            // racing the outer 30s timeout instead of cleanly waiting for
+            // bytes. The dedicated drain helper (`drainAvailableData`)
+            // intentionally still uses `0` because *that* path expects to
+            // return immediately after the connection signals complete.
+            connection.receive(minimumIncompleteLength: 1, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
                 if let error {
                     // Real error - but still try to return any data we got
                     if let data, !data.isEmpty {
@@ -743,9 +762,10 @@ public actor PeerConnection {
                     // Connection cleanly closed with no more data
                     continuation.resume(returning: .connectionComplete)
                 } else {
-                    // No data and connection still open - this can happen with minimumIncompleteLength: 0
-                    // Return empty data and let caller decide whether to continue
-                    continuation.resume(returning: .data(Data()))
+                    // With minimumIncompleteLength=1 this branch should not
+                    // trigger except on cancellation; treat as completion to
+                    // exit the receive loop deterministically.
+                    continuation.resume(returning: .connectionComplete)
                 }
             }
         }

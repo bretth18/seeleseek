@@ -741,28 +741,60 @@ public final class DownloadManager {
 
     private func openFileConnectionOnce(
         to endpoint: NWEndpoint,
-        bindTo localPort: UInt16?
+        bindTo localPort: UInt16?,
+        timeout: TimeInterval = 10
     ) async throws -> NWConnection {
         let params = PeerConnection.makeOutboundParameters(bindTo: localPort, remoteEndpoint: endpoint)
         let connection = NWConnection(to: endpoint, using: params)
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.stateUpdateHandler = { [weak connection] state in
-                switch state {
-                case .ready:
-                    connection?.stateUpdateHandler = nil
-                    continuation.resume()
-                case .failed(let error):
-                    connection?.stateUpdateHandler = nil
-                    continuation.resume(throwing: error)
-                case .cancelled:
-                    connection?.stateUpdateHandler = nil
-                    continuation.resume(throwing: DownloadError.connectionCancelled)
-                default:
-                    break
+        // Race the connection against a timeout. Without this, an NWConnection
+        // that sits in `.preparing` or `.waiting` (peer unreachable, NAT
+        // dropping SYNs) parks here forever — the outer 60s F-connection
+        // watchdog never gets to its `Task.sleep` because the await above
+        // never returns. On timeout we cancel the NWConnection so the
+        // state-update handler fires `.cancelled`, the continuation
+        // resolves, and we surface a clean `.timeout` instead of stranding
+        // the download.
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await withTaskCancellationHandler {
+                        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                            connection.stateUpdateHandler = { [weak connection] state in
+                                switch state {
+                                case .ready:
+                                    connection?.stateUpdateHandler = nil
+                                    continuation.resume()
+                                case .failed(let error):
+                                    connection?.stateUpdateHandler = nil
+                                    continuation.resume(throwing: error)
+                                case .cancelled:
+                                    connection?.stateUpdateHandler = nil
+                                    continuation.resume(throwing: DownloadError.connectionCancelled)
+                                default:
+                                    break
+                                }
+                            }
+                            connection.start(queue: .global(qos: .userInitiated))
+                        }
+                    } onCancel: {
+                        connection.cancel()
+                    }
                 }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeout))
+                    throw DownloadError.timeout
+                }
+                _ = try await group.next()
+                group.cancelAll()
             }
-            connection.start(queue: .global(qos: .userInitiated))
+        } catch {
+            // Make sure we don't leak a half-started connection on the
+            // timeout path (the cancellation handler covers Task-cancellation
+            // but a raw `.timeout` throw exits the group before that fires
+            // for the receive child if it had already returned).
+            connection.cancel()
+            throw error
         }
         return connection
     }
@@ -780,18 +812,28 @@ public final class DownloadManager {
     }
 
     private func receiveData(connection: NWConnection, length: Int, timeout: TimeInterval = 30) async throws -> Data {
+        // Cancel the underlying NWConnection on timeout. group.cancelAll()
+        // alone only signals Swift Task cancellation — the receive callback
+        // never fires, so the orphan child stays suspended and the task
+        // group never returns. Calling connection.cancel() forces the
+        // receive completion handler to fire (with error), the continuation
+        // resumes, the child exits, and the timeout actually times out.
         try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-                    connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else if let data, data.count >= length {
-                            continuation.resume(returning: data)
-                        } else {
-                            continuation.resume(throwing: DownloadError.connectionClosed)
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                        connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
+                            if let error {
+                                continuation.resume(throwing: error)
+                            } else if let data, data.count >= length {
+                                continuation.resume(returning: data)
+                            } else {
+                                continuation.resume(throwing: DownloadError.connectionClosed)
+                            }
                         }
                     }
+                } onCancel: {
+                    connection.cancel()
                 }
             }
 
@@ -825,7 +867,7 @@ public final class DownloadManager {
             throw DownloadError.cannotCreateFile
         }
 
-        let fileHandle: FileHandle
+        let rawFileHandle: FileHandle
 
         if resumeOffset > 0 && FileManager.default.fileExists(atPath: destPath.path) {
             // Resume mode - append to existing file
@@ -834,7 +876,7 @@ public final class DownloadManager {
                 throw DownloadError.cannotCreateFile
             }
             try handle.seekToEnd()
-            fileHandle = handle
+            rawFileHandle = handle
         } else {
             // Create file for writing
             let created = FileManager.default.createFile(atPath: destPath.path, contents: nil)
@@ -846,8 +888,12 @@ public final class DownloadManager {
                 logger.error("Failed to open file handle for \(destPath.path)")
                 throw DownloadError.cannotCreateFile
             }
-            fileHandle = handle
+            rawFileHandle = handle
         }
+
+        // Hand the FileHandle off to a non-MainActor actor — same rationale
+        // as `receiveFileDataFromPeer` / `sendFileDataViaPeerConnection`.
+        let fileIO = TransferFileIO(handle: rawFileHandle)
 
         var bytesReceived: UInt64 = resumeOffset
         let startTime = Date()
@@ -866,7 +912,7 @@ public final class DownloadManager {
                 continue
             }
 
-            try fileHandle.write(contentsOf: chunk)
+            try await fileIO.write(chunk)
             bytesReceived += UInt64(chunk.count)
             networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
 
@@ -874,11 +920,9 @@ public final class DownloadManager {
             let elapsed = Date().timeIntervalSince(startTime)
             let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
 
-            await MainActor.run { [transferState] in
-                transferState?.updateTransfer(id: transferId) { t in
-                    t.bytesTransferred = bytesReceived
-                    t.speed = speed
-                }
+            transferState?.updateTransfer(id: transferId) { t in
+                t.bytesTransferred = bytesReceived
+                t.speed = speed
             }
 
             // If this was the final chunk, exit loop
@@ -888,8 +932,8 @@ public final class DownloadManager {
         }
 
         // Flush data to disk before verifying
-        try fileHandle.synchronize()
-        try fileHandle.close()
+        try await fileIO.synchronize()
+        await fileIO.close()
 
         // Verify file integrity
         let attrs = try FileManager.default.attributesOfItem(atPath: destPath.path)
@@ -1568,7 +1612,13 @@ public final class DownloadManager {
             throw DownloadError.cannotCreateFile
         }
 
-        let fileHandle: FileHandle
+        // Open the file handle on MainActor (file creation is fast),
+        // then hand it off to a `TransferFileIO` actor that owns the handle
+        // for the rest of the function. Every per-chunk write hops to that
+        // actor so the synchronous `write(contentsOf:)` runs off the main
+        // thread — without this, a slow disk could block UI updates and
+        // delay the timeout watchdog enough to make 30 s look like 60 s.
+        let rawFileHandle: FileHandle
 
         if resumeOffset > 0 && FileManager.default.fileExists(atPath: destPath.path) {
             // Resume mode - open existing file and seek to end
@@ -1577,7 +1627,7 @@ public final class DownloadManager {
                 throw DownloadError.cannotCreateFile
             }
             try handle.seekToEnd()
-            fileHandle = handle
+            rawFileHandle = handle
             logger.info("Resume mode: Appending to \(destPath.lastPathComponent) from offset \(resumeOffset)")
         } else {
             // Normal mode - create new file
@@ -1590,8 +1640,10 @@ public final class DownloadManager {
                 logger.error("Failed to open file handle for \(destPath.path)")
                 throw DownloadError.cannotCreateFile
             }
-            fileHandle = handle
+            rawFileHandle = handle
         }
+
+        let fileIO = TransferFileIO(handle: rawFileHandle)
 
         var bytesReceived: UInt64 = resumeOffset  // Start from resume offset if resuming
         let startTime = Date()
@@ -1603,14 +1655,12 @@ public final class DownloadManager {
         let bufferedFileData = await connection.getFileTransferBuffer()
         if !bufferedFileData.isEmpty {
             logger.debug("Writing \(bufferedFileData.count) bytes from file transfer buffer")
-            try fileHandle.write(contentsOf: bufferedFileData)
+            try await fileIO.write(bufferedFileData)
             bytesReceived += UInt64(bufferedFileData.count)
 
             // Update progress
-            await MainActor.run { [transferState] in
-                transferState?.updateTransfer(id: transferId) { t in
-                    t.bytesTransferred = bytesReceived
-                }
+            transferState?.updateTransfer(id: transferId) { t in
+                t.bytesTransferred = bytesReceived
             }
         }
 
@@ -1628,9 +1678,23 @@ public final class DownloadManager {
                 // previous 60s value let half-dead peers freeze the row at e.g.
                 // 30% for a full minute before the row failed and retry kicked
                 // in — by then the user had already clicked "Retry" twice.
+                //
+                // On timeout we forcibly disconnect the underlying PeerConnection
+                // via the cancellation handler. Without that, the receive
+                // callback inside `receiveFileChunk` never fires, the child
+                // task's continuation stays pending, and the task group waits
+                // on the orphan forever — defeating the timeout entirely.
                 chunkResult = try await withThrowingTaskGroup(of: PeerConnection.FileChunkResult.self) { group in
                     group.addTask {
-                        try await connection.receiveFileChunk()
+                        try await withTaskCancellationHandler {
+                            try await connection.receiveFileChunk()
+                        } onCancel: {
+                            // PeerConnection.disconnect() is actor-isolated; hop
+                            // briefly to call it. The receive callback fires
+                            // with `connectionClosed`, the continuation resolves,
+                            // and this child completes.
+                            Task { await connection.disconnect() }
+                        }
                     }
                     group.addTask {
                         try await Task.sleep(for: .seconds(30))
@@ -1652,7 +1716,7 @@ public final class DownloadManager {
                 while drainAttempts < 10 {
                     let remainingBuffer = await connection.getFileTransferBuffer()
                     if !remainingBuffer.isEmpty {
-                        try fileHandle.write(contentsOf: remainingBuffer)
+                        try await fileIO.write(remainingBuffer)
                         bytesReceived += UInt64(remainingBuffer.count)
                         logger.debug("Drain: +\(remainingBuffer.count) bytes, total=\(bytesReceived)")
                         drainAttempts += 1
@@ -1679,7 +1743,7 @@ public final class DownloadManager {
             switch chunkResult {
             case .data(let chunk), .dataWithCompletion(let chunk):
                 if !chunk.isEmpty {
-                    try fileHandle.write(contentsOf: chunk)
+                    try await fileIO.write(chunk)
                     bytesReceived += UInt64(chunk.count)
                     networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
                     lastDataTime = Date()  // Reset timeout tracker
@@ -1688,11 +1752,9 @@ public final class DownloadManager {
                     let elapsed = Date().timeIntervalSince(startTime)
                     let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
 
-                    await MainActor.run { [transferState] in
-                        transferState?.updateTransfer(id: transferId) { t in
-                            t.bytesTransferred = bytesReceived
-                            t.speed = speed
-                        }
+                    transferState?.updateTransfer(id: transferId) { t in
+                        t.bytesTransferred = bytesReceived
+                        t.speed = speed
                     }
 
                     // Log progress every 1MB
@@ -1726,7 +1788,7 @@ public final class DownloadManager {
                 // First drain our local buffer
                 let remainingBuffer = await connection.getFileTransferBuffer()
                 if !remainingBuffer.isEmpty {
-                    try fileHandle.write(contentsOf: remainingBuffer)
+                    try await fileIO.write(remainingBuffer)
                     bytesReceived += UInt64(remainingBuffer.count)
                     logger.debug("Buffer drain: +\(remainingBuffer.count) bytes, now at \(bytesReceived)")
                 }
@@ -1746,7 +1808,7 @@ public final class DownloadManager {
                         break
                     }
 
-                    try fileHandle.write(contentsOf: extraChunk)
+                    try await fileIO.write(extraChunk)
                     bytesReceived += UInt64(extraChunk.count)
                     logger.debug("Drain \(additionalReads): +\(extraChunk.count) bytes, now at \(bytesReceived)/\(expectedSize)")
                 }
@@ -1760,13 +1822,13 @@ public final class DownloadManager {
         // Drain any final buffer
         let finalBuffer = await connection.getFileTransferBuffer()
         if !finalBuffer.isEmpty {
-            try fileHandle.write(contentsOf: finalBuffer)
+            try await fileIO.write(finalBuffer)
             bytesReceived += UInt64(finalBuffer.count)
         }
 
         // Flush data to disk before verifying
-        try fileHandle.synchronize()
-        try fileHandle.close()
+        try await fileIO.synchronize()
+        await fileIO.close()
 
         // Verify file integrity
         let attrs = try FileManager.default.attributesOfItem(atPath: destPath.path)

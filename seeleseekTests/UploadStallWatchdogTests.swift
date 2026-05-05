@@ -1,6 +1,17 @@
 import Testing
 import Foundation
+import Synchronization
 @testable import SeeleseekCore
+
+/// Lock-protected boolean for cross-actor signalling. Built on
+/// `Mutex` so its API is `nonisolated`/`Sendable` regardless of the
+/// surrounding suite's actor isolation. `final class` (not struct)
+/// because `Mutex` is non-Copyable.
+nonisolated private final class StallTestFlag: Sendable {
+    private let state = Mutex(false)
+    var fired: Bool { state.withLock { $0 } }
+    func markFired() { state.withLock { $0 = true } }
+}
 
 /// Regression tests for `UploadManager.sendChunkWithTimeout` — the
 /// per-chunk stall watchdog that wraps every `connection.send` in the
@@ -17,7 +28,7 @@ struct UploadStallWatchdogTests {
     @Test("Returns normally when the send finishes within the threshold")
     func fastSendCompletes() async throws {
         let manager = UploadManager()
-        try await manager.sendChunkWithTimeout(1.0) {
+        try await manager.sendChunkWithTimeout(1.0, onTimeout: {}) {
             try await Task.sleep(for: .milliseconds(10))
         }
     }
@@ -26,7 +37,7 @@ struct UploadStallWatchdogTests {
     func slowSendTimesOut() async {
         let manager = UploadManager()
         do {
-            try await manager.sendChunkWithTimeout(0.1) {
+            try await manager.sendChunkWithTimeout(0.1, onTimeout: {}) {
                 try await Task.sleep(for: .seconds(2))
             }
             Issue.record("Expected timeout to throw")
@@ -42,12 +53,28 @@ struct UploadStallWatchdogTests {
         struct SendFailed: Error {}
         let manager = UploadManager()
         do {
-            try await manager.sendChunkWithTimeout(1.0) {
+            try await manager.sendChunkWithTimeout(1.0, onTimeout: {}) {
                 throw SendFailed()
             }
             Issue.record("Expected the inner error to propagate")
         } catch is SendFailed {
             // expected — the watchdog must not swallow real send errors
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test("onTimeout fires when the send hangs past the threshold")
+    func onTimeoutFires() async {
+        let manager = UploadManager()
+        let flag = StallTestFlag()
+        do {
+            try await manager.sendChunkWithTimeout(0.1, onTimeout: { flag.markFired() }) {
+                try await Task.sleep(for: .seconds(2))
+            }
+            Issue.record("Expected timeout to throw")
+        } catch UploadManager.UploadError.timeout {
+            #expect(flag.fired, "onTimeout must fire so the underlying connection is dropped")
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

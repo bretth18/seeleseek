@@ -498,9 +498,8 @@ public final class UploadManager {
             }
         } catch {
             logger.error("Failed to send TransferRequest: \(error.localizedDescription)")
-            failUpload(transferId: transferId, error: error.localizedDescription)
-            pendingTransfers.removeValue(forKey: token)
             transferResponseTimeouts.removeValue(forKey: token)?.cancel()
+            await failUploadAttempt(transferId: transferId, error: error.localizedDescription, token: token)
         }
     }
 
@@ -540,6 +539,11 @@ public final class UploadManager {
                     t.error = detail
                 }
             }
+            // pendingTransfers[token] was removed above; that frees an
+            // in-flight slot (processQueue counts both active + pending).
+            // Without this kick the freed slot can sit idle until an
+            // unrelated event happens to call processQueue.
+            await processQueue()
             return
         }
 
@@ -592,9 +596,7 @@ public final class UploadManager {
             port = address.port
         } catch {
             logger.error("Failed to get peer address: \(error.localizedDescription)")
-            failUpload(transferId: pending.transferId, error: "Failed to connect to peer")
-            activeUploads.removeValue(forKey: pending.transferId)
-            pendingTransfers.removeValue(forKey: token)
+            await failUploadAttempt(transferId: pending.transferId, error: "Failed to connect to peer", token: token)
             return
         }
 
@@ -602,9 +604,7 @@ public final class UploadManager {
 
         guard port > 0 else {
             logger.warning("Invalid port for \(pending.username)")
-            failUpload(transferId: pending.transferId, error: "Could not get peer address")
-            activeUploads.removeValue(forKey: pending.transferId)
-            pendingTransfers.removeValue(forKey: token)
+            await failUploadAttempt(transferId: pending.transferId, error: "Could not get peer address", token: token)
             return
         }
 
@@ -621,8 +621,7 @@ public final class UploadManager {
         // Validate port
         guard port > 0, port <= Int(UInt16.max), let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
             logger.error("Invalid port: \(port)")
-            failUpload(transferId: pending.transferId, error: "Invalid peer port")
-            activeUploads.removeValue(forKey: pending.transferId)
+            await failUploadAttempt(transferId: pending.transferId, error: "Invalid peer port")
             return
         }
 
@@ -710,8 +709,7 @@ public final class UploadManager {
         } catch {
             logger.error("Failed to send PeerInit: \(error.localizedDescription)")
             connection.cancel()
-            failUpload(transferId: pending.transferId, error: "Failed to initiate file transfer")
-            activeUploads.removeValue(forKey: pending.transferId)
+            await failUploadAttempt(transferId: pending.transferId, error: "Failed to initiate file transfer")
             return
         }
 
@@ -752,8 +750,7 @@ public final class UploadManager {
         } catch {
             logger.error("Failed during F connection handshake: \(error.localizedDescription)")
             connection.cancel()
-            failUpload(transferId: pending.transferId, error: "Failed to start file transfer")
-            activeUploads.removeValue(forKey: pending.transferId)
+            await failUploadAttempt(transferId: pending.transferId, error: "Failed to start file transfer")
         }
     }
 
@@ -765,26 +762,27 @@ public final class UploadManager {
         transferId: UUID,
         totalSize: UInt64
     ) async {
-        guard let fileHandle = FileHandle(forReadingAtPath: filePath) else {
+        guard let rawFileHandle = FileHandle(forReadingAtPath: filePath) else {
             logger.error("Cannot open file: \(filePath)")
-            failUpload(transferId: transferId, error: "Cannot read file")
-            activeUploads.removeValue(forKey: transferId)
             connection.cancel()
+            await failUploadAttempt(transferId: transferId, error: "Cannot read file")
             return
         }
+        // See `sendFileDataViaPeerConnection` for the rationale on hopping
+        // file I/O to a non-MainActor actor.
+        let fileIO = TransferFileIO(handle: rawFileHandle)
         defer {
-            try? fileHandle.close()
+            Task { await fileIO.close() }
             connection.cancel()
         }
 
         // Seek to offset
         if offset > 0 {
             do {
-                try fileHandle.seek(toOffset: offset)
+                try await fileIO.seek(to: offset)
             } catch {
                 logger.error("Failed to seek to offset: \(error.localizedDescription)")
-                failUpload(transferId: transferId, error: "Failed to seek in file")
-                activeUploads.removeValue(forKey: transferId)
+                await failUploadAttempt(transferId: transferId, error: "Failed to seek in file")
                 return
             }
         }
@@ -797,14 +795,16 @@ public final class UploadManager {
 
         do {
             while bytesSent < totalSize {
-                // Read chunk
-                guard let chunk = try fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                // Read chunk off MainActor
+                guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
 
                 // Send chunk with a stall timeout so a wedged TCP write
-                // can't freeze the transfer indefinitely.
-                try await sendChunkWithTimeout {
+                // can't freeze the transfer indefinitely. On timeout drop
+                // the NWConnection so its pending send callback fires and
+                // the task group can finish.
+                try await sendChunkWithTimeout(onTimeout: { connection.cancel() }) {
                     try await self.sendData(connection: connection, data: chunk)
                 }
                 bytesSent += UInt64(chunk.count)
@@ -920,9 +920,25 @@ public final class UploadManager {
     /// this, `connection.send` on a half-dead peer waits forever for a
     /// callback that never fires and the row sits at e.g. 30% until the
     /// user manually clicks Retry.
-    func sendChunkWithTimeout(_ timeout: TimeInterval = 30, _ send: @Sendable @escaping () async throws -> Void) async throws {
+    ///
+    /// `onTimeout` MUST drop the underlying connection (sync `cancel()` on
+    /// NWConnection or async `disconnect()` on PeerConnection). Without it,
+    /// `group.cancelAll()` only signals Task cancellation — the still-pending
+    /// `send` continuation never resumes, so the task group waits on the
+    /// orphan child forever and the "timeout" never actually returns.
+    func sendChunkWithTimeout(
+        _ timeout: TimeInterval = 30,
+        onTimeout: @Sendable @escaping () -> Void,
+        _ send: @Sendable @escaping () async throws -> Void
+    ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await send() }
+            group.addTask {
+                try await withTaskCancellationHandler {
+                    try await send()
+                } onCancel: {
+                    onTimeout()
+                }
+            }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
                 throw UploadError.timeout
@@ -933,18 +949,26 @@ public final class UploadManager {
     }
 
     private func receiveExact(connection: NWConnection, length: Int, timeout: TimeInterval = 30) async throws -> Data {
+        // See `receiveData` in DownloadManager for the same cancel-the-
+        // connection rationale: without `connection.cancel()` in onCancel,
+        // a wedged receive leaves the child task suspended and the task
+        // group waits on it forever, defeating the timeout.
         try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-                    connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else if let data {
-                            continuation.resume(returning: data)
-                        } else {
-                            continuation.resume(throwing: UploadError.connectionFailed)
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                        connection.receive(minimumIncompleteLength: length, maximumLength: length) { data, _, _, error in
+                            if let error {
+                                continuation.resume(throwing: error)
+                            } else if let data {
+                                continuation.resume(returning: data)
+                            } else {
+                                continuation.resume(throwing: UploadError.connectionFailed)
+                            }
                         }
                     }
+                } onCancel: {
+                    connection.cancel()
                 }
             }
 
@@ -1142,8 +1166,7 @@ public final class UploadManager {
             logger.error("Failed to continue upload via PierceFirewall: \(error.localizedDescription)")
             let failState = await connection.getState()
             logger.debug("Connection state at failure: \(String(describing: failState))")
-            failUpload(transferId: pending.transferId, error: error.localizedDescription)
-            activeUploads.removeValue(forKey: pending.transferId)
+            await failUploadAttempt(transferId: pending.transferId, error: error.localizedDescription)
         }
     }
 
@@ -1159,28 +1182,33 @@ public final class UploadManager {
 
         guard FileManager.default.fileExists(atPath: filePath) else {
             logger.error("File not found: \(filePath)")
-            failUpload(transferId: transferId, error: "File not found")
-            activeUploads.removeValue(forKey: transferId)
+            await failUploadAttempt(transferId: transferId, error: "File not found")
             return
         }
 
-        guard let fileHandle = FileHandle(forReadingAtPath: filePath) else {
+        guard let rawFileHandle = FileHandle(forReadingAtPath: filePath) else {
             logger.error("Could not open file: \(filePath)")
-            failUpload(transferId: transferId, error: "Could not open file")
-            activeUploads.removeValue(forKey: transferId)
+            await failUploadAttempt(transferId: transferId, error: "Could not open file")
             return
         }
+
+        // Hand the FileHandle to a non-MainActor actor so each per-chunk
+        // `read(upToCount:)` runs off the main thread. Synchronous disk
+        // reads of 64 KB are typically fast on SSDs, but on slower disks
+        // (or HDDs, or under memory pressure) the cumulative blocking
+        // delays peer-event dispatch and the timeout watchdog enough to
+        // cause spurious stalls.
+        let fileIO = TransferFileIO(handle: rawFileHandle)
 
         defer {
-            try? fileHandle.close()
+            Task { await fileIO.close() }
         }
 
         do {
-            try fileHandle.seek(toOffset: offset)
+            try await fileIO.seek(to: offset)
         } catch {
             logger.error("Could not seek to offset \(offset): \(error)")
-            failUpload(transferId: transferId, error: "Could not seek in file")
-            activeUploads.removeValue(forKey: transferId)
+            await failUploadAttempt(transferId: transferId, error: "Could not seek in file")
             return
         }
 
@@ -1191,16 +1219,20 @@ public final class UploadManager {
 
         do {
             while bytesSent < totalSize {
-                // Read chunk from file
-                guard let chunk = try fileHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                // Read chunk from file (off MainActor)
+                guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
 
                 // Send chunk with a stall timeout. PeerConnection.sendRaw
                 // bottoms out at the same NWConnection.send used above, so
                 // it has the same wedge-forever failure mode without the
-                // watchdog.
-                try await sendChunkWithTimeout {
+                // watchdog. On timeout, drop the underlying NWConnection
+                // (via PeerConnection.disconnect) so the pending send
+                // callback fires and the child task can finish.
+                try await sendChunkWithTimeout(onTimeout: {
+                    Task { await connection.disconnect() }
+                }) {
                     try await connection.sendRaw(chunk)
                 }
                 bytesSent += UInt64(chunk.count)
@@ -1320,11 +1352,34 @@ public final class UploadManager {
         return "\(seconds / 60)m"
     }
 
+    /// Centralized teardown for an upload attempt that has already started
+    /// (i.e. been pulled out of `uploadQueue`). Routes through
+    /// `failUpload` for the row-state change + retry scheduling, removes
+    /// any pending/active dict entries the caller still holds, then kicks
+    /// `processQueue` so the freed concurrency slot is reused immediately.
+    ///
+    /// Why every failure path needs the queue kick: without it, a failed
+    /// attempt frees an `activeUploads` slot but leaves queued uploads
+    /// sitting until some unrelated event (a new QueueUpload, a
+    /// completed upload, a manual retry) happens to call `processQueue`.
+    /// We saw rows stuck in `.queued` for minutes after a connection-
+    /// setup failure even though the slot was free the whole time.
+    private func failUploadAttempt(transferId: UUID, error: String, token: UInt32? = nil) async {
+        failUpload(transferId: transferId, error: error)
+        if let token {
+            pendingTransfers.removeValue(forKey: token)
+        }
+        activeUploads.removeValue(forKey: transferId)
+        await processQueue()
+    }
+
     /// Single point where an upload transitions to `.failed`. Sets the row's
     /// status + error, then schedules an automatic retry if the reason is
     /// classified retriable and we haven't hit `maxRetries`. Caller still
     /// owns cleanup (`pendingTransfers` / `activeUploads`); retry re-enters
     /// via `uploadQueue` + `processQueue()`, not via those dictionaries.
+    /// Most failure paths should use `failUploadAttempt` instead — it bundles
+    /// cleanup and `processQueue()` so freed slots don't sit idle.
     private func failUpload(transferId: UUID, error: String) {
         guard let transfer = transferState?.getTransfer(id: transferId) else {
             logger.warning("failUpload: no transfer for \(transferId)")
