@@ -25,6 +25,13 @@ public final class UploadManager {
     /// gets re-registered for PierceFirewall handling would be falsely
     /// flagged as a no-response timeout 60s after the original TransferRequest.
     private var transferResponseTimeouts: [UInt32: Task<Void, Never>] = [:]
+    /// Per-token timeout for "peer never came back via PierceFirewall after
+    /// our direct F-connect failed". Stored here so `handlePierceFirewall`
+    /// (peer arrived) and the direct-connect-success path (line 691) can
+    /// cancel the orphan before it wakes up and falsely fails the row.
+    /// Without this, a late direct success races a 30s timer that
+    /// `failUpload`s the same transferId we already promoted to active.
+    private var pierceFirewallTimeouts: [UInt32: Task<Void, Never>] = [:]
 
     // Configuration
     public private(set) var maxConcurrentUploads = 5
@@ -527,13 +534,43 @@ public final class UploadManager {
             let detail = reason ?? "Peer rejected transfer"
             let status = Self.status(forReject: reason)
             logger.warning("Peer rejected upload for \(pending.filename): \(detail) (→ \(status.rawValue))")
-            // `.queued` (peer accepted, queueing) and `.cancelled` (peer
-            // explicit cancel) are not failures — keep them as-is. Only
-            // route true `.failed` rejects through `failUpload` so the
-            // retry classifier sees the reason text.
-            if status == .failed {
+            switch status {
+            case .failed:
+                // Hard rejection — route through failUpload so the retry
+                // classifier sees the reason text.
                 failUpload(transferId: pending.transferId, error: detail)
-            } else {
+            case .queued:
+                // Peer accepted but is queueing us. Set the row to .queued
+                // so the UI accurately reflects "waiting in peer's queue",
+                // then schedule a retry — without it the row sits inert
+                // forever (pending was removed above; nothing else drives
+                // this transfer). Peer typically follows up with a
+                // PlaceInQueueReply, but if they never do (or never get
+                // around to actually serving us) the retry's backoff
+                // ladder makes sure we re-attempt eventually.
+                let currentRetryCount = transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+                transferState?.updateTransfer(id: pending.transferId) { t in
+                    t.status = .queued
+                    t.error = detail
+                }
+                if currentRetryCount < maxRetries {
+                    scheduleUploadRetry(
+                        transferId: pending.transferId,
+                        username: pending.username,
+                        filename: pending.filename,
+                        size: pending.size,
+                        retryCount: currentRetryCount
+                    )
+                }
+            case .cancelled:
+                // Terminal user-initiated cancel on the peer side. No retry.
+                transferState?.updateTransfer(id: pending.transferId) { t in
+                    t.status = .cancelled
+                    t.error = detail
+                }
+            default:
+                // Anything new from `status(forReject:)` falls through to
+                // the row-state path so we don't lose the reason.
                 transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = status
                     t.error = detail
@@ -666,15 +703,18 @@ public final class UploadManager {
                     t.error = "Waiting for peer to connect (firewall)"
                 }
 
-                // Timeout: fail the upload if PierceFirewall doesn't arrive within 30s
-                Task { [weak self] in
+                // Timeout: fail the upload if PierceFirewall doesn't arrive within 30s.
+                // Tracked in `pierceFirewallTimeouts` so a late direct success
+                // (or the actual PierceFirewall arriving) can cancel the timer
+                // before it stomps the row.
+                pierceFirewallTimeouts[token]?.cancel()
+                pierceFirewallTimeouts[token] = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(30))
-                    guard let self else { return }
+                    guard let self, !Task.isCancelled else { return }
+                    self.pierceFirewallTimeouts.removeValue(forKey: token)
                     if let stale = self.pendingTransfers.removeValue(forKey: token) {
                         self.logger.warning("PierceFirewall timeout for upload \(stale.filename) to \(stale.username)")
-                        self.failUpload(transferId: stale.transferId, error: "Peer connection timeout (firewall)")
-                        self.activeUploads.removeValue(forKey: stale.transferId)
-                        await self.processQueue()
+                        await self.failUploadAttempt(transferId: stale.transferId, error: "Peer connection timeout (firewall)")
                     }
                 }
             } else {
@@ -687,8 +727,12 @@ public final class UploadManager {
         logger.info("F connection established to \(ip):\(port)")
 
         // Direct connection succeeded -- remove from pendingTransfers so PierceFirewall path
-        // doesn't also start a transfer, and timeout doesn't mark it as failed
+        // doesn't also start a transfer, and timeout doesn't mark it as failed.
+        // Also cancel the per-token PierceFirewall timeout if one was armed
+        // by an earlier direct-failure pass; otherwise it would wake 30s
+        // later and `failUpload` the row we just promoted to active.
         pendingTransfers.removeValue(forKey: token)
+        pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
 
         // Send PeerInit with type "F" and token 0 (always 0 for F connections per protocol)
         // PeerInit format: [length][code=1][username][type="F"][token=0]
@@ -1057,6 +1101,13 @@ public final class UploadManager {
             // "Cancelled" is a terminal reason in the retry classifier, so
             // routing through `failUpload` correctly suppresses any retry.
             cancelRetry(transferId: transferId)
+            // If we were waiting on the peer's PierceFirewall, drop the
+            // pending entry and cancel the 30 s watchdog so it can't fire
+            // later and overwrite the `.cancelled` status with `.failed`.
+            if let pendingToken = pendingTransfers.first(where: { $0.value.transferId == transferId })?.key {
+                pendingTransfers.removeValue(forKey: pendingToken)
+                pierceFirewallTimeouts.removeValue(forKey: pendingToken)?.cancel()
+            }
             failUpload(transferId: transferId, error: "Cancelled")
             logger.info("Cancelled upload: \(upload.filename)")
         }
@@ -1072,6 +1123,10 @@ public final class UploadManager {
     /// Handle CantConnectToPeer — server tells us the peer couldn't reach us, fail the upload
     public func handleCantConnectToPeer(token: UInt32) {
         guard let pending = pendingTransfers.removeValue(forKey: token) else { return }
+        // Server confirmed peer can't reach us; the PierceFirewall timer
+        // would just fire 30s later with the same conclusion. Cancel it
+        // to avoid double-fire.
+        pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
         logger.warning("CantConnectToPeer for upload \(pending.filename) — peer unreachable")
         failUpload(transferId: pending.transferId, error: "Peer unreachable (firewall)")
         activeUploads.removeValue(forKey: pending.transferId)
@@ -1080,6 +1135,8 @@ public final class UploadManager {
 
     /// Handle PierceFirewall for upload (indirect connection from peer)
     public func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
+        // Peer arrived — cancel the 30s "they never showed up" timer.
+        pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
         guard let pending = pendingTransfers.removeValue(forKey: token) else {
             logger.warning("No pending upload for PierceFirewall token \(token)")
             return
@@ -1368,6 +1425,9 @@ public final class UploadManager {
         failUpload(transferId: transferId, error: error)
         if let token {
             pendingTransfers.removeValue(forKey: token)
+            // Cancel any PierceFirewall watchdog armed for this token so it
+            // can't fire 30 s later and stomp the row we just transitioned.
+            pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
         }
         activeUploads.removeValue(forKey: transferId)
         await processQueue()
@@ -1443,10 +1503,15 @@ public final class UploadManager {
                 // Between schedule and wake the row may have completed
                 // (a late TransferResponse landed), been cancelled, or
                 // been re-queued manually. Only proceed if it's still
-                // sitting in `.failed`.
+                // sitting in `.failed` or `.queued`. `.queued` covers the
+                // "peer accepted but is queueing us" case in
+                // `handleTransferResponse` — we leave the row at `.queued`
+                // for accurate UI but still need the retry to fire so the
+                // upload doesn't sit inert if peer never sends a follow-up
+                // TransferRequest.
                 guard let current = self.transferState?.getTransfer(id: transferId),
-                      current.status == .failed else {
-                    self.logger.info("Skipping scheduled upload retry for \(filename): no longer in .failed state")
+                      current.status == .failed || current.status == .queued else {
+                    self.logger.info("Skipping scheduled upload retry for \(filename): no longer in .failed/.queued state")
                     return
                 }
                 self.retryUploadInternal(

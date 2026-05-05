@@ -298,6 +298,36 @@ public final class DownloadManager {
             return
         }
 
+        // Sweep any prior in-flight bookkeeping for this transfer before
+        // creating a new attempt. Without this, two reconnect/retry/timer
+        // paths racing to (re)start the same transfer each create their
+        // own `pendingDownloads[token]` entry — and a late TransferRequest,
+        // UploadFailed, or PlaceInQueueReply matching the OLD token can
+        // mutate or fail the row right under the new attempt.
+        // Stale `pendingFileTransfersByUser` entries get the same
+        // treatment so an old `transferToken` from a prior attempt can't
+        // satisfy an inbound F-connection that was actually meant for it.
+        let staleTokens = pendingDownloads.compactMap { (key, value) in
+            value.transferId == transfer.id ? key : nil
+        }
+        for stale in staleTokens {
+            pendingDownloads.removeValue(forKey: stale)
+        }
+        for (user, entries) in pendingFileTransfersByUser {
+            let kept = entries.filter { $0.transferId != transfer.id }
+            if kept.count != entries.count {
+                if kept.isEmpty {
+                    pendingFileTransfersByUser.removeValue(forKey: user)
+                } else {
+                    pendingFileTransfersByUser[user] = kept
+                }
+            }
+        }
+        // A retry Task scheduled on a prior attempt could fire later and
+        // call into us mid-flight; cancel it now since this fresh attempt
+        // is the new source of truth.
+        cancelRetry(transferId: transfer.id)
+
         let token = UInt32.random(in: 0...UInt32.max)
 
         transferState.updateTransfer(id: transfer.id) { t in
@@ -629,12 +659,20 @@ public final class DownloadManager {
 
         guard let transferState else { return }
 
-        // Check if still pending
-        guard hasPendingFileTransfer(username: username, transferToken: transferToken) else {
+        // Peek (do NOT remove) the pending entry. We hold ownership of the
+        // F-fallback attempt without taking the entry out of the dict, so:
+        //   - if the peer's PierceFirewall arrives during our connect dance,
+        //     the inbound F-handler can still match it
+        //   - if our F connect/handshake fails inside the `catch` below,
+        //     the 60s watchdog (and the explicit failDownload we trigger on
+        //     error) still see the entry and can fail the row
+        // The original shape removed the entry up front, so a connect/
+        // handshake failure left the row stuck `.transferring` forever:
+        // the watchdog's `removePendingFileTransfer != nil` check returned
+        // nil, and the catch's "the timeout will handle that" comment was
+        // a no-op.
+        guard let pending = peekPendingFileTransfer(username: username, transferToken: transferToken) else {
             logger.debug("Outgoing F connection not needed - transfer no longer pending")
-            return
-        }
-        guard let pending = removePendingFileTransfer(username: username, transferToken: transferToken) else {
             return
         }
 
@@ -686,6 +724,12 @@ public final class DownloadManager {
 
             logger.debug("Handshake complete, receiving file data")
 
+            // Handshake succeeded — claim ownership of the pending entry now
+            // so the inbound F-handler / 60s watchdog won't race us. If
+            // something between here and the receive succeeds throws, the
+            // catch below treats the entry as already-consumed.
+            _ = removePendingFileTransfer(username: username, transferToken: transferToken)
+
             // Compute destination path preserving folder structure
             let destPath = computeDestPath(for: pending.filename, username: username)
             let filename = destPath.lastPathComponent
@@ -735,7 +779,27 @@ public final class DownloadManager {
 
         } catch {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
-            // Don't mark as failed yet - the timeout will handle that
+            // Explicit failure handling. Previously this branch deferred to
+            // the 60s watchdog ("Don't mark as failed yet — the timeout
+            // will handle that"), but the watchdog only fires while the
+            // pendingFileTransfer entry exists; any code path that
+            // already removed it left the row wedged at `.transferring`
+            // forever. Now we own the failure: drop the pending entry
+            // (if it's still there — the success-path remove above may
+            // have run before we threw), drop the pendingDownloads slot,
+            // and route through `failDownload` so the retry classifier
+            // can schedule a re-attempt with the normal backoff.
+            if removePendingFileTransfer(username: username, transferToken: transferToken) != nil
+                || pendingDownloads[downloadToken] != nil {
+                pendingDownloads.removeValue(forKey: downloadToken)
+                failDownload(
+                    transferId: pending.transferId,
+                    username: pending.username,
+                    filename: pending.filename,
+                    size: pending.size,
+                    reason: "F connection failed: \(error.localizedDescription)"
+                )
+            }
         }
     }
 
@@ -1343,6 +1407,13 @@ public final class DownloadManager {
     private func hasPendingFileTransfer(username: String, transferToken: UInt32) -> Bool {
         let entries = findPendingFileTransfers(for: username)
         return entries.contains { $0.transferToken == transferToken }
+    }
+
+    /// Look up a pending file transfer without removing it. Used by paths
+    /// that may abort before they own the entry (e.g. the F-fallback's
+    /// `do`/`catch` — see `initiateOutgoingFileConnection`).
+    private func peekPendingFileTransfer(username: String, transferToken: UInt32) -> PendingFileTransfer? {
+        findPendingFileTransfers(for: username).first { $0.transferToken == transferToken }
     }
 
     /// Find all pending file transfers for a username (exact or case-insensitive)

@@ -438,37 +438,46 @@ public final class ServerMessageHandler {
         guard !isProcessingQueue else { return }
         isProcessingQueue = true
 
-        Task {
-            while !connectionQueue.isEmpty {
+        Task { [weak self] in
+            guard let self else { return }
+            while !self.connectionQueue.isEmpty {
                 // Rate limit: wait if we connected too recently
-                let timeSinceLastConnection = Date().timeIntervalSince(lastConnectionAttempt)
-                if timeSinceLastConnection < connectionRateLimit {
-                    let waitTime = connectionRateLimit - timeSinceLastConnection
+                let timeSinceLastConnection = Date().timeIntervalSince(self.lastConnectionAttempt)
+                if timeSinceLastConnection < self.connectionRateLimit {
+                    let waitTime = self.connectionRateLimit - timeSinceLastConnection
                     try? await Task.sleep(for: .milliseconds(Int(waitTime * 1000)))
                 }
 
-                guard !connectionQueue.isEmpty else { break }
+                guard !self.connectionQueue.isEmpty else { break }
 
-                let next = connectionQueue.removeFirst()
-                lastConnectionAttempt = Date()
+                let next = self.connectionQueue.removeFirst()
+                self.lastConnectionAttempt = Date()
 
                 let connectionKey = "\(next.username)-\(next.token)"
-                if pendingConnections.contains(connectionKey) {
+                if self.pendingConnections.contains(connectionKey) {
                     continue
                 }
-                pendingConnections.insert(connectionKey)
+                self.pendingConnections.insert(connectionKey)
 
-                await connectToPeerThrottled(
-                    username: next.username,
-                    connectionType: next.type,
-                    ip: next.ip,
-                    port: next.port,
-                    token: next.token
-                )
-
-                pendingConnections.remove(connectionKey)
+                // Fire-and-forget: dispatch each throttled connect to its
+                // own Task so one stuck `pool.connect` (e.g. NWConnection
+                // sitting in `.preparing` against a half-dead peer)
+                // can't block the entire queue. Each connect attempt's
+                // 10s `withTimeout` still bounds its own runtime; the
+                // queue stays responsive regardless.
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.connectToPeerThrottled(
+                        username: next.username,
+                        connectionType: next.type,
+                        ip: next.ip,
+                        port: next.port,
+                        token: next.token
+                    )
+                    self.pendingConnections.remove(connectionKey)
+                }
             }
-            isProcessingQueue = false
+            self.isProcessingQueue = false
         }
     }
 
@@ -510,15 +519,20 @@ public final class ServerMessageHandler {
         }
     }
 
+    /// Race `operation` against a `seconds` deadline. On timeout the task
+    /// group's cleanup signals cancellation to the operation child; for it
+    /// to actually unwind the operation must respect Task cancellation
+    /// (e.g. cancellable async APIs, or its own state checks). The
+    /// operation child here is `pool.connect`, which uses Network.framework
+    /// state handlers — not natively cancellation-aware — so a wedged peer
+    /// connection may continue dangling in the pool's bookkeeping until
+    /// the pool's own staleness sweep picks it up. The mitigation that
+    /// matters here is upstream: the queue processor no longer awaits this
+    /// call serially, so one stuck child can't block the entire queue.
     private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @Sendable @escaping () async throws -> T) async throws -> T {
         return try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
-                do {
-                    let result = try await operation()
-                    return result
-                } catch {
-                    throw error
-                }
+                try await operation()
             }
 
             group.addTask {
