@@ -560,7 +560,7 @@ struct FailureTests {
         #expect(MessageParser.parseTransferRequest(payload) == nil)
     }
 
-    @Test("Transfer request upload direction but not enough bytes for fileSize")
+    @Test("Transfer request upload direction with missing fileSize is rejected")
     func testTransferRequestUploadMissingFileSize() {
         var payload = Data()
         payload.appendUInt32(1) // upload
@@ -568,10 +568,26 @@ struct FailureTests {
         payload.appendString("test.mp3")
         // No fileSize bytes
 
-        let result = MessageParser.parseTransferRequest(payload)
-        #expect(result != nil)
-        #expect(result?.direction == .upload)
-        #expect(result?.fileSize == nil) // Missing but not fatal
+        // Upload-direction TransferRequests MUST carry an 8-byte file
+        // size. Previously the parser accepted truncated payloads and
+        // returned `fileSize == nil`, which downstream coerced to `0` —
+        // creating a phantom "0/0" transfer that immediately succeeded.
+        // The parser now treats this as malformed and drops the message.
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
+    }
+
+    @Test("Transfer request upload direction with zero fileSize is rejected")
+    func testTransferRequestUploadZeroFileSize() {
+        var payload = Data()
+        payload.appendUInt32(1) // upload
+        payload.appendUInt32(12345)
+        payload.appendString("test.mp3")
+        payload.appendUInt64(0) // explicit zero size
+
+        // Same rationale as above: a zero-size upload-direction request
+        // is either parser misalignment or a peer-side bug; accepting it
+        // would make a corrupt transfer look valid.
+        #expect(MessageParser.parseTransferRequest(payload) == nil)
     }
 
     @Test("Transfer request download direction succeeds without fileSize")

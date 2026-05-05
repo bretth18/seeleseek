@@ -24,6 +24,16 @@ public final class DownloadManager {
     // Array-based to support multiple concurrent downloads from same user
     private var pendingFileTransfersByUser: [String: [PendingFileTransfer]] = [:]
 
+    /// Per-transferToken watchdog Task spawned in `handleTransferRequest`.
+    /// Sleeps 60 s and forces the row to fail if no F connection arrived.
+    /// Tracked so any path that consumes a pending entry — direct/indirect
+    /// success, F-fallback success, F-fallback failure, manual cancel —
+    /// can cancel the orphan before it wakes up and stomps a row that has
+    /// already moved on. `removePendingFileTransfer` is the single point
+    /// where this dict is cleared, so all callers get the cleanup for
+    /// free.
+    private var fileTransferWatchdogs: [UInt32: Task<Void, Never>] = [:]
+
     // MARK: - Post-Download Processing
     private var metadataReader: (any MetadataReading)?
     /// Directories that already have folder icons applied (avoid redundant work)
@@ -316,6 +326,11 @@ public final class DownloadManager {
         for (user, entries) in pendingFileTransfersByUser {
             let kept = entries.filter { $0.transferId != transfer.id }
             if kept.count != entries.count {
+                // Cancel any watchdogs tied to entries we're dropping so a
+                // stale 60 s timer can't fire on the new attempt.
+                for stale in entries where stale.transferId == transfer.id {
+                    fileTransferWatchdogs.removeValue(forKey: stale.transferToken)?.cancel()
+                }
                 if kept.isEmpty {
                     pendingFileTransfersByUser.removeValue(forKey: user)
                 } else {
@@ -607,9 +622,16 @@ public final class DownloadManager {
             let fileSize = request.size
             let peerUsername = pending.username
 
-            Task {
+            // Cancel any prior watchdog for this token (defensive — a fresh
+            // TransferRequest with a previously-seen token shouldn't happen
+            // in practice, but Task.cancel is cheap and keeps invariants
+            // tight).
+            fileTransferWatchdogs.removeValue(forKey: transferToken)?.cancel()
+            fileTransferWatchdogs[transferToken] = Task { [weak self] in
+                guard let self else { return }
                 // Wait 5 seconds for peer to connect to us
                 try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
 
                 // If still pending, try connecting to them instead (NAT traversal fallback)
                 if self.hasPendingFileTransfer(username: peerUsername, transferToken: transferToken) {
@@ -625,10 +647,14 @@ public final class DownloadManager {
 
                 // Wait another 55 seconds for either connection type
                 try? await Task.sleep(for: .seconds(55))
+                guard !Task.isCancelled else { return }
 
-                // If still pending after total 60 seconds, mark as failed
+                // If still pending after total 60 seconds, mark as failed.
+                // The Task is also self-cleared from `fileTransferWatchdogs`
+                // by `removePendingFileTransfer` below — calling
+                // `task.cancel()` on a finished Task is a no-op.
                 if self.removePendingFileTransfer(username: peerUsername, transferToken: transferToken) != nil {
-                    pendingDownloads.removeValue(forKey: token)
+                    self.pendingDownloads.removeValue(forKey: token)
                     self.failDownload(
                         transferId: pending.transferId,
                         username: pending.username,
@@ -1431,7 +1457,14 @@ public final class DownloadManager {
         return []
     }
 
-    /// Remove and return a specific pending file transfer by username and token
+    /// Remove and return a specific pending file transfer by username and token.
+    ///
+    /// Cancels the per-token watchdog as a side effect so callers don't
+    /// have to remember to do it. Removing the pending entry is THE signal
+    /// that the watchdog's "fail this row at 60 s" job is no longer needed
+    /// (success path consumed it, manual cancel happened, etc.). Without
+    /// this side effect the orphan watchdog could wake up after
+    /// completion and call `failDownload` on a row already at `.completed`.
     @discardableResult
     private func removePendingFileTransfer(username: String, transferToken: UInt32) -> PendingFileTransfer? {
         // Try exact match first
@@ -1447,6 +1480,7 @@ public final class DownloadManager {
         } else {
             pendingFileTransfersByUser[key] = entries
         }
+        fileTransferWatchdogs.removeValue(forKey: transferToken)?.cancel()
         return removed
     }
 
@@ -1994,11 +2028,15 @@ public final class DownloadManager {
 
         logger.info("Re-queuing \(waitingDownloads.count) waiting downloads")
 
-        // Group by username to avoid duplicate connection attempts
+        // Group by username so the connection lookup is per-peer, but
+        // dedupe each transfer individually inside the group. The previous
+        // shape ("any pending download for this user → skip the whole
+        // user") starved every other waiting transfer for a peer the
+        // moment one of them was in flight — a 100-file folder download
+        // would only re-drive one transfer per cycle.
         let byUser = Dictionary(grouping: waitingDownloads, by: { $0.username })
 
         for (username, transfers) in byUser {
-            // Try to find an existing connection to this user
             if let connection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
                 for transfer in transfers {
                     do {
@@ -2012,15 +2050,25 @@ public final class DownloadManager {
                     }
                 }
             } else {
-                // No connection exists - re-initiate the first download from scratch
-                // (handlePeerAddress will handle all downloads for this user)
-                logger.info("No connection to \(username), re-initiating download")
-                let transfer = transfers[0]
-
-                // Only re-initiate if not already being handled by a pending download
-                let alreadyPending = pendingDownloads.values.contains { $0.username == username }
-                if !alreadyPending {
-                    await startDownload(transfer: transfer)
+                // No connection exists. Re-initiate every transfer that
+                // doesn't already have its own in-flight pending entry.
+                // `establishPeerConnection` coalesces concurrent calls per
+                // username in NetworkClient, so N startDownload calls
+                // share one TCP connection. Stagger to avoid spawning
+                // them all on the same tick.
+                logger.info("No connection to \(username), re-initiating downloads")
+                var staggerIndex = 0
+                for transfer in transfers {
+                    let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
+                    if alreadyPending { continue }
+                    let delay = Double(staggerIndex) * 0.5
+                    Task { [weak self] in
+                        if delay > 0 {
+                            try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+                        }
+                        await self?.startDownload(transfer: transfer)
+                    }
+                    staggerIndex += 1
                 }
             }
         }
@@ -2052,26 +2100,29 @@ public final class DownloadManager {
 
         logger.info("Connection retry: \(failedDownloads.count) failed downloads to retry")
 
-        // Group by username and stagger
-        let byUser = Dictionary(grouping: failedDownloads, by: { $0.username })
+        // Per-transferId dedup so a folder of N failed transfers retries
+        // ALL of them, not just one per peer. The username-only dedup
+        // here previously starved every transfer-after-the-first for the
+        // peer until the first either succeeded or got cleared by an
+        // unrelated path. `establishPeerConnection` still coalesces TCP
+        // setup per-peer, so the practical cost of multi-fire is just N
+        // queueDownload sends on one connection.
         var staggerIndex = 0
-        for (username, transfers) in byUser {
-            // Skip if already has a pending download for this user
-            let alreadyPending = pendingDownloads.values.contains { $0.username == username }
+        for transfer in failedDownloads {
+            let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
             if alreadyPending { continue }
 
-            let transfer = transfers[0]
             transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
                 t.error = nil
             }
 
             let currentDelay = Double(staggerIndex) * 1.0
-            Task {
+            Task { [weak self] in
                 if currentDelay > 0 {
                     try? await Task.sleep(for: .milliseconds(Int(currentDelay * 1000)))
                 }
-                await startDownload(transfer: transfer)
+                await self?.startDownload(transfer: transfer)
             }
             staggerIndex += 1
         }
@@ -2091,18 +2142,27 @@ public final class DownloadManager {
         }
     }
 
-    /// Send PlaceInQueueRequest for all waiting downloads to get updated queue positions
+    /// Send PlaceInQueueRequest for all waiting/connecting downloads to get
+    /// updated queue positions.
+    ///
+    /// `.connecting` rows haven't yet flipped to `.waiting` (that flip
+    /// happens 60 s after `queueOnConnection` if no peer reply arrives),
+    /// so they previously got no position UI until that flip — even if
+    /// the peer was already happily reporting our place. Including
+    /// `.connecting` closes that 60 s gap. We deliberately skip
+    /// `.queued`: those rows haven't sent the initial QueueDownload yet,
+    /// so the peer wouldn't recognise the filename in a position request.
     private func updateQueuePositions() async {
         guard let transferState, let networkClient else { return }
 
-        let waitingDownloads = transferState.downloads.filter {
-            $0.status == .waiting
+        let activeDownloads = transferState.downloads.filter {
+            $0.status == .waiting || $0.status == .connecting
         }
-        guard !waitingDownloads.isEmpty else { return }
+        guard !activeDownloads.isEmpty else { return }
 
-        logger.info("Updating queue positions for \(waitingDownloads.count) waiting downloads")
+        logger.info("Updating queue positions for \(activeDownloads.count) waiting/connecting downloads")
 
-        for transfer in waitingDownloads {
+        for transfer in activeDownloads {
             if let connection = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
                 do {
                     try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
@@ -2141,17 +2201,29 @@ public final class DownloadManager {
 
         logger.info("Recovering \(staleDownloads.count) stale waiting downloads")
 
-        let byUser = Dictionary(grouping: staleDownloads, by: { $0.username })
-        for (username, transfers) in byUser {
-            let alreadyPending = pendingDownloads.values.contains { $0.username == username }
+        // Per-transferId dedup. Username-only dedup here meant a folder of
+        // 100 stale transfers from one peer recovered exactly one transfer
+        // every 15 minutes — the rest stayed wedged for hours.
+        // `establishPeerConnection` coalesces the actual TCP work in
+        // NetworkClient, so kicking N transfers for one peer doesn't open
+        // N connections.
+        var staggerIndex = 0
+        for transfer in staleDownloads {
+            let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
             if alreadyPending { continue }
 
-            let transfer = transfers[0]
             transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
                 t.error = nil
             }
-            await startDownload(transfer: transfer)
+            let delay = Double(staggerIndex) * 0.5
+            Task { [weak self] in
+                if delay > 0 {
+                    try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
+                }
+                await self?.startDownload(transfer: transfer)
+            }
+            staggerIndex += 1
         }
     }
 
@@ -2161,16 +2233,58 @@ public final class DownloadManager {
     private func handlePlaceInQueueReply(username: String, filename: String, position: UInt32) {
         guard let transferState else { return }
 
-        // Find matching download by username + filename
+        let isLive: (Transfer) -> Bool = {
+            $0.status == .queued || $0.status == .waiting || $0.status == .connecting
+        }
+
+        // Try exact match first (cheap and the common case).
         if let transfer = transferState.downloads.first(where: {
-            $0.username == username && $0.filename == filename &&
-            ($0.status == .queued || $0.status == .waiting || $0.status == .connecting)
+            $0.username == username && $0.filename == filename && isLive($0)
         }) {
             transferState.updateTransfer(id: transfer.id) { t in
                 t.queuePosition = Int(position)
             }
             logger.info("Updated queue position for \(filename) from \(username): \(position)")
+            return
         }
+
+        // Case-insensitive fallback. Some peers normalise filenames
+        // (lowercase, NFC/NFD swaps) before echoing them back in
+        // PlaceInQueueReply, which makes a strict equality check drop
+        // the position silently. Also fall back across pendingDownloads
+        // — if there's exactly one in-flight pending entry for this
+        // (username, filename-lowered), it's certainly the right one.
+        let lowerUser = username.lowercased()
+        let lowerFile = filename.lowercased()
+        if let transfer = transferState.downloads.first(where: {
+            $0.username.lowercased() == lowerUser &&
+            $0.filename.lowercased() == lowerFile &&
+            isLive($0)
+        }) {
+            transferState.updateTransfer(id: transfer.id) { t in
+                t.queuePosition = Int(position)
+            }
+            logger.info("Updated queue position (ci-fallback) for \(filename) from \(username): \(position)")
+            return
+        }
+
+        // Last-ditch fallback: if a single pending download matches by
+        // (lowercased username, lowercased filename), use its transferId.
+        // The peer must have queued this file, so the position is for
+        // that transfer.
+        let candidates = pendingDownloads.values.filter {
+            $0.username.lowercased() == lowerUser &&
+            $0.filename.lowercased() == lowerFile
+        }
+        if candidates.count == 1, let pending = candidates.first {
+            transferState.updateTransfer(id: pending.transferId) { t in
+                t.queuePosition = Int(position)
+            }
+            logger.info("Updated queue position (pending-fallback) for \(filename) from \(username): \(position)")
+            return
+        }
+
+        logger.debug("No live download matched PlaceInQueueReply: user=\(username) file=\(filename)")
     }
 
     // MARK: - Upload Denied/Failed Handling
@@ -2589,6 +2703,12 @@ public final class DownloadManager {
 
     internal func _seedPendingDownloadForTest(_ pending: PendingDownload, token: UInt32) {
         pendingDownloads[token] = pending
+    }
+
+    /// Drive the queue-position handler from tests. Real callers reach
+    /// it via the pool's `.placeInQueueReply` event in NetworkClient.
+    internal func _handlePlaceInQueueReplyForTest(username: String, filename: String, position: UInt32) {
+        handlePlaceInQueueReply(username: username, filename: filename, position: position)
     }
 
     /// Test-only re-entry into the salvage path. Real callers go through the

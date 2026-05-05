@@ -97,10 +97,19 @@ struct TransferHistoryRecord: Codable, FetchableRecord, PersistableRecord, Senda
         self.localPath = localPath
     }
 
-    /// Create from completed transfer
+    /// Create from completed transfer.
+    ///
+    /// Uses the transfer's stable UUID as the history-row id so reloading
+    /// the row across sessions and re-completing it is idempotent — pair
+    /// with `save(db)` (upsert) at the call site. Without the stable id
+    /// we generated a fresh UUID on each call, which inserted a duplicate
+    /// history row every time a completed transfer happened to be
+    /// re-completed (e.g. salvage path running on a row that finished in
+    /// a previous session, then finished again in the current one).
     static func from(_ transfer: Transfer, duration: TimeInterval) -> TransferHistoryRecord {
         let avgSpeed = duration > 0 ? Double(transfer.size) / duration : 0
         return TransferHistoryRecord(
+            id: transfer.id.uuidString,
             filename: transfer.filename,
             username: transfer.username,
             size: Int64(transfer.size),

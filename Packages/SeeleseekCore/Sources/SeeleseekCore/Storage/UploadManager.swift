@@ -1803,6 +1803,67 @@ public final class UploadManager {
         pendingTransfers[token] = pending
     }
 
+    /// Inspect the per-token pierce-firewall watchdog dict from tests.
+    internal func _pierceFirewallTimeoutTaskForTest(token: UInt32) -> Task<Void, Never>? {
+        pierceFirewallTimeouts[token]
+    }
+
+    /// Drive the rejection branch of `handleTransferResponse` directly.
+    /// Real callers reach it via the pool event stream wired in
+    /// `configure(...)`. The rejection branch never touches the
+    /// `connection` argument (only the `allowed=true` path does), so
+    /// tests can pass a synthetic placeholder.
+    internal func _handleTransferRejectionForTest(token: UInt32, reason: String?) async {
+        // Inline the rejection path without the connection-dependent
+        // success branch. Mirrors `handleTransferResponse(token:..., allowed: false, ...)`.
+        transferResponseTimeouts.removeValue(forKey: token)?.cancel()
+        guard let pending = pendingTransfers.removeValue(forKey: token) else { return }
+        let detail = reason ?? "Peer rejected transfer"
+        let status = Self.status(forReject: reason)
+        switch status {
+        case .failed:
+            failUpload(transferId: pending.transferId, error: detail)
+        case .queued:
+            let currentRetryCount = transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.status = .queued
+                t.error = detail
+            }
+            if currentRetryCount < maxRetries {
+                scheduleUploadRetry(
+                    transferId: pending.transferId,
+                    username: pending.username,
+                    filename: pending.filename,
+                    size: pending.size,
+                    retryCount: currentRetryCount
+                )
+            }
+        case .cancelled:
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.status = .cancelled
+                t.error = detail
+            }
+        default:
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.status = status
+                t.error = detail
+            }
+        }
+        await processQueue()
+    }
+
+    /// Drive `failUploadAttempt` directly so tests can assert the
+    /// processQueue side-effect of every failure path.
+    internal func _failUploadAttemptForTest(transferId: UUID, error: String, token: UInt32?) async {
+        await failUploadAttempt(transferId: transferId, error: error, token: token)
+    }
+
+    internal var _activeUploadCountForTest: Int { activeUploads.count }
+    internal var _pendingTransferCountForTest: Int { pendingTransfers.count }
+    internal func _seedQueuedUploadForTest(_ upload: QueuedUpload) {
+        uploadQueue.append(upload)
+    }
+
     /// Maps a TransferReply rejection `reason` string to the closest
     /// TransferStatus. Exposed for unit tests.
     static func status(forReject reason: String?) -> Transfer.TransferStatus {

@@ -111,14 +111,20 @@ struct TransferRepository {
         }
     }
 
-    /// Record completed transfer to history
+    /// Record completed transfer to history.
+    ///
+    /// Idempotent: keyed on the transfer's stable UUID via
+    /// `TransferHistoryRecord.from(_:duration:)`, with `save(db)` doing
+    /// upsert semantics. Without this, every re-completion of a row
+    /// (salvage paths, app restart that re-promotes a row, etc.) inserted
+    /// a fresh history record and skewed the totals visible in stats.
     static func recordCompletion(_ transfer: Transfer) async throws {
         guard let startTime = transfer.startTime else { return }
         let duration = Date().timeIntervalSince(startTime)
 
         _ = try await DatabaseManager.shared.write { db in
             let record = TransferHistoryRecord.from(transfer, duration: duration)
-            try record.insert(db)
+            try record.save(db)
         }
     }
 }
