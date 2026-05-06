@@ -490,30 +490,45 @@ public enum MessageParser {
 
         var fileSize: UInt64?
         if direction == .upload {
-            // For upload direction, file size should follow the filename
-            // Check if we have enough bytes remaining (need 8 bytes for UInt64)
+            // For upload direction (peer wants to upload to us), file size
+            // is mandatory per protocol — it tells us how many bytes the
+            // F connection will deliver. The previous shape returned a
+            // parsed message with `fileSize == nil` whenever bytes were
+            // missing or zero, which downstream callers coerced to `0`,
+            // making a corrupt or truncated TransferRequest look like a
+            // valid empty-file transfer. Reject the parse instead so the
+            // caller treats the message as malformed.
             let remainingBytes = payload.count - offset
             logger.debug("Remaining bytes after filename: \(remainingBytes), need 8 for fileSize")
 
-            if remainingBytes >= 8 {
-                // Debug: show the 8 bytes we're reading for file size
-                let sizeBytes = payload.dropFirst(offset).prefix(8)
-                let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-                logger.debug("fileSize bytes at offset \(offset): \(sizeBytesHex)")
-
-                fileSize = payload.readUInt64(at: offset)
-                logger.debug("fileSize parsed: \(fileSize ?? 0)")
-
-                // Validate: file size of 0 for upload direction is suspicious
-                if fileSize == 0 {
-                    logger.warning("TransferRequest: fileSize is 0 for upload direction - this may indicate parsing issue")
-                    logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
-                }
-            } else {
+            guard remainingBytes >= 8 else {
                 logger.warning("TransferRequest: Not enough bytes for fileSize! Have \(remainingBytes), need 8")
                 logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
-                // Still return what we have - fileSize will be nil
+                return nil
             }
+
+            // Debug: show the 8 bytes we're reading for file size
+            let sizeBytes = payload.dropFirst(offset).prefix(8)
+            let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
+            logger.debug("fileSize bytes at offset \(offset): \(sizeBytesHex)")
+
+            guard let parsed = payload.readUInt64(at: offset) else {
+                logger.warning("TransferRequest: failed to read 8 bytes for fileSize at offset \(offset)")
+                return nil
+            }
+            logger.debug("fileSize parsed: \(parsed)")
+
+            // A zero size for an upload-direction TransferRequest is
+            // either a parser misalignment or a peer protocol bug. Either
+            // way, accepting it would create a "transfer" that does
+            // nothing and immediately succeeds with 0/0 bytes — not
+            // recoverable into a valid download. Reject.
+            guard parsed > 0 else {
+                logger.warning("TransferRequest: fileSize is 0 for upload direction — rejecting as malformed")
+                logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                return nil
+            }
+            fileSize = parsed
         }
 
         return TransferRequestInfo(direction: direction, token: token, filename: filename, fileSize: fileSize)

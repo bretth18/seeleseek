@@ -116,6 +116,20 @@ public final class PeerConnectionPool {
     // SECURITY: Track connection attempts per IP for rate limiting
     private var connectionAttempts: [String: [Date]] = [:]
 
+    /// Token → expected username for an upcoming PierceFirewall.
+    ///
+    /// Populated by callers that send `ConnectToPeer` (browse, folder,
+    /// userinfo, download, upload) before the indirect PierceFirewall
+    /// arrives. When the pool sees `.pierceFirewall(token)` it stamps the
+    /// username on the `PeerConnection` *synchronously inside the per-
+    /// connection event-handling loop*, before the next peer message on
+    /// the same connection is dispatched. Without this, a `PlaceInQueueReply`
+    /// arriving immediately after PierceFirewall (a common case) was
+    /// emitted with `username == ""`, and `handlePlaceInQueueReply`'s
+    /// exact-match check silently dropped the queue position — the symptom
+    /// was "queue values not shown until many retry attempts."
+    private var pierceFirewallExpectedUsernames: [UInt32: String] = [:]
+
     // MARK: - Types
 
     public struct PeerConnectionInfo: Identifiable {
@@ -443,6 +457,26 @@ public final class PeerConnectionPool {
         activeConnections = connections.count
     }
 
+    /// Pre-register the username we expect on the indirect PierceFirewall
+    /// connection that should arrive bearing this token. Callers must invoke
+    /// this BEFORE sending `ConnectToPeer` (i.e. before the peer can respond
+    /// indirectly). The pool consumes the entry inside `handlePeerEvent`'s
+    /// `.pierceFirewall` branch — synchronously, before any subsequent
+    /// peer message on the same connection can be dispatched — so that the
+    /// follow-up `PlaceInQueueReply` (and friends) sees a non-empty
+    /// `connection.peerInfo.username`.
+    public func registerExpectedPierceFirewallUsername(token: UInt32, username: String) {
+        pierceFirewallExpectedUsernames[token] = username
+    }
+
+    /// Drop the pre-registered username when the matching PierceFirewall
+    /// will never arrive (e.g. direct connection won the race, browse
+    /// timed out, browse cancelled). Idempotent — safe to call after the
+    /// pool has already consumed the entry.
+    public func clearExpectedPierceFirewallUsername(token: UInt32) {
+        pierceFirewallExpectedUsernames.removeValue(forKey: token)
+    }
+
     /// Update the username for a connection (used when matching PierceFirewall to pending uploads)
     public func updateConnectionUsername(connection: PeerConnection, username: String) async {
         // Find the connection by checking which key maps to this PeerConnection
@@ -693,16 +727,23 @@ public final class PeerConnectionPool {
 
     /// Consume events from a PeerConnection's AsyncStream and dispatch them as PeerPoolEvents.
     /// Replaces the old setOn* callback pattern for Swift 6 concurrency safety.
+    ///
+    /// `handlePeerEvent` is awaited so that work which must complete before
+    /// the next message is processed (e.g. stamping a username on a freshly
+    /// pierce-firewalled indirect connection) actually finishes first. With
+    /// fire-and-forget dispatch a `PlaceInQueueReply` could be processed in
+    /// the same per-connection burst as the preceding `PierceFirewall`,
+    /// reading an empty `connection.peerInfo.username`.
     private func consumeEvents(from connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) {
         Task { [weak self] in
             for await event in connection.events {
                 guard let self else { return }
-                self.handlePeerEvent(event, connection: connection, username: username, connectionId: connectionId, capturedIP: capturedIP, isIncoming: isIncoming)
+                await self.handlePeerEvent(event, connection: connection, username: username, connectionId: connectionId, capturedIP: capturedIP, isIncoming: isIncoming)
             }
         }
     }
 
-    private func handlePeerEvent(_ event: PeerConnectionEvent, connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) {
+    private func handlePeerEvent(_ event: PeerConnectionEvent, connection: PeerConnection, username: String, connectionId: String, capturedIP: String, isIncoming: Bool) async {
         // Touch the connection's lastActivity on every event. Without this,
         // `lastActivity` was never set anywhere, so every connection fell
         // into `cleanupStaleConnections`'s "ghost" branch and got killed
@@ -814,6 +855,36 @@ public final class PeerConnectionPool {
             logger.info("PierceFirewall received: token=\(token)")
             incrementPierceFirewallCount()
             decrementIPCounter(for: capturedIP)
+
+            // Stamp the username on the connection BEFORE we yield the
+            // event or process any subsequent message on this connection.
+            // The receive loop is already pumping bytes, and a peer that
+            // pierces firewall typically follows with `PlaceInQueueReply`
+            // (or other peer messages) immediately. With the prior
+            // fire-and-forget Task pattern in NetworkClient, those follow-
+            // ups raced ahead and were emitted with an empty username,
+            // which `handlePlaceInQueueReply`'s exact-match check then
+            // dropped silently — exactly the "queue values not shown
+            // until many retry attempts" symptom.
+            if let expectedUsername = pierceFirewallExpectedUsernames.removeValue(forKey: token) {
+                await connection.setPeerUsername(expectedUsername)
+                if var info = connections[connectionId] {
+                    info = PeerConnectionInfo(
+                        id: info.id,
+                        username: expectedUsername,
+                        ip: info.ip,
+                        port: info.port,
+                        state: info.state,
+                        connectionType: info.connectionType,
+                        bytesReceived: info.bytesReceived,
+                        bytesSent: info.bytesSent,
+                        connectedAt: info.connectedAt
+                    )
+                    connections[connectionId] = info
+                }
+                logger.debug("Stamped username '\(expectedUsername)' on indirect connection (token=\(token))")
+            }
+
             connections.removeValue(forKey: connectionId)
             activeConnections_.removeValue(forKey: connectionId)
             activeConnections = connections.count
