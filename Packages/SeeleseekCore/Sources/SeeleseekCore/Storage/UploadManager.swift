@@ -970,6 +970,15 @@ public final class UploadManager {
     /// `group.cancelAll()` only signals Task cancellation — the still-pending
     /// `send` continuation never resumes, so the task group waits on the
     /// orphan child forever and the "timeout" never actually returns.
+    ///
+    /// `onTimeout` is fired *inside* the timeout child immediately before it
+    /// throws, not via `withTaskCancellationHandler` on the send child. The
+    /// cancellation-handler approach was timing-fragile under contention:
+    /// if the send child hadn't entered `withTaskCancellationHandler` by the
+    /// time `cancelAll()` ran, the handler was never installed and
+    /// `onTimeout` silently never fired. Calling `onTimeout` from the
+    /// timeout child makes the contract deterministic — it fires iff the
+    /// timeout won the race.
     func sendChunkWithTimeout(
         _ timeout: TimeInterval = 30,
         onTimeout: @Sendable @escaping () -> Void,
@@ -977,14 +986,11 @@ public final class UploadManager {
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                try await withTaskCancellationHandler {
-                    try await send()
-                } onCancel: {
-                    onTimeout()
-                }
+                try await send()
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
+                onTimeout()
                 throw UploadError.timeout
             }
             _ = try await group.next()

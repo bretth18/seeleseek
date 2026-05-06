@@ -74,18 +74,10 @@ struct UploadStallWatchdogTests {
             }
             Issue.record("Expected timeout to throw")
         } catch UploadManager.UploadError.timeout {
-            // `withTaskCancellationHandler`'s onCancel runs asynchronously
-            // when cancellation is signalled — it isn't guaranteed to have
-            // completed by the time the parent throw propagates back here.
-            // Locally the race usually goes our way; on a contended CI
-            // runner it doesn't, which produced an intermittent failure
-            // on the first PR push. Poll for up to ~1 s so the assertion
-            // tests the *contract* (handler eventually fires), not a
-            // particular scheduler ordering.
-            for _ in 0..<100 {
-                if flag.fired { break }
-                try? await Task.sleep(for: .milliseconds(10))
-            }
+            // The implementation now fires `onTimeout` synchronously
+            // inside the timeout child immediately before it throws, so
+            // by the time the throw propagates back here the flag is
+            // already set — no polling/retry required.
             #expect(flag.fired, "onTimeout must fire so the underlying connection is dropped")
         } catch {
             Issue.record("Unexpected error: \(error)")
