@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import CryptoKit
 
 
 /// Manages the download queue and file transfers
@@ -533,7 +534,7 @@ public final class DownloadManager {
                 transferId: transfer.id,
                 username: transfer.username,
                 filename: transfer.filename,
-                size: request.size,
+                size: request.size > 0 ? request.size : transfer.size,
                 peerIP: info.ip.isEmpty ? nil : info.ip,
                 peerPort: info.port > 0 ? info.port : nil
             )
@@ -579,14 +580,15 @@ public final class DownloadManager {
             // Store the transfer token from TransferRequest - we'll send this on the F connection
 
             // Check for partial file to enable resume
-            let destPath = computeDestPath(for: pending.filename, username: pending.username)
+            let expectedSize = request.size > 0 ? request.size : pending.size
+            let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
             var resumeOffset: UInt64 = 0
-            if FileManager.default.fileExists(atPath: destPath.path) {
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: destPath.path),
+            if FileManager.default.fileExists(atPath: incompletePath.path) {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: incompletePath.path),
                    let existingSize = attrs[.size] as? UInt64,
-                   existingSize > 0 && existingSize < request.size {
+                   existingSize > 0 && (expectedSize == 0 || existingSize < expectedSize) {
                     resumeOffset = existingSize
-                    logger.info("Found partial file \(destPath.lastPathComponent), \(existingSize)/\(request.size) bytes, resuming from offset \(resumeOffset)")
+                    logger.info("Found incomplete file \(incompletePath.lastPathComponent), \(existingSize)/\(expectedSize) bytes, resuming from offset \(resumeOffset)")
                 }
             }
 
@@ -594,7 +596,7 @@ public final class DownloadManager {
                 transferId: pending.transferId,
                 username: pending.username,
                 filename: pending.filename,
-                size: request.size,
+                size: expectedSize,
                 downloadToken: token,
                 transferToken: request.token,  // This is sent on F connection handshake
                 offset: resumeOffset           // Resume from partial file if exists
@@ -619,7 +621,7 @@ public final class DownloadManager {
             let peerIP = pending.peerIP
             let peerPort = pending.peerPort
             let transferToken = request.token
-            let fileSize = request.size
+            let fileSize = expectedSize
             let peerUsername = pending.username
 
             // Cancel any prior watchdog for this token (defensive — a fresh
@@ -757,17 +759,19 @@ public final class DownloadManager {
             _ = removePendingFileTransfer(username: username, transferToken: transferToken)
 
             // Compute destination path preserving folder structure
-            let destPath = computeDestPath(for: pending.filename, username: username)
-            let filename = destPath.lastPathComponent
+            let finalPath = computeDestPath(for: pending.filename, username: username)
+            let incompletePath = computeIncompletePath(for: pending.filename, username: username)
+            let filename = finalPath.lastPathComponent
 
             // Receive file data
             try await receiveFileData(
                 connection: connection,
-                destPath: destPath,
+                destPath: incompletePath,
                 expectedSize: fileSize,
                 transferId: pending.transferId,
                 resumeOffset: resumeOffset
             )
+            try finalizeCompletedDownload(from: incompletePath, to: finalPath)
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
@@ -782,14 +786,14 @@ public final class DownloadManager {
             transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = fileSize
-                t.localPath = destPath
+                t.localPath = finalPath
                 t.error = nil
             }
 
-            logger.info("Download complete (outgoing F): \(filename) -> \(destPath.path)")
+            logger.info("Download complete (outgoing F): \(filename) -> \(finalPath.path)")
             ActivityLogger.shared?.logDownloadCompleted(filename: filename)
-            applyFolderArtworkIfNeeded(for: destPath)
-            organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
+            applyFolderArtworkIfNeeded(for: finalPath)
+            organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
 
             // Record in statistics
             statisticsState?.recordTransfer(
@@ -942,7 +946,7 @@ public final class DownloadManager {
 
     private func receiveFileData(connection: NWConnection, destPath: URL, expectedSize: UInt64, transferId: UUID, resumeOffset: UInt64 = 0) async throws {
         // SECURITY: Check for symlink attacks before creating any files
-        let baseDir = getDownloadDirectory()
+        let baseDir = getIncompleteDownloadDirectory()
         guard isPathSafe(destPath, within: baseDir) else {
             logger.error("SECURITY: Symlink attack detected for path \(destPath.path)")
             throw DownloadError.cannotCreateFile
@@ -1030,23 +1034,11 @@ public final class DownloadManager {
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
         logger.info("File verification: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize)")
-        // If expected size is 0, something went wrong with TransferRequest parsing
-        if expectedSize == 0 {
-            logger.error("Expected size is 0 - TransferRequest parsing likely failed")
-        }
-
-        // Allow small discrepancy (up to 0.1% or 1KB, whichever is larger)
-        let tolerance = max(1024, expectedSize / 1000)
-        let sizeDiff = actualSize > expectedSize ? actualSize - expectedSize : expectedSize - actualSize
-
-
-        if expectedSize > 0 && sizeDiff > tolerance {
-            logger.error("File size mismatch: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff))")
+        if expectedSize > 0 && actualSize >= expectedSize {
+            logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
+        } else {
+            logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
-        }
-
-        if actualSize != expectedSize && expectedSize > 0 {
-            logger.warning("Minor size discrepancy: expected \(expectedSize), got \(actualSize) (diff: \(sizeDiff) bytes) - accepting")
         }
 
         connection.cancel()
@@ -1095,6 +1087,14 @@ public final class DownloadManager {
         return downloadsDir
     }
 
+    private func getIncompleteDownloadDirectory() -> URL {
+        if let override = _downloadDirectoryOverride {
+            return override.appendingPathComponent("Incomplete", isDirectory: true)
+        }
+        return settings?.incompleteDownloadDirectory
+            ?? getDownloadDirectory().appendingPathComponent("Incomplete", isDirectory: true)
+    }
+
     /// Compute destination path preserving folder structure from SoulSeek path
     /// e.g., "@@music\Artist\Album\01 Song.mp3" -> "Downloads/SeeleSeek/Artist/Album/01 Song.mp3"
     private func computeDestPath(for soulseekPath: String, username: String) -> URL {
@@ -1114,6 +1114,26 @@ public final class DownloadManager {
         }
 
         return destURL
+    }
+
+    private func computeIncompletePath(for soulseekPath: String, username: String) -> URL {
+        let incompleteDir = getIncompleteDownloadDirectory()
+        let displayName = sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
+        let digest = SHA256.hash(data: Data("\(username)\u{0}\(soulseekPath)".utf8))
+        let hash = digest.map { String(format: "%02x", $0) }.joined()
+        return incompleteDir.appendingPathComponent("INCOMPLETE\(hash)_\(displayName)")
+    }
+
+    private func finalizeCompletedDownload(from incompletePath: URL, to finalPath: URL) throws {
+        guard incompletePath != finalPath else { return }
+
+        let finalParent = finalPath.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: finalParent, withIntermediateDirectories: true)
+
+        if FileManager.default.fileExists(atPath: finalPath.path) {
+            try FileManager.default.removeItem(at: finalPath)
+        }
+        try FileManager.default.moveItem(at: incompletePath, to: finalPath)
     }
 
     /// Resolve a SoulSeek path into a relative download path using a template.
@@ -1417,10 +1437,10 @@ public final class DownloadManager {
         }
 
         if entries.count == 1 {
-            // Single entry - use it directly (most common case)
-            let pending = entries[0]
-            _ = removePendingFileTransfer(username: username, transferToken: pending.transferToken)
-            await handleFileTransferWithPending(pending, connection: connection)
+            // Still read and verify FileTransferInit. A stale F connection
+            // from the same user but a previous token must not consume the
+            // only pending entry.
+            await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
         } else {
             // Multiple entries for same user - receive FileTransferInit token first to match
             await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
@@ -1516,14 +1536,16 @@ public final class DownloadManager {
                 offsetData.appendUInt64(pending.offset)
                 try await connection.sendRaw(offsetData)
 
-                let destPath = computeDestPath(for: pending.filename, username: pending.username)
+                let finalPath = computeDestPath(for: pending.filename, username: pending.username)
+                let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
                 try await receiveFileDataFromPeer(
                     connection: connection,
-                    destPath: destPath,
+                    destPath: incompletePath,
                     expectedSize: pending.size,
                     transferId: pending.transferId,
                     resumeOffset: pending.offset
                 )
+                try finalizeCompletedDownload(from: incompletePath, to: finalPath)
 
                 let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
                 cancelRetry(transferId: pending.transferId)
@@ -1537,159 +1559,25 @@ public final class DownloadManager {
                 transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .completed
                     t.bytesTransferred = pending.size
-                    t.localPath = destPath
+                    t.localPath = finalPath
                     t.error = nil
                 }
-                ActivityLogger.shared?.logDownloadCompleted(filename: destPath.lastPathComponent)
-                applyFolderArtworkIfNeeded(for: destPath)
-                organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
+                ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
+                applyFolderArtworkIfNeeded(for: finalPath)
+                organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
                 statisticsState?.recordTransfer(
-                    filename: destPath.lastPathComponent,
+                    filename: finalPath.lastPathComponent,
                     username: pending.username,
                     size: pending.size,
                     duration: duration,
                     isDownload: true
                 )
             } else {
-                // Token didn't match any pending - try first entry as fallback
-                logger.warning("Token \(receivedToken) didn't match any pending transfer for \(username)")
-                if let fallback = entries.first {
-                    _ = removePendingFileTransfer(username: username, transferToken: fallback.transferToken)
-                    // Put token back into buffer so handleFileTransferWithPending can read it
-                    await connection.prependToFileTransferBuffer(tokenData)
-                    await handleFileTransferWithPending(fallback, connection: connection)
-                }
+                logger.warning("F connection token \(receivedToken) didn't match any pending transfer for \(username); closing stale connection")
+                await connection.disconnect()
             }
         } catch {
             logger.error("Failed token-match F connection: \(error.localizedDescription)")
-        }
-    }
-
-    /// Common handler for file transfer with a pending transfer record
-    private func handleFileTransferWithPending(_ pending: PendingFileTransfer, connection: PeerConnection) async {
-        guard let transferState else {
-            logger.error("TransferState not configured in handleFileTransferWithPending")
-            return
-        }
-
-        logger.info("File transfer connection, sending transferToken=\(pending.transferToken) offset=\(pending.offset)")
-
-        // Compute destination path preserving folder structure
-        let destPath = computeDestPath(for: pending.filename, username: pending.username)
-        let filename = destPath.lastPathComponent
-
-        logger.info("Receiving file to: \(destPath.path)")
-
-        do {
-            // Note: receive loop is already stopped in PeerConnection.handleInitMessage when F connection detected
-            // This call is now just a safety no-op (stopReceiving is idempotent)
-            await connection.stopReceiving()
-
-            // Small delay to let any in-flight network data arrive
-            try await Task.sleep(for: .milliseconds(50))
-
-            // Per SoulSeek/nicotine+ protocol on F connections:
-            // 1. UPLOADER sends FileTransferInit (token - 4 bytes)
-            // 2. DOWNLOADER sends FileOffset (offset - 8 bytes)
-            // 3. UPLOADER sends raw file data
-            // See: https://nicotine-plus.org/doc/SLSKPROTOCOL.md step 8-9
-
-            // Step 1: Receive FileTransferInit from uploader (token - 4 bytes)
-            // Check if data was already received by the message loop before we stopped it
-            var tokenData: Data
-            let bufferedData = await connection.getFileTransferBuffer()
-            if bufferedData.count >= 4 {
-                logger.debug("Using \(bufferedData.count) bytes from file transfer buffer")
-                tokenData = bufferedData.prefix(4)
-                // Put remaining data back (if any) for file data
-                if bufferedData.count > 4 {
-                    await connection.prependToFileTransferBuffer(Data(bufferedData.dropFirst(4)))
-                }
-            } else {
-                logger.debug("Waiting for FileTransferInit from uploader")
-                if bufferedData.count > 0 {
-                    // Have partial data, need more
-                    let remaining = try await connection.receiveRawBytes(count: 4 - bufferedData.count, timeout: 30)
-                    tokenData = bufferedData + remaining
-                } else {
-                    tokenData = try await connection.receiveRawBytes(count: 4, timeout: 30)
-                }
-            }
-
-            let receivedToken = tokenData.readUInt32(at: 0) ?? 0
-            logger.debug("Received FileTransferInit: token=\(receivedToken) (expected=\(pending.transferToken))")
-
-            if receivedToken != pending.transferToken {
-                logger.warning("Token mismatch: received \(receivedToken) but expected \(pending.transferToken)")
-            }
-
-            // Step 2: Send FileOffset (offset - 8 bytes)
-            var offsetData = Data()
-            offsetData.appendUInt64(pending.offset)
-            logger.debug("Sending FileOffset: offset=\(pending.offset)")
-            try await connection.sendRaw(offsetData)
-
-            logger.debug("Handshake complete, receiving file data")
-
-            // Receive file data using the PeerConnection
-            try await receiveFileDataFromPeer(
-                connection: connection,
-                destPath: destPath,
-                expectedSize: pending.size,
-                transferId: pending.transferId,
-                resumeOffset: pending.offset
-            )
-
-            // Calculate transfer duration
-            let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
-
-            cancelRetry(transferId: pending.transferId)
-
-            // Mark as completed with local path for Finder reveal
-            transferState.updateTransfer(id: pending.transferId) { t in
-                t.status = .completed
-                t.bytesTransferred = pending.size
-                t.localPath = destPath
-                t.error = nil
-            }
-
-            logger.info("Download complete: \(filename) -> \(destPath.path)")
-            ActivityLogger.shared?.logDownloadCompleted(filename: filename)
-            applyFolderArtworkIfNeeded(for: destPath)
-            organizeCompletedDownload(currentPath: destPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
-
-            logger.debug("Recording download stats: \(filename), size=\(pending.size), duration=\(duration)")
-            if let stats = statisticsState {
-                stats.recordTransfer(
-                    filename: filename,
-                    username: pending.username,
-                    size: pending.size,
-                    duration: duration,
-                    isDownload: true
-                )
-                logger.debug("Stats recorded for download of \(pending.filename)")
-            } else {
-                logger.warning("statisticsState is nil")
-            }
-
-            // Clean up the original download tracking
-            pendingDownloads.removeValue(forKey: pending.downloadToken)
-
-        } catch {
-            logger.error("File transfer failed: \(error.localizedDescription)")
-
-            let errorMsg = error.localizedDescription
-            let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
-
-            pendingDownloads.removeValue(forKey: pending.downloadToken)
-            failDownload(
-                transferId: pending.transferId,
-                username: pending.username,
-                filename: pending.filename,
-                size: pending.size,
-                reason: errorMsg,
-                retryCount: currentRetryCount
-            )
         }
     }
 
@@ -1702,7 +1590,7 @@ public final class DownloadManager {
         resumeOffset: UInt64 = 0
     ) async throws {
         // SECURITY: Check for symlink attacks before creating any files
-        let baseDir = getDownloadDirectory()
+        let baseDir = getIncompleteDownloadDirectory()
         guard isPathSafe(destPath, within: baseDir) else {
             logger.error("SECURITY: Symlink attack detected for path \(destPath.path)")
             throw DownloadError.cannotCreateFile
@@ -1945,19 +1833,9 @@ public final class DownloadManager {
         // Like nicotine+: require actualSize >= expectedSize
         if expectedSize > 0 && actualSize >= expectedSize {
             logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
-        } else if expectedSize == 0 && actualSize > 0 {
-            // Expected size was 0 (parsing issue) but we got data - accept it
-            logger.warning("Expected size was 0 but received \(actualSize) bytes - accepting")
-        } else if actualSize < expectedSize && expectedSize > 0 {
-            // Check if we're very close (99%+) - might be a metadata size mismatch
-            if percentComplete >= 99.0 {
-                // Accept files that are 99%+ complete - likely a slight size mismatch in peer's metadata
-                logger.warning("Near-complete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.2f", percentComplete))%) - accepting")
-            } else {
-                // Incomplete transfer - nicotine+ would fail this too
-                logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
-                throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
-            }
+        } else {
+            logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
+            throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
         }
 
         await connection.disconnect()
@@ -2358,15 +2236,15 @@ public final class DownloadManager {
         }
 
         // Check if we attempted a resume - if so, delete partial and retry from scratch
-        let destPath = computeDestPath(for: pending.filename, username: pending.username)
-        if FileManager.default.fileExists(atPath: destPath.path) {
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: destPath.path),
+        let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
+        if FileManager.default.fileExists(atPath: incompletePath.path) {
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: incompletePath.path),
                let existingSize = attrs[.size] as? UInt64,
                existingSize > 0 {
                 // We had a partial file - the peer might not support resume
                 // Delete partial and retry from scratch
                 logger.warning("Upload failed after resume attempt - deleting partial file and retrying from scratch")
-                try? FileManager.default.removeItem(at: destPath)
+                try? FileManager.default.removeItem(at: incompletePath)
 
                 // Mark for retry with status .queued
                 transferState?.updateTransfer(id: pending.transferId) { t in
@@ -2799,6 +2677,10 @@ public final class DownloadManager {
     /// a temp directory instead of `~/Downloads/SeeleSeek`.
     internal func _setDownloadDirectoryOverrideForTest(_ url: URL?) {
         _downloadDirectoryOverride = url
+    }
+
+    internal func _incompleteBasenameForTest(soulseekPath: String, username: String) -> String {
+        computeIncompletePath(for: soulseekPath, username: username).lastPathComponent
     }
 
     private var _downloadDirectoryOverride: URL?

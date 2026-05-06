@@ -159,14 +159,9 @@ struct DownloadRetryFlowTests {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         manager._setDownloadDirectoryOverrideForTest(tempRoot)
 
-        // Default template is "{username}/{folders}/{filename}" → for
-        // "@@music\\Artist\\Album\\song.mp3" with username "alice" the
-        // resolved relative path is "alice/Artist/Album/song.mp3".
         let partialPath = tempRoot
-            .appendingPathComponent("alice")
-            .appendingPathComponent("Artist")
-            .appendingPathComponent("Album")
-            .appendingPathComponent("song.mp3")
+            .appendingPathComponent("Incomplete")
+            .appendingPathComponent(manager._incompleteBasenameForTest(soulseekPath: filename, username: "alice"))
         try FileManager.default.createDirectory(
             at: partialPath.deletingLastPathComponent(),
             withIntermediateDirectories: true

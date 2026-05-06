@@ -87,6 +87,7 @@ public protocol StatisticsRecording: AnyObject, Sendable {
 @MainActor
 public protocol DownloadSettingsProviding: AnyObject, Sendable {
     var activeDownloadTemplate: String { get }
+    var incompleteDownloadDirectory: URL { get }
     var setFolderIcons: Bool { get }
 }
 

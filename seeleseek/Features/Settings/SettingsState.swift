@@ -545,6 +545,10 @@ extension SettingsState {
         }
         return downloadFolderFormat.template
     }
+
+    var incompleteDownloadDirectory: URL {
+        incompleteLocation
+    }
 }
 
 // MARK: - Speed Formatting
