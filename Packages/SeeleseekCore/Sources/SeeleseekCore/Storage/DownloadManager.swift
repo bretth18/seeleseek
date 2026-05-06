@@ -759,9 +759,8 @@ public final class DownloadManager {
             _ = removePendingFileTransfer(username: username, transferToken: transferToken)
 
             // Compute destination path preserving folder structure
-            let finalPath = computeDestPath(for: pending.filename, username: username)
+            let desiredFinalPath = computeDestPath(for: pending.filename, username: username)
             let incompletePath = computeIncompletePath(for: pending.filename, username: username)
-            let filename = finalPath.lastPathComponent
 
             // Receive file data
             try await receiveFileData(
@@ -771,7 +770,11 @@ public final class DownloadManager {
                 transferId: pending.transferId,
                 resumeOffset: resumeOffset
             )
-            try finalizeCompletedDownload(from: incompletePath, to: finalPath)
+            // `finalPath` may differ from `desiredFinalPath` if a file was
+            // already at the destination — finalize will pick a non-colliding
+            // suffix so we never silently clobber an existing local copy.
+            let finalPath = try finalizeCompletedDownload(from: incompletePath, to: desiredFinalPath)
+            let filename = finalPath.lastPathComponent
 
             // Calculate transfer duration
             let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
@@ -1121,19 +1124,96 @@ public final class DownloadManager {
         let displayName = sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
         let digest = SHA256.hash(data: Data("\(username)\u{0}\(soulseekPath)".utf8))
         let hash = digest.map { String(format: "%02x", $0) }.joined()
-        return incompleteDir.appendingPathComponent("INCOMPLETE\(hash)_\(displayName)")
+        // Constant prefix is 75 bytes ("INCOMPLETE" + 64-hex + "_"); macOS
+        // caps a single path component at 255 bytes. Tagged music filenames
+        // can already approach 200 bytes, and the SHA256 alone disambiguates
+        // the entry — `displayName` is purely for human readability — so
+        // budget the remainder conservatively and truncate by UTF-8 bytes
+        // (not grapheme clusters) to avoid blowing the limit on multibyte
+        // characters. Preserve the extension so the suffix stays meaningful.
+        let truncatedName = truncateBasenamePreservingExtension(displayName, maxBytes: 160)
+        return incompleteDir.appendingPathComponent("INCOMPLETE\(hash)_\(truncatedName)")
     }
 
-    private func finalizeCompletedDownload(from incompletePath: URL, to finalPath: URL) throws {
-        guard incompletePath != finalPath else { return }
+    private func truncateBasenamePreservingExtension(_ name: String, maxBytes: Int) -> String {
+        guard name.utf8.count > maxBytes else { return name }
+        let ext = (name as NSString).pathExtension
+        let stem = (name as NSString).deletingPathExtension
+        let extWithDot = ext.isEmpty ? "" : ".\(ext)"
+        let extBytes = extWithDot.utf8.count
+        // If the extension alone exceeds the budget, fall back to truncating
+        // the whole name instead of trying to keep an unreasonably long ext.
+        let stemBudget = max(1, maxBytes - extBytes)
+        var truncatedStem = ""
+        var bytes = 0
+        for char in stem {
+            let charBytes = String(char).utf8.count
+            if bytes + charBytes > stemBudget { break }
+            truncatedStem.append(char)
+            bytes += charBytes
+        }
+        let result = truncatedStem + extWithDot
+        // Defensive: if the extension was the thing that overflowed, fall
+        // back to a hard prefix on the original name.
+        if result.utf8.count > maxBytes {
+            var hard = ""
+            var b = 0
+            for char in name {
+                let cb = String(char).utf8.count
+                if b + cb > maxBytes { break }
+                hard.append(char)
+                b += cb
+            }
+            return hard.isEmpty ? "download" : hard
+        }
+        return result.isEmpty ? "download" : result
+    }
+
+    /// Move a completed transfer from the incomplete directory to its final
+    /// destination. If a file already exists at `finalPath` (typical case:
+    /// the user re-downloaded the same item), suffix the new arrival with
+    /// "(1)", "(2)", ... rather than silently clobbering the existing copy
+    /// — the prior behavior was indistinguishable from data loss when the
+    /// existing file was a manually edited / re-tagged version.
+    ///
+    /// Returns the URL the file was actually moved to.
+    @discardableResult
+    private func finalizeCompletedDownload(from incompletePath: URL, to finalPath: URL) throws -> URL {
+        guard incompletePath != finalPath else { return finalPath }
 
         let finalParent = finalPath.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: finalParent, withIntermediateDirectories: true)
 
-        if FileManager.default.fileExists(atPath: finalPath.path) {
-            try FileManager.default.removeItem(at: finalPath)
+        let resolved = nonCollidingDestination(for: finalPath)
+        if resolved != finalPath {
+            logger.info("Destination \(finalPath.lastPathComponent) exists — using \(resolved.lastPathComponent) instead")
         }
-        try FileManager.default.moveItem(at: incompletePath, to: finalPath)
+        try FileManager.default.moveItem(at: incompletePath, to: resolved)
+        return resolved
+    }
+
+    /// Find a sibling URL that doesn't collide with an existing file. If
+    /// `url` is free, returns it unchanged; otherwise inserts " (N)" before
+    /// the extension, scanning N upward until a free slot is found.
+    private func nonCollidingDestination(for url: URL) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return url }
+        let parent = url.deletingLastPathComponent()
+        let ext = url.pathExtension
+        let stem = url.deletingPathExtension().lastPathComponent
+        var n = 1
+        while n < 10_000 {
+            let candidateName = ext.isEmpty ? "\(stem) (\(n))" : "\(stem) (\(n)).\(ext)"
+            let candidate = parent.appendingPathComponent(candidateName)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+            n += 1
+        }
+        // Safety fallback: a UUID-suffixed name will be unique even if the
+        // parent dir somehow has 10k matching siblings.
+        let fallbackName = ext.isEmpty
+            ? "\(stem) (\(UUID().uuidString))"
+            : "\(stem) (\(UUID().uuidString)).\(ext)"
+        return parent.appendingPathComponent(fallbackName)
     }
 
     /// Resolve a SoulSeek path into a relative download path using a template.
@@ -1436,15 +1516,10 @@ public final class DownloadManager {
             return
         }
 
-        if entries.count == 1 {
-            // Still read and verify FileTransferInit. A stale F connection
-            // from the same user but a previous token must not consume the
-            // only pending entry.
-            await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
-        } else {
-            // Multiple entries for same user - receive FileTransferInit token first to match
-            await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
-        }
+        // Always read and verify the FileTransferInit token, even when only
+        // one entry is pending — a stale F connection from the same user
+        // but a previous token must not consume the only pending entry.
+        await handleFileTransferWithTokenMatch(entries: entries, username: username, connection: connection)
     }
 
     // MARK: - Pending File Transfer Helpers (array-based)
@@ -1536,7 +1611,7 @@ public final class DownloadManager {
                 offsetData.appendUInt64(pending.offset)
                 try await connection.sendRaw(offsetData)
 
-                let finalPath = computeDestPath(for: pending.filename, username: pending.username)
+                let desiredFinalPath = computeDestPath(for: pending.filename, username: pending.username)
                 let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
                 try await receiveFileDataFromPeer(
                     connection: connection,
@@ -1545,7 +1620,7 @@ public final class DownloadManager {
                     transferId: pending.transferId,
                     resumeOffset: pending.offset
                 )
-                try finalizeCompletedDownload(from: incompletePath, to: finalPath)
+                let finalPath = try finalizeCompletedDownload(from: incompletePath, to: desiredFinalPath)
 
                 let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
                 cancelRetry(transferId: pending.transferId)
@@ -2648,7 +2723,7 @@ public final class DownloadManager {
             transferId: transfer.id,
             username: transfer.username,
             filename: transfer.filename,
-            size: request.size,
+            size: request.size > 0 ? request.size : transfer.size,
             peerIP: info.ip.isEmpty ? nil : info.ip,
             peerPort: info.port > 0 ? info.port : nil
         )
