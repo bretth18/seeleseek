@@ -20,6 +20,41 @@ public final class ShareManager {
     public var totalFolders: Int { sharedFolders.count }
     public var totalSize: UInt64 { fileIndex.reduce(0) { $0 + $1.size } }
 
+    /// Per-subscriber continuations. Vanilla `AsyncStream` is
+    /// single-consumer, so we fan out yields ourselves.
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    private var countsChangedDebounce: Task<Void, Never>?
+
+    /// Subscribe to share-count change events. Each call returns a fresh
+    /// stream; cancelling the consuming Task tears down the continuation.
+    public func countsChangesStream() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.continuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    self?.continuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    /// Coalesce rapid changes into a single trailing-edge yield (200 ms
+    /// after the last change). Bulk operations like a 10-folder add would
+    /// otherwise produce N broadcasts.
+    private func notifyCountsChanged() {
+        countsChangedDebounce?.cancel()
+        countsChangedDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self, !Task.isCancelled else { return }
+            // Snapshot — subscriber teardown can mutate the dict.
+            let snapshot = Array(self.continuations.values)
+            for continuation in snapshot {
+                continuation.yield()
+            }
+        }
+    }
+
     // MARK: - Types
 
     /// Who is allowed to see a shared folder when peers browse or search
@@ -130,11 +165,18 @@ public final class ShareManager {
     // MARK: - Persistence Keys
 
     private let sharedFoldersKey = "SeeleSeek.SharedFolders"
+    /// Backing store for shared-folder list and per-path security-scoped
+    /// bookmarks. Injectable so tests can hand in a fresh suite and not
+    /// race other tests over `UserDefaults.standard`.
+    private let defaults: UserDefaults
 
     // MARK: - Initialization
 
-    public init() {
-        load()
+    /// Side-effect-free. Caller must invoke `loadPersistedFolders()` and
+    /// `rescanAll()` explicitly after wiring `countsChangesStream()`
+    /// consumers.
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
     }
 
     // MARK: - Folder Management
@@ -153,15 +195,20 @@ public final class ShareManager {
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
-            UserDefaults.standard.set(bookmarkData, forKey: "bookmark-\(url.path)")
+            defaults.set(bookmarkData, forKey: "bookmark-\(url.path)")
         } catch {
             logger.error("Failed to create bookmark: \(error.localizedDescription)")
         }
 
         let folder = SharedFolder(path: url.path)
 
-        // Avoid duplicates
+        // Avoid duplicates. Security-scoped resource access is reference-
+        // counted: the redundant `start` we just did needs a matching
+        // `stop` here, otherwise repeated add-the-same-folder clicks
+        // accumulate access counts that are never balanced (the matching
+        // `stop` in `removeFolder` only fires once).
         guard !sharedFolders.contains(where: { $0.path == folder.path }) else {
+            url.stopAccessingSecurityScopedResource()
             logger.info("Folder already shared: \(url.path)")
             return
         }
@@ -169,9 +216,11 @@ public final class ShareManager {
         sharedFolders.append(folder)
         save()
 
-        // Scan the new folder
+        // Notify after the scan so the (folders, files) broadcast pair
+        // is atomic — never folders=N+1 with the old file count.
         Task {
             await scanFolder(folder)
+            notifyCountsChanged()
         }
     }
 
@@ -187,9 +236,10 @@ public final class ShareManager {
         URL(fileURLWithPath: folder.path).stopAccessingSecurityScopedResource()
 
         // Remove bookmark
-        UserDefaults.standard.removeObject(forKey: "bookmark-\(folder.path)")
+        defaults.removeObject(forKey: "bookmark-\(folder.path)")
 
         save()
+        notifyCountsChanged()
     }
 
     // MARK: - Scanning
@@ -208,9 +258,19 @@ public final class ShareManager {
 
         lastScanDate = Date()
         isScanning = false
-        save()
+        // Only persist if the for-loop actually ran. With an empty
+        // sharedFolders, save() would JSON-encode `[]` and overwrite the
+        // user's persisted folder list — so a rescan triggered before
+        // (or instead of) loadPersistedFolders silently wipes their
+        // shares. addFolder/removeFolder save() their own changes; the
+        // rescan-time save is only here to persist refreshed
+        // per-folder counts updated by scanFolder.
+        if !sharedFolders.isEmpty {
+            save()
+        }
 
         logger.info("Scan complete: \(self.totalFiles) files in \(self.totalFolders) folders")
+        notifyCountsChanged()
     }
 
     /// Bundle of per-folder scan outputs produced on a background task and
@@ -232,7 +292,7 @@ public final class ShareManager {
         // Restore bookmark access on the main actor before handing the URL
         // to a detached task — security-scoped resource access is per-URL
         // and must be balanced, but the access call itself is cheap.
-        if let bookmarkData = UserDefaults.standard.data(forKey: "bookmark-\(folder.path)") {
+        if let bookmarkData = defaults.data(forKey: "bookmark-\(folder.path)") {
             var isStale = false
             if let url = try? URL(
                 resolvingBookmarkData: bookmarkData,
@@ -386,6 +446,9 @@ public final class ShareManager {
             )
         }
         save()
+        // No notify — `SharedFoldersFiles` broadcasts `totalFiles` (all
+        // visibilities), which doesn't change here. Revisit if we switch
+        // broadcast semantics to public-only.
     }
 
     /// Convert indexed files to SharedFile format for responses
@@ -464,22 +527,22 @@ public final class ShareManager {
     private func save() {
         do {
             let data = try JSONEncoder().encode(sharedFolders)
-            UserDefaults.standard.set(data, forKey: sharedFoldersKey)
+            defaults.set(data, forKey: sharedFoldersKey)
         } catch {
             logger.error("Failed to save shared folders: \(error.localizedDescription)")
         }
     }
 
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: sharedFoldersKey) else { return }
+    /// Decode persisted shared-folder list from `UserDefaults`. Synchronous
+    /// — does NOT trigger a rescan. Call `rescanAll()` after this to
+    /// repopulate `fileIndex`. The two steps are split so the caller can
+    /// register `countsChangesStream` subscribers between them; the
+    /// rescan-completion yield is then guaranteed to be observed.
+    public func loadPersistedFolders() {
+        guard let data = defaults.data(forKey: sharedFoldersKey) else { return }
 
         do {
             sharedFolders = try JSONDecoder().decode([SharedFolder].self, from: data)
-
-            // Restore bookmark access and rescan
-            Task {
-                await rescanAll()
-            }
         } catch {
             logger.error("Failed to load shared folders: \(error.localizedDescription)")
         }

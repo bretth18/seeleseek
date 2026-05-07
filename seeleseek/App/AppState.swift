@@ -175,6 +175,12 @@ final class AppState {
                 maxResults: settings.maxSearchResponseResults
             )
         }
+
+        // ShareManager construction is side-effect-free; load + rescan
+        // are explicit so they happen after the countsChangesStream
+        // consumer above is wired.
+        client.shareManager.loadPersistedFolders()
+        Task { await client.shareManager.rescanAll() }
     }
 
     // MARK: - Folder Download Coordinator

@@ -872,16 +872,30 @@ public final class UploadManager {
                 }
             }
 
-            // Signal EOF to the connection to ensure all data is flushed
-            // This sends an empty final message which triggers TCP to push remaining data
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume()
-                    }
-                })
+            // Short read (file changed under us, or `read(upTo:)` ended
+            // early) — surface as failure rather than racing the peer's
+            // UploadFailed with a bogus `.completed`.
+            guard bytesSent >= totalSize else {
+                throw UploadError.connectionFailed
+            }
+
+            // Best-effort EOF half-close. The downloader cancels its side
+            // the moment `bytesReceived >= expectedSize`, so this almost
+            // always races a peer FIN and resolves with EPIPE-like errors.
+            // Every byte is already on the wire — swallow the error
+            // instead of scheduling a retry for an already-delivered file.
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume()
+                        }
+                    })
+                }
+            } catch {
+                logger.debug("EOF half-close send returned \(error.localizedDescription) — peer closed first; transfer already delivered")
             }
 
             // Measure transfer duration at the moment the last application
