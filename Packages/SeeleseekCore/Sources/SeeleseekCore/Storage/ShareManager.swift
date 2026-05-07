@@ -20,6 +20,55 @@ public final class ShareManager {
     public var totalFolders: Int { sharedFolders.count }
     public var totalSize: UInt64 { fileIndex.reduce(0) { $0 + $1.size } }
 
+    /// Subscribers notified (on MainActor) whenever the broadcast-relevant
+    /// share counts change — i.e. after a rescan completes, a newly added
+    /// folder finishes its initial scan, or a folder is removed.
+    /// `NetworkClient` subscribes so the server's view of our shares stays
+    /// in sync after the initial-login broadcast. Without this hook the
+    /// login broadcast loses the race against the disk scan and the server
+    /// keeps reporting 0 shared files until the user toggles connection
+    /// state.
+    ///
+    /// Multi-handler (UUID-keyed) rather than a single closure: the
+    /// project's CLAUDE.md flags single-closure callbacks as silent-overwrite
+    /// hazards. Use `addCountsChangedHandler` to subscribe and the returned
+    /// token with `removeCountsChangedHandler` to unsubscribe. Test seams
+    /// also use this — driving the same observable hook from tests catches
+    /// regressions in real subscriber wiring.
+    private var countsChangedHandlers: [UUID: () -> Void] = [:]
+    /// Coalescing task: bulk operations (a 10-folder add, a removeFolder
+    /// loop) would otherwise produce N broadcasts. We delay 200 ms after
+    /// the *last* count-changing event and fire once. 200 ms is short enough
+    /// that the server-visible state lags imperceptibly while still folding
+    /// programmatic batches into a single update.
+    private var countsChangedDebounce: Task<Void, Never>?
+
+    @discardableResult
+    public func addCountsChangedHandler(_ handler: @escaping () -> Void) -> UUID {
+        let id = UUID()
+        countsChangedHandlers[id] = handler
+        return id
+    }
+
+    public func removeCountsChangedHandler(_ id: UUID) {
+        countsChangedHandlers.removeValue(forKey: id)
+    }
+
+    /// Schedule a coalesced fire of every registered handler. Cheap to call
+    /// repeatedly in a tight loop — only the trailing edge actually invokes
+    /// subscribers.
+    private func notifyCountsChanged() {
+        countsChangedDebounce?.cancel()
+        countsChangedDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let self, !Task.isCancelled else { return }
+            // Snapshot before iterating — a handler that adds/removes
+            // subscribers shouldn't mutate the dict mid-iteration.
+            let handlers = Array(self.countsChangedHandlers.values)
+            for handler in handlers { handler() }
+        }
+    }
+
     // MARK: - Types
 
     /// Who is allowed to see a shared folder when peers browse or search
@@ -169,9 +218,16 @@ public final class ShareManager {
         sharedFolders.append(folder)
         save()
 
-        // Scan the new folder
+        // Scan the new folder, then notify so the server learns about the
+        // new file count. Notifying before the scan would push a broadcast
+        // with an inflated folder count and zero new files, which we'd
+        // immediately replace seconds later when the scan finishes — and
+        // the (folders, files) pair is broadcast atomically, so an
+        // intermediate (folders=N+1, files=oldCount) state is wrong on its
+        // face.
         Task {
             await scanFolder(folder)
+            notifyCountsChanged()
         }
     }
 
@@ -190,6 +246,7 @@ public final class ShareManager {
         UserDefaults.standard.removeObject(forKey: "bookmark-\(folder.path)")
 
         save()
+        notifyCountsChanged()
     }
 
     // MARK: - Scanning
@@ -211,6 +268,7 @@ public final class ShareManager {
         save()
 
         logger.info("Scan complete: \(self.totalFiles) files in \(self.totalFolders) folders")
+        notifyCountsChanged()
     }
 
     /// Bundle of per-folder scan outputs produced on a background task and
@@ -386,6 +444,12 @@ public final class ShareManager {
             )
         }
         save()
+        // Deliberately does NOT call `notifyCountsChanged`. The
+        // SharedFoldersFiles message broadcast by `NetworkClient` carries
+        // `totalFiles` (every indexed file regardless of visibility), and
+        // toggling public ↔ buddies doesn't change that total. If we ever
+        // change the broadcast semantics to "publicly visible files only,"
+        // this site needs to fire too.
     }
 
     /// Convert indexed files to SharedFile format for responses

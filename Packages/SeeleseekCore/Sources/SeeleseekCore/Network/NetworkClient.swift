@@ -276,6 +276,29 @@ public final class NetworkClient {
             }
         }
 
+        // Re-broadcast SharedFoldersFiles whenever the local share index
+        // changes. The login handshake also broadcasts this, but at login
+        // time the disk rescan is usually still running — totalFiles reads
+        // 0, the server records 0, and our profile shows "0 shared files"
+        // to every peer until something forces a re-broadcast.
+        // `updateShareCounts` is a no-op while disconnected, so firing it
+        // before login is safe.
+        //
+        // Subscribe-before-publish ordering invariant: `shareManager` is a
+        // stored property of `NetworkClient`, so `ShareManager.init` (which
+        // synchronously kicks off `Task { await rescanAll() }`) runs during
+        // our property-init phase, *before* this `init` body. Subscribing
+        // here would normally lose any notifications the rescan fired in
+        // the gap — except both phases run on `MainActor`, which is serial,
+        // so the rescan Task cannot begin executing until our synchronous
+        // init body finishes (including this subscription). If anyone ever
+        // moves this subscription into a separately-invoked `configure(...)`
+        // step, that invariant breaks and the first notification is lost.
+        _ = shareManager.addCountsChangedHandler { [weak self] in
+            guard let self else { return }
+            Task { await self.updateShareCounts() }
+        }
+
         logger.info("NetworkClient initialized")
     }
 
@@ -2434,7 +2457,12 @@ public final class NetworkClient {
 
     // MARK: - Share Updates
 
-    /// Update the server with current share counts (call after scanning)
+    /// Re-broadcast `SharedFoldersFiles` to the server using `ShareManager`'s
+    /// current totals. Wired automatically via
+    /// `shareManager.addCountsChangedHandler` in `init` — fires whenever a
+    /// rescan completes, a folder's initial scan finishes, or a folder is
+    /// removed. No-op while disconnected (the login handshake itself
+    /// broadcasts a fresh count on every reconnect).
     public func updateShareCounts() async {
         guard isConnected, let connection = serverConnection else { return }
 

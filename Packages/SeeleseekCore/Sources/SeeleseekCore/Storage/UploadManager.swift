@@ -872,16 +872,42 @@ public final class UploadManager {
                 }
             }
 
-            // Signal EOF to the connection to ensure all data is flushed
-            // This sends an empty final message which triggers TCP to push remaining data
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume()
-                    }
-                })
+            // If we exited the loop with fewer bytes than the peer expects
+            // (short read because the file changed under us, or `read(upTo:)`
+            // returned nil before reaching `totalSize`), the transfer is NOT
+            // complete — the peer will mark it incomplete on their side, so
+            // surface a real failure here rather than racing them to a bogus
+            // `.completed`. Routes through the catch below for retry
+            // scheduling.
+            guard bytesSent >= totalSize else {
+                throw UploadError.connectionFailed
+            }
+
+            // Best-effort EOF half-close. We've already handed every
+            // application byte to TCP, so as far as the protocol is
+            // concerned the transfer is done. The downloader stops the
+            // moment `bytesReceived >= expectedSize` and immediately calls
+            // `connection.cancel()` — which means this `send(isComplete:
+            // true)` almost always races a TCP FIN from the peer and
+            // resolves with EPIPE / "Software caused connection abort" /
+            // "Socket is not connected". Pre-fix that throw fell through to
+            // the catch block and scheduled a retry for an upload the peer
+            // already had on disk; the row sat in the backoff ladder until
+            // max retries while the downloader's side was happily
+            // `.completed`. Swallow the error — `defer { connection.cancel() }`
+            // tears the connection down regardless.
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume()
+                        }
+                    })
+                }
+            } catch {
+                logger.debug("EOF half-close send returned \(error.localizedDescription) — peer closed first; transfer already delivered")
             }
 
             // Measure transfer duration at the moment the last application
