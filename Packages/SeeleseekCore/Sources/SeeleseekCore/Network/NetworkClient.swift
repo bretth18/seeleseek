@@ -270,25 +270,45 @@ public final class NetworkClient {
     public init() {
         logger.info("NetworkClient initializing...")
 
-        // Consume pool events via AsyncStream (replaces callback wiring)
+        // Consume pool events via AsyncStream (replaces callback wiring).
+        // Stream captured synchronously and Task body uses weak self per
+        // iteration to avoid retaining self across the loop — `guard let
+        // self` would strong-hold for the full loop lifetime, and the
+        // loop only ends when the stream tears down (which only happens
+        // when self deinits), creating a cycle.
+        let poolEvents = peerConnectionPool.events
         poolEventConsumerTask = Task { [weak self] in
-            guard let self else { return }
-            for await event in self.peerConnectionPool.events {
-                self.handlePoolEvent(event)
+            for await event in poolEvents {
+                self?.handlePoolEvent(event)
             }
         }
 
         // Re-broadcast `SharedFoldersFiles` whenever the local share
-        // index changes. The login handshake broadcasts this too, but at
-        // login the disk rescan is typically still running so totalFiles
-        // reads 0; without this consumer the server keeps reporting "0
-        // shared files" to every peer until the user reconnects with the
-        // scan already cached. `updateShareCounts` is a no-op while
+        // index changes. Without this the login broadcast (which races
+        // the disk rescan and usually loses) leaves the server reporting
+        // "0 shared files" until the user reconnects with the scan
+        // already cached. `updateShareCounts` is a no-op while
         // disconnected, so pre-login events are harmless.
+        //
+        // The continuation is registered SYNCHRONOUSLY here (not inside
+        // the Task body) so it exists before any other Task can run on
+        // MainActor — `countsChangesStream()`'s init closure fires
+        // immediately and stamps `continuations[id] = continuation`. If
+        // we instead called it inside the Task body, a `Task { await
+        // rescanAll() }` queued on the same MainActor could run first,
+        // fire `notifyCountsChanged()` against an empty `continuations`
+        // dict, and the yield would be lost. AsyncStream's buffer covers
+        // post-registration delivery, NOT pre-registration yields.
+        //
+        // Closure captures only the stream value; no `[weak self]`
+        // strong-ification inside a `for await` (which would retain
+        // self for the loop's lifetime — i.e. forever, since the loop
+        // only exits when the continuation tears down, which only
+        // happens when self deinits).
+        let countsStream = shareManager.countsChangesStream()
         shareCountsConsumerTask = Task { [weak self] in
-            guard let self else { return }
-            for await _ in self.shareManager.countsChangesStream() {
-                await self.updateShareCounts()
+            for await _ in countsStream {
+                await self?.updateShareCounts()
             }
         }
 
@@ -522,11 +542,13 @@ public final class NetworkClient {
             logger.info("Listening on port \(self.listenPort)")
             logger.info("Listening on port \(self.listenPort) (obfuscated: \(self.obfuscatedPort))")
 
-            // Step 2: Consume incoming peer connections (after listener started, so we get the fresh stream)
+            // Step 2: Consume incoming peer connections (after listener started, so we get the fresh stream).
+            // Weak self per iteration — see `poolEventConsumerTask` for the
+            // retain-cycle rationale.
             let connectionStream = await listenerService.newConnections
             listenerConsumerTask = Task { [weak self] in
-                guard let self else { return }
                 for await (connection, obfuscated) in connectionStream {
+                    guard let self else { return }
                     await self.peerConnectionPool.handleIncomingConnection(connection, obfuscated: obfuscated)
                 }
             }
@@ -2450,12 +2472,9 @@ public final class NetworkClient {
 
     // MARK: - Share Updates
 
-    /// Re-broadcast `SharedFoldersFiles` to the server using `ShareManager`'s
-    /// current totals. Wired automatically via
-    /// `shareManager.addCountsChangedHandler` in `init` — fires whenever a
-    /// rescan completes, a folder's initial scan finishes, or a folder is
-    /// removed. No-op while disconnected (the login handshake itself
-    /// broadcasts a fresh count on every reconnect).
+    /// Re-broadcast `SharedFoldersFiles` using `ShareManager`'s current
+    /// totals. Wired automatically via the `countsChangesStream`
+    /// consumer in `init`. No-op while disconnected.
     public func updateShareCounts() async {
         guard isConnected, let connection = serverConnection else { return }
 

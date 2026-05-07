@@ -24,12 +24,15 @@ struct ShareCountNotificationTests {
     private static let debounceWaitMillis = 350
 
     /// Subscribe to `countsChangesStream()` and feed each yield into the
-    /// caller's `FireCounter`. Returns the consumer Task so the test can
-    /// cancel it on teardown — uncancelled streams keep the continuation
-    /// (and hence the ShareManager) alive past the test's lifetime.
+    /// caller's `FireCounter`. Stream is allocated synchronously here so
+    /// the continuation is registered before this function returns — the
+    /// same pattern `NetworkClient.init` uses. Allocating the stream
+    /// inside the Task body would expose tests to a Task-scheduling
+    /// race against any subsequent publisher.
     private func consume(_ shares: ShareManager, into counter: FireCounter) -> Task<Void, Never> {
-        Task {
-            for await _ in shares.countsChangesStream() {
+        let stream = shares.countsChangesStream()
+        return Task {
+            for await _ in stream {
                 counter.bump()
             }
         }
