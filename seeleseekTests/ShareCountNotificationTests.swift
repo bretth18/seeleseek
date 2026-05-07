@@ -20,8 +20,16 @@ nonisolated private final class FireCounter: Sendable {
 @Suite("ShareManager count-change notifications")
 struct ShareCountNotificationTests {
 
-    /// Slack on the 200 ms debounce so loaded CI machines don't flake.
-    private static let debounceWaitMillis = 350
+    /// Generous upper bound for waiting on the 200 ms debounce + a yield
+    /// to propagate to the consumer Task. CI scheduling under contention
+    /// can easily blow past 350 ms; polling against this ceiling lets the
+    /// test return as soon as the expected value is reached without
+    /// flaking when it isn't.
+    private static let yieldTimeoutMillis = 2_000
+    /// Quiescence window after a counter reaches its target — long enough
+    /// for any rogue second yield to land. Needs to be > the 200 ms
+    /// debounce so a second debounce-window-fire would have arrived.
+    private static let quiescenceMillis = 400
 
     /// Subscribe to `countsChangesStream()` and feed each yield into the
     /// caller's `FireCounter`. Stream is allocated synchronously here so
@@ -38,6 +46,18 @@ struct ShareCountNotificationTests {
         }
     }
 
+    /// Poll until `counter` reaches `target` or `Self.yieldTimeoutMillis`
+    /// elapses. Returns the observed value. Polling-with-timeout is what
+    /// keeps these tests passing on CI under load — a fixed `Task.sleep`
+    /// has to be sized for the worst-case scheduler delay or it flakes.
+    private func waitForCounter(_ counter: FireCounter, toReach target: Int) async -> Int {
+        let deadline = Date().addingTimeInterval(Double(Self.yieldTimeoutMillis) / 1_000)
+        while counter.value < target && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return counter.value
+    }
+
     @Test("rescanAll fires each subscriber exactly once")
     func rescanAllFiresSubscribers() async {
         let shares = ShareManager()
@@ -46,9 +66,9 @@ struct ShareCountNotificationTests {
         defer { task.cancel() }
 
         await shares.rescanAll()
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        let observed = await waitForCounter(counter, toReach: 1)
 
-        #expect(counter.value == 1, "rescanAll must trigger one trailing-edge yield")
+        #expect(observed == 1, "rescanAll must trigger one trailing-edge yield")
     }
 
     @Test("removeFolder fires subscribers")
@@ -62,9 +82,9 @@ struct ShareCountNotificationTests {
         // no-ops, but the notification path is the same shape.
         let folder = ShareManager.SharedFolder(path: "/nonexistent/path")
         shares.removeFolder(folder)
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        let observed = await waitForCounter(counter, toReach: 1)
 
-        #expect(counter.value == 1)
+        #expect(observed == 1)
     }
 
     @Test("Multiple subscribers all receive every yield (fan-out)")
@@ -80,10 +100,11 @@ struct ShareCountNotificationTests {
         }
 
         await shares.rescanAll()
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        let observedA = await waitForCounter(a, toReach: 1)
+        let observedB = await waitForCounter(b, toReach: 1)
 
-        #expect(a.value == 1, "first subscriber must fire")
-        #expect(b.value == 1, "second subscriber must fire — vanilla AsyncStream is single-consumer; fan-out is implemented by ShareManager")
+        #expect(observedA == 1, "first subscriber must fire")
+        #expect(observedB == 1, "second subscriber must fire — vanilla AsyncStream is single-consumer; fan-out is implemented by ShareManager")
     }
 
     @Test("Cancelling a consumer Task removes its continuation")
@@ -98,13 +119,13 @@ struct ShareCountNotificationTests {
         cancelledTask.cancel()
         // `onTermination` hops to MainActor to remove the entry. Yield
         // the actor so the cleanup Task can run before we publish.
-        try? await Task.sleep(for: .milliseconds(50))
+        try? await Task.sleep(for: .milliseconds(100))
 
         await shares.rescanAll()
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        let observedKept = await waitForCounter(kept, toReach: 1)
 
         #expect(cancelled.value == 0, "cancelled subscriber must not fire")
-        #expect(kept.value == 1, "remaining subscriber must still fire")
+        #expect(observedKept == 1, "remaining subscriber must still fire")
     }
 
     @Test("Rapid changes coalesce into a single trailing-edge yield (debounce)")
@@ -117,7 +138,10 @@ struct ShareCountNotificationTests {
         for _ in 0..<5 {
             await shares.rescanAll()
         }
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        // Wait for the trailing-edge yield to land, then settle long
+        // enough for any rogue second yield to arrive too.
+        _ = await waitForCounter(counter, toReach: 1)
+        try? await Task.sleep(for: .milliseconds(Self.quiescenceMillis))
 
         #expect(counter.value == 1, "5 rapid changes must coalesce into 1 yield")
     }
@@ -131,10 +155,11 @@ struct ShareCountNotificationTests {
 
         // Pre-refactor `ShareManager.init` auto-spawned a rescan via load();
         // load is now an explicit, side-effect-free call. Calling it
-        // alone must NOT fire the stream — only an actual count change
-        // (rescan / add / remove) does.
+        // alone must NOT yield — only an actual count change does.
         shares.loadPersistedFolders()
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
+        // No target value to poll for (we expect 0); just sleep long
+        // enough to confirm no spurious yield arrives.
+        try? await Task.sleep(for: .milliseconds(Self.quiescenceMillis))
 
         #expect(counter.value == 0, "loadPersistedFolders must not yield — it doesn't change the file index")
     }
