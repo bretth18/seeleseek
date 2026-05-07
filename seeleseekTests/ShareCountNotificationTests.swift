@@ -37,6 +37,13 @@ struct ShareCountNotificationTests {
     /// same pattern `NetworkClient.init` uses. Allocating the stream
     /// inside the Task body would expose tests to a Task-scheduling
     /// race against any subsequent publisher.
+    ///
+    /// Caller MUST `await primeConsumer(task)` (or `await Task.sleep(...)`)
+    /// before the first publish, to give the Task body time to enter
+    /// `for await stream`. On CI the AsyncStream buffer that's supposed
+    /// to cover pre-iteration yields was not landing reliably — empirically
+    /// the consume Task needed to be parked at its first `await
+    /// iterator.next()` before yields would propagate.
     private func consume(_ shares: ShareManager, into counter: FireCounter) -> Task<Void, Never> {
         let stream = shares.countsChangesStream()
         return Task {
@@ -44,6 +51,15 @@ struct ShareCountNotificationTests {
                 counter.bump()
             }
         }
+    }
+
+    /// Hand the MainActor over long enough for a freshly-created consume
+    /// Task to enter its `for await` loop. A bare `Task.yield()` is not
+    /// sufficient on CI under load — the consume Task can lose multiple
+    /// scheduling rounds to whatever else is queued. 50 ms is empirically
+    /// well above what's needed locally and gives plenty of slack on CI.
+    private func primeConsumer() async {
+        try? await Task.sleep(for: .milliseconds(50))
     }
 
     /// Poll until `counter` reaches `target` or `Self.yieldTimeoutMillis`
@@ -64,6 +80,7 @@ struct ShareCountNotificationTests {
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
+        await primeConsumer()
 
         await shares.rescanAll()
         let observed = await waitForCounter(counter, toReach: 1)
@@ -77,6 +94,7 @@ struct ShareCountNotificationTests {
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
+        await primeConsumer()
 
         // Synthetic folder — never added, so the removeAll calls are
         // no-ops, but the notification path is the same shape.
@@ -98,6 +116,7 @@ struct ShareCountNotificationTests {
             taskA.cancel()
             taskB.cancel()
         }
+        await primeConsumer()
 
         await shares.rescanAll()
         let observedA = await waitForCounter(a, toReach: 1)
@@ -134,6 +153,7 @@ struct ShareCountNotificationTests {
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
+        await primeConsumer()
 
         for _ in 0..<5 {
             await shares.rescanAll()
@@ -152,6 +172,7 @@ struct ShareCountNotificationTests {
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
+        await primeConsumer()
 
         // Pre-refactor `ShareManager.init` auto-spawned a rescan via load();
         // load is now an explicit, side-effect-free call. Calling it
