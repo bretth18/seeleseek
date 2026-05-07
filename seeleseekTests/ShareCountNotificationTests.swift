@@ -3,34 +3,19 @@ import Foundation
 import Synchronization
 @testable import SeeleseekCore
 
-/// Lock-protected counter for cross-actor handler-invocation accounting.
-/// Built on `Mutex` so its API is `nonisolated`/`Sendable` regardless of
-/// the surrounding suite's actor isolation. `final class` (not struct)
-/// because `Mutex` is non-Copyable.
+/// `Mutex`-backed counter so the API stays `nonisolated`/`Sendable`
+/// regardless of the suite's actor isolation. `final class` because
+/// `Mutex` is non-Copyable.
 nonisolated private final class FireCounter: Sendable {
     private let state = Mutex(0)
     var value: Int { state.withLock { $0 } }
     func bump() { state.withLock { $0 += 1 } }
 }
 
-/// Regression tests for `ShareManager.countsChangesStream()` and the
-/// debounce/fan-out behavior of `notifyCountsChanged`.
-///
-/// Background: at login, `NetworkClient` broadcasts `SharedFoldersFiles`
-/// using `ShareManager.totalFiles`. The disk rescan that populates the
-/// index runs concurrently with login and almost always loses the race —
-/// the broadcast goes out as `(0, 0)` and the server keeps reporting
-/// "0 shared files" to every peer until something forces a re-broadcast.
-/// `NetworkClient` subscribes via `countsChangesStream()` so a freshly
-/// completed rescan (or add/remove) triggers `updateShareCounts`. These
-/// tests pin the contract: per-subscriber stream allocation, multi-
-/// consumer fan-out, the 200 ms debounce that coalesces bulk operations,
-/// and the AsyncStream buffering that fixes the subscribe-before-publish
-/// race that the previous closure-dict version was vulnerable to.
-///
-/// The tests sleep just past the debounce window (350 ms) before
-/// asserting fire counts — the contract is "trailing-edge yield after
-/// the last event," so observation has to wait for that edge.
+/// Regression tests for `ShareManager.countsChangesStream` — the hook
+/// `NetworkClient` uses to re-broadcast `SharedFoldersFiles` after the
+/// disk rescan completes (so peers stop seeing "0 shared files" when the
+/// login broadcast loses the race against the disk walk).
 @MainActor
 @Suite("ShareManager count-change notifications")
 struct ShareCountNotificationTests {
@@ -126,41 +111,12 @@ struct ShareCountNotificationTests {
         let task = consume(shares, into: counter)
         defer { task.cancel() }
 
-        // Five rescans back-to-back. Each notifyCountsChanged cancels the
-        // prior debounce Task and arms a fresh 200 ms timer; only the
-        // last one survives to yield. Without the debounce we'd see 5
-        // broadcasts to the server for what is logically one batch.
         for _ in 0..<5 {
             await shares.rescanAll()
         }
         try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
 
         #expect(counter.value == 1, "5 rapid changes must coalesce into 1 yield")
-    }
-
-    @Test("Subscriber created BEFORE rescan still observes the trailing yield")
-    func subscribeBeforePublishObservesYield() async {
-        // The whole point of switching to AsyncStream: the buffer covers
-        // the case where the consumer Task is created but hasn't yet
-        // entered `for await` when the yield fires. With the old
-        // closure-dict, a yield before the handler was registered was
-        // silently dropped; here, the continuation buffer holds it until
-        // the loop drains. We approximate the race by spawning the
-        // consumer Task and immediately publishing without yielding the
-        // actor — the consumer can't possibly have started executing
-        // its loop body yet.
-        let shares = ShareManager()
-        let counter = FireCounter()
-        let task = consume(shares, into: counter)
-        defer { task.cancel() }
-
-        // No `Task.yield()` between consume() and rescanAll() — we want
-        // the publish to happen before the consumer's for-await loop is
-        // running.
-        await shares.rescanAll()
-        try? await Task.sleep(for: .milliseconds(Self.debounceWaitMillis))
-
-        #expect(counter.value == 1, "buffered yield must reach the consumer once it starts iterating")
     }
 
     @Test("loadPersistedFolders does not yield on its own (no implicit rescan)")

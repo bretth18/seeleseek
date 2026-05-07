@@ -141,9 +141,7 @@ public final class NetworkClient {
     // Stream consumer tasks (cancelled on disconnect for clean reconnect)
     private var listenerConsumerTask: Task<Void, Never>?
     private var poolEventConsumerTask: Task<Void, Never>?
-    /// Lives for the NetworkClient's lifetime — share-count change events
-    /// are session-independent (rescans happen while disconnected too,
-    /// and `updateShareCounts` is itself a no-op while disconnected).
+    /// Session-independent — share rescans happen while disconnected too.
     private var shareCountsConsumerTask: Task<Void, Never>?
 
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
@@ -280,28 +278,13 @@ public final class NetworkClient {
             }
         }
 
-        // Re-broadcast SharedFoldersFiles whenever the local share index
-        // changes. The login handshake also broadcasts this, but at login
-        // time the disk rescan is usually still running — totalFiles reads
-        // 0, the server records 0, and our profile shows "0 shared files"
-        // to every peer until something forces a re-broadcast.
-        // `updateShareCounts` is a no-op while disconnected, so consuming
-        // events before login is safe.
-        //
-        // The previous shape of this code carried a load-bearing
-        // MainActor-serial-execution invariant: `ShareManager.init` used
-        // to auto-spawn `Task { await rescanAll() }`, and any subscriber
-        // had to be installed before that Task got to run. The two pieces
-        // (auto-load removed from `ShareManager.init` + AsyncStream
-        // continuation buffering) eliminate that constraint:
-        //   * `ShareManager.init` is now side-effect-free.
-        //   * `loadPersistedFolders()` + `rescanAll()` are explicit calls
-        //     made by the app AFTER this consumer Task has been created,
-        //     so any rescan-completion yield is guaranteed to land in
-        //     this stream's buffer at the latest.
-        //   * Even if the consumer Task hadn't begun executing by the
-        //     time the yield fires, `AsyncStream`'s default unbounded
-        //     buffer holds it until the `for await` drains it.
+        // Re-broadcast `SharedFoldersFiles` whenever the local share
+        // index changes. The login handshake broadcasts this too, but at
+        // login the disk rescan is typically still running so totalFiles
+        // reads 0; without this consumer the server keeps reporting "0
+        // shared files" to every peer until the user reconnects with the
+        // scan already cached. `updateShareCounts` is a no-op while
+        // disconnected, so pre-login events are harmless.
         shareCountsConsumerTask = Task { [weak self] in
             guard let self else { return }
             for await _ in self.shareManager.countsChangesStream() {

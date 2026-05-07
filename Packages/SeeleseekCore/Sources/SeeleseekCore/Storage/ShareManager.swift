@@ -20,46 +20,18 @@ public final class ShareManager {
     public var totalFolders: Int { sharedFolders.count }
     public var totalSize: UInt64 { fileIndex.reduce(0) { $0 + $1.size } }
 
-    /// Per-subscriber `AsyncStream` continuations. Each call to
-    /// `countsChangesStream()` allocates a fresh stream and registers its
-    /// continuation here; `notifyCountsChanged()` fans out to all of them.
-    /// Vanilla `AsyncStream` is single-consumer, so we maintain the
-    /// fan-out ourselves rather than handing every subscriber the same
-    /// stream (where they'd race for events).
-    ///
-    /// Why `AsyncStream` instead of a closure dict: the continuation
-    /// buffers yields fired before the consumer's `for await` loop has
-    /// actually started executing. That eliminates the previous
-    /// subscribe-before-publish ordering invariant — `NetworkClient` can
-    /// register its consumer in `init`, and any rescan completion that
-    /// fires before the consumer Task is scheduled is replayed when the
-    /// loop drains the buffer. The previous closure-dict required strict
-    /// MainActor-serial ordering between subscriber registration and
-    /// publisher fire to avoid silently dropping the first event.
+    /// Per-subscriber continuations. Vanilla `AsyncStream` is
+    /// single-consumer, so we fan out yields ourselves.
     private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-    /// Coalescing task: bulk operations (a 10-folder add, a removeFolder
-    /// loop) would otherwise produce N broadcasts. We delay 200 ms after
-    /// the *last* count-changing event and yield once. 200 ms is short
-    /// enough that the server-visible state lags imperceptibly while
-    /// still folding programmatic batches into a single update.
     private var countsChangedDebounce: Task<Void, Never>?
 
     /// Subscribe to share-count change events. Each call returns a fresh
-    /// stream — concurrent consumers all receive every yield. Cancelling
-    /// the consuming Task (or letting it go out of scope) tears down the
-    /// continuation via `onTermination` and removes it from `continuations`.
+    /// stream; cancelling the consuming Task tears down the continuation.
     public func countsChangesStream() -> AsyncStream<Void> {
         AsyncStream { continuation in
             let id = UUID()
-            // Continuation registration must happen on MainActor (the
-            // dict is MainActor-isolated). The AsyncStream initializer's
-            // closure runs synchronously in the caller's context — and
-            // every call site is MainActor since the type itself is
-            // @MainActor — so the direct mutation is safe.
             self.continuations[id] = continuation
             continuation.onTermination = { [weak self] _ in
-                // `onTermination` runs on the AsyncStream's internal
-                // queue, not MainActor. Hop back to remove our entry.
                 Task { @MainActor in
                     self?.continuations.removeValue(forKey: id)
                 }
@@ -67,17 +39,15 @@ public final class ShareManager {
         }
     }
 
-    /// Schedule a coalesced yield to every registered continuation.
-    /// Cheap to call repeatedly in a tight loop — only the trailing edge
-    /// actually wakes subscribers.
+    /// Coalesce rapid changes into a single trailing-edge yield (200 ms
+    /// after the last change). Bulk operations like a 10-folder add would
+    /// otherwise produce N broadcasts.
     private func notifyCountsChanged() {
         countsChangedDebounce?.cancel()
         countsChangedDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(200))
             guard let self, !Task.isCancelled else { return }
-            // Snapshot before iterating — a subscriber's `onTermination`
-            // hopping back to remove its entry shouldn't mutate the dict
-            // we're traversing.
+            // Snapshot — subscriber teardown can mutate the dict.
             let snapshot = Array(self.continuations.values)
             for continuation in snapshot {
                 continuation.yield()
@@ -198,16 +168,9 @@ public final class ShareManager {
 
     // MARK: - Initialization
 
-    /// Side-effect-free. Construction does NOT decode persisted folders or
-    /// kick off a rescan — the app must call `loadPersistedFolders()` then
-    /// `rescanAll()` explicitly, AFTER any `countsChangesStream()`
-    /// consumers have been wired. Pre-refactor `init` did both implicitly,
-    /// which meant the `rescanAll` Task could fire `notifyCountsChanged`
-    /// before any subscriber existed; the only thing keeping it correct
-    /// was MainActor's serial execution of synchronous `init` chains.
-    /// Decoupling here lets `NetworkClient.init` register its
-    /// `countsChangesStream` consumer first, and any subsequent rescan
-    /// completion is reliably observed.
+    /// Side-effect-free. Caller must invoke `loadPersistedFolders()` and
+    /// `rescanAll()` explicitly after wiring `countsChangesStream()`
+    /// consumers.
     public init() {}
 
     // MARK: - Folder Management
@@ -242,13 +205,8 @@ public final class ShareManager {
         sharedFolders.append(folder)
         save()
 
-        // Scan the new folder, then notify so the server learns about the
-        // new file count. Notifying before the scan would push a broadcast
-        // with an inflated folder count and zero new files, which we'd
-        // immediately replace seconds later when the scan finishes — and
-        // the (folders, files) pair is broadcast atomically, so an
-        // intermediate (folders=N+1, files=oldCount) state is wrong on its
-        // face.
+        // Notify after the scan so the (folders, files) broadcast pair
+        // is atomic — never folders=N+1 with the old file count.
         Task {
             await scanFolder(folder)
             notifyCountsChanged()
@@ -468,12 +426,9 @@ public final class ShareManager {
             )
         }
         save()
-        // Deliberately does NOT call `notifyCountsChanged`. The
-        // SharedFoldersFiles message broadcast by `NetworkClient` carries
-        // `totalFiles` (every indexed file regardless of visibility), and
-        // toggling public ↔ buddies doesn't change that total. If we ever
-        // change the broadcast semantics to "publicly visible files only,"
-        // this site needs to fire too.
+        // No notify — `SharedFoldersFiles` broadcasts `totalFiles` (all
+        // visibilities), which doesn't change here. Revisit if we switch
+        // broadcast semantics to public-only.
     }
 
     /// Convert indexed files to SharedFile format for responses
