@@ -202,8 +202,13 @@ public final class ShareManager {
 
         let folder = SharedFolder(path: url.path)
 
-        // Avoid duplicates
+        // Avoid duplicates. Security-scoped resource access is reference-
+        // counted: the redundant `start` we just did needs a matching
+        // `stop` here, otherwise repeated add-the-same-folder clicks
+        // accumulate access counts that are never balanced (the matching
+        // `stop` in `removeFolder` only fires once).
         guard !sharedFolders.contains(where: { $0.path == folder.path }) else {
+            url.stopAccessingSecurityScopedResource()
             logger.info("Folder already shared: \(url.path)")
             return
         }
