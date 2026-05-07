@@ -135,4 +135,28 @@ struct ShareCountNotificationTests {
 
         #expect(counter.value == 0, "loadPersistedFolders must not yield — it doesn't change the file index")
     }
+
+    @Test("rescanAll on empty sharedFolders does NOT wipe persisted data")
+    func emptyRescanPreservesPersistedData() async {
+        // Regression: `rescanAll` used to unconditionally `save()` at the
+        // end. With sharedFolders empty (loadPersistedFolders skipped or
+        // failed), that save serialized `[]` and overwrote the user's
+        // persisted folder list — silently wiping their shares on next
+        // open. Test runs against an isolated UserDefaults suite so it
+        // doesn't race other tests over `.standard`.
+        let suiteName = "ShareManagerTest-\(UUID().uuidString)"
+        let suite = UserDefaults(suiteName: suiteName)!
+        defer { suite.removePersistentDomain(forName: suiteName) }
+
+        let sentinel = Data("[\"sentinel\"]".utf8)
+        suite.set(sentinel, forKey: "SeeleSeek.SharedFolders")
+
+        // Construct ShareManager without calling loadPersistedFolders —
+        // sharedFolders stays empty, exercising the wipe path.
+        let shares = ShareManager(defaults: suite)
+        await shares.rescanAll()
+
+        let after = suite.data(forKey: "SeeleSeek.SharedFolders")
+        #expect(after == sentinel, "rescanAll on empty sharedFolders must not overwrite persisted data")
+    }
 }
