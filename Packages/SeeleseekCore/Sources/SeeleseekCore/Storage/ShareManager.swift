@@ -20,52 +20,68 @@ public final class ShareManager {
     public var totalFolders: Int { sharedFolders.count }
     public var totalSize: UInt64 { fileIndex.reduce(0) { $0 + $1.size } }
 
-    /// Subscribers notified (on MainActor) whenever the broadcast-relevant
-    /// share counts change — i.e. after a rescan completes, a newly added
-    /// folder finishes its initial scan, or a folder is removed.
-    /// `NetworkClient` subscribes so the server's view of our shares stays
-    /// in sync after the initial-login broadcast. Without this hook the
-    /// login broadcast loses the race against the disk scan and the server
-    /// keeps reporting 0 shared files until the user toggles connection
-    /// state.
+    /// Per-subscriber `AsyncStream` continuations. Each call to
+    /// `countsChangesStream()` allocates a fresh stream and registers its
+    /// continuation here; `notifyCountsChanged()` fans out to all of them.
+    /// Vanilla `AsyncStream` is single-consumer, so we maintain the
+    /// fan-out ourselves rather than handing every subscriber the same
+    /// stream (where they'd race for events).
     ///
-    /// Multi-handler (UUID-keyed) rather than a single closure: the
-    /// project's CLAUDE.md flags single-closure callbacks as silent-overwrite
-    /// hazards. Use `addCountsChangedHandler` to subscribe and the returned
-    /// token with `removeCountsChangedHandler` to unsubscribe. Test seams
-    /// also use this — driving the same observable hook from tests catches
-    /// regressions in real subscriber wiring.
-    private var countsChangedHandlers: [UUID: () -> Void] = [:]
+    /// Why `AsyncStream` instead of a closure dict: the continuation
+    /// buffers yields fired before the consumer's `for await` loop has
+    /// actually started executing. That eliminates the previous
+    /// subscribe-before-publish ordering invariant — `NetworkClient` can
+    /// register its consumer in `init`, and any rescan completion that
+    /// fires before the consumer Task is scheduled is replayed when the
+    /// loop drains the buffer. The previous closure-dict required strict
+    /// MainActor-serial ordering between subscriber registration and
+    /// publisher fire to avoid silently dropping the first event.
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     /// Coalescing task: bulk operations (a 10-folder add, a removeFolder
     /// loop) would otherwise produce N broadcasts. We delay 200 ms after
-    /// the *last* count-changing event and fire once. 200 ms is short enough
-    /// that the server-visible state lags imperceptibly while still folding
-    /// programmatic batches into a single update.
+    /// the *last* count-changing event and yield once. 200 ms is short
+    /// enough that the server-visible state lags imperceptibly while
+    /// still folding programmatic batches into a single update.
     private var countsChangedDebounce: Task<Void, Never>?
 
-    @discardableResult
-    public func addCountsChangedHandler(_ handler: @escaping () -> Void) -> UUID {
-        let id = UUID()
-        countsChangedHandlers[id] = handler
-        return id
+    /// Subscribe to share-count change events. Each call returns a fresh
+    /// stream — concurrent consumers all receive every yield. Cancelling
+    /// the consuming Task (or letting it go out of scope) tears down the
+    /// continuation via `onTermination` and removes it from `continuations`.
+    public func countsChangesStream() -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            let id = UUID()
+            // Continuation registration must happen on MainActor (the
+            // dict is MainActor-isolated). The AsyncStream initializer's
+            // closure runs synchronously in the caller's context — and
+            // every call site is MainActor since the type itself is
+            // @MainActor — so the direct mutation is safe.
+            self.continuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                // `onTermination` runs on the AsyncStream's internal
+                // queue, not MainActor. Hop back to remove our entry.
+                Task { @MainActor in
+                    self?.continuations.removeValue(forKey: id)
+                }
+            }
+        }
     }
 
-    public func removeCountsChangedHandler(_ id: UUID) {
-        countsChangedHandlers.removeValue(forKey: id)
-    }
-
-    /// Schedule a coalesced fire of every registered handler. Cheap to call
-    /// repeatedly in a tight loop — only the trailing edge actually invokes
-    /// subscribers.
+    /// Schedule a coalesced yield to every registered continuation.
+    /// Cheap to call repeatedly in a tight loop — only the trailing edge
+    /// actually wakes subscribers.
     private func notifyCountsChanged() {
         countsChangedDebounce?.cancel()
         countsChangedDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(200))
             guard let self, !Task.isCancelled else { return }
-            // Snapshot before iterating — a handler that adds/removes
-            // subscribers shouldn't mutate the dict mid-iteration.
-            let handlers = Array(self.countsChangedHandlers.values)
-            for handler in handlers { handler() }
+            // Snapshot before iterating — a subscriber's `onTermination`
+            // hopping back to remove its entry shouldn't mutate the dict
+            // we're traversing.
+            let snapshot = Array(self.continuations.values)
+            for continuation in snapshot {
+                continuation.yield()
+            }
         }
     }
 
@@ -182,9 +198,17 @@ public final class ShareManager {
 
     // MARK: - Initialization
 
-    public init() {
-        load()
-    }
+    /// Side-effect-free. Construction does NOT decode persisted folders or
+    /// kick off a rescan — the app must call `loadPersistedFolders()` then
+    /// `rescanAll()` explicitly, AFTER any `countsChangesStream()`
+    /// consumers have been wired. Pre-refactor `init` did both implicitly,
+    /// which meant the `rescanAll` Task could fire `notifyCountsChanged`
+    /// before any subscriber existed; the only thing keeping it correct
+    /// was MainActor's serial execution of synchronous `init` chains.
+    /// Decoupling here lets `NetworkClient.init` register its
+    /// `countsChangesStream` consumer first, and any subsequent rescan
+    /// completion is reliably observed.
+    public init() {}
 
     // MARK: - Folder Management
 
@@ -534,16 +558,16 @@ public final class ShareManager {
         }
     }
 
-    private func load() {
+    /// Decode persisted shared-folder list from `UserDefaults`. Synchronous
+    /// — does NOT trigger a rescan. Call `rescanAll()` after this to
+    /// repopulate `fileIndex`. The two steps are split so the caller can
+    /// register `countsChangesStream` subscribers between them; the
+    /// rescan-completion yield is then guaranteed to be observed.
+    public func loadPersistedFolders() {
         guard let data = UserDefaults.standard.data(forKey: sharedFoldersKey) else { return }
 
         do {
             sharedFolders = try JSONDecoder().decode([SharedFolder].self, from: data)
-
-            // Restore bookmark access and rescan
-            Task {
-                await rescanAll()
-            }
         } catch {
             logger.error("Failed to load shared folders: \(error.localizedDescription)")
         }

@@ -141,6 +141,10 @@ public final class NetworkClient {
     // Stream consumer tasks (cancelled on disconnect for clean reconnect)
     private var listenerConsumerTask: Task<Void, Never>?
     private var poolEventConsumerTask: Task<Void, Never>?
+    /// Lives for the NetworkClient's lifetime — share-count change events
+    /// are session-independent (rescans happen while disconnected too,
+    /// and `updateShareCounts` is itself a no-op while disconnected).
+    private var shareCountsConsumerTask: Task<Void, Never>?
 
     // MARK: - Pending Peer Address Requests (for concurrent browse/folder requests)
     // Uses (continuation, requestID) to prevent double-resume when same user is requested multiple times
@@ -281,22 +285,28 @@ public final class NetworkClient {
         // time the disk rescan is usually still running — totalFiles reads
         // 0, the server records 0, and our profile shows "0 shared files"
         // to every peer until something forces a re-broadcast.
-        // `updateShareCounts` is a no-op while disconnected, so firing it
-        // before login is safe.
+        // `updateShareCounts` is a no-op while disconnected, so consuming
+        // events before login is safe.
         //
-        // Subscribe-before-publish ordering invariant: `shareManager` is a
-        // stored property of `NetworkClient`, so `ShareManager.init` (which
-        // synchronously kicks off `Task { await rescanAll() }`) runs during
-        // our property-init phase, *before* this `init` body. Subscribing
-        // here would normally lose any notifications the rescan fired in
-        // the gap — except both phases run on `MainActor`, which is serial,
-        // so the rescan Task cannot begin executing until our synchronous
-        // init body finishes (including this subscription). If anyone ever
-        // moves this subscription into a separately-invoked `configure(...)`
-        // step, that invariant breaks and the first notification is lost.
-        _ = shareManager.addCountsChangedHandler { [weak self] in
+        // The previous shape of this code carried a load-bearing
+        // MainActor-serial-execution invariant: `ShareManager.init` used
+        // to auto-spawn `Task { await rescanAll() }`, and any subscriber
+        // had to be installed before that Task got to run. The two pieces
+        // (auto-load removed from `ShareManager.init` + AsyncStream
+        // continuation buffering) eliminate that constraint:
+        //   * `ShareManager.init` is now side-effect-free.
+        //   * `loadPersistedFolders()` + `rescanAll()` are explicit calls
+        //     made by the app AFTER this consumer Task has been created,
+        //     so any rescan-completion yield is guaranteed to land in
+        //     this stream's buffer at the latest.
+        //   * Even if the consumer Task hadn't begun executing by the
+        //     time the yield fires, `AsyncStream`'s default unbounded
+        //     buffer holds it until the `for await` drains it.
+        shareCountsConsumerTask = Task { [weak self] in
             guard let self else { return }
-            Task { await self.updateShareCounts() }
+            for await _ in self.shareManager.countsChangesStream() {
+                await self.updateShareCounts()
+            }
         }
 
         logger.info("NetworkClient initialized")

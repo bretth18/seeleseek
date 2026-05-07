@@ -175,6 +175,22 @@ final class AppState {
                 maxResults: settings.maxSearchResponseResults
             )
         }
+
+        // Load persisted shared folders and trigger an initial disk rescan.
+        // Order matters: `ShareManager.init` is now side-effect-free, so
+        // this is where the persisted folder list is decoded from
+        // UserDefaults and the disk walk that populates `fileIndex` is
+        // started. We do it AFTER the rest of `wireNetworkClient` has run
+        // because `NetworkClient.init` already created its
+        // `countsChangesStream` consumer Task — any rescan-completion
+        // yield is guaranteed to be observed (the stream's continuation
+        // buffer covers the case where the consumer Task hasn't begun
+        // executing yet). Pre-refactor `ShareManager.init` did this
+        // implicitly and the consumer-before-publisher ordering relied on
+        // MainActor's serial execution; that load-bearing invariant is
+        // gone now.
+        client.shareManager.loadPersistedFolders()
+        Task { await client.shareManager.rescanAll() }
     }
 
     // MARK: - Folder Download Coordinator
