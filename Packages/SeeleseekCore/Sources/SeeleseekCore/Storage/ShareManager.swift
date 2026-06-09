@@ -249,12 +249,24 @@ public final class ShareManager {
 
         isScanning = true
         scanProgress = 0
-        fileIndex.removeAll()
 
+        // Build the new index aside and swap at the end. Clearing
+        // `fileIndex` up front left a minutes-wide window where every
+        // peer lookup missed and got a terminal "File not shared."
+        var newIndex: [IndexedFile] = []
         for (index, folder) in sharedFolders.enumerated() {
-            await scanFolder(folder)
+            if let result = await scanFolderResult(folder) {
+                newIndex.append(contentsOf: result.indexed)
+                applyFolderStats(result)
+                logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
+            } else {
+                logger.error("Failed to enumerate folder: \(folder.path)")
+            }
             scanProgress = Double(index + 1) / Double(sharedFolders.count)
         }
+
+        // Atomic swap — old index served lookups during the scan.
+        fileIndex = newIndex
 
         lastScanDate = Date()
         isScanning = false
@@ -286,7 +298,46 @@ public final class ShareManager {
         let totalSize: UInt64
     }
 
+    /// Single-folder scan that mutates state directly (addFolder path).
+    /// `rescanAll` uses `scanFolderResult` + a deferred index swap instead.
     private func scanFolder(_ folder: SharedFolder) async {
+        guard let result = await scanFolderResult(folder) else {
+            logger.error("Failed to enumerate folder: \(folder.path)")
+            return
+        }
+        fileIndex.append(contentsOf: result.indexed)
+        applyFolderStats(result)
+        logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
+    }
+
+    /// Update the per-folder counters from a completed scan.
+    private func applyFolderStats(_ result: ScanResult) {
+        if let index = sharedFolders.firstIndex(where: { $0.id == result.folderID }) {
+            sharedFolders[index].fileCount = result.fileCount
+            sharedFolders[index].totalSize = result.totalSize
+            sharedFolders[index].lastScanned = Date()
+        }
+    }
+
+    /// Disambiguate duplicate share-root display names so sharedPaths
+    /// stay unique across roots (e.g. two folders both named "Music"
+    /// become "Music" and "Music (2)").
+    private func uniqueDisplayName(for folder: SharedFolder) -> String {
+        let base = folder.displayName
+        let sameName = sharedFolders.filter { $0.displayName == base }
+        guard sameName.count > 1,
+              let position = sameName.firstIndex(where: { $0.id == folder.id }),
+              position > 0 else {
+            return base
+        }
+        let unique = "\(base) (\(position + 1))"
+        logger.warning("Share root name collision for \(base) — using \(unique)")
+        return unique
+    }
+
+    /// Walk a folder on a background task and return the indexed files
+    /// plus stats, without touching published state.
+    private func scanFolderResult(_ folder: SharedFolder) async -> ScanResult? {
         let folderURL = URL(fileURLWithPath: folder.path)
 
         // Restore bookmark access on the main actor before handing the URL
@@ -309,9 +360,10 @@ public final class ShareManager {
         // references escape.
         let folderID = folder.id
         let folderVisibility = folder.visibility
-        let folderDisplayName = folder.displayName
+        // Suffix duplicate root names so sharedPaths are unique.
+        let folderDisplayName = uniqueDisplayName(for: folder)
 
-        let result: ScanResult? = await Task.detached(priority: .utility) {
+        return await Task.detached(priority: .utility) {
             let fileManager = FileManager.default
             guard let enumerator = fileManager.enumerator(
                 at: folderURL,
@@ -353,22 +405,6 @@ public final class ShareManager {
 
             return ScanResult(folderID: folderID, indexed: files, fileCount: count, totalSize: total)
         }.value
-
-        guard let result else {
-            logger.error("Failed to enumerate folder: \(folder.path)")
-            return
-        }
-
-        // Single publish step back on main: append the scanned batch and
-        // update folder stats in one @MainActor hop.
-        fileIndex.append(contentsOf: result.indexed)
-        if let index = sharedFolders.firstIndex(where: { $0.id == result.folderID }) {
-            sharedFolders[index].fileCount = result.fileCount
-            sharedFolders[index].totalSize = result.totalSize
-            sharedFolders[index].lastScanned = Date()
-        }
-
-        logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
     }
 
     // Static so the detached scan task can call it without a main-actor hop.

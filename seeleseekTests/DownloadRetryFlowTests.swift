@@ -142,8 +142,8 @@ struct DownloadRetryFlowTests {
     /// spawns a 2-second-delayed retry Task; we don't await it
     /// (networkClient is nil in tests, so it would log an error and
     /// return), and the assertions below run before it wakes.
-    @Test("UploadFailed after a partial file deletes it and re-queues from scratch")
-    func uploadFailedAfterPartialDeletesAndRequeues() throws {
+    @Test("UploadFailed without a resume attempt keeps the partial and uses counted retries")
+    func uploadFailedWithoutResumeKeepsPartial() throws {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
         let filename = "@@music\\Artist\\Album\\song.mp3"
@@ -151,6 +151,7 @@ struct DownloadRetryFlowTests {
         transfer.bytesTransferred = 256
         tracking.downloads.append(transfer)
         manager._setTransferStateForTest(tracking)
+        // resumeOffset stays 0: no resume was attempted this cycle.
         manager._seedPendingDownloadForTest(makePending(transfer), token: 10)
 
         let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -167,15 +168,54 @@ struct DownloadRetryFlowTests {
             withIntermediateDirectories: true
         )
         try Data(repeating: 0xAB, count: 256).write(to: partialPath)
-        #expect(FileManager.default.fileExists(atPath: partialPath.path))
 
         manager.handleUploadFailed(username: "alice", filename: filename)
 
         let row = tracking.downloads.first
-        #expect(row?.status == .queued, "partial-file branch must re-queue from scratch")
-        #expect(row?.error == nil)
-        #expect(row?.bytesTransferred == 0, "delete-and-restart must reset bytes to zero")
-        #expect(!FileManager.default.fileExists(atPath: partialPath.path), "partial file must be deleted")
-        #expect(manager._pendingDownloadCount == 0, "old pending entry is consumed by re-queue")
+        #expect(row?.status == .failed, "must route through the counted retry machinery")
+        #expect(row?.error == "Retrying in 10s...")
+        #expect(row?.nextRetryAt != nil)
+        #expect(FileManager.default.fileExists(atPath: partialPath.path),
+                "no resume was attempted, so the partial is kept as groundwork")
+        #expect(manager._pendingDownloadCount == 0)
+    }
+
+    @Test("UploadFailed after a resume attempt deletes the partial so the retry starts clean")
+    func uploadFailedAfterResumeDeletesPartial() throws {
+        let manager = DownloadManager()
+        let tracking = MockTransferTracking()
+        let filename = "@@music\\Artist\\Album\\song.mp3"
+        var transfer = makeTransfer(username: "alice", filename: filename, status: .connecting)
+        transfer.bytesTransferred = 256
+        tracking.downloads.append(transfer)
+        manager._setTransferStateForTest(tracking)
+        var pending = makePending(transfer)
+        pending.resumeOffset = 256  // this attempt offered a resume offset
+        manager._seedPendingDownloadForTest(pending, token: 10)
+
+        let tempRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("seeleseek-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        manager._setDownloadDirectoryOverrideForTest(tempRoot)
+
+        let partialPath = tempRoot
+            .appendingPathComponent("Incomplete")
+            .appendingPathComponent(manager._incompleteBasenameForTest(soulseekPath: filename, username: "alice"))
+        try FileManager.default.createDirectory(
+            at: partialPath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(repeating: 0xAB, count: 256).write(to: partialPath)
+
+        manager.handleUploadFailed(username: "alice", filename: filename)
+
+        let row = tracking.downloads.first
+        #expect(row?.status == .failed, "retry is counted/capped, not a silent requeue")
+        #expect(row?.error == "Retrying in 10s...")
+        #expect(row?.bytesTransferred == 0, "delete-and-restart resets bytes")
+        #expect(!FileManager.default.fileExists(atPath: partialPath.path),
+                "peer rejected a resume, so the partial must be deleted")
+        #expect(manager._pendingDownloadCount == 0)
     }
 }

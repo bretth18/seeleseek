@@ -18,33 +18,36 @@ extension UploadManager {
         let connection = NWConnection(to: endpoint, using: params)
 
         let hasResumed = Mutex(false)
+        let timeoutTask = Mutex<Task<Void, Never>?>(nil)
+        // First claimant wins; everyone else's events are ignored.
+        let claimResume: @Sendable () -> Bool = {
+            hasResumed.withLock { old in
+                guard !old else { return false }
+                old = true
+                return true
+            }
+        }
         return await withCheckedContinuation { continuation in
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    guard hasResumed.withLock({ old in
-                        guard !old else { return false }
-                        old = true
-                        return true
-                    }) else { return }
+                    guard claimResume() else { return }
+                    timeoutTask.withLock { $0?.cancel() }
                     continuation.resume(returning: .ready(connection))
                 case .failed(let error):
-                    guard hasResumed.withLock({ old in
-                        guard !old else { return false }
-                        old = true
-                        return true
-                    }) else { return }
+                    guard claimResume() else { return }
+                    timeoutTask.withLock { $0?.cancel() }
+                    // No caller uses the socket from failure outcomes;
+                    // cancel it here so it doesn't leak.
+                    connection.cancel()
                     if PeerConnection.isBindFailure(error) {
                         continuation.resume(returning: .bindFailed(connection))
                     } else {
                         continuation.resume(returning: .failed(connection))
                     }
                 case .cancelled:
-                    guard hasResumed.withLock({ old in
-                        guard !old else { return false }
-                        old = true
-                        return true
-                    }) else { return }
+                    guard claimResume() else { return }
+                    timeoutTask.withLock { $0?.cancel() }
                     continuation.resume(returning: .failed(connection))
                 default:
                     break
@@ -52,16 +55,13 @@ extension UploadManager {
             }
             connection.start(queue: .global(qos: .userInitiated))
 
-            Task {
+            let task = Task {
                 try? await Task.sleep(for: timeout)
-                guard hasResumed.withLock({ old in
-                    guard !old else { return false }
-                    old = true
-                    return true
-                }) else { return }
+                guard claimResume() else { return }
                 connection.cancel()
                 continuation.resume(returning: .failed(connection))
             }
+            timeoutTask.withLock { $0 = task }
         }
     }
 }

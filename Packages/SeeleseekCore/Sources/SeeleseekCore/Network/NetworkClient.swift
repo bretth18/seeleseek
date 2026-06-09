@@ -106,6 +106,8 @@ public final class NetworkClient {
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
     private var loginContinuation: CheckedContinuation<Bool, Error>?
+    private var loginTimeoutTask: Task<Void, Never>?
+    private var loginAttemptGeneration = 0
 
     // MARK: - Auto-Reconnect
     private var reconnectTask: Task<Void, Never>?
@@ -530,6 +532,15 @@ public final class NetworkClient {
 
         logger.info("Starting connection to \(server):\(port) as \(username)")
 
+        // Let any in-flight teardown finish before starting the listener —
+        // otherwise the old teardown's listenerService.stop() can land
+        // after the new start() and silently kill the fresh listener while
+        // its port is still advertised to the server. (Safe re-entrancy:
+        // isConnecting is already true, so a concurrent connect() bails at
+        // the guard above.)
+        await teardownTask?.value
+        teardownTask = nil
+
         do {
             // Step 1: Start listener for incoming peer connections
             listenerConsumerTask?.cancel()
@@ -581,26 +592,48 @@ public final class NetworkClient {
                 loginSuccess = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
                     self.loginContinuation = continuation
 
-                    // Timeout after 10 seconds so we don't wait forever
-                    Task {
+                    // Timeout after 10 seconds so we don't wait forever.
+                    // Generation-stamped: an uncancelled timer from attempt N
+                    // must never resume attempt N+1's continuation (quick
+                    // disconnect/reconnect inside the 10s window).
+                    self.loginAttemptGeneration += 1
+                    let generation = self.loginAttemptGeneration
+                    self.loginTimeoutTask?.cancel()
+                    self.loginTimeoutTask = Task {
                         try? await Task.sleep(for: .seconds(10))
-                        if let pending = self.loginContinuation {
-                            self.loginContinuation = nil
-                            pending.resume(throwing: ServerConnection.ConnectionError.timeout)
-                        }
+                        guard !Task.isCancelled,
+                              generation == self.loginAttemptGeneration,
+                              let pending = self.loginContinuation else { return }
+                        self.loginContinuation = nil
+                        pending.resume(throwing: ServerConnection.ConnectionError.timeout)
                     }
                 }
+                loginTimeoutTask?.cancel()
+                loginTimeoutTask = nil
             } catch {
-                // Login timed out or failed — don't auto-reconnect on auth failure.
+                loginTimeoutTask?.cancel()
+                loginTimeoutTask = nil
                 // Route through the full teardown so the listener, NAT, peer
                 // pool, pending waiters, distributed state, and server socket
                 // all get cleaned up — previously this path only stopped the
                 // listener, leaving stale state for the next connect().
                 isConnecting = false
                 connectionError = error.localizedDescription
-                shouldAutoReconnect = false
+                // Only a credential rejection should disable auto-reconnect;
+                // a timeout or socket error during the handshake is transient
+                // and the user asked for a persistent connection.
+                let wasEligibleForReconnect: Bool
+                if case ServerConnection.ConnectionError.loginFailed = error {
+                    shouldAutoReconnect = false
+                    wasEligibleForReconnect = false
+                } else {
+                    wasEligibleForReconnect = shouldAutoReconnect
+                }
                 performDisconnect()
                 await teardownTask?.value
+                if wasEligibleForReconnect {
+                    scheduleReconnect(reason: error.localizedDescription)
+                }
                 return
             }
 
@@ -616,6 +649,8 @@ public final class NetworkClient {
                     obfuscatedPort: UInt32(obfuscatedPort)
                 )
                 try await connection.send(portMessage)
+                lastAdvertisedListenPort = listenPort
+                lastAdvertisedObfuscatedPort = obfuscatedPort
 
                 // Step 6: Set online status
                 let statusMessage = MessageBuilder.setOnlineStatusMessage(status: .online)
@@ -937,7 +972,53 @@ public final class NetworkClient {
 
     // MARK: - NAT Setup (Background)
 
+    /// NAT-PMP (and UPnP with a busy port) may grant a DIFFERENT external
+    /// port than requested. Peers dial the external port, so the server must
+    /// be re-told whenever the granted port differs from what login step 5
+    /// advertised — otherwise peers dial a port the router doesn't forward.
+    private var externalListenPort: UInt16 = 0      // 0 = no mapping / same as listenPort
+    private var externalObfuscatedPort: UInt16 = 0
+    private var lastAdvertisedListenPort: UInt16 = 0
+    private var lastAdvertisedObfuscatedPort: UInt16 = 0
+
+    private func readvertiseListenPortsIfNeeded() async {
+        guard isConnected else { return }
+        let effectivePort = externalListenPort > 0 ? externalListenPort : listenPort
+        let effectiveObfuscated = externalObfuscatedPort > 0 ? externalObfuscatedPort : obfuscatedPort
+        guard effectivePort != lastAdvertisedListenPort
+                || effectiveObfuscated != lastAdvertisedObfuscatedPort else { return }
+        do {
+            let message = MessageBuilder.setListenPortMessage(
+                port: UInt32(effectivePort),
+                obfuscatedPort: UInt32(effectiveObfuscated)
+            )
+            try await requireConnectedServerConnection().send(message)
+            lastAdvertisedListenPort = effectivePort
+            lastAdvertisedObfuscatedPort = effectiveObfuscated
+            logger.info("NAT: re-advertised external ports \(effectivePort) (obfuscated \(effectiveObfuscated)) to server")
+        } catch {
+            logger.warning("NAT: failed to re-advertise external port: \(error.localizedDescription)")
+        }
+    }
+
     private func setupNATInBackground() async {
+        externalListenPort = 0
+        externalObfuscatedPort = 0
+        // Refresh can renumber a mapping (router reboot, lease churn) —
+        // push the new external port to the server when it does.
+        await natService.setOnExternalPortChanged { [weak self] internalPort, newExternalPort in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if internalPort == self.listenPort {
+                    self.externalListenPort = newExternalPort
+                } else if internalPort == self.obfuscatedPort {
+                    self.externalObfuscatedPort = newExternalPort
+                } else {
+                    return
+                }
+                await self.readvertiseListenPortsIfNeeded()
+            }
+        }
         // Check if UPnP/NAT-PMP is enabled in settings
         let enableNAT = UserDefaults.standard.object(forKey: "settingsEnableUPnP") == nil
             ? true  // Default to enabled
@@ -965,6 +1046,7 @@ public final class NetworkClient {
         do {
             let mappedPort = try await natService.mapPort(listenPort)
             logger.info("NAT: Mapped port \(self.listenPort) -> \(mappedPort)")
+            externalListenPort = mappedPort
         } catch {
             logger.warning("NAT: Port mapping failed (will rely on server-mediated connections)")
         }
@@ -977,10 +1059,15 @@ public final class NetworkClient {
             do {
                 let mappedObfuscated = try await natService.mapPort(obfuscatedPort)
                 logger.info("NAT: Mapped obfuscated port \(self.obfuscatedPort) -> \(mappedObfuscated)")
+                externalObfuscatedPort = mappedObfuscated
             } catch {
                 // Silent failure for obfuscated port
             }
         }
+
+        // The router may have granted different external ports than the
+        // ones login advertised — tell the server about the real ones.
+        await readvertiseListenPortsIfNeeded()
 
         // Discover external IP
         if let extIP = await natService.discoverExternalIP() {
@@ -1396,19 +1483,18 @@ public final class NetworkClient {
             try? await Task.sleep(for: .seconds(timeout))
             guard let self else { return }
 
-            // If still pending without a connection, mark as timed out
+            // If still pending without a connection, fail the waiter and
+            // drop the entry — nothing consumes it after this point, and
+            // leaving it in the dict leaked one entry per failed browse
+            // (and let a late PierceFirewall park an orphaned socket in it).
             if var pending = self.pendingBrowseStates[token] {
                 if pending.receivedConnection == nil {
                     logger.warning("Browse: Timeout waiting for PierceFirewall from \(pending.username) (token=\(token))")
-                    pending.timedOut = true
-                    self.pendingBrowseStates[token] = pending
-
-                    // If there's a continuation waiting, resume it with error
                     if let continuation = pending.continuation {
                         pending.continuation = nil
-                        self.pendingBrowseStates[token] = pending
                         continuation.resume(throwing: NetworkError.timeout)
                     }
+                    self.pendingBrowseStates.removeValue(forKey: token)
                 }
             }
             // Clear any leftover username pre-registration.
@@ -1442,32 +1528,52 @@ public final class NetworkClient {
             }
         }
 
-        // Wait for connection
-        return try await withCheckedThrowingContinuation { continuation in
-            if var state = pendingBrowseStates[token] {
-                // Check again if connection arrived while we were setting up
-                if let connection = state.receivedConnection {
-                    pendingBrowseStates.removeValue(forKey: token)
-                    continuation.resume(returning: connection)
-                    return
-                }
-                if state.timedOut {
-                    pendingBrowseStates.removeValue(forKey: token)
+        // Wait for connection. Cancellation-aware: callers race this waiter
+        // against a direct connect inside task groups — without the handler,
+        // group.cancelAll() can't unwind the waiter and the group blocks at
+        // scope exit until the registration timeout fires.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if var state = pendingBrowseStates[token] {
+                    // Check again if connection arrived while we were setting up
+                    if let connection = state.receivedConnection {
+                        pendingBrowseStates.removeValue(forKey: token)
+                        continuation.resume(returning: connection)
+                        return
+                    }
+                    if state.timedOut {
+                        pendingBrowseStates.removeValue(forKey: token)
+                        continuation.resume(throwing: NetworkError.timeout)
+                        return
+                    }
+                    if let reason = state.failureReason {
+                        pendingBrowseStates.removeValue(forKey: token)
+                        continuation.resume(throwing: NetworkError.connectionFailed(reason))
+                        return
+                    }
+                    state.continuation = continuation
+                    pendingBrowseStates[token] = state
+                } else {
+                    // Token was already removed (cancelled or error)
                     continuation.resume(throwing: NetworkError.timeout)
-                    return
                 }
-                if let reason = state.failureReason {
-                    pendingBrowseStates.removeValue(forKey: token)
-                    continuation.resume(throwing: NetworkError.connectionFailed(reason))
-                    return
-                }
-                state.continuation = continuation
-                pendingBrowseStates[token] = state
-            } else {
-                // Token was already removed (cancelled or error)
-                continuation.resume(throwing: NetworkError.timeout)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelWaitForPendingBrowse(token: token)
             }
         }
+    }
+
+    /// Unblock a cancelled `waitForPendingBrowse` waiter. The entry itself
+    /// stays registered (minus the waiter) so a late PierceFirewall is still
+    /// matched and cleaned up rather than falling through unhandled.
+    private func cancelWaitForPendingBrowse(token: UInt32) {
+        guard var state = pendingBrowseStates[token],
+              let continuation = state.continuation else { return }
+        state.continuation = nil
+        pendingBrowseStates[token] = state
+        continuation.resume(throwing: CancellationError())
     }
 
     /// Mark a pending browse as failed (e.g. server sent CantConnectToPeer).
@@ -1491,6 +1597,11 @@ public final class NetworkClient {
         if let state = pendingBrowseStates.removeValue(forKey: token) {
             state.timeoutTask?.cancel()
             // Don't resume continuation - caller will handle the success case
+            // A PierceFirewall that arrived but was never consumed (direct
+            // path won the race) is an orphaned live socket — close it.
+            if let connection = state.receivedConnection {
+                Task { await connection.disconnect() }
+            }
         }
         peerConnectionPool.clearExpectedPierceFirewallUsername(token: token)
     }
@@ -1505,6 +1616,14 @@ public final class NetworkClient {
     /// it even if the pool's pre-registration map was cleared).
     public func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) async -> Bool {
         if var state = pendingBrowseStates[token] {
+            // A browse that already failed (CantConnectToPeer) has no waiter
+            // left; storing the connection would orphan a live socket.
+            if state.timedOut || state.failureReason != nil {
+                logger.debug("Browse: late PierceFirewall token=\(token) for dead browse; closing")
+                pendingBrowseStates.removeValue(forKey: token)
+                await connection.disconnect()
+                return true
+            }
             logger.debug("Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
 
             // Stamp username synchronously — must complete BEFORE we resume
@@ -1699,16 +1818,30 @@ public final class NetworkClient {
     }
 
     /// Handle status response - resumes every pending status check for this user
-    public func handleUserStatusResponse(username: String, status: UserStatus, privileged: Bool) {
+    /// Last privileged flag the server actually reported per user. WatchUser
+    /// replies don't carry privileged, so they pass nil and fall back to
+    /// this instead of fabricating `false` (which could clobber a concurrent
+    /// GetUserStatus waiter with wrong data).
+    private var lastKnownPrivileged: [String: Bool] = [:]
+
+    public func handleUserStatusResponse(username: String, status: UserStatus, privileged: Bool?) {
+        let resolvedPrivileged: Bool
+        if let privileged {
+            lastKnownPrivileged[username] = privileged
+            resolvedPrivileged = privileged
+        } else {
+            resolvedPrivileged = lastKnownPrivileged[username] ?? false
+        }
+
         if let waiters = pendingStatusRequests.removeValue(forKey: username) {
             for waiter in waiters {
-                waiter.continuation.resume(returning: (status: status, privileged: privileged))
+                waiter.continuation.resume(returning: (status: status, privileged: resolvedPrivileged))
             }
         }
 
         // Notify all registered status handlers
         for handler in userStatusHandlers {
-            handler(username, status, privileged)
+            handler(username, status, resolvedPrivileged)
         }
     }
 
@@ -1756,14 +1889,6 @@ public final class NetworkClient {
         let message = MessageBuilder.roomSearch(room: room, token: token, query: query)
         try await requireConnectedServerConnection().send(message)
         logger.info("Room search in \(room): \(query)")
-    }
-
-    /// Legacy room search request (server code 25)
-    public func searchRoomLegacy(_ room: String, query: String, token: UInt32) async throws {
-        guard isConnected else { throw NetworkError.notConnected }
-        let message = MessageBuilder.fileSearchRoomMessage(room: room, token: token, query: query)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Legacy room search in \(room): \(query)")
     }
 
     /// Add a wishlist search (runs periodically)
@@ -2250,7 +2375,26 @@ public final class NetworkClient {
         registerPendingBrowse(token: token, username: username, timeout: 30)
         await sendConnectToPeer(token: token, username: username, connectionType: "P")
 
-        let (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
+        let ip: String
+        let port: Int
+        let obfuscatedPort: Int
+        do {
+            (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
+        } catch {
+            // Without this the registered browse entry (and its 30s timer)
+            // leaks for the session whenever the address lookup fails.
+            cancelPendingBrowse(token: token)
+            throw error
+        }
+
+        // The server answers GetPeerAddress for an offline/unknown user with
+        // 0.0.0.0:0 — dialing port 0 throws immediately and the indirect
+        // wait can never succeed (the user isn't there to pierce). Fail fast
+        // instead of burning the full 30s window.
+        guard ip != "0.0.0.0", port > 0 || obfuscatedPort > 0 else {
+            cancelPendingBrowse(token: token)
+            throw NetworkError.connectionFailed("\(username) is offline (no address)")
+        }
 
         // Prefer the peer's obfuscated port whenever they advertise one.
         // Peers always advertise the plain port too, so falling back to plain

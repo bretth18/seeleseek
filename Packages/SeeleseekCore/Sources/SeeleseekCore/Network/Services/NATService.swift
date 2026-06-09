@@ -34,13 +34,23 @@ public actor NATService {
 
     private struct InternalMapping: Sendable {
         let internalPort: UInt16
-        let externalPort: UInt16
+        /// Router-assigned. Refresh can renumber it (router reboot, lease
+        /// churn), so it's mutable and renumbers fire `onExternalPortChanged`.
+        var externalPort: UInt16
         let proto: String
         let method: MappingMethod
         /// Lease duration the router granted (seconds). `0` means permanent
         /// (no refresh needed).
         let leaseSeconds: UInt32
         var createdAt: Date
+    }
+
+    /// Called with (internalPort, newExternalPort) when a refresh renumbers
+    /// a mapping — the owner re-advertises the new port to the server.
+    private var onExternalPortChanged: (@Sendable (UInt16, UInt16) -> Void)?
+
+    public func setOnExternalPortChanged(_ handler: @escaping @Sendable (UInt16, UInt16) -> Void) {
+        onExternalPortChanged = handler
     }
 
     private struct UPnPGateway: Sendable {
@@ -220,15 +230,16 @@ public actor NATService {
         for idx in indices {
             let mapping = mappedPorts[idx]
             do {
+                let refreshedPort: UInt16
                 switch mapping.method {
                 case .upnp:
-                    _ = try await mapPortUPnPWithFallback(
+                    refreshedPort = try await mapPortUPnPWithFallback(
                         mapping.internalPort,
                         externalPort: mapping.externalPort,
                         protocol: mapping.proto
-                    )
+                    ).port
                 case .natpmp:
-                    _ = try await mapPortNATPMPRaw(
+                    refreshedPort = try await mapPortNATPMPRaw(
                         mapping.internalPort,
                         externalPort: mapping.externalPort,
                         protocol: mapping.proto,
@@ -237,8 +248,16 @@ public actor NATService {
                 }
                 if idx < mappedPorts.count {
                     mappedPorts[idx].createdAt = Date()
+                    if refreshedPort != mapping.externalPort {
+                        // Router renumbered the mapping — record it and let
+                        // the owner re-advertise, or the recorded external
+                        // port silently goes stale.
+                        logger.warning("Mapping renumbered: \(mapping.proto) \(mapping.internalPort) external \(mapping.externalPort) -> \(refreshedPort)")
+                        mappedPorts[idx].externalPort = refreshedPort
+                        onExternalPortChanged?(mapping.internalPort, refreshedPort)
+                    }
                 }
-                logger.debug("Refreshed \(mapping.proto) \(mapping.internalPort)->\(mapping.externalPort)")
+                logger.debug("Refreshed \(mapping.proto) \(mapping.internalPort)->\(refreshedPort)")
             } catch {
                 logger.warning("Mapping refresh failed for \(mapping.proto) \(mapping.externalPort): \(error.localizedDescription)")
                 if case .upnp = mapping.method {

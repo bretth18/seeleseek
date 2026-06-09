@@ -187,8 +187,13 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onUploadSpeedLimitChange?(uploadSpeedLimit)
         }
     }
+    /// Live push (KB/s, 0 = unlimited) to UploadManager. Wired by AppState —
+    /// the setting was previously cosmetic: persisted and displayed, but
+    /// never assigned to the manager's limiter.
+    var onUploadSpeedLimitChange: ((Int) -> Void)?
     var downloadSpeedLimit: Int = 0 {
         didSet {
             guard !isLoading else { return }

@@ -161,6 +161,10 @@ public enum MessageParser {
         public let port: UInt32
         public let token: UInt32
         public let privileged: Bool
+        /// Trailing ConnectToPeer fields (0 when the server omits them):
+        /// the peer's obfuscation support and its obfuscated listen port.
+        public var obfuscationType: UInt32 = 0
+        public var obfuscatedPort: UInt32 = 0
     }
 
     public nonisolated static func parseConnectToPeer(_ payload: Data) -> PeerInfo? {
@@ -182,6 +186,12 @@ public enum MessageParser {
         offset += 4
 
         let privileged = payload.readBool(at: offset) ?? false
+        offset += 1
+
+        // Trailing fields (spec fields 7-8); older servers may omit them.
+        let obfuscationType = payload.readUInt32(at: offset) ?? 0
+        offset += 4
+        let obfuscatedPort = payload.readUInt32(at: offset) ?? 0
 
         let ipString = formatLittleEndianIPv4(ip)
 
@@ -191,7 +201,9 @@ public enum MessageParser {
             ip: ipString,
             port: port,
             token: token,
-            privileged: privileged
+            privileged: privileged,
+            obfuscationType: obfuscationType,
+            obfuscatedPort: obfuscatedPort
         )
     }
 
@@ -518,15 +530,11 @@ public enum MessageParser {
             }
             logger.debug("fileSize parsed: \(parsed)")
 
-            // A zero size for an upload-direction TransferRequest is
-            // either a parser misalignment or a peer protocol bug. Either
-            // way, accepting it would create a "transfer" that does
-            // nothing and immediately succeeds with 0/0 bytes — not
-            // recoverable into a valid download. Reject.
-            guard parsed > 0 else {
-                logger.warning("TransferRequest: fileSize is 0 for upload direction — rejecting as malformed")
-                logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
-                return nil
+            // Zero-byte files are legal shares (slskd/Seeker advertise
+            // size 0 for them); rejecting the message would stall a queued
+            // 0-byte download forever.
+            if parsed == 0 {
+                logger.debug("TransferRequest: fileSize is 0 (zero-byte file)")
             }
             fileSize = parsed
         }

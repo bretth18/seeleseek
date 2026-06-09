@@ -153,12 +153,21 @@ public actor ListenerService {
                     }) else { return }
                     continuation.resume()
                 case .failed(let error):
-                    guard hasResumed.withLock({
+                    let shouldResume = hasResumed.withLock({
                         guard !$0 else { return false }
                         $0 = true
                         return true
-                    }) else { return }
-                    continuation.resume(throwing: error)
+                    })
+                    if shouldResume {
+                        continuation.resume(throwing: error)
+                    } else {
+                        // Post-startup death (network change, interface drop):
+                        // without this the listener stays non-nil and
+                        // listeningPort keeps advertising a dead port.
+                        Task { [weak self] in
+                            await self?.handlePlainListenerFailure(error)
+                        }
+                    }
                 case .cancelled:
                     break
                 default:
@@ -238,10 +247,18 @@ public actor ListenerService {
         self.obfuscatedListener = newListener
     }
 
+    private func handlePlainListenerFailure(_ error: Error) {
+        logger.error("Listener failed after startup: \(error.localizedDescription)")
+        listener?.cancel()
+        listener = nil
+        listeningPort = 0
+    }
+
     private func handleObfuscatedListenerFailure(_ error: Error) {
         logger.error("Obfuscated listener failed: \(error.localizedDescription)")
         obfuscatedListener?.cancel()
         obfuscatedListener = nil
+        obfuscatedPort = 0
     }
 
     private func handleNewConnection(_ connection: NWConnection, obfuscated: Bool) {

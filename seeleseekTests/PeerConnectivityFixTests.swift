@@ -181,8 +181,11 @@ struct PeerConnectivityFixTests {
 
     // MARK: - Transfer routing
 
-    @Test("Token match takes precedence over filename")
-    func transferRoutingPrefersToken() {
+    @Test("Peer token never matches our local token namespace")
+    func transferRoutingIgnoresPeerToken() {
+        // The peer's TransferRequest ticket and our locally-generated
+        // pendingDownloads keys are unrelated namespaces — a numeric
+        // collision must not route the request to an unrelated download.
         let pending: [UInt32: DownloadManager.PendingDownload] = [
             42: .init(transferId: UUID(), username: "alice", filename: "song.flac", size: 1000),
             7:  .init(transferId: UUID(), username: "bob",   filename: "other.flac", size: 1000)
@@ -190,7 +193,7 @@ struct PeerConnectivityFixTests {
         let request = TransferRequest(
             direction: .upload, token: 42, filename: "ANY.flac", size: 1000, username: "zzz"
         )
-        #expect(DownloadManager.matchPendingDownload(request: request, pending: pending) == 42)
+        #expect(DownloadManager.matchPendingDownload(request: request, pending: pending) == nil)
     }
 
     @Test("(username, filename) wins when token doesn't match")
