@@ -113,8 +113,16 @@ public final class PeerConnectionPool {
 
     // MARK: - Per-IP Connection Tracking
     private var connectionsPerIP: [String: Int] = [:]
+    /// Connection ids (incoming only) currently holding a per-IP slot.
+    /// Makes slot release idempotent across the many removal paths.
+    private var heldIPSlots: Set<String> = []
     // SECURITY: Track connection attempts per IP for rate limiting
     private var connectionAttempts: [String: [Date]] = [:]
+
+    /// Monotonic suffix for outgoing connection ids. Two token-0 direct
+    /// dials to the same user would otherwise share a key and the second
+    /// would overwrite the first's tracking.
+    @ObservationIgnored private var outgoingConnectionSequence: UInt64 = 0
 
     /// Token → expected username for an upcoming PierceFirewall.
     ///
@@ -285,25 +293,32 @@ public final class PeerConnectionPool {
         let connection = PeerConnection(peerInfo: peerInfo, token: token, isObfuscated: obfuscated)
 
         // Start consuming events BEFORE connecting to avoid missing early events
-        let outgoingId = "\(username)-\(token)"
-        consumeEvents(from: connection, username: username, connectionId: outgoingId, capturedIP: peerInfo.ip, isIncoming: false)
+        outgoingConnectionSequence += 1
+        let connectionId = "\(username)-\(token)-\(outgoingConnectionSequence)"
+        consumeEvents(from: connection, username: username, connectionId: connectionId, capturedIP: peerInfo.ip, isIncoming: false)
 
         try await connection.connect()
 
         // For DIRECT connections, send PeerInit to identify ourselves
         // For INDIRECT connections (responding to ConnectToPeer), skip PeerInit - caller will send PierceFirewall
-        if !isIndirect {
-            if !ourUsername.isEmpty {
-                try await connection.sendPeerInit(username: ourUsername)
-                logger.debug("Sent PeerInit to \(username) as '\(self.ourUsername)'")
+        do {
+            if !isIndirect {
+                if !ourUsername.isEmpty {
+                    try await connection.sendPeerInit(username: ourUsername)
+                    logger.debug("Sent PeerInit to \(username) as '\(self.ourUsername)'")
+                } else {
+                    logger.warning("ourUsername not set, skipping PeerInit")
+                }
             } else {
-                logger.warning("ourUsername not set, skipping PeerInit")
+                logger.debug("Indirect connection to \(username) - skipping PeerInit (will send PierceFirewall)")
             }
-        } else {
-            logger.debug("Indirect connection to \(username) - skipping PeerInit (will send PierceFirewall)")
+        } catch {
+            // Handshake failed after TCP connect: close the socket so it
+            // doesn't linger open and untracked.
+            await connection.disconnect()
+            throw error
         }
 
-        let connectionId = "\(username)-\(token)"
         let info = PeerConnectionInfo(
             id: connectionId,
             username: username,
@@ -339,7 +354,26 @@ public final class PeerConnectionPool {
             isObfuscated: obfuscated
         )
 
-        try await connection.accept()
+        // Race accept against a timeout. On timeout, cancel the NWConnection
+        // so the pending accept continuation resolves instead of hanging.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await connection.accept()
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(15))
+                nwConnection.cancel()
+                throw PeerConnectionError.timeout
+            }
+            do {
+                _ = try await group.next()
+            } catch {
+                nwConnection.cancel()
+                group.cancelAll()
+                throw error
+            }
+            group.cancelAll()
+        }
 
         // We'll know the username after handshake
         // NOTE: Don't start receiving yet - caller must set up callbacks first, then call beginReceiving()
@@ -368,6 +402,9 @@ public final class PeerConnectionPool {
         }
 
         let peerIP = Self.canonicalIP(from: nwConnection.endpoint)
+        // Generate the id before taking the per-IP slot so the catch below
+        // can release it idempotently.
+        let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 
         // Enforce per-IP connection limit to prevent single peer from exhausting resources
         if !peerIP.isEmpty {
@@ -400,12 +437,11 @@ public final class PeerConnectionPool {
 
             // Increment per-IP counter
             connectionsPerIP[ip] = currentCount + 1
+            heldIPSlots.insert(connectionId)
         }
 
         do {
             let connection = try await acceptIncoming(nwConnection, obfuscated: obfuscated)
-
-            let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
 
             let capturedIP = peerIP
             consumeEvents(from: connection, username: "unknown", connectionId: connectionId, capturedIP: capturedIP, isIncoming: true)
@@ -434,6 +470,7 @@ public final class PeerConnectionPool {
             logger.info("Incoming connection accepted and callbacks configured")
             logger.info("Incoming connection stored: \(connectionId), receive loop started")
         } catch {
+            releaseIPSlot(connectionId: connectionId, ip: peerIP)
             // Inbound timeouts / refused / resets are normal on a
             // public-facing peer (dead peers, NAT tarpits). Debug only.
             logger.debug("Failed to handle incoming connection: \(error.localizedDescription)")
@@ -449,6 +486,9 @@ public final class PeerConnectionPool {
             info.username == username ? key : nil
         }
         for key in keysToRemove {
+            if let info = connections[key] {
+                releaseIPSlot(connectionId: key, ip: info.ip)
+            }
             connections.removeValue(forKey: key)
             if let conn = activeConnections_.removeValue(forKey: key) {
                 await conn.disconnect()
@@ -510,6 +550,8 @@ public final class PeerConnectionPool {
         activeConnections_.removeAll()
         connections.removeAll()
         lastActivities.removeAll()
+        connectionsPerIP.removeAll()
+        heldIPSlots.removeAll()
         activeConnections = 0
     }
 
@@ -536,6 +578,9 @@ public final class PeerConnectionPool {
                 return connection
             } else {
                 logger.debug("Found stale connection for \(username) (key: \(key)), removing")
+                if let info = connections[key] {
+                    releaseIPSlot(connectionId: key, ip: info.ip)
+                }
                 activeConnections_.removeValue(forKey: key)
                 connections.removeValue(forKey: key)
             }
@@ -562,8 +607,8 @@ public final class PeerConnectionPool {
     /// Writes to the non-observable `lastActivities` dict so SwiftUI views
     /// observing `connections` don't invalidate on every peer message.
     /// `connectionId` is the dict key for both incoming and outgoing
-    /// connections (outgoing keys are `"\(username)-\(token)"`, set in
-    /// `connect(...)`), so this is a direct lookup — no prefix scan.
+    /// connections (outgoing keys are `"\(username)-\(token)-\(seq)"`, set
+    /// in `connect(...)`), so this is a direct lookup — no prefix scan.
     private func touchActivity(connectionId: String) {
         lastActivities[connectionId] = Date()
     }
@@ -593,18 +638,25 @@ public final class PeerConnectionPool {
 
         var toRemove: [String] = []
         for (id, info) in connections {
+            // Connection-level byte activity. Pool events only fire per
+            // decoded message, so a multi-MB frame accumulating (browse)
+            // bumps no event for minutes — but bytes ARE flowing. Read the
+            // connection's Mutex-backed timestamp to avoid reaping it.
+            let byteActivity = activeConnections_[id]?.lastActivityAt
             if let lastActivity = lastActivities[id] {
                 if lastActivity <= idleCutoff {
+                    if let byteActivity, byteActivity > idleCutoff { continue }
                     toRemove.append(id)
                 }
             } else if let connectedAt = info.connectedAt, connectedAt <= stuckHandshakeCutoff {
+                if let byteActivity, byteActivity > stuckHandshakeCutoff { continue }
                 toRemove.append(id)
             }
         }
 
         for id in toRemove {
             if let info = connections[id] {
-                decrementIPCounter(for: info.ip)
+                releaseIPSlot(connectionId: id, ip: info.ip)
             }
             if let conn = activeConnections_[id] {
                 Task { await conn.disconnect() }
@@ -650,6 +702,14 @@ public final class PeerConnectionPool {
         case .name(let name, _): return name
         @unknown default: return ""
         }
+    }
+
+    /// Idempotent release of an incoming connection's per-IP slot. Safe to
+    /// call from every removal path; only the first call decrements, and
+    /// outgoing ids (which never take slots) are no-ops.
+    private func releaseIPSlot(connectionId: String, ip: String) {
+        guard heldIPSlots.remove(connectionId) != nil else { return }
+        decrementIPCounter(for: ip)
     }
 
     /// Decrement per-IP connection counter (call when removing a connection)
@@ -761,9 +821,7 @@ public final class PeerConnectionPool {
             // (e.g. "bob-1" vs "bob-12").
             connections[connectionId]?.state = state
             if case .disconnected = state {
-                if isIncoming {
-                    decrementIPCounter(for: capturedIP)
-                }
+                releaseIPSlot(connectionId: connectionId, ip: capturedIP)
                 connections.removeValue(forKey: connectionId)
                 activeConnections_.removeValue(forKey: connectionId)
                 activeConnections = connections.count
@@ -775,9 +833,7 @@ public final class PeerConnectionPool {
             // Close connection after results received
             Task {
                 await connection.disconnect()
-                if isIncoming {
-                    self.decrementIPCounter(for: capturedIP)
-                }
+                self.releaseIPSlot(connectionId: connectionId, ip: capturedIP)
                 self.connections.removeValue(forKey: connectionId)
                 self.activeConnections_.removeValue(forKey: connectionId)
                 self.activeConnections = self.connections.count
@@ -808,7 +864,7 @@ public final class PeerConnectionPool {
                     "Blocked inbound peer: \(discoveredUsername)",
                     detail: capturedIP.isEmpty ? "matches block pattern" : "\(capturedIP) — matches block pattern"
                 )
-                decrementIPCounter(for: capturedIP)
+                releaseIPSlot(connectionId: connectionId, ip: capturedIP)
                 connections.removeValue(forKey: connectionId)
                 activeConnections_.removeValue(forKey: connectionId)
                 activeConnections = connections.count
@@ -845,7 +901,7 @@ public final class PeerConnectionPool {
             // insight into raw file bytes flowing outside its peer-message
             // framing. Same pattern as .pierceFirewall below; both events
             // transfer ownership of the connection from pool to consumer.
-            decrementIPCounter(for: capturedIP)
+            releaseIPSlot(connectionId: connectionId, ip: capturedIP)
             connections.removeValue(forKey: connectionId)
             activeConnections_.removeValue(forKey: connectionId)
             activeConnections = connections.count
@@ -854,7 +910,7 @@ public final class PeerConnectionPool {
         case .pierceFirewall(let token):
             logger.info("PierceFirewall received: token=\(token)")
             incrementPierceFirewallCount()
-            decrementIPCounter(for: capturedIP)
+            releaseIPSlot(connectionId: connectionId, ip: capturedIP)
 
             // Stamp the username on the connection BEFORE we yield the
             // event or process any subsequent message on this connection.

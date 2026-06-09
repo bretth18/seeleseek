@@ -128,7 +128,15 @@ public actor PeerConnection {
     private(set) var messagesReceived: UInt32 = 0
     private(set) var messagesSent: UInt32 = 0
     private(set) var connectedAt: Date?
-    private(set) var lastActivityAt: Date?
+    // Mutex-backed so the pool's MainActor cleanup timer can read it
+    // synchronously while raw file bytes are flowing.
+    private nonisolated let _lastActivityAt = Mutex<Date?>(nil)
+    public nonisolated var lastActivityAt: Date? {
+        _lastActivityAt.withLock { $0 }
+    }
+    private nonisolated func touchLastActivity() {
+        _lastActivityAt.withLock { $0 = Date() }
+    }
 
     // MARK: - Initialization
 
@@ -195,8 +203,23 @@ public actor PeerConnection {
 
     // Track if connect continuation has been resumed to prevent double-resume
     private var connectContinuationResumed = false
+    // Each dial/accept attempt gets a generation; state events from
+    // abandoned attempts (e.g. bind-retry's first socket) are dropped.
+    private var connectAttemptGeneration: UInt64 = 0
+    // Generation that reached .ready; gates event-stream finish on teardown.
+    private var connectionEstablishedGeneration: UInt64?
 
     public func connect() async throws {
+        do {
+            try await dialWithBindRetry()
+        } catch {
+            // No usable connection: end the event stream so consumers exit.
+            eventContinuation.finish()
+            throw error
+        }
+    }
+
+    private func dialWithBindRetry() async throws {
         guard case .disconnected = state else { return }
 
         // Validate port range (must be valid UInt16 and non-zero)
@@ -230,6 +253,8 @@ public actor PeerConnection {
     private func performConnect(to endpoint: NWEndpoint, bindTo localPort: UInt16?) async throws {
         updateState(.connecting)
         connectContinuationResumed = false
+        connectAttemptGeneration += 1
+        let generation = connectAttemptGeneration
 
         let params = Self.makeOutboundParameters(bindTo: localPort, remoteEndpoint: endpoint)
         let conn = NWConnection(to: endpoint, using: params)
@@ -241,7 +266,7 @@ public actor PeerConnection {
                 conn.stateUpdateHandler = { [weak self] newState in
                     guard let self else { return }
                     Task {
-                        await self.handleConnectionState(newState, continuation: continuation)
+                        await self.handleConnectionState(newState, generation: generation, continuation: continuation)
                     }
                 }
                 conn.start(queue: .global(qos: .userInitiated))
@@ -288,6 +313,9 @@ public actor PeerConnection {
         guard let connection, isIncoming else { return }
 
         updateState(.connecting)
+        connectContinuationResumed = false
+        connectAttemptGeneration += 1
+        let generation = connectAttemptGeneration
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.stateUpdateHandler = { [weak self] newState in
@@ -297,7 +325,7 @@ public actor PeerConnection {
                     if case .ready = newState {
                         await self.extractRemoteEndpointIfNeeded()
                     }
-                    await self.handleConnectionState(newState, continuation: continuation)
+                    await self.handleConnectionState(newState, generation: generation, continuation: continuation)
                 }
             }
 
@@ -585,16 +613,37 @@ public actor PeerConnection {
             throw PeerError.notConnected
         }
 
+        // Serve from the file transfer buffer first (bytes the stopped
+        // message loop already pulled off the socket).
+        if fileTransferBuffer.count >= exactLength {
+            let data = fileTransferBuffer.prefix(exactLength)
+            fileTransferBuffer.removeFirst(exactLength)
+            return Data(data)
+        }
+
+        // Let the message loop's in-flight receive land, then re-check.
+        await waitForMessageLoopReceiveToLand()
+        if fileTransferBuffer.count >= exactLength {
+            let data = fileTransferBuffer.prefix(exactLength)
+            fileTransferBuffer.removeFirst(exactLength)
+            return Data(data)
+        }
+
+        let bufferedData = fileTransferBuffer
+        fileTransferBuffer.removeAll()
+        let neededFromNetwork = exactLength - bufferedData.count
+
         return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: exactLength, maximumLength: exactLength) { [weak self] data, _, _, error in
+            connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
                 if let error {
                     continuation.resume(throwing: error)
-                } else if let data {
+                } else if let data, data.count == neededFromNetwork {
                     Task {
                         await self?.recordReceived(data.count)
                     }
-                    continuation.resume(returning: data)
+                    continuation.resume(returning: bufferedData + data)
                 } else {
+                    // Short delivery (connection closed mid-read)
                     continuation.resume(throwing: PeerError.connectionClosed)
                 }
             }
@@ -640,14 +689,6 @@ public actor PeerConnection {
             return Data(data)
         }
 
-        // If we have some buffered data but not enough, we need to receive more
-        let neededFromNetwork = count - fileTransferBuffer.count
-        logger.debug("[\(self.peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(self.fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
-
-        // Capture and clear buffer before entering non-isolated closure
-        let bufferedData = fileTransferBuffer
-        fileTransferBuffer.removeAll()
-
         // Cancel the underlying NWConnection on timeout. Without this, the
         // timeout child throws but the receive continuation stays pending —
         // `withThrowingTaskGroup` then waits on the orphan child forever, so
@@ -655,30 +696,11 @@ public actor PeerConnection {
         return try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask { [self] in
                 try await withTaskCancellationHandler {
-                    try await withCheckedThrowingContinuation { continuation in
-                        connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
-                            if let error {
-                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
-                                continuation.resume(throwing: error)
-                            } else if let data, data.count >= neededFromNetwork {
-                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
-                                Task {
-                                    await self?.recordReceived(data.count)
-                                }
-                                // Combine buffered data with newly received data
-                                if !bufferedData.isEmpty {
-                                    var combined = bufferedData
-                                    combined.append(data)
-                                    continuation.resume(returning: Data(combined.prefix(count)))
-                                } else {
-                                    continuation.resume(returning: data)
-                                }
-                            } else {
-                                self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
-                                continuation.resume(throwing: PeerError.connectionClosed)
-                            }
-                        }
-                    }
+                    // Let the message loop's in-flight receive land first so
+                    // we never have two competing receives on one socket;
+                    // its bytes go to fileTransferBuffer and are re-checked.
+                    await waitForMessageLoopReceiveToLand()
+                    return try await receiveRawBytesFromSocket(count: count, timeout: timeout, connection: connection)
                 } onCancel: {
                     // Force the pending receive to fire its callback (with an
                     // error) so the continuation resolves and this child task
@@ -700,6 +722,50 @@ public actor PeerConnection {
         }
     }
 
+    /// Re-checks the buffer after the message loop quiesces, then issues the
+    /// actual socket receive for whatever is still missing.
+    private func receiveRawBytesFromSocket(count: Int, timeout: TimeInterval, connection: NWConnection) async throws -> Data {
+        if fileTransferBuffer.count >= count {
+            let data = fileTransferBuffer.prefix(count)
+            fileTransferBuffer.removeFirst(count)
+            logger.debug("[\(self.peerInfo.username)] Got \(count) raw bytes from file transfer buffer (post-quiesce)")
+            return Data(data)
+        }
+
+        // If we have some buffered data but not enough, we need to receive more
+        let neededFromNetwork = count - fileTransferBuffer.count
+        logger.debug("[\(self.peerInfo.username)] Waiting for \(neededFromNetwork) raw bytes from network (have \(self.fileTransferBuffer.count) buffered, need \(count) total, timeout: \(timeout)s)...")
+
+        // Capture and clear buffer before entering non-isolated closure
+        let bufferedData = fileTransferBuffer
+        fileTransferBuffer.removeAll()
+
+        return try await withCheckedThrowingContinuation { continuation in
+            connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
+                if let error {
+                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] receiveRawBytes error: \(error)")
+                    continuation.resume(throwing: error)
+                } else if let data, data.count >= neededFromNetwork {
+                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received \(data.count) raw bytes from network")
+                    Task {
+                        await self?.recordReceived(data.count)
+                    }
+                    // Combine buffered data with newly received data
+                    if !bufferedData.isEmpty {
+                        var combined = bufferedData
+                        combined.append(data)
+                        continuation.resume(returning: Data(combined.prefix(count)))
+                    } else {
+                        continuation.resume(returning: data)
+                    }
+                } else {
+                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] Received incomplete data: \(data?.count ?? 0)/\(neededFromNetwork)")
+                    continuation.resume(throwing: PeerError.connectionClosed)
+                }
+            }
+        }
+    }
+
     /// Result type for file chunk reception - distinguishes between data, completion, and errors
     public enum FileChunkResult: Sendable {
         case data(Data)
@@ -715,16 +781,16 @@ public actor PeerConnection {
         }
 
         // First, check if we have buffered data from when the receive loop was stopped
-        if !fileTransferBuffer.isEmpty {
-            let chunk: Data
-            if fileTransferBuffer.count <= maxLength {
-                chunk = fileTransferBuffer
-                fileTransferBuffer.removeAll()
-            } else {
-                chunk = fileTransferBuffer.prefix(maxLength)
-                fileTransferBuffer.removeFirst(maxLength)
-            }
+        if let chunk = takeFileChunkFromBuffer(maxLength: maxLength) {
             logger.debug("Using \(chunk.count) bytes from file transfer buffer")
+            return .data(chunk)
+        }
+
+        // Let the message loop's in-flight receive land, then re-check the
+        // buffer: its bytes must be consumed in order, before fresh receives.
+        await waitForMessageLoopReceiveToLand()
+        if let chunk = takeFileChunkFromBuffer(maxLength: maxLength) {
+            logger.debug("Using \(chunk.count) bytes from file transfer buffer (post-quiesce)")
             return .data(chunk)
         }
 
@@ -771,17 +837,69 @@ public actor PeerConnection {
         }
     }
 
+    /// Dequeue up to `maxLength` bytes from the file transfer buffer.
+    private func takeFileChunkFromBuffer(maxLength: Int) -> Data? {
+        guard !fileTransferBuffer.isEmpty else { return nil }
+        let chunk: Data
+        if fileTransferBuffer.count <= maxLength {
+            chunk = fileTransferBuffer
+            fileTransferBuffer.removeAll()
+        } else {
+            chunk = Data(fileTransferBuffer.prefix(maxLength))
+            fileTransferBuffer.removeFirst(maxLength)
+        }
+        return chunk
+    }
+
     // Flag to stop the receive loop for raw file transfers
     private var shouldStopReceiving = false
 
     // Buffer for file transfer data received after stopping message parsing
     private var fileTransferBuffer = Data()
 
+    // True while the message loop has an NWConnection.receive in flight.
+    // Raw readers must wait for it to land before issuing their own receive,
+    // or NWConnection delivers bytes to the loop first (out-of-order data).
+    private var messageLoopReceiveArmed = false
+    private var messageLoopIdleWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    /// Called on every non-rearm exit of the message loop's receive callback.
+    private func markMessageLoopReceiveLanded() {
+        messageLoopReceiveArmed = false
+        let waiters = messageLoopIdleWaiters
+        messageLoopIdleWaiters.removeAll()
+        for waiter in waiters.values {
+            waiter.resume()
+        }
+    }
+
+    /// Suspends until the message loop's in-flight receive has landed.
+    private func waitForMessageLoopReceiveToLand() async {
+        guard messageLoopReceiveArmed else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if messageLoopReceiveArmed {
+                    messageLoopIdleWaiters[id] = continuation
+                } else {
+                    continuation.resume()
+                }
+            }
+        } onCancel: {
+            Task { await self.resumeIdleWaiter(id) }
+        }
+    }
+
+    private func resumeIdleWaiter(_ id: UUID) {
+        messageLoopIdleWaiters.removeValue(forKey: id)?.resume()
+    }
+
     /// Stop the normal receive loop so we can do raw file transfers
     public func stopReceiving() {
         shouldStopReceiving = true
         // Clear the message receive buffer - any pending data will go to file transfer buffer
         receiveBuffer.removeAll()
+        migrateObfuscatedTailToFileBuffer()
         logger.info("Stopping receive loop for file transfer")
         logger.debug("[\(self.peerInfo.username)] Stopped receive loop, cleared message buffer")
     }
@@ -808,19 +926,25 @@ public actor PeerConnection {
         do {
             return try await withThrowingTaskGroup(of: Data.self) { group in
                 group.addTask {
-                    try await withCheckedThrowingContinuation { continuation in
-                        // Use minimumIncompleteLength: 0 to return immediately with whatever is available
-                        connection.receive(minimumIncompleteLength: 0, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
-                            if let error {
-                                continuation.resume(throwing: error)
-                            } else if let data, !data.isEmpty {
-                                Task { await self?.recordReceived(data.count) }
-                                continuation.resume(returning: data)
-                            } else {
-                                // No data available
-                                continuation.resume(returning: Data())
+                    try await withTaskCancellationHandler {
+                        try await withCheckedThrowingContinuation { continuation in
+                            // Use minimumIncompleteLength: 0 to return immediately with whatever is available
+                            connection.receive(minimumIncompleteLength: 0, maximumLength: maxLength) { [weak self] data, _, isComplete, error in
+                                if let error {
+                                    continuation.resume(throwing: error)
+                                } else if let data, !data.isEmpty {
+                                    Task { await self?.recordReceived(data.count) }
+                                    continuation.resume(returning: data)
+                                } else {
+                                    // No data available
+                                    continuation.resume(returning: Data())
+                                }
                             }
                         }
+                    } onCancel: {
+                        // Resolve a pending receive so the timeout can return.
+                        // Safe: only called after the transfer completed.
+                        connection.cancel()
                     }
                 }
 
@@ -842,12 +966,20 @@ public actor PeerConnection {
 
     // MARK: - Private Methods
 
-    private func handleConnectionState(_ state: NWConnection.State, continuation: CheckedContinuation<Void, Error>?) {
+    private func handleConnectionState(_ state: NWConnection.State, generation: UInt64, continuation: CheckedContinuation<Void, Error>?) {
+        // Drop events from abandoned attempts: a stale socket's late
+        // .cancelled/.failed must not resume the live attempt's continuation,
+        // reset the shared flag, cancel the live connection, or stomp state.
+        guard generation == connectAttemptGeneration else {
+            logger.debug("Ignoring stale connection state (gen \(generation) < \(self.connectAttemptGeneration)): \(String(describing: state))")
+            return
+        }
         switch state {
         case .ready:
             logger.info("Peer connected: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             logger.info("Connected to peer \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             connectedAt = Date()
+            connectionEstablishedGeneration = generation
             updateState(.connected)
             // Only auto-start receiving if flag is set (for outgoing connections)
             // For incoming connections, we delay until callbacks are configured
@@ -875,6 +1007,12 @@ public actor PeerConnection {
             if !connectContinuationResumed {
                 connectContinuationResumed = true
                 continuation?.resume(throwing: error)
+            }
+            // Established connection died: end the event stream (after the
+            // .stateChanged yield above) so the pool's consume loop exits.
+            // Gated so a stale bind-retry socket can't finish the live stream.
+            if connectionEstablishedGeneration == generation {
+                eventContinuation.finish()
             }
 
         case .waiting(let error):
@@ -909,6 +1047,9 @@ public actor PeerConnection {
                 connectContinuationResumed = true
                 continuation?.resume(throwing: CancellationError())
             }
+            if connectionEstablishedGeneration == generation {
+                eventContinuation.finish()
+            }
 
         case .setup:
             break
@@ -930,12 +1071,20 @@ public actor PeerConnection {
         logger.debug("[\(self.peerInfo.username)] Resuming receive loop for P connection (browse)")
         shouldStopReceiving = false
 
-        // Move any data from file transfer buffer back to receive buffer
+        // Move buffered data back: decoded prefix to receiveBuffer, any
+        // undecoded obfuscated tail back to obfuscatedBuffer for the codec.
         if !fileTransferBuffer.isEmpty {
-            receiveBuffer.append(fileTransferBuffer)
+            let boundary = isObfuscated
+                ? min(fileBufferDecodedPrefixLength, fileTransferBuffer.count)
+                : fileTransferBuffer.count
+            receiveBuffer.append(fileTransferBuffer.prefix(boundary))
+            if boundary < fileTransferBuffer.count {
+                obfuscatedBuffer.append(fileTransferBuffer.dropFirst(boundary))
+            }
             fileTransferBuffer.removeAll()
-            logger.debug("[\(self.peerInfo.username)] Moved \(self.receiveBuffer.count) bytes back to receive buffer")
+            logger.debug("[\(self.peerInfo.username)] Restored \(boundary) decoded bytes to receive buffer, \(self.obfuscatedBuffer.count) undecoded to obfuscated buffer")
         }
+        fileBufferDecodedPrefixLength = 0
 
         startReceiving()
     }
@@ -943,10 +1092,13 @@ public actor PeerConnection {
     private func startReceiving() {
         guard let connection else {
             logger.warning("[\(self.peerInfo.username)] startReceiving called but no connection!")
+            // A rearm that finds no connection still has to release waiters.
+            markMessageLoopReceiveLanded()
             return
         }
 
         logger.debug("[\(self.peerInfo.username)] Starting receive loop...")
+        messageLoopReceiveArmed = true
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) { [weak self] data, _, isComplete, error in
             guard let self else {
@@ -967,6 +1119,7 @@ public actor PeerConnection {
                         await self.appendToFileTransferBuffer(data)
                         self.logger.debug("[\(username)] Receive loop stopped, stored \(data.count) bytes for file transfer")
                     }
+                    await self.markMessageLoopReceiveLanded()
                     return // Don't continue receive loop
                 }
 
@@ -984,16 +1137,19 @@ public actor PeerConnection {
                 // receives and cause a race condition.
                 if await self.shouldStopReceiving {
                     self.logger.debug("[\(username)] Receive loop stopped after processing (file transfer mode)")
+                    await self.markMessageLoopReceiveLanded()
                     return
                 }
 
                 if isComplete {
                     self.logger.debug("[\(username)] Connection complete, disconnecting")
                     await self.disconnect()
+                    await self.markMessageLoopReceiveLanded()
                 } else if error == nil {
                     await self.startReceiving()
                 } else {
                     self.logger.debug("[\(username)] Not continuing receive due to error")
+                    await self.markMessageLoopReceiveLanded()
                 }
             }
         }
@@ -1001,6 +1157,23 @@ public actor PeerConnection {
 
     private func appendToFileTransferBuffer(_ data: Data) {
         fileTransferBuffer.append(data)
+    }
+
+    /// On obfuscated connections, fileTransferBuffer can hold decoded plain
+    /// bytes (moved from receiveBuffer at a flip) followed by undecoded wire
+    /// bytes. This boundary lets `resumeReceivingForPeerConnection` split
+    /// them back instead of feeding cipher bytes to the plain parser.
+    private var fileBufferDecodedPrefixLength = 0
+
+    /// Call at every plain→file-mode flip, after moving receiveBuffer over:
+    /// records the decoded/undecoded boundary and migrates any undecoded
+    /// obfuscated tail so it isn't stranded in `obfuscatedBuffer`.
+    private func migrateObfuscatedTailToFileBuffer() {
+        fileBufferDecodedPrefixLength = fileTransferBuffer.count
+        guard isObfuscated, !obfuscatedBuffer.isEmpty else { return }
+        logger.debug("[\(self.peerInfo.username)] Moving \(self.obfuscatedBuffer.count) undecoded obfuscated bytes to file transfer buffer")
+        fileTransferBuffer.append(obfuscatedBuffer)
+        obfuscatedBuffer.removeAll()
     }
 
     // Track if we've completed handshake
@@ -1040,7 +1213,7 @@ public actor PeerConnection {
 
     private func handleReceivedData(_ data: Data) async {
         bytesReceived += UInt64(data.count)
-        lastActivityAt = Date()
+        touchLastActivity()
 
         if isObfuscated {
             obfuscatedBuffer.append(data)
@@ -1193,6 +1366,7 @@ public actor PeerConnection {
                     logger.debug("PierceFirewall: moved \(self.receiveBuffer.count) bytes to file transfer buffer")
                     receiveBuffer.removeAll()
                 }
+                migrateObfuscatedTailToFileBuffer()
 
                 eventContinuation.yield(.pierceFirewall(token: token))
             }
@@ -1244,6 +1418,7 @@ public actor PeerConnection {
                         logger.debug("F connection: moved \(self.receiveBuffer.count) bytes from receive buffer to file transfer buffer")
                         receiveBuffer.removeAll()
                     }
+                    migrateObfuscatedTailToFileBuffer()
 
                     logger.debug("F connection detected, yielding fileTransferConnection event")
                     eventContinuation.yield(.fileTransferConnection(username: username, token: peerToken, connection: self))
@@ -1636,12 +1811,12 @@ public actor PeerConnection {
     private func recordSent(_ bytes: Int) {
         bytesSent += UInt64(bytes)
         messagesSent += 1
-        lastActivityAt = Date()
+        touchLastActivity()
     }
 
     private func recordReceived(_ bytes: Int) {
         bytesReceived += UInt64(bytes)
-        lastActivityAt = Date()
+        touchLastActivity()
     }
 
     // MARK: - Zlib Decompression

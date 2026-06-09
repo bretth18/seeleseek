@@ -576,7 +576,7 @@ struct FailureTests {
         #expect(MessageParser.parseTransferRequest(payload) == nil)
     }
 
-    @Test("Transfer request upload direction with zero fileSize is rejected")
+    @Test("Transfer request upload direction with zero fileSize is accepted")
     func testTransferRequestUploadZeroFileSize() {
         var payload = Data()
         payload.appendUInt32(1) // upload
@@ -584,10 +584,14 @@ struct FailureTests {
         payload.appendString("test.mp3")
         payload.appendUInt64(0) // explicit zero size
 
-        // Same rationale as above: a zero-size upload-direction request
-        // is either parser misalignment or a peer-side bug; accepting it
-        // would make a corrupt transfer look valid.
-        #expect(MessageParser.parseTransferRequest(payload) == nil)
+        // Zero-byte files are legal shares (slskd/Seeker advertise size 0
+        // for them); rejecting the message stalled queued 0-byte downloads
+        // forever. Truncated payloads are still rejected (test above) —
+        // an explicit zero is distinguishable from missing bytes.
+        let result = MessageParser.parseTransferRequest(payload)
+        #expect(result != nil)
+        #expect(result?.direction == .upload)
+        #expect(result?.fileSize == 0)
     }
 
     @Test("Transfer request download direction succeeds without fileSize")

@@ -236,14 +236,9 @@ public enum MessageBuilder {
         // Private (buddy-only) section
         appendDirectories(privateFiles)
 
-        // Compress with zlib
-        guard let compressed = compressZlib(uncompressedPayload) else {
-            // Fallback: send uncompressed (not ideal but better than nothing)
-            var payload = Data()
-            payload.appendUInt32(UInt32(PeerMessageCode.sharesReply.rawValue))
-            payload.append(uncompressedPayload)
-            return wrapMessage(payload)
-        }
+        // Compress with zlib (mandatory for code 5 — receivers inflate
+        // unconditionally, so an uncompressed fallback can never parse)
+        let compressed = compressZlib(uncompressedPayload)
 
         // Build final message
         var payload = Data()
@@ -332,14 +327,8 @@ public enum MessageBuilder {
         // Private (buddy-only) results
         appendResults(privateResults)
 
-        // Compress with zlib
-        guard let compressed = compressZlib(uncompressedPayload) else {
-            // Fallback: send uncompressed (not ideal but better than nothing)
-            var payload = Data()
-            payload.appendUInt32(UInt32(PeerMessageCode.searchReply.rawValue))
-            payload.append(uncompressedPayload)
-            return wrapMessage(payload)
-        }
+        // Compress with zlib (mandatory for code 9)
+        let compressed = compressZlib(uncompressedPayload)
 
         // Build final message
         var payload = Data()
@@ -401,8 +390,8 @@ public enum MessageBuilder {
             }
         }
 
-        // Compress with zlib
-        let compressedPayload = compressZlib(uncompressedPayload) ?? uncompressedPayload
+        // Compress with zlib (mandatory for code 37)
+        let compressedPayload = compressZlib(uncompressedPayload)
 
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.folderContentsReply.rawValue))
@@ -411,14 +400,19 @@ public enum MessageBuilder {
         return wrapMessage(payload)
     }
 
-    /// Compress data using zlib
-    nonisolated private static func compressZlib(_ data: Data) -> Data? {
+    /// Compress data using zlib. Always produces a valid zlib stream —
+    /// codes 5/9/37 are mandatorily compressed on the wire, so there is
+    /// no legal uncompressed fallback.
+    nonisolated private static func compressZlib(_ data: Data) -> Data {
         var compressed = Data()
         // Add zlib header
         compressed.append(0x78)  // CMF: compression method 8 (deflate), window size 7
         compressed.append(0x9C)  // FLG: default compression level
 
-        let bufferSize = max(65536, data.count)  // At least 64KB, or input size
+        // Deflate can EXPAND incompressible input (~5 bytes per 16KB block);
+        // without headroom, encode returns 0 for >64KB payloads that don't
+        // compress below input size.
+        let bufferSize = data.count + data.count / 16 + 64 + 6
         var compressedBuffer = [UInt8](repeating: 0, count: bufferSize)
 
         let compressedSize = data.withUnsafeBytes { sourceBuffer -> Int in
@@ -435,8 +429,14 @@ public enum MessageBuilder {
             )
         }
 
-        guard compressedSize > 0 else { return nil }
-        compressed.append(Data(compressedBuffer.prefix(compressedSize)))
+        if compressedSize > 0 {
+            compressed.append(Data(compressedBuffer.prefix(compressedSize)))
+        } else {
+            // Shouldn't be reachable with proper headroom (empty input is the
+            // one known case) — emit DEFLATE stored blocks so the output is
+            // still a stream the receiver can inflate.
+            compressed.append(storedDeflateBlocks(data))
+        }
 
         // Add Adler-32 checksum
         let checksum = adler32(data)
@@ -444,6 +444,29 @@ public enum MessageBuilder {
         compressed.append(Data(bytes: &bigEndianChecksum, count: 4))
 
         return compressed
+    }
+
+    /// RFC 1951 stored (uncompressed) blocks: 1-byte BFINAL/BTYPE=00 header,
+    /// LEN + NLEN (one's complement) little-endian, then raw bytes; max
+    /// 65535 bytes per block.
+    nonisolated private static func storedDeflateBlocks(_ data: Data) -> Data {
+        var out = Data()
+        var index = data.startIndex
+        repeat {
+            let chunkEnd = data.index(index, offsetBy: 65535, limitedBy: data.endIndex) ?? data.endIndex
+            let chunk = data[index..<chunkEnd]
+            let isFinal = chunkEnd == data.endIndex
+            out.append(isFinal ? 0x01 : 0x00)
+            let len = UInt16(chunk.count)
+            out.append(UInt8(len & 0xFF))
+            out.append(UInt8(len >> 8))
+            let nlen = ~len
+            out.append(UInt8(nlen & 0xFF))
+            out.append(UInt8(nlen >> 8))
+            out.append(chunk)
+            index = chunkEnd
+        } while index < data.endIndex
+        return out
     }
 
     /// Calculate Adler-32 checksum for zlib
@@ -659,16 +682,6 @@ public enum MessageBuilder {
     public nonisolated static func roomSearch(room: String, token: UInt32, query: String) -> Data {
         var payload = Data()
         payload.appendUInt32(ServerMessageCode.roomSearch.rawValue)
-        payload.appendString(room)
-        payload.appendUInt32(token)
-        payload.appendString(query)
-        return wrapMessage(payload)
-    }
-
-    /// Legacy room search code 25 (still used by some peers/servers)
-    public nonisolated static func fileSearchRoomMessage(room: String, token: UInt32, query: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.fileSearchRoom.rawValue)
         payload.appendString(room)
         payload.appendUInt32(token)
         payload.appendString(query)

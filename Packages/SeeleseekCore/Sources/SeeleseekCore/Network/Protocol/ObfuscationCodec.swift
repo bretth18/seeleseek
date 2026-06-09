@@ -104,7 +104,9 @@ public enum ObfuscationCodec {
     /// allocate arbitrary memory while we wait for bytes that never arrive).
     public static func decodeMessage(
         from buffer: Data,
-        maxPayloadLength: Int = 16 * 1024 * 1024
+        // Matches MessageParser's plain-frame limit — large share lists can
+        // exceed 16MB and must parse identically on obfuscated connections.
+        maxPayloadLength: Int = 100_000_000
     ) throws -> (payload: Data, bytesConsumed: Int)? {
         guard buffer.count >= keyLength + 4 else { return nil }
 

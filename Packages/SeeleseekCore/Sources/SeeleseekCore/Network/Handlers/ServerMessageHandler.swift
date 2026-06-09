@@ -346,7 +346,7 @@ public final class ServerMessageHandler {
 
         guard info.exists else {
             Task { @MainActor in
-                self.client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: false)
+                self.client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: nil)
             }
             return
         }
@@ -358,7 +358,9 @@ public final class ServerMessageHandler {
         let dirs = info.dirs ?? 0
 
         Task { @MainActor in
-            self.client?.handleUserStatusResponse(username: info.username, status: status, privileged: false)
+            // WatchUser replies don't carry privileged — nil keeps the
+            // last server-reported value instead of fabricating false.
+            self.client?.handleUserStatusResponse(username: info.username, status: status, privileged: nil)
             self.client?.dispatchUserStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
         }
 
@@ -566,8 +568,18 @@ public final class ServerMessageHandler {
             return
         }
 
+        // Adoption runs in a task that can take up to 15s (3 × 5s connects);
+        // a second PossibleParents in that window must not start a second
+        // adoption loop (duplicate parents, inconsistent branch reports).
+        if isConnectingToParent {
+            logger.debug("Parent adoption already in progress, ignoring PossibleParents")
+            return
+        }
+        isConnectingToParent = true
+
         // Try to connect to first few parents until one succeeds (limit to avoid resource exhaustion)
         Task {
+            defer { isConnectingToParent = false }
             let maxAttempts = min(3, parents.count)
             for i in 0..<maxAttempts {
                 let parent = parents[i]
@@ -585,6 +597,7 @@ public final class ServerMessageHandler {
     }
 
     private var distributedParentConnection: PeerConnection?
+    private var isConnectingToParent = false
 
     /// Disconnect and drop the distributed-parent socket. Called from
     /// `NetworkClient.performDisconnect` so a reconnect doesn't inherit
@@ -621,14 +634,15 @@ public final class ServerMessageHandler {
 
             logger.info("Connected to distributed parent: \(username)")
 
-            // Disconnect old parent before storing new one
-            if let oldParent = distributedParentConnection {
+            // Store the new parent BEFORE disconnecting the old one so the
+            // old parent's stream-end loss handler sees it was replaced and
+            // doesn't trigger a spurious distributed-network reset.
+            let oldParent = distributedParentConnection
+            distributedParentConnection = connection
+            if let oldParent {
                 logger.info("Disconnecting old distributed parent")
                 await oldParent.disconnect()
             }
-
-            // Store the connection to keep it alive
-            distributedParentConnection = connection
 
             // Consume distributed messages from the connection's event stream
             let parentUsername = username
@@ -639,6 +653,8 @@ public final class ServerMessageHandler {
                         await self.handleDistributedMessage(code: code, payload: payload, parentUsername: parentUsername)
                     }
                 }
+                // Stream ended: the parent dropped us (or we tore it down).
+                await self?.handleDistributedParentLoss(connection)
             }
 
             // Tell server we have a parent now
@@ -655,6 +671,19 @@ public final class ServerMessageHandler {
             await connection.disconnect()
             return false
         }
+    }
+
+    /// Called when a distributed parent's event stream ends. Without this
+    /// the stale `distributedParentConnection` blocks all future parent
+    /// offers and the client silently leaves the distributed network (our
+    /// shares stop appearing in other users' searches) until reconnect.
+    private func handleDistributedParentLoss(_ connection: PeerConnection) async {
+        // A newer parent may already have replaced this one, and teardown
+        // paths (tearDownDistributedParent) clear the reference themselves.
+        guard distributedParentConnection === connection else { return }
+        distributedParentConnection = nil
+        logger.warning("Distributed parent disconnected; requesting a new parent")
+        await client?.resetDistributedNetwork()
     }
 
     private func handleDistributedMessage(code: UInt32, payload: Data, parentUsername: String = "") async {

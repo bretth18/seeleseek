@@ -45,8 +45,21 @@ public actor ServerConnection {
     // Connection continuation - stored as property to ensure single-resume safety
     private var connectContinuation: CheckedContinuation<Void, Error>?
 
+    // Bounds the connect attempt: NWConnection can sit in `.waiting`
+    // indefinitely (e.g. connection refused keeps retrying on path
+    // changes and never reaches `.failed`), which would otherwise hang
+    // the caller forever and leave `state` stuck at `.connecting`.
+    private var connectTimeoutTask: Task<Void, Never>?
+    private static let connectTimeoutSeconds: Int = 15
+
     // Async stream for messages
     private var messageContinuation: AsyncStream<Data>.Continuation?
+    // Frames parsed before a consumer registers (the stream's continuation
+    // is handed over via an actor hop, so there's a window after `.ready`
+    // where messages would otherwise be dropped). Flushed on registration.
+    private var pendingMessages: [Data] = []
+    private static let maxPendingMessages = 2048
+    private var streamGeneration = 0
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "ServerConnection")
 
@@ -70,17 +83,29 @@ public actor ServerConnection {
             Task {
                 await self.setMessageContinuation(continuation)
             }
-            continuation.onTermination = { @Sendable _ in
-                Task { await self.clearContinuation() }
-            }
         }
     }
 
     private func setMessageContinuation(_ continuation: AsyncStream<Data>.Continuation) {
+        // A second consumer replaces the first; finish the old stream so its
+        // `for await` loop exits instead of silently going quiet.
+        messageContinuation?.finish()
+        streamGeneration += 1
+        let generation = streamGeneration
         messageContinuation = continuation
+        continuation.onTermination = { @Sendable _ in
+            Task { await self.clearContinuation(ifGeneration: generation) }
+        }
+        // Flush frames that arrived before the consumer registered.
+        for frame in pendingMessages {
+            continuation.yield(frame)
+        }
+        pendingMessages.removeAll()
     }
 
-    private func clearContinuation() {
+    private func clearContinuation(ifGeneration generation: Int) {
+        // A stale stream's termination must not tear down a newer stream.
+        guard generation == streamGeneration else { return }
         messageContinuation = nil
     }
 
@@ -115,6 +140,7 @@ public actor ServerConnection {
         }
 
         guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+            updateState(.disconnected)
             throw ConnectionError.connectionFailed("Invalid port: \(port)")
         }
         let endpoint = NWEndpoint.hostPort(
@@ -127,6 +153,11 @@ public actor ServerConnection {
 
         return try await withCheckedThrowingContinuation { continuation in
             self.connectContinuation = continuation
+            self.connectTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.connectTimeoutSeconds))
+                guard !Task.isCancelled else { return }
+                await self?.handleConnectTimeout()
+            }
             conn.stateUpdateHandler = { [weak self] newState in
                 guard let self else { return }
                 Task {
@@ -137,18 +168,40 @@ public actor ServerConnection {
         }
     }
 
+    /// Resume the pending connect continuation exactly once and stop the
+    /// connect timeout. Safe to call from any path; no-ops when nothing
+    /// is pending.
+    private func resumeConnectContinuation(throwing error: Error?) {
+        connectTimeoutTask?.cancel()
+        connectTimeoutTask = nil
+        guard let continuation = connectContinuation else { return }
+        connectContinuation = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+
+    private func handleConnectTimeout() {
+        guard connectContinuation != nil else { return }
+        logger.error("Connect to \(self.host):\(self.port) timed out after \(Self.connectTimeoutSeconds)s")
+        resumeConnectContinuation(throwing: ConnectionError.timeout)
+        // Tear down so state returns to .disconnected and a future
+        // connect() isn't no-op'd by the .connecting guard.
+        disconnect()
+    }
+
     public func disconnect() {
         connection?.cancel()
         connection = nil
         receiveBuffer = Data()
         // Resume any pending connect continuation before state change
-        if let continuation = connectContinuation {
-            connectContinuation = nil
-            continuation.resume(throwing: ConnectionError.notConnected)
-        }
+        resumeConnectContinuation(throwing: ConnectionError.notConnected)
         // Finish the async message stream so NetworkClient's `for await` loop exits
         messageContinuation?.finish()
         messageContinuation = nil
+        pendingMessages.removeAll()
         updateState(.disconnected)
     }
 
@@ -219,20 +272,12 @@ public actor ServerConnection {
         case .ready:
             logger.info("Connected to \(self.host):\(self.port)")
             updateState(.connected)
-            // Resume continuation exactly once, then nil it out
-            if let continuation = connectContinuation {
-                connectContinuation = nil
-                continuation.resume()
-            }
+            resumeConnectContinuation(throwing: nil)
             Task { await startReceiving() }
 
         case .failed(let error):
             logger.error("Connection failed: \(error.localizedDescription)")
-            // Resume continuation exactly once if still connecting
-            if let continuation = connectContinuation {
-                connectContinuation = nil
-                continuation.resume(throwing: ConnectionError.connectionFailed(error.localizedDescription))
-            }
+            resumeConnectContinuation(throwing: ConnectionError.connectionFailed(error.localizedDescription))
             // Clean up and end the async stream so NetworkClient detects the loss
             disconnect()
 
@@ -240,13 +285,23 @@ public actor ServerConnection {
             logger.info("Connection cancelled")
             updateState(.disconnected)
             // If cancelled during connect, resume with error
-            if let continuation = connectContinuation {
-                connectContinuation = nil
-                continuation.resume(throwing: ConnectionError.connectionFailed("Connection cancelled"))
-            }
+            resumeConnectContinuation(throwing: ConnectionError.connectionFailed("Connection cancelled"))
 
         case .waiting(let error):
             logger.warning("Connection waiting: \(error.localizedDescription)")
+            // TCP-level refusals/unreachability park NWConnection in .waiting
+            // (it retries on path changes and never reaches .failed). Treat
+            // the definitive POSIX codes as failures so connect() doesn't
+            // hang until the timeout: ENOMEM, ENETUNREACH, ENOTCONN,
+            // ETIMEDOUT, ECONNREFUSED, EHOSTUNREACH.
+            if case .posix(let posixError) = error {
+                let code = posixError.rawValue
+                if code == 12 || code == 51 || code == 57 || code == 60 || code == 61 || code == 65 {
+                    logger.error("Server connection definitive failure: POSIX \(code)")
+                    resumeConnectContinuation(throwing: ConnectionError.connectionFailed(error.localizedDescription))
+                    disconnect()
+                }
+            }
 
         default:
             break
@@ -304,8 +359,14 @@ public actor ServerConnection {
             completeMessage.appendUInt32(frame.code)
             completeMessage.append(frame.payload)
 
-            // Yield to async stream
-            messageContinuation?.yield(completeMessage)
+            // Yield to async stream; if the consumer hasn't registered its
+            // continuation yet (actor hop in `messages`), buffer the frame
+            // so a fast login response isn't dropped.
+            if let messageContinuation {
+                messageContinuation.yield(completeMessage)
+            } else if pendingMessages.count < Self.maxPendingMessages {
+                pendingMessages.append(completeMessage)
+            }
 
             // Also call legacy handler if set
             await messageHandler?(frame.code, frame.payload)

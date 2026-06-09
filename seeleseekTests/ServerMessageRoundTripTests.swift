@@ -115,19 +115,6 @@ struct ServerMessageRoundTripTests {
         #expect(q == "iron maiden")
     }
 
-    @Test("fileSearchRoom message (legacy code 25)")
-    func testFileSearchRoom() {
-        let msg = MessageBuilder.fileSearchRoomMessage(room: "Jazz", token: 777, query: "miles")
-        let (code, off) = parseMessage(msg)
-        #expect(code == ServerMessageCode.fileSearchRoom.rawValue)
-        var o = off
-        let (room, rLen) = msg.readString(at: o)!; o += rLen
-        #expect(room == "Jazz")
-        #expect(msg.readUInt32(at: o) == 777); o += 4
-        let (q, _) = msg.readString(at: o)!
-        #expect(q == "miles")
-    }
-
     @Test("wishlistSearch message")
     func testWishlistSearch() {
         let msg = MessageBuilder.wishlistSearch(token: 1234, query: "rare vinyl")

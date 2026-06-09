@@ -447,10 +447,19 @@ final class TransferState: TransferTracking {
     /// the no-op safe; this just stops the wasted sleep.
     var onDownloadTerminated: ((UUID) -> Void)?
 
+    /// Invoked when the user cancels (or removes) a transfer that may have
+    /// live network activity. Set by AppState to the managers' cancel APIs
+    /// so the actual streaming/queue work stops — flipping the row status
+    /// alone leaves the bytes flowing. Deliberately NOT fired by
+    /// retryTransfer, which also fires onDownloadTerminated but wants the
+    /// transfer re-driven, not torn down.
+    var onCancelRequested: ((UUID) -> Void)?
+
     func cancelTransfer(id: UUID) {
         updateTransfer(id: id) { transfer in
             transfer.status = .cancelled
         }
+        onCancelRequested?(id)
         onDownloadTerminated?(id)
     }
 
@@ -470,6 +479,8 @@ final class TransferState: TransferTracking {
         uploads.removeAll { $0.id == id }
         speedHistoryStore.removeValue(forKey: id)
         reconcilePeerWatches()
+        // Removing an in-flight transfer must also stop its network work.
+        onCancelRequested?(id)
         onDownloadTerminated?(id)
 
         // Remove from database

@@ -25,15 +25,37 @@ public final class DownloadManager {
     // Array-based to support multiple concurrent downloads from same user
     private var pendingFileTransfersByUser: [String: [PendingFileTransfer]] = [:]
 
-    /// Per-transferToken watchdog Task spawned in `handleTransferRequest`.
-    /// Sleeps 60 s and forces the row to fail if no F connection arrived.
-    /// Tracked so any path that consumes a pending entry — direct/indirect
-    /// success, F-fallback success, F-fallback failure, manual cancel —
-    /// can cancel the orphan before it wakes up and stomps a row that has
-    /// already moved on. `removePendingFileTransfer` is the single point
-    /// where this dict is cleared, so all callers get the cleanup for
-    /// free.
-    private var fileTransferWatchdogs: [UInt32: Task<Void, Never>] = [:]
+    /// Per-(username, transferToken) watchdog Task spawned in
+    /// `handleTransferRequest`. Sleeps 60 s and forces the row to fail if no
+    /// F connection arrived. Tracked so any path that consumes a pending
+    /// entry — direct/indirect success, F-fallback success, F-fallback
+    /// failure, manual cancel — can cancel the orphan before it wakes up and
+    /// stomps a row that has already moved on. `removePendingFileTransfer`
+    /// is the single point where this dict is cleared, so all callers get
+    /// the cleanup for free. Keyed by `watchdogKey(username:transferToken:)`
+    /// rather than the bare token: tokens are peer-chosen and frequently
+    /// small, so two peers can collide on the same value — token-only keying
+    /// let one peer's registration cancel the other's watchdog.
+    private var fileTransferWatchdogs: [String: Task<Void, Never>] = [:]
+
+    private func watchdogKey(username: String, transferToken: UInt32) -> String {
+        "\(username)\u{0}\(transferToken)"
+    }
+
+    /// Transfers the user has cancelled. The receive loops, completion
+    /// paths, salvage/resurrect paths, and retry machinery consult this so a
+    /// cancelled download stays terminal: nothing resurrects it except an
+    /// explicit (re)start of the same transferId, which clears the entry.
+    /// Partial files are kept on cancel so a later manual retry can resume.
+    private var cancelledTransferIds: Set<UUID> = []
+
+    /// A transfer is "cancelled" if the user marked it so (in our set) or
+    /// the row already reads `.cancelled` (covers app-side cancels that
+    /// flipped the row before/without calling `cancelDownload`).
+    private func isCancelled(_ transferId: UUID) -> Bool {
+        cancelledTransferIds.contains(transferId)
+            || transferState?.getTransfer(id: transferId)?.status == .cancelled
+    }
 
     // MARK: - Post-Download Processing
     private var metadataReader: (any MetadataReading)?
@@ -96,6 +118,7 @@ public final class DownloadManager {
         case timeout
         case incompleteTransfer(expected: UInt64, actual: UInt64)
         case verificationFailed
+        case cancelledByUser
 
         public var errorDescription: String? {
             switch self {
@@ -107,6 +130,7 @@ public final class DownloadManager {
             case .incompleteTransfer(let expected, let actual):
                 return "Incomplete transfer: received \(actual) of \(expected) bytes"
             case .verificationFailed: return "File verification failed"
+            case .cancelledByUser: return "Cancelled by user"
             }
         }
     }
@@ -273,6 +297,47 @@ public final class DownloadManager {
             return
         }
 
+        // Duplicate detection. Two rows for the same (username, filename)
+        // mean two pendingDownloads entries and two F-connections appending
+        // to the same incomplete file — guaranteed corruption. If a live
+        // attempt already exists, no-op. If a prior attempt finished or was
+        // abandoned (.completed / .failed / .cancelled), reuse that row and
+        // re-drive it rather than spawning a parallel one.
+        let dupePending = pendingDownloads.values.contains {
+            $0.username == result.username && $0.filename == result.filename
+        }
+        if let existing = transferState.downloads.first(where: {
+            $0.direction == .download &&
+            $0.username == result.username &&
+            $0.filename == result.filename
+        }) {
+            switch existing.status {
+            case .queued, .waiting, .connecting, .transferring:
+                logger.info("Skipping duplicate download (already \(existing.status.rawValue)): \(result.filename)")
+                return
+            case .completed, .failed, .cancelled:
+                logger.info("Re-queuing previously \(existing.status.rawValue) download: \(result.filename)")
+                cancelledTransferIds.remove(existing.id)
+                transferState.updateTransfer(id: existing.id) { t in
+                    t.status = .queued
+                    t.error = nil
+                    t.bytesTransferred = 0
+                    t.retryCount = 0
+                    t.nextRetryAt = nil
+                }
+                let id = existing.id
+                let user = existing.username
+                let file = existing.filename
+                let size = existing.size
+                Task { await self.startDownload(transferId: id, username: user, filename: file, size: size) }
+                return
+            }
+        }
+        if dupePending {
+            logger.info("Skipping duplicate download (pending in flight): \(result.filename)")
+            return
+        }
+
         let transfer = Transfer(
             username: result.username,
             filename: result.filename,
@@ -330,7 +395,7 @@ public final class DownloadManager {
                 // Cancel any watchdogs tied to entries we're dropping so a
                 // stale 60 s timer can't fire on the new attempt.
                 for stale in entries where stale.transferId == transfer.id {
-                    fileTransferWatchdogs.removeValue(forKey: stale.transferToken)?.cancel()
+                    fileTransferWatchdogs.removeValue(forKey: watchdogKey(username: user, transferToken: stale.transferToken))?.cancel()
                 }
                 if kept.isEmpty {
                     pendingFileTransfersByUser.removeValue(forKey: user)
@@ -343,6 +408,10 @@ public final class DownloadManager {
         // call into us mid-flight; cancel it now since this fresh attempt
         // is the new source of truth.
         cancelRetry(transferId: transfer.id)
+        // An explicit (re)start is the user's intent to revive this row, so
+        // drop any prior cancellation marker — otherwise the receive loop
+        // and completion paths would immediately abort the new attempt.
+        cancelledTransferIds.remove(transfer.id)
 
         let token = UInt32.random(in: 0...UInt32.max)
 
@@ -434,6 +503,10 @@ public final class DownloadManager {
     /// across startDownload/handlePeerAddress/queue paths.
     private func failPending(token: UInt32, reason: String) {
         guard let transferState, let pending = pendingDownloads[token] else { return }
+        if isCancelled(pending.transferId) {
+            pendingDownloads.removeValue(forKey: token)
+            return
+        }
         let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
         transferState.updateTransfer(id: pending.transferId) { t in
             t.status = .failed
@@ -455,19 +528,19 @@ public final class DownloadManager {
         Self.matchPendingDownload(request: request, pending: pendingDownloads)
     }
 
-    /// Token → (username, filename). The earlier filename-only fallback
-    /// could misroute when two different peers happened to be sending the
-    /// same filename; it was only needed because `request.username` used
-    /// to arrive empty on reused connections. `handlePoolTransferRequest`
-    /// now normalizes the request with the connection's authoritative
-    /// `peerInfo.username` before calling this, so the fallback is gone.
+    /// Match by (username, filename). We deliberately do NOT try
+    /// `pending[request.token]` first: `request.token` is the peer's
+    /// upload ticket, while the `pending` dictionary is keyed by OUR
+    /// locally-generated random download token — they live in different
+    /// namespaces, so a hit there would be a coincidental collision, not a
+    /// real match. The earlier filename-only fallback is also gone:
+    /// `handlePoolTransferRequest` normalizes the request with the
+    /// connection's authoritative `peerInfo.username` before calling this.
     static func matchPendingDownload(
         request: TransferRequest,
         pending: [UInt32: PendingDownload]
     ) -> UInt32? {
-        if pending[request.token] != nil {
-            return request.token
-        }
+        guard !request.username.isEmpty else { return nil }
         return pending.first { (_, p) in
             p.username == request.username && p.filename == request.filename
         }?.key
@@ -482,6 +555,24 @@ public final class DownloadManager {
         let normalizedRequest = request.username.isEmpty && !peerUsername.isEmpty
             ? TransferRequest(direction: request.direction, token: request.token, filename: request.filename, size: request.size, username: peerUsername)
             : request
+
+        // direction == .download means the peer wants a file FROM us — the
+        // legacy (pre-QueueUpload) way of requesting an upload. Route it to
+        // the upload side; previously it was dropped unanswered and the
+        // requester hung until their timeout.
+        if normalizedRequest.direction == .download {
+            guard let uploadManager, !peerUsername.isEmpty else {
+                logger.info("Legacy download-direction TransferRequest dropped (no upload manager or username): \(request.filename)")
+                return
+            }
+            await uploadManager.handleDownloadTransferRequest(
+                username: peerUsername,
+                token: normalizedRequest.token,
+                filename: normalizedRequest.filename,
+                connection: connection
+            )
+            return
+        }
 
         if let token = matchPendingDownload(for: normalizedRequest) {
             logger.info("Pool TransferRequest matched pending download: user=\(peerUsername) file=\(request.filename)")
@@ -549,6 +640,12 @@ public final class DownloadManager {
     private func handleTransferRequest(token: UInt32, request: TransferRequest, connection: PeerConnection) async {
         guard let transferState, let pending = pendingDownloads[token] else { return }
 
+        if isCancelled(pending.transferId) {
+            logger.info("Ignoring TransferRequest for cancelled transfer: \(pending.filename)")
+            pendingDownloads.removeValue(forKey: token)
+            return
+        }
+
         let directionStr = request.direction == .upload ? "upload" : "download"
         logger.info("Transfer request received: direction=\(directionStr) size=\(request.size) from \(request.username)")
 
@@ -583,10 +680,10 @@ public final class DownloadManager {
             let expectedSize = request.size > 0 ? request.size : pending.size
             let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
             var resumeOffset: UInt64 = 0
-            if FileManager.default.fileExists(atPath: incompletePath.path) {
+            if expectedSize > 0, FileManager.default.fileExists(atPath: incompletePath.path) {
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: incompletePath.path),
                    let existingSize = attrs[.size] as? UInt64,
-                   existingSize > 0 && (expectedSize == 0 || existingSize < expectedSize) {
+                   existingSize > 0 && existingSize < expectedSize {
                     resumeOffset = existingSize
                     logger.info("Found incomplete file \(incompletePath.lastPathComponent), \(existingSize)/\(expectedSize) bytes, resuming from offset \(resumeOffset)")
                 }
@@ -602,6 +699,9 @@ public final class DownloadManager {
                 offset: resumeOffset           // Resume from partial file if exists
             )
             pendingFileTransfersByUser[pending.username, default: []].append(pendingTransfer)
+            // Record the offset this attempt resumes from so a later
+            // UploadFailed can tell whether a resume was actually tried.
+            pendingDownloads[token]?.resumeOffset = resumeOffset
             logger.info("Registered pending file transfer for \(pending.username): transferToken=\(request.token)")
 
             // Earliest unambiguous signal the peer is responding. Drop
@@ -628,8 +728,9 @@ public final class DownloadManager {
             // TransferRequest with a previously-seen token shouldn't happen
             // in practice, but Task.cancel is cheap and keeps invariants
             // tight).
-            fileTransferWatchdogs.removeValue(forKey: transferToken)?.cancel()
-            fileTransferWatchdogs[transferToken] = Task { [weak self] in
+            let wKey = watchdogKey(username: peerUsername, transferToken: transferToken)
+            fileTransferWatchdogs.removeValue(forKey: wKey)?.cancel()
+            fileTransferWatchdogs[wKey] = Task { [weak self] in
                 guard let self else { return }
                 // Wait 5 seconds for peer to connect to us
                 try? await Task.sleep(for: .seconds(5))
@@ -744,6 +845,15 @@ public final class DownloadManager {
             let receivedToken = tokenData.readUInt32(at: 0) ?? 0
             logger.debug("Received FileTransferInit: token=\(receivedToken) (expected=\(transferToken))")
 
+            // Validate the uploader's FileTransferInit token. A mismatch means
+            // this stream isn't the transfer we expect (stale/crossed wires);
+            // proceeding would append unknown bytes to the file. Bail and let
+            // the catch route through the normal failure/retry path.
+            guard receivedToken == transferToken else {
+                logger.warning("FileTransferInit token mismatch from \(username): got \(receivedToken), expected \(transferToken)")
+                throw DownloadError.connectionClosed
+            }
+
             // Send FileOffset (offset - 8 bytes)
             var offsetData = Data()
             offsetData.appendUInt64(resumeOffset)
@@ -770,6 +880,13 @@ public final class DownloadManager {
                 transferId: pending.transferId,
                 resumeOffset: resumeOffset
             )
+
+            if isCancelled(pending.transferId) {
+                logger.info("Download cancelled after receive; not finalizing \(pending.filename)")
+                pendingDownloads.removeValue(forKey: downloadToken)
+                connection.cancel()
+                return
+            }
             // `finalPath` may differ from `desiredFinalPath` if a file was
             // already at the destination — finalize will pick a non-colliding
             // suffix so we never silently clobber an existing local copy.
@@ -798,11 +915,12 @@ public final class DownloadManager {
             applyFolderArtworkIfNeeded(for: finalPath)
             organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
 
-            // Record in statistics
+            // Record only bytes received THIS session against the session
+            // duration so resumed transfers don't report inflated totals/speed.
             statisticsState?.recordTransfer(
                 filename: filename,
                 username: username,
-                size: fileSize,
+                size: fileSize > resumeOffset ? fileSize - resumeOffset : fileSize,
                 duration: duration,
                 isDownload: true
             )
@@ -812,6 +930,11 @@ public final class DownloadManager {
 
         } catch {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
+            if isCancelled(pending.transferId) {
+                _ = removePendingFileTransfer(username: username, transferToken: transferToken)
+                pendingDownloads.removeValue(forKey: downloadToken)
+                return
+            }
             // Explicit failure handling. Previously this branch deferred to
             // the 60s watchdog ("Don't mark as failed yet — the timeout
             // will handle that"), but the watchdog only fires while the
@@ -915,7 +1038,7 @@ public final class DownloadManager {
         // group never returns. Calling connection.cancel() forces the
         // receive completion handler to fire (with error), the continuation
         // resumes, the child exits, and the timeout actually times out.
-        try await withThrowingTaskGroup(of: Data.self) { group in
+        try await withThrowingTaskGroup(of: Data?.self) { group in
             group.addTask {
                 try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
@@ -935,15 +1058,24 @@ public final class DownloadManager {
             }
 
             group.addTask {
-                try await Task.sleep(for: .seconds(timeout))
-                throw DownloadError.timeout
+                try? await Task.sleep(for: .seconds(timeout))
+                return nil  // timeout sentinel
             }
 
-            guard let result = try await group.next() else {
+            guard let first = try await group.next() else {
                 throw DownloadError.timeout
             }
+            if let data = first {
+                group.cancelAll()
+                return data
+            }
+            // Timeout fired first; still surface a simultaneously-received
+            // result so the read is never discarded on the race.
             group.cancelAll()
-            return result
+            if let second = try? await group.next(), let data = second {
+                return data
+            }
+            throw DownloadError.timeout
         }
     }
 
@@ -999,6 +1131,12 @@ public final class DownloadManager {
 
         // Receive data in chunks
         while bytesReceived < expectedSize {
+            if isCancelled(transferId) {
+                try? await fileIO.synchronize()
+                await fileIO.close()
+                connection.cancel()
+                throw DownloadError.cancelledByUser
+            }
             let (chunk, isComplete) = try await receiveChunkWithStatus(connection: connection)
 
             if chunk.isEmpty && isComplete {
@@ -1013,9 +1151,10 @@ public final class DownloadManager {
             bytesReceived += UInt64(chunk.count)
             networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
 
-            // Update progress
+            // Update progress (speed from bytes received THIS session)
             let elapsed = Date().timeIntervalSince(startTime)
-            let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
+            let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
+            let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
             transferState?.updateTransfer(id: transferId) { t in
                 t.bytesTransferred = bytesReceived
@@ -1037,8 +1176,17 @@ public final class DownloadManager {
         let actualSize = attrs[.size] as? UInt64 ?? 0
 
         logger.info("File verification: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize)")
-        if expectedSize > 0 && actualSize >= expectedSize {
-            logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
+        if expectedSize == 0 {
+            logger.info("Zero-byte file complete")
+        } else if actualSize == expectedSize {
+            logger.info("Download complete: received \(actualSize) bytes")
+        } else if actualSize > expectedSize {
+            // Peer ignored our offset and re-streamed from 0 — partial+full
+            // got appended. The file is corrupt; delete so the next attempt
+            // starts clean.
+            logger.error("Oversize transfer: \(actualSize) > \(expectedSize); deleting corrupt file")
+            try? FileManager.default.removeItem(at: destPath)
+            throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
         } else {
             logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
@@ -1048,20 +1196,54 @@ public final class DownloadManager {
         logger.info("File transfer complete and verified: \(actualSize) bytes received")
     }
 
-    private func receiveChunkWithStatus(connection: NWConnection) async throws -> (Data, Bool) {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(Data, Bool), Error>) in
-            // Use 1MB buffer for better throughput on file transfers
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1024 * 1024) { data, _, isComplete, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let data, !data.isEmpty {
-                    continuation.resume(returning: (data, isComplete))
-                } else if isComplete {
-                    continuation.resume(returning: (Data(), true))
-                } else {
-                    continuation.resume(returning: (Data(), false))
+    private func receiveChunkWithStatus(connection: NWConnection, timeout: TimeInterval = 30) async throws -> (Data, Bool) {
+        // Race the receive against a 30s stall timeout (same shape as the
+        // inbound path). Without it, a half-open peer suspends the receive
+        // continuation forever and the row sticks `.transferring`. On timeout
+        // we cancel the NWConnection so the receive callback fires and the
+        // child exits. A `nil` race result is the timeout sentinel; we prefer
+        // a real data result so a chunk that arrives simultaneously with the
+        // timeout is never discarded.
+        try await withThrowingTaskGroup(of: Optional<(Data, Bool)>.self) { group in
+            group.addTask {
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(Data, Bool), Error>) in
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024 * 1024) { data, _, isComplete, error in
+                            if let error {
+                                continuation.resume(throwing: error)
+                            } else if let data, !data.isEmpty {
+                                continuation.resume(returning: (data, isComplete))
+                            } else if isComplete {
+                                continuation.resume(returning: (Data(), true))
+                            } else {
+                                continuation.resume(returning: (Data(), false))
+                            }
+                        }
+                    }
+                } onCancel: {
+                    connection.cancel()
                 }
             }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                return nil
+            }
+
+            guard let first = try await group.next() else {
+                throw DownloadError.timeout
+            }
+            if let value = first {
+                group.cancelAll()
+                return value
+            }
+            // Timeout fired first. Cancel the receive child, but if it had
+            // already produced data simultaneously, return that instead of
+            // throwing it away.
+            group.cancelAll()
+            if let second = try? await group.next(), let value = second {
+                return value
+            }
+            throw DownloadError.timeout
         }
     }
 
@@ -1575,13 +1757,14 @@ public final class DownloadManager {
         } else {
             pendingFileTransfersByUser[key] = entries
         }
-        fileTransferWatchdogs.removeValue(forKey: transferToken)?.cancel()
+        fileTransferWatchdogs.removeValue(forKey: watchdogKey(username: key, transferToken: transferToken))?.cancel()
         return removed
     }
 
     /// Handle F connection when multiple transfers are pending for same user.
     /// Receives FileTransferInit token first to match the right pending entry.
     private func handleFileTransferWithTokenMatch(entries: [PendingFileTransfer], username: String, connection: PeerConnection) async {
+        var matched: PendingFileTransfer?
         do {
             await connection.stopReceiving()
             try await Task.sleep(for: .milliseconds(50))
@@ -1605,54 +1788,79 @@ public final class DownloadManager {
             logger.info("F connection: received FileTransferInit token=\(receivedToken), matching against \(entries.count) pending entries")
 
             // Match by token
-            if let pending = removePendingFileTransfer(username: username, transferToken: receivedToken) {
-                // Send FileOffset and proceed
-                var offsetData = Data()
-                offsetData.appendUInt64(pending.offset)
-                try await connection.sendRaw(offsetData)
-
-                let desiredFinalPath = computeDestPath(for: pending.filename, username: pending.username)
-                let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
-                try await receiveFileDataFromPeer(
-                    connection: connection,
-                    destPath: incompletePath,
-                    expectedSize: pending.size,
-                    transferId: pending.transferId,
-                    resumeOffset: pending.offset
-                )
-                let finalPath = try finalizeCompletedDownload(from: incompletePath, to: desiredFinalPath)
-
-                let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
-                cancelRetry(transferId: pending.transferId)
-                // Drop the corresponding pendingDownloads entry too —
-                // otherwise a late peer message (UploadFailed /
-                // UploadDenied) finds the stale entry by filename and
-                // tries to re-queue an already-finished transfer. The
-                // other completion paths already do this; the
-                // incoming-F path was the missing one.
-                pendingDownloads.removeValue(forKey: pending.downloadToken)
-                transferState?.updateTransfer(id: pending.transferId) { t in
-                    t.status = .completed
-                    t.bytesTransferred = pending.size
-                    t.localPath = finalPath
-                    t.error = nil
-                }
-                ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
-                applyFolderArtworkIfNeeded(for: finalPath)
-                organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
-                statisticsState?.recordTransfer(
-                    filename: finalPath.lastPathComponent,
-                    username: pending.username,
-                    size: pending.size,
-                    duration: duration,
-                    isDownload: true
-                )
-            } else {
+            guard let pending = removePendingFileTransfer(username: username, transferToken: receivedToken) else {
                 logger.warning("F connection token \(receivedToken) didn't match any pending transfer for \(username); closing stale connection")
                 await connection.disconnect()
+                return
             }
+            matched = pending
+
+            if isCancelled(pending.transferId) {
+                logger.info("F connection for cancelled transfer \(pending.filename); closing")
+                pendingDownloads.removeValue(forKey: pending.downloadToken)
+                await connection.disconnect()
+                return
+            }
+
+            // Send FileOffset and proceed
+            var offsetData = Data()
+            offsetData.appendUInt64(pending.offset)
+            try await connection.sendRaw(offsetData)
+
+            let desiredFinalPath = computeDestPath(for: pending.filename, username: pending.username)
+            let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
+            try await receiveFileDataFromPeer(
+                connection: connection,
+                destPath: incompletePath,
+                expectedSize: pending.size,
+                transferId: pending.transferId,
+                resumeOffset: pending.offset
+            )
+
+            if isCancelled(pending.transferId) {
+                logger.info("Download cancelled after receive; not finalizing \(pending.filename)")
+                pendingDownloads.removeValue(forKey: pending.downloadToken)
+                await connection.disconnect()
+                return
+            }
+
+            let finalPath = try finalizeCompletedDownload(from: incompletePath, to: desiredFinalPath)
+
+            let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
+            cancelRetry(transferId: pending.transferId)
+            // Drop the pendingDownloads entry so a late UploadFailed/Denied
+            // can't re-queue an already-finished transfer.
+            pendingDownloads.removeValue(forKey: pending.downloadToken)
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.status = .completed
+                t.bytesTransferred = pending.size
+                t.localPath = finalPath
+                t.error = nil
+            }
+            ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
+            applyFolderArtworkIfNeeded(for: finalPath)
+            organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
+            // Record only this session's bytes (resumed portion was on disk).
+            statisticsState?.recordTransfer(
+                filename: finalPath.lastPathComponent,
+                username: pending.username,
+                size: pending.size > pending.offset ? pending.size - pending.offset : pending.size,
+                duration: duration,
+                isDownload: true
+            )
         } catch {
             logger.error("Failed token-match F connection: \(error.localizedDescription)")
+            await connection.disconnect()
+            guard let matched else { return }
+            pendingDownloads.removeValue(forKey: matched.downloadToken)
+            if isCancelled(matched.transferId) { return }
+            failDownload(
+                transferId: matched.transferId,
+                username: matched.username,
+                filename: matched.filename,
+                size: matched.size,
+                reason: "F connection failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -1739,6 +1947,12 @@ public final class DownloadManager {
         // Nicotine+ approach: receive until connection ACTUALLY closes, then verify byte count
         // Don't use artificial timeouts that could cut off slow transfers
         receiveLoop: while true {
+            if isCancelled(transferId) {
+                try? await fileIO.synchronize()
+                await fileIO.close()
+                await connection.disconnect()
+                throw DownloadError.cancelledByUser
+            }
             // Receive data - no artificial timeout that returns fake completion
             let chunkResult: PeerConnection.FileChunkResult
             do {
@@ -1752,7 +1966,7 @@ public final class DownloadManager {
                 // callback inside `receiveFileChunk` never fires, the child
                 // task's continuation stays pending, and the task group waits
                 // on the orphan forever — defeating the timeout entirely.
-                chunkResult = try await withThrowingTaskGroup(of: PeerConnection.FileChunkResult.self) { group in
+                chunkResult = try await withThrowingTaskGroup(of: PeerConnection.FileChunkResult?.self) { group in
                     group.addTask {
                         try await withTaskCancellationHandler {
                             try await connection.receiveFileChunk()
@@ -1765,14 +1979,24 @@ public final class DownloadManager {
                         }
                     }
                     group.addTask {
-                        try await Task.sleep(for: .seconds(30))
+                        try? await Task.sleep(for: .seconds(30))
+                        return nil  // timeout sentinel
+                    }
+                    guard let first = try await group.next() else {
                         throw DownloadError.timeout
                     }
-                    guard let result = try await group.next() else {
-                        throw DownloadError.timeout
+                    if let chunk = first {
+                        group.cancelAll()
+                        return chunk
                     }
+                    // Timeout fired first. Cancel the receive child but still
+                    // surface any chunk it produced simultaneously, so a
+                    // received chunk is never discarded on a timeout race.
                     group.cancelAll()
-                    return result
+                    if let second = try? await group.next(), let chunk = second {
+                        return chunk
+                    }
+                    throw DownloadError.timeout
                 }
             } catch is DownloadError {
                 // Timeout - but try to drain any remaining buffered data first
@@ -1816,9 +2040,10 @@ public final class DownloadManager {
                     networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
                     lastDataTime = Date()  // Reset timeout tracker
 
-                    // Update progress periodically (not every chunk to reduce UI overhead)
+                    // Update progress (speed from bytes received THIS session)
                     let elapsed = Date().timeIntervalSince(startTime)
-                    let speed = elapsed > 0 ? Int64(Double(bytesReceived) / elapsed) : 0
+                    let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
+                    let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
                     transferState?.updateTransfer(id: transferId) { t in
                         t.bytesTransferred = bytesReceived
@@ -1905,9 +2130,16 @@ public final class DownloadManager {
         let percentComplete = expectedSize > 0 ? Double(actualSize) / Double(expectedSize) * 100 : 100
         logger.info("Verify: expected=\(expectedSize), received=\(bytesReceived), disk=\(actualSize) (\(String(format: "%.1f", percentComplete))%)")
 
-        // Like nicotine+: require actualSize >= expectedSize
-        if expectedSize > 0 && actualSize >= expectedSize {
-            logger.info("Download complete: received \(actualSize) bytes (expected \(expectedSize))")
+        if expectedSize == 0 {
+            logger.info("Zero-byte file complete")
+        } else if actualSize == expectedSize {
+            logger.info("Download complete: received \(actualSize) bytes")
+        } else if actualSize > expectedSize {
+            // Peer ignored our offset and re-streamed from 0 — partial+full
+            // got appended. Corrupt; delete so the next attempt starts clean.
+            logger.error("Oversize transfer: \(actualSize) > \(expectedSize); deleting corrupt file")
+            try? FileManager.default.removeItem(at: destPath)
+            throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
         } else {
             logger.error("Incomplete transfer: \(actualSize)/\(expectedSize) bytes (\(String(format: "%.1f", percentComplete))%)")
             throw DownloadError.incompleteTransfer(expected: expectedSize, actual: actualSize)
@@ -2310,38 +2542,17 @@ public final class DownloadManager {
             }
         }
 
-        // Check if we attempted a resume - if so, delete partial and retry from scratch
+        // If THIS attempt resumed from a partial (offset > 0) and the peer
+        // rejected it, the peer likely can't resume — drop the partial so the
+        // retry starts clean. Otherwise keep the partial as groundwork. Either
+        // way the retry is routed through the normal failDownload machinery so
+        // it's counted, capped at maxRetries, and cancellable via cancelRetry.
         let incompletePath = computeIncompletePath(for: pending.filename, username: pending.username)
-        if FileManager.default.fileExists(atPath: incompletePath.path) {
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: incompletePath.path),
-               let existingSize = attrs[.size] as? UInt64,
-               existingSize > 0 {
-                // We had a partial file - the peer might not support resume
-                // Delete partial and retry from scratch
-                logger.warning("Upload failed after resume attempt - deleting partial file and retrying from scratch")
-                try? FileManager.default.removeItem(at: incompletePath)
-
-                // Mark for retry with status .queued
-                transferState?.updateTransfer(id: pending.transferId) { t in
-                    t.status = .queued
-                    t.bytesTransferred = 0
-                    t.error = nil
-                }
-
-                // Schedule automatic retry
-                let transferId = pending.transferId
-                let username = pending.username
-                let filenameCopy = pending.filename
-                let size = pending.size
-
-                pendingDownloads.removeValue(forKey: token)
-
-                Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    self.logger.info("Retrying download from scratch: \(filenameCopy)")
-                    await self.startDownload(transferId: transferId, username: username, filename: filenameCopy, size: size)
-                }
-                return
+        if pending.resumeOffset > 0, FileManager.default.fileExists(atPath: incompletePath.path) {
+            logger.warning("Upload failed after resume attempt - deleting partial to retry from scratch")
+            try? FileManager.default.removeItem(at: incompletePath)
+            transferState?.updateTransfer(id: pending.transferId) { t in
+                t.bytesTransferred = 0
             }
         }
 
@@ -2381,6 +2592,13 @@ public final class DownloadManager {
         reason: String,
         retryCount explicitRetryCount: Int? = nil
     ) {
+        // A cancelled transfer is terminal: don't overwrite .cancelled with
+        // .failed and don't schedule a retry.
+        if isCancelled(transferId) {
+            logger.info("Not failing cancelled transfer \(transferId): \(reason)")
+            return
+        }
+
         let currentRetryCount = explicitRetryCount
             ?? transferState?.getTransfer(id: transferId)?.retryCount
             ?? 0
@@ -2421,11 +2639,14 @@ public final class DownloadManager {
             return false
         }
 
-        // Known terminal reasons — user action or peer-side decisions
-        // that re-asking won't change. `cancel` (bare stem) matches both
-        // "cancelled" and "canceled" spellings. Mirror UploadManager.
+        // Known terminal reasons — peer-side decisions that re-asking won't
+        // change. The bare "cancel" stem was removed: it also matched the
+        // client's own transient teardown strings ("Connection was
+        // cancelled", "Operation canceled"), wrongly marking them terminal.
+        // User-initiated cancels no longer flow through failDownload at all
+        // (see cancelDownload + the cancelled-transfer guards), so we only
+        // need genuine peer-denial reasons here.
         let terminalPatterns = [
-            "cancel",
             "denied",
             "not shared",
             "not available",
@@ -2523,6 +2744,8 @@ public final class DownloadManager {
     /// calling this; `retryFailedDownload` checks `.failed || .cancelled`.
     private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
+        // Manual/automatic retry revives the row; drop any cancellation marker.
+        cancelledTransferIds.remove(transferId)
 
         // Update the existing transfer record. Reset to .queued so
         // `startDownload` (which sets it to .connecting) sees a clean slate.
@@ -2590,6 +2813,44 @@ public final class DownloadManager {
         transferState?.updateTransfer(id: transferId) { t in
             t.nextRetryAt = nil
         }
+    }
+
+    /// Cancel an in-flight or queued download. Marks the transfer cancelled so
+    /// the receive loops abort at their next chunk check, completion paths
+    /// refuse to finalize it, the salvage/TransferRequest path won't resurrect
+    /// it, and failDownload treats it as terminal (no retry). Any partial file
+    /// is kept on disk so a later manual retry can resume from it. Idempotent.
+    public func cancelDownload(transferId: UUID) {
+        cancelledTransferIds.insert(transferId)
+        cancelRetry(transferId: transferId)
+
+        // Drop our pending bookkeeping for this transfer.
+        let tokens = pendingDownloads.compactMap { $0.value.transferId == transferId ? $0.key : nil }
+        for token in tokens {
+            pendingDownloads.removeValue(forKey: token)
+        }
+        for (user, entries) in pendingFileTransfersByUser {
+            let toRemove = entries.filter { $0.transferId == transferId }
+            guard !toRemove.isEmpty else { continue }
+            for entry in toRemove {
+                fileTransferWatchdogs.removeValue(forKey: watchdogKey(username: user, transferToken: entry.transferToken))?.cancel()
+            }
+            let kept = entries.filter { $0.transferId != transferId }
+            if kept.isEmpty {
+                pendingFileTransfersByUser.removeValue(forKey: user)
+            } else {
+                pendingFileTransfersByUser[user] = kept
+            }
+        }
+
+        transferState?.updateTransfer(id: transferId) { t in
+            t.status = .cancelled
+            t.error = nil
+            t.speed = 0
+            t.queuePosition = nil
+            t.nextRetryAt = nil
+        }
+        logger.info("Cancelled download \(transferId)")
     }
 
     /// Rearm in-memory retry timers for any persisted `.failed` rows that

@@ -78,6 +78,13 @@ final class AppState {
             uploadManager?.setMaxConcurrentUploads(newValue)
         }
 
+        // Same wiring for the upload speed limit (KB/s, 0 = unlimited) —
+        // previously persisted and displayed but never applied.
+        uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
+        settings.onUploadSpeedLimitChange = { [weak uploadManager] newValue in
+            uploadManager?.setUploadSpeedLimit(kbPerSecond: newValue)
+        }
+
         // Peer-status watcher — SocialState tracks live online/away/offline
         // state for any peer currently in the transfer list (not just
         // buddies), so rows can surface offline state even for strangers.
@@ -93,6 +100,15 @@ final class AppState {
         transferState.onDownloadTerminated = { [weak self] transferId in
             self?.downloadManager.cancelRetry(transferId: transferId)
             self?.uploadManager.cancelRetry(transferId: transferId)
+        }
+
+        // Cancel/remove must stop the actual network work, not just flip the
+        // row status — without this a "cancelled" transfer keeps streaming
+        // and the completion path flips it back to .completed.
+        transferState.onCancelRequested = { [weak self] transferId in
+            guard let self else { return }
+            self.downloadManager.cancelDownload(transferId: transferId)
+            Task { await self.uploadManager.cancelUpload(transferId: transferId) }
         }
 
         uploadManager.uploadPermissionChecker = { [weak self] username in
@@ -479,10 +495,11 @@ final class AppState {
         // Load settings from database
         await settings.loadFromDatabase()
 
-        // `loadFromDatabase` sets `isLoading = true`, so the `didSet` hook
-        // that normally pushes maxUploadSlots to UploadManager is suppressed.
-        // Re-apply after the load completes.
+        // `loadFromDatabase` sets `isLoading = true`, so the `didSet` hooks
+        // that normally push maxUploadSlots / uploadSpeedLimit to
+        // UploadManager are suppressed. Re-apply after the load completes.
         uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
+        uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
 
         // Load resumable transfers
         await transferState.loadPersisted()
