@@ -150,6 +150,8 @@ public actor ServerConnection {
 
         let conn = NWConnection(to: endpoint, using: parameters)
         connection = conn
+        connectGeneration += 1
+        let generation = connectGeneration
 
         return try await withCheckedThrowingContinuation { continuation in
             self.connectContinuation = continuation
@@ -161,7 +163,7 @@ public actor ServerConnection {
             conn.stateUpdateHandler = { [weak self] newState in
                 guard let self else { return }
                 Task {
-                    await self.handleStateChange(newState)
+                    await self.handleStateChange(newState, generation: generation)
                 }
             }
             conn.start(queue: .global(qos: .userInitiated))
@@ -267,7 +269,15 @@ public actor ServerConnection {
 
     // MARK: - Private Methods
 
-    private func handleStateChange(_ newState: NWConnection.State) {
+    // Bumped per connect(); a cancelled previous socket's late events must
+    // not fail or tear down the current attempt during quick reconnects.
+    private var connectGeneration = 0
+
+    private func handleStateChange(_ newState: NWConnection.State, generation: Int) {
+        guard generation == connectGeneration else {
+            logger.debug("Ignoring stale connection state from a previous attempt: \(String(describing: newState))")
+            return
+        }
         switch newState {
         case .ready:
             logger.info("Connected to \(self.host):\(self.port)")

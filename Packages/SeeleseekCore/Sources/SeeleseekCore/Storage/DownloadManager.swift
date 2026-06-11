@@ -77,6 +77,57 @@ public final class DownloadManager {
     private var queuePositionTimer: Task<Void, Never>?  // Update queue positions (5 min)
     private var staleRecoveryTimer: Task<Void, Never>?  // Recover stale downloads (15 min)
 
+    // MARK: - Offline-Peer Suppression & Dial Caps
+    //
+    // With a large queue against offline/unreachable peers, the timers above
+    // used to re-attempt every transfer forever (one ConnectToPeer +
+    // GetUserAddress + Tasks + DB writes per attempt, hundreds per minute)
+    // — pinning the main actor and growing memory via task backlog. Two
+    // brakes fix that:
+    //
+    // 1. Peers the server reports offline are cached here and skipped by
+    //    every timer. The entry clears when a UserStatus push says they're
+    //    back (the app already WatchUser-es every transfer peer), with a
+    //    TTL fallback probe in case the push was missed.
+    // 2. Each timer tick re-drives at most `maxDialsPerTick` transfers, so
+    //    a 200-row queue can't burst-saturate the main actor.
+    private var offlineUsers: [String: Date] = [:]
+    private let offlineRecheckInterval: TimeInterval = 30 * 60
+    private let maxDialsPerTick = 8
+
+    private func isPeerOffline(_ username: String) -> Bool {
+        guard let since = offlineUsers[username] else { return false }
+        // TTL fallback: after 30 min allow one probe; a failed probe
+        // re-stamps the entry, a successful one clears it.
+        if Date().timeIntervalSince(since) > offlineRecheckInterval {
+            offlineUsers.removeValue(forKey: username)
+            return false
+        }
+        return true
+    }
+
+    private func markPeerOffline(_ username: String) {
+        guard !username.isEmpty else { return }
+        offlineUsers[username] = Date()
+    }
+
+    private func markPeerOnline(_ username: String) {
+        guard offlineUsers.removeValue(forKey: username) != nil else { return }
+        logger.info("Peer \(username) back online — re-driving their downloads")
+        guard let transferState else { return }
+        let theirs = transferState.downloads.filter {
+            $0.username == username
+                && ($0.status == .queued || $0.status == .waiting || $0.status == .failed)
+                && !isCancelled($0.id)
+        }
+        for (index, transfer) in theirs.prefix(maxDialsPerTick).enumerated() {
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(index * 500))
+                await self?.startDownload(transfer: transfer)
+            }
+        }
+    }
+
     public struct PendingDownload {
         public let transferId: UUID
         public let username: String
@@ -155,6 +206,25 @@ public final class DownloadManager {
         // ConnectToPeer + direct/indirect race itself, so the previous
         // addPeerAddressHandler / onIncomingConnectionMatched registrations
         // are intentionally absent.
+
+        // Live offline/online pushes for the offline-peer dial suppression.
+        // The app WatchUser-es every transfer peer, so these arrive for
+        // exactly the users we care about.
+        networkClient.addUserStatusHandler { [weak self] username, status, _ in
+            guard let self else { return }
+            if status == .offline {
+                // Only suppress users we actually have transfers with —
+                // don't grow the cache with every buddy/chat status.
+                let hasTransfers = self.transferState?.downloads.contains {
+                    $0.username == username
+                } ?? false
+                if hasTransfers {
+                    self.markPeerOffline(username)
+                }
+            } else {
+                self.markPeerOnline(username)
+            }
+        }
 
         // Set up callback for incoming file transfer connections
         networkClient.onFileTransferConnection = { [weak self] username, token, connection in
@@ -436,9 +506,16 @@ public final class DownloadManager {
             // coalesced inside NetworkClient, so a folder-batch of N
             // downloads opens one connection, not N.
             let connection = try await networkClient.establishPeerConnection(for: transfer.username)
+            // Any successful establishment proves the peer is reachable.
+            offlineUsers.removeValue(forKey: transfer.username)
             await queueOnConnection(token: token, connection: connection)
         } catch {
             logger.error("startDownload(\(transfer.filename)): \(error.localizedDescription)")
+            // Server said the user has no address — suppress further dial
+            // attempts until a UserStatus push (or the TTL probe) clears it.
+            if error.localizedDescription.localizedCaseInsensitiveContains("offline") {
+                markPeerOffline(transfer.username)
+            }
             failPending(token: token, reason: error.localizedDescription)
         }
     }
@@ -1126,6 +1203,7 @@ public final class DownloadManager {
 
         var bytesReceived: UInt64 = resumeOffset
         let startTime = Date()
+        var lastProgressUpdate = Date.distantPast
 
         logger.info("Receiving file data, expected size: \(expectedSize) bytes")
 
@@ -1151,14 +1229,19 @@ public final class DownloadManager {
             bytesReceived += UInt64(chunk.count)
             networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
 
-            // Update progress (speed from bytes received THIS session)
-            let elapsed = Date().timeIntervalSince(startTime)
-            let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
-            let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
+            // Update progress at most 2×/s — chunks arrive up to hundreds
+            // of times per second and each row update is a full observable
+            // invalidation + persistence cascade.
+            if Date().timeIntervalSince(lastProgressUpdate) >= 0.5 {
+                lastProgressUpdate = Date()
+                let elapsed = Date().timeIntervalSince(startTime)
+                let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
+                let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
-            transferState?.updateTransfer(id: transferId) { t in
-                t.bytesTransferred = bytesReceived
-                t.speed = speed
+                transferState?.updateTransfer(id: transferId) { t in
+                    t.bytesTransferred = bytesReceived
+                    t.speed = speed
+                }
             }
 
             // If this was the final chunk, exit loop
@@ -1923,6 +2006,7 @@ public final class DownloadManager {
 
         var bytesReceived: UInt64 = resumeOffset  // Start from resume offset if resuming
         let startTime = Date()
+        var lastProgressUpdate = Date.distantPast
 
         logger.info("Receiving file data from peer, expected size: \(expectedSize) bytes")
         logger.info("Start receive: \(destPath.lastPathComponent), expected=\(expectedSize) bytes")
@@ -2040,20 +2124,17 @@ public final class DownloadManager {
                     networkClient?.peerConnectionPool.recordBytesReceived(UInt64(chunk.count))
                     lastDataTime = Date()  // Reset timeout tracker
 
-                    // Update progress (speed from bytes received THIS session)
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
-                    let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
+                    // Update progress at most 2×/s (see outgoing-F loop).
+                    if Date().timeIntervalSince(lastProgressUpdate) >= 0.5 {
+                        lastProgressUpdate = Date()
+                        let elapsed = Date().timeIntervalSince(startTime)
+                        let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
+                        let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
-                    transferState?.updateTransfer(id: transferId) { t in
-                        t.bytesTransferred = bytesReceived
-                        t.speed = speed
-                    }
-
-                    // Log progress every 1MB
-                    if bytesReceived % (1024 * 1024) < UInt64(chunk.count) {
-                        let pct = expectedSize > 0 ? Double(bytesReceived) / Double(expectedSize) * 100 : 0
-                        logger.debug("Progress: \(bytesReceived)/\(expectedSize) (\(String(format: "%.1f", pct))%) @ \(speed/1024)KB/s")
+                        transferState?.updateTransfer(id: transferId) { t in
+                            t.bytesTransferred = bytesReceived
+                            t.speed = speed
+                        }
                     }
                 }
 
@@ -2166,7 +2247,12 @@ public final class DownloadManager {
             return
         }
 
-        logger.debug("No pending upload for PierceFirewall token \(token)")
+        // Terminal consumer of the event: nothing else will look at this
+        // connection (the pool already untracked it at the PierceFirewall
+        // handoff), so an unmatched one must be closed here or it stays
+        // open until the remote gives up.
+        logger.debug("No pending upload for PierceFirewall token \(token); closing")
+        await connection.disconnect()
     }
 
     // MARK: - CantConnectToPeer Handling
@@ -2221,6 +2307,16 @@ public final class DownloadManager {
         // would only re-drive one transfer per cycle.
         let byUser = Dictionary(grouping: waitingDownloads, by: { $0.username })
 
+        // Housekeeping piggybacked on this tick: drop cancelled-ids whose
+        // rows no longer exist (they'd otherwise accrete for the session).
+        let liveIds = Set(transferState.downloads.map(\.id))
+        cancelledTransferIds.formIntersection(liveIds)
+
+        // Cap fresh dials per tick so a big queue of unreachable peers
+        // can't burst-saturate the main actor; the next tick picks up
+        // where this one stopped (dictionary order rotates naturally).
+        var dialBudget = maxDialsPerTick
+
         for (username, transfers) in byUser {
             if let connection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
                 for transfer in transfers {
@@ -2235,8 +2331,11 @@ public final class DownloadManager {
                     }
                 }
             } else {
-                // No connection exists. Re-initiate every transfer that
-                // doesn't already have its own in-flight pending entry.
+                // No connection exists. Skip peers the server says are
+                // offline — a UserStatus push re-drives them on return.
+                if isPeerOffline(username) { continue }
+                guard dialBudget > 0 else { continue }
+                // Re-initiate transfers without an in-flight pending entry.
                 // `establishPeerConnection` coalesces concurrent calls per
                 // username in NetworkClient, so N startDownload calls
                 // share one TCP connection. Stagger to avoid spawning
@@ -2246,6 +2345,8 @@ public final class DownloadManager {
                 for transfer in transfers {
                     let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
                     if alreadyPending { continue }
+                    guard dialBudget > 0 else { break }
+                    dialBudget -= 1
                     let delay = Double(staggerIndex) * 0.5
                     Task { [weak self] in
                         if delay > 0 {
@@ -2273,27 +2374,33 @@ public final class DownloadManager {
         }
     }
 
-    /// Re-initiate downloads that failed due to connection timeouts/errors
+    /// Re-initiate downloads that failed due to connection timeouts/errors.
+    ///
+    /// This timer is a safety net for rows that fell out of the backoff
+    /// ladder (e.g. the app slept through a scheduled retry) — it must NOT
+    /// outrank the ladder. Three brakes, each closing a measured storm:
+    /// rows mid-backoff are skipped (restarting them used to cancel the
+    /// sleeping ladder Task, capping effective backoff at 3 min forever);
+    /// rows that exhausted `maxRetries` stay terminal until reconnect or
+    /// manual retry; offline peers wait for their UserStatus push.
     private func retryFailedConnectionDownloads() async {
         guard let transferState else { return }
 
         let failedDownloads = transferState.downloads.filter {
             $0.status == .failed && $0.direction == .download &&
-            isRetriableError($0.error ?? "")
+            isRetriableError($0.error ?? "") &&
+            $0.retryCount < maxRetries &&
+            pendingRetries[$0.id] == nil &&
+            !isCancelled($0.id) &&
+            !isPeerOffline($0.username)
         }
         guard !failedDownloads.isEmpty else { return }
 
-        logger.info("Connection retry: \(failedDownloads.count) failed downloads to retry")
+        let toRetry = failedDownloads.prefix(maxDialsPerTick)
+        logger.info("Connection retry: \(toRetry.count) of \(failedDownloads.count) failed downloads this tick")
 
-        // Per-transferId dedup so a folder of N failed transfers retries
-        // ALL of them, not just one per peer. The username-only dedup
-        // here previously starved every transfer-after-the-first for the
-        // peer until the first either succeeded or got cleared by an
-        // unrelated path. `establishPeerConnection` still coalesces TCP
-        // setup per-peer, so the practical cost of multi-fire is just N
-        // queueDownload sends on one connection.
         var staggerIndex = 0
-        for transfer in failedDownloads {
+        for transfer in toRetry {
             let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
             if alreadyPending { continue }
 
@@ -2393,9 +2500,13 @@ public final class DownloadManager {
         // NetworkClient, so kicking N transfers for one peer doesn't open
         // N connections.
         var staggerIndex = 0
+        var dialBudget = maxDialsPerTick
         for transfer in staleDownloads {
             let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
             if alreadyPending { continue }
+            if isPeerOffline(transfer.username) || isCancelled(transfer.id) { continue }
+            guard dialBudget > 0 else { break }
+            dialBudget -= 1
 
             transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
@@ -2810,8 +2921,14 @@ public final class DownloadManager {
             task.cancel()
             logger.info("Cancelled pending retry for transfer \(transferId)")
         }
-        transferState?.updateTransfer(id: transferId) { t in
-            t.nextRetryAt = nil
+        // Only touch the row when there's actually a stamp to clear —
+        // startDownload calls this unconditionally, and an unguarded write
+        // here was one full row-update cascade (DB write + invalidation)
+        // per attempt.
+        if transferState?.getTransfer(id: transferId)?.nextRetryAt != nil {
+            transferState?.updateTransfer(id: transferId) { t in
+                t.nextRetryAt = nil
+            }
         }
     }
 

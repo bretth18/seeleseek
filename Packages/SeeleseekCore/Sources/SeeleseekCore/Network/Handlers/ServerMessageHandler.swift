@@ -687,7 +687,7 @@ public final class ServerMessageHandler {
     }
 
     private func handleDistributedMessage(code: UInt32, payload: Data, parentUsername: String = "") async {
-        logger.debug("Distributed message received: code=\(code) size=\(payload.count)")
+        // No per-message log here: this fires 5-50x/sec in steady state.
 
         // Distributed messages use the same codes as DistributedMessageCode
         switch code {
@@ -779,8 +779,6 @@ public final class ServerMessageHandler {
 
         let payload = data.safeSubdata(in: 1..<data.count) ?? Data()
 
-        logger.debug("Received embedded distributed message: code=\(distribCode) size=\(payload.count)")
-
         if distribCode == DistributedMessageCode.searchRequest.rawValue {
             // This is a distributed search - we should check our files and respond
             handleDistributedSearch(payload)
@@ -793,8 +791,6 @@ public final class ServerMessageHandler {
         let username = info.username
         let token = info.token
         let query = info.query
-
-        logger.debug("Distributed search from \(username): '\(query)' token=\(token)")
 
         // Forward to children
         Task {
@@ -840,7 +836,7 @@ public final class ServerMessageHandler {
                 matchingFiles = Array(matchingFiles.prefix(maxResults))
             }
 
-            logger.info("Distributed search '\(query)' from \(username) (buddy=\(isBuddy)): \(matchingFiles.count) matches")
+            logger.debug("Distributed search '\(query)' from \(username) (buddy=\(isBuddy)): \(matchingFiles.count) matches")
             ActivityLogger.shared?.logDistributedSearch(query: query, matchCount: matchingFiles.count)
 
             await sendDistributedSearchResponse(
@@ -930,7 +926,7 @@ public final class ServerMessageHandler {
                 results: publicResults,
                 privateResults: privateResults
             )
-            logger.info("Sent \(publicResults.count) public + \(privateResults.count) private search results to \(username) for token \(token)")
+            logger.debug("Sent \(publicResults.count) public + \(privateResults.count) private search results to \(username) for token \(token)")
         } catch {
             client.cancelPendingBrowse(token: indirectToken)
             logger.debug("Search result delivery to \(username) failed: \(error.localizedDescription)")

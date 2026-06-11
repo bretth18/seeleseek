@@ -142,11 +142,18 @@ final class TransferState: TransferTracking {
     // MARK: - Transfers
     var downloads: [Transfer] = [] {
         didSet {
+            guard !skipDownloadIndexRebuild else { return }
             rebuildDownloadIndex()
             refreshDownloadsInProgressCount()
         }
     }
     var uploads: [Transfer] = []
+
+    /// Set briefly by `updateTransfer` when a mutation can't change the
+    /// index (status/username/filename unchanged), so per-chunk progress
+    /// writes skip the full O(n) rebuild. Wholesale assignments
+    /// (load/remove/clear) leave this false and rebuild as before.
+    @ObservationIgnored private var skipDownloadIndexRebuild = false
 
     // MARK: - Download Status Index (O(1) lookup)
     private(set) var downloadStatusIndex: [String: Transfer.TransferStatus] = [:]
@@ -359,6 +366,80 @@ final class TransferState: TransferTracking {
         }
     }
 
+    // MARK: - Debounced persistence
+    /// `updateTransfer` fires per received chunk; writing a row per call
+    /// queued unbounded Tasks behind the DB writer. Instead, dirty ids are
+    /// coalesced and flushed at most once per second, reading the current
+    /// row state at flush time. Status transitions flush promptly; pure
+    /// progress (bytes/speed/queuePosition/nextRetryAt) waits for the tick.
+    @ObservationIgnored private var dirtyTransferIDs: Set<UUID> = []
+    /// Dirty ids whose non-progress fields changed; flushed via full save.
+    @ObservationIgnored private var fullSaveTransferIDs: Set<UUID> = []
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
+    @ObservationIgnored private var flushInFlight = false
+
+    private func markDirty(_ id: UUID, progressOnly: Bool, urgent: Bool) {
+        dirtyTransferIDs.insert(id)
+        if !progressOnly { fullSaveTransferIDs.insert(id) }
+        if urgent {
+            flushDirtyTransfers()
+        } else {
+            scheduleFlush()
+        }
+    }
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, !Task.isCancelled else { return }
+            self.flushTask = nil
+            self.flushDirtyTransfers()
+        }
+    }
+
+    private func flushDirtyTransfers() {
+        guard !dirtyTransferIDs.isEmpty, !flushInFlight else { return }
+        let ids = dirtyTransferIDs
+        let fullIDs = fullSaveTransferIDs
+        dirtyTransferIDs.removeAll()
+        fullSaveTransferIDs.removeAll()
+
+        // Snapshot current rows; ids removed in the meantime drop out here.
+        var fullRows: [Transfer] = []
+        var progressRows: [Transfer] = []
+        for id in ids {
+            guard let transfer = getTransfer(id: id) else { continue }
+            if fullIDs.contains(id) {
+                fullRows.append(transfer)
+            } else {
+                progressRows.append(transfer)
+            }
+        }
+        guard !fullRows.isEmpty || !progressRows.isEmpty else { return }
+
+        flushInFlight = true
+        Task {
+            for transfer in fullRows {
+                do {
+                    try await TransferRepository.save(transfer)
+                } catch {
+                    logger.error("Failed to persist transfer: \(error.localizedDescription)")
+                }
+            }
+            for transfer in progressRows {
+                try? await TransferRepository.updateProgress(
+                    id: transfer.id,
+                    bytesTransferred: transfer.bytesTransferred,
+                    speed: transfer.speed
+                )
+            }
+            flushInFlight = false
+            // Re-arm if new updates landed while writing.
+            if !dirtyTransferIDs.isEmpty { scheduleFlush() }
+        }
+    }
+
     /// Record transfer completion to history
     private func recordCompletion(_ transfer: Transfer) {
         Task {
@@ -409,32 +490,52 @@ final class TransferState: TransferTracking {
         startWatch(transfer.username)
     }
 
+    /// True when `before` → `after` only changed bytesTransferred/speed.
+    /// (username/filename are `let`, so they can never change here.)
+    private func isProgressOnlyChange(_ before: Transfer, _ after: Transfer) -> Bool {
+        var probe = before
+        probe.bytesTransferred = after.bytesTransferred
+        probe.speed = after.speed
+        return probe == after
+    }
+
     func updateTransfer(id: UUID, update: (inout Transfer) -> Void) {
-        var updatedTransfer: Transfer?
-
         if let index = downloads.firstIndex(where: { $0.id == id }) {
-            let previousStatus = downloads[index].status
-            update(&downloads[index])
-            updatedTransfer = downloads[index]
+            let before = downloads[index]
+            var transfer = before
+            update(&transfer)
+            let statusChanged = before.status != transfer.status
+
+            if statusChanged {
+                downloads[index] = transfer
+            } else {
+                // Status (the only indexed mutable field) is unchanged:
+                // write the row back without the O(n) index rebuild.
+                skipDownloadIndexRebuild = true
+                downloads[index] = transfer
+                skipDownloadIndexRebuild = false
+            }
 
             // Record completion if status changed to completed
-            if previousStatus != .completed && downloads[index].status == .completed {
-                recordCompletion(downloads[index])
+            if before.status != .completed && transfer.status == .completed {
+                recordCompletion(transfer)
             }
+            markDirty(id, progressOnly: isProgressOnlyChange(before, transfer), urgent: statusChanged)
         } else if let index = uploads.firstIndex(where: { $0.id == id }) {
-            let previousStatus = uploads[index].status
-            update(&uploads[index])
-            updatedTransfer = uploads[index]
+            let before = uploads[index]
+            var transfer = before
+            update(&transfer)
 
             // Record completion if status changed to completed
-            if previousStatus != .completed && uploads[index].status == .completed {
-                recordCompletion(uploads[index])
+            if before.status != .completed && transfer.status == .completed {
+                recordCompletion(transfer)
             }
-        }
-
-        // Persist the update
-        if let transfer = updatedTransfer {
-            persistTransfer(transfer)
+            uploads[index] = transfer
+            markDirty(
+                id,
+                progressOnly: isProgressOnlyChange(before, transfer),
+                urgent: before.status != transfer.status
+            )
         }
     }
 
@@ -450,16 +551,18 @@ final class TransferState: TransferTracking {
     /// Invoked when the user cancels (or removes) a transfer that may have
     /// live network activity. Set by AppState to the managers' cancel APIs
     /// so the actual streaming/queue work stops — flipping the row status
-    /// alone leaves the bytes flowing. Deliberately NOT fired by
+    /// alone leaves the bytes flowing. The Bool is `isDownload`, so AppState
+    /// can route to the right manager. Deliberately NOT fired by
     /// retryTransfer, which also fires onDownloadTerminated but wants the
     /// transfer re-driven, not torn down.
-    var onCancelRequested: ((UUID) -> Void)?
+    var onCancelRequested: ((UUID, Bool) -> Void)?
 
     func cancelTransfer(id: UUID) {
+        let isDownload = downloads.contains { $0.id == id }
         updateTransfer(id: id) { transfer in
             transfer.status = .cancelled
         }
-        onCancelRequested?(id)
+        onCancelRequested?(id, isDownload)
         onDownloadTerminated?(id)
     }
 
@@ -475,12 +578,14 @@ final class TransferState: TransferTracking {
     }
 
     func removeTransfer(id: UUID) {
+        // Direction must be captured BEFORE removal for the cancel routing.
+        let isDownload = downloads.contains { $0.id == id }
         downloads.removeAll { $0.id == id }
         uploads.removeAll { $0.id == id }
         speedHistoryStore.removeValue(forKey: id)
         reconcilePeerWatches()
         // Removing an in-flight transfer must also stop its network work.
-        onCancelRequested?(id)
+        onCancelRequested?(id, isDownload)
         onDownloadTerminated?(id)
 
         // Remove from database
@@ -539,8 +644,11 @@ final class TransferState: TransferTracking {
     }
 
     func updateSpeeds() {
-        totalDownloadSpeed = activeDownloads.reduce(0) { $0 + $1.speed }
-        totalUploadSpeed = activeUploads.reduce(0) { $0 + $1.speed }
+        // Only write on change so idle ticks don't invalidate observers.
+        let downloadSpeed = activeDownloads.reduce(0) { $0 + $1.speed }
+        let uploadSpeed = activeUploads.reduce(0) { $0 + $1.speed }
+        if downloadSpeed != totalDownloadSpeed { totalDownloadSpeed = downloadSpeed }
+        if uploadSpeed != totalUploadSpeed { totalUploadSpeed = uploadSpeed }
         sampleSpeedHistory()
     }
 

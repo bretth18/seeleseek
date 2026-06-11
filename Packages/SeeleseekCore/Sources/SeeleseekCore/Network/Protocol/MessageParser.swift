@@ -761,7 +761,8 @@ public enum MessageParser {
     public struct UserInfoReplyInfo: Sendable, Equatable {
         public let description: String
         public let hasPicture: Bool
-        public let pictureData: Data?
+        // var: the cache layer strips pictures from unsolicited replies.
+        public var pictureData: Data?
         public let totalUploads: UInt32
         public let queueSize: UInt32
         public let hasFreeSlots: Bool

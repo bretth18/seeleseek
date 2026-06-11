@@ -137,7 +137,7 @@ final class ChatState {
             let msg = ChatMessage(username: "", content: "You were invited to private room '\(room)'", isSystem: true)
             // Add as a system notification to current room if any
             if let current = self.selectedRoom, let idx = self.joinedRooms.firstIndex(where: { $0.name == current }) {
-                self.joinedRooms[idx].messages.append(msg)
+                Self.appendCapped(msg, to: &self.joinedRooms[idx].messages)
             }
         }
 
@@ -272,7 +272,7 @@ final class ChatState {
                 joinedRooms[index].users.append(username)
             }
             let message = ChatMessage(username: "", content: "\(username) joined the room", isSystem: true)
-            joinedRooms[index].messages.append(message)
+            Self.appendCapped(message, to: &joinedRooms[index].messages)
         }
     }
 
@@ -280,7 +280,7 @@ final class ChatState {
         if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
             joinedRooms[index].users.removeAll { $0 == username }
             let message = ChatMessage(username: "", content: "\(username) left the room", isSystem: true)
-            joinedRooms[index].messages.append(message)
+            Self.appendCapped(message, to: &joinedRooms[index].messages)
         }
     }
 
@@ -351,6 +351,18 @@ final class ChatState {
     // SECURITY: Maximum message length to prevent abuse
     private static let maxMessageLength = 2000
 
+    /// Cap per room/chat so long-lived sessions don't grow unboundedly.
+    private static let maxMessages = 1000
+
+    /// Append with cap: keeps the most recent `maxMessages`, dropping
+    /// from the head.
+    private static func appendCapped(_ message: ChatMessage, to messages: inout [ChatMessage]) {
+        messages.append(message)
+        if messages.count > maxMessages {
+            messages.removeFirst(messages.count - maxMessages)
+        }
+    }
+
     var canSendMessage: Bool {
         let trimmed = messageInput.trimmingCharacters(in: .whitespaces)
         return !trimmed.isEmpty && trimmed.count <= Self.maxMessageLength
@@ -400,7 +412,7 @@ final class ChatState {
 
     func addRoomMessage(_ roomName: String, message: ChatMessage) {
         if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
-            joinedRooms[index].messages.append(message)
+            Self.appendCapped(message, to: &joinedRooms[index].messages)
             if selectedRoom != roomName {
                 joinedRooms[index].unreadCount += 1
             }
@@ -491,7 +503,7 @@ final class ChatState {
 
     func addPrivateMessage(_ username: String, message: ChatMessage) {
         if let index = privateChats.firstIndex(where: { $0.username == username }) {
-            privateChats[index].messages.append(message)
+            Self.appendCapped(message, to: &privateChats[index].messages)
             // If receiving a message from them, they're online
             if !message.isOwn {
                 privateChats[index].isOnline = true
@@ -502,7 +514,7 @@ final class ChatState {
         } else {
             // Create new chat - user is online since they sent us a message
             var chat = PrivateChat(username: username, isOnline: !message.isOwn)
-            chat.messages.append(message)
+            Self.appendCapped(message, to: &chat.messages)
             chat.unreadCount = selectedPrivateChat != username ? 1 : 0
             privateChats.append(chat)
 
@@ -596,6 +608,10 @@ final class ChatState {
                     let existingIds = Set(privateChats[index].messages.map(\.id))
                     let newMessages = messages.filter { !existingIds.contains($0.id) }
                     privateChats[index].messages.insert(contentsOf: newMessages, at: 0)
+                    let overflow = privateChats[index].messages.count - Self.maxMessages
+                    if overflow > 0 {
+                        privateChats[index].messages.removeFirst(overflow)
+                    }
                 } else {
                     let chat = PrivateChat(username: peer, messages: messages)
                     privateChats.append(chat)

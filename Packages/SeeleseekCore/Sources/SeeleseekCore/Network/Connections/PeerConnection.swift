@@ -431,8 +431,6 @@ public actor PeerConnection {
     public func sendPierceFirewall() async throws {
         let message = MessageBuilder.pierceFirewallMessage(token: token)
         logger.debug("Sending PierceFirewall to \(self.peerInfo.username) with token \(self.token) (\(message.count) bytes)")
-        let pfHex = message.map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("PierceFirewall data: \(pfHex)")
         try await send(message)
         // Mark handshake as complete from our side - peer will send peer messages (not init messages) now
         handshakeComplete = true
@@ -590,15 +588,14 @@ public actor PeerConnection {
             wire = data
         }
 
-        logger.debug("[\(self.peerInfo.username)] Sending \(wire.count) bytes (obfuscated=\(self.isObfuscated))")
-
+        // No per-send debug logs: forwarding distributed traffic to
+        // children makes this a steady-state hot path.
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: wire, completion: .contentProcessed { [weak self] error in
                 if let error {
                     self?.logger.error("[\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 } else {
-                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] send succeeded")
                     Task {
                         await self?.recordSent(wire.count)
                     }
@@ -617,7 +614,7 @@ public actor PeerConnection {
         // message loop already pulled off the socket).
         if fileTransferBuffer.count >= exactLength {
             let data = fileTransferBuffer.prefix(exactLength)
-            fileTransferBuffer.removeFirst(exactLength)
+            consumeFileBufferHead(exactLength)
             return Data(data)
         }
 
@@ -625,12 +622,12 @@ public actor PeerConnection {
         await waitForMessageLoopReceiveToLand()
         if fileTransferBuffer.count >= exactLength {
             let data = fileTransferBuffer.prefix(exactLength)
-            fileTransferBuffer.removeFirst(exactLength)
+            consumeFileBufferHead(exactLength)
             return Data(data)
         }
 
         let bufferedData = fileTransferBuffer
-        fileTransferBuffer.removeAll()
+        clearFileBuffer()
         let neededFromNetwork = exactLength - bufferedData.count
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -684,7 +681,7 @@ public actor PeerConnection {
         // (this can happen when data arrives before we stop the receive loop)
         if fileTransferBuffer.count >= count {
             let data = fileTransferBuffer.prefix(count)
-            fileTransferBuffer.removeFirst(count)
+            consumeFileBufferHead(count)
             logger.debug("[\(self.peerInfo.username)] Got \(count) raw bytes from file transfer buffer")
             return Data(data)
         }
@@ -727,7 +724,7 @@ public actor PeerConnection {
     private func receiveRawBytesFromSocket(count: Int, timeout: TimeInterval, connection: NWConnection) async throws -> Data {
         if fileTransferBuffer.count >= count {
             let data = fileTransferBuffer.prefix(count)
-            fileTransferBuffer.removeFirst(count)
+            consumeFileBufferHead(count)
             logger.debug("[\(self.peerInfo.username)] Got \(count) raw bytes from file transfer buffer (post-quiesce)")
             return Data(data)
         }
@@ -738,7 +735,7 @@ public actor PeerConnection {
 
         // Capture and clear buffer before entering non-isolated closure
         let bufferedData = fileTransferBuffer
-        fileTransferBuffer.removeAll()
+        clearFileBuffer()
 
         return try await withCheckedThrowingContinuation { continuation in
             connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
@@ -843,12 +840,26 @@ public actor PeerConnection {
         let chunk: Data
         if fileTransferBuffer.count <= maxLength {
             chunk = fileTransferBuffer
-            fileTransferBuffer.removeAll()
+            clearFileBuffer()
         } else {
             chunk = Data(fileTransferBuffer.prefix(maxLength))
-            fileTransferBuffer.removeFirst(maxLength)
+            consumeFileBufferHead(maxLength)
         }
         return chunk
+    }
+
+    /// All head-consumption of `fileTransferBuffer` goes through these so
+    /// `fileBufferDecodedPrefixLength` tracks reality — a stale boundary
+    /// would restore undecoded cipher bytes to `receiveBuffer` as plain on
+    /// browse resume.
+    private func consumeFileBufferHead(_ count: Int) {
+        fileTransferBuffer.removeFirst(count)
+        fileBufferDecodedPrefixLength = max(0, fileBufferDecodedPrefixLength - count)
+    }
+
+    private func clearFileBuffer() {
+        fileTransferBuffer.removeAll()
+        fileBufferDecodedPrefixLength = 0
     }
 
     // Flag to stop the receive loop for raw file transfers
@@ -907,13 +918,16 @@ public actor PeerConnection {
     /// Get any data that was received after stopReceiving() was called
     public func getFileTransferBuffer() -> Data {
         let data = fileTransferBuffer
-        fileTransferBuffer.removeAll()
+        clearFileBuffer()
         return data
     }
 
-    /// Prepend data back to the file transfer buffer (for partial reads)
+    /// Prepend data back to the file transfer buffer (for partial reads).
+    /// Pushed-back bytes were consumed from the decoded head, so the
+    /// decoded-prefix boundary grows with them.
     public func prependToFileTransferBuffer(_ data: Data) {
         fileTransferBuffer = data + fileTransferBuffer
+        fileBufferDecodedPrefixLength += data.count
     }
 
     /// Drain any available data from the connection without blocking
@@ -1097,7 +1111,7 @@ public actor PeerConnection {
             return
         }
 
-        logger.debug("[\(self.peerInfo.username)] Starting receive loop...")
+        // No log: rearmed once per receive event.
         messageLoopReceiveArmed = true
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) { [weak self] data, _, isComplete, error in
@@ -1181,16 +1195,67 @@ public actor PeerConnection {
     private var peerHandshakeReceived = false  // True when we receive peer's PeerInit
     private var peerUsername: String = ""
 
+    /// Continuations parked in `waitForPeerHandshake`, resumed when the
+    /// peer's PeerInit/PierceFirewall lands. Replaces a 50ms poll loop.
+    private var handshakeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
+    /// Sole setter of `peerHandshakeReceived` — resumes all parked waiters.
+    private func markPeerHandshakeReceived() {
+        peerHandshakeReceived = true
+        let waiters = handshakeWaiters
+        handshakeWaiters.removeAll()
+        for waiter in waiters.values {
+            waiter.resume()
+        }
+    }
+
+    /// Double-resume-safe via removeValue (cancellation vs. handshake race).
+    private func resumeHandshakeWaiter(_ id: UUID) {
+        handshakeWaiters.removeValue(forKey: id)?.resume()
+    }
+
+    /// Suspends until the peer handshake has been received (or the
+    /// surrounding task is cancelled — caller re-checks state after).
+    private func suspendUntilPeerHandshake() async {
+        guard !peerHandshakeReceived else { return }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                if peerHandshakeReceived {
+                    continuation.resume()
+                } else {
+                    handshakeWaiters[id] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.resumeHandshakeWaiter(id) }
+        }
+    }
+
     /// Wait for the peer to complete handshake (send their PeerInit)
     /// This is needed before sending requests like GetShareFileList
     public func waitForPeerHandshake(timeout: Duration = .seconds(10)) async throws {
-        let start = Date()
-        let timeoutSeconds = TimeInterval(timeout.components.seconds)
-        while !peerHandshakeReceived {
-            try await Task.sleep(for: .milliseconds(50))
-            if Date().timeIntervalSince(start) > timeoutSeconds {
-                logger.warning("[\(self.peerInfo.username)] Timeout waiting for peer handshake")
-                throw PeerError.timeout
+        if !peerHandshakeReceived {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await self.suspendUntilPeerHandshake()
+                    // Resumed by cancellation, not handshake? Surface it.
+                    try Task.checkCancellation()
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw PeerError.timeout
+                }
+                do {
+                    try await group.next()
+                    group.cancelAll()
+                } catch {
+                    group.cancelAll()
+                    if error is PeerError {
+                        self.logger.warning("[\(self.peerInfo.username)] Timeout waiting for peer handshake")
+                    }
+                    throw error
+                }
             }
         }
         logger.info("[\(self.peerInfo.username)] Peer handshake received")
@@ -1261,9 +1326,11 @@ public actor PeerConnection {
             return
         }
 
+        #if DEBUG
+        // Hex preview only in debug builds; ran per receive event in release.
         let preview = data.prefix(40).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("[\(self.peerInfo.username)] Received \(data.count) bytes, buffer=\(self.receiveBuffer.count) bytes")
-        logger.debug("[\(self.peerInfo.username)] Data preview: \(preview)")
+        logger.debug("[\(self.peerInfo.username)] Received \(data.count) bytes, buffer=\(self.receiveBuffer.count) bytes, preview: \(preview)")
+        #endif
 
         // Parse messages - init messages use 1-byte codes, peer messages use 4-byte codes
         while receiveBuffer.count >= 5 {
@@ -1291,8 +1358,6 @@ public actor PeerConnection {
                 break
             }
 
-            logger.debug("[\(self.peerInfo.username)] Message: length=\(length), firstByte=\(firstByte), handshakeComplete=\(self.handshakeComplete)")
-
             if !handshakeComplete && (firstByte == 0 || firstByte == 1) {
                 // Init message with 1-byte code
                 logger.debug("[\(self.peerInfo.username)] Init message: code=\(firstByte) length=\(length)")
@@ -1303,8 +1368,8 @@ public actor PeerConnection {
                 await handleInitMessage(code: firstByte, payload: payload)
             } else if connectionType == .distributed {
                 // Distributed messages use 1-byte code: uint32 length + uint8 code + payload
+                // No per-message log: steady-state relay traffic is 5-50/sec.
                 let code = UInt32(firstByte)
-                logger.debug("[\(self.peerInfo.username)] Distributed message: code=\(code) length=\(length)")
                 let payload = receiveBuffer.safeSubdata(in: 5..<totalLength) ?? Data()
 
                 receiveBuffer.removeFirst(totalLength)
@@ -1331,8 +1396,10 @@ public actor PeerConnection {
                     logger.debug("[\(self.peerInfo.username)] Failed to read message code")
                     break
                 }
+                #if DEBUG
                 let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid(\(code))"
                 logger.debug("[\(self.peerInfo.username)] Peer message: code=\(code) (\(codeDescription)) length=\(length)")
+                #endif
                 let payload = receiveBuffer.safeSubdata(in: 8..<totalLength) ?? Data()
 
                 receiveBuffer.removeFirst(totalLength)
@@ -1371,7 +1438,7 @@ public actor PeerConnection {
                 eventContinuation.yield(.pierceFirewall(token: token))
             }
             handshakeComplete = true
-            peerHandshakeReceived = true
+            markPeerHandshakeReceived()
 
         case PeerMessageCode.peerInit.rawValue:
             // Peer init - extract username, type, token
@@ -1433,7 +1500,7 @@ public actor PeerConnection {
                 }
             }
             handshakeComplete = true
-            peerHandshakeReceived = true
+            markPeerHandshakeReceived()
             logger.info("[\(self.peerUsername)] Peer handshake complete (received PeerInit)")
 
         default:
@@ -1444,16 +1511,6 @@ public actor PeerConnection {
     }
 
     private func handlePeerMessage(code: UInt32, payload: Data) async {
-        let codeDescription: String
-        if let seeleCode = SeeleSeekPeerCode(rawValue: code) {
-            codeDescription = seeleCode.description
-        } else if code <= 255, let peerCode = PeerMessageCode(rawValue: UInt8(code)) {
-            codeDescription = peerCode.description
-        } else {
-            codeDescription = "unknown(\(code))"
-        }
-        logger.debug("[\(self.peerInfo.username)] handlePeerMessage: code=\(code) (\(codeDescription)) payload=\(payload.count) bytes")
-
         // Handle based on message code
         switch code {
         case UInt32(PeerMessageCode.sharesRequest.rawValue):
@@ -1639,9 +1696,11 @@ public actor PeerConnection {
         }
 
         guard let parsed = parsedInfo else {
-            let dataPreview = data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
             logger.error("[\(self.peerInfo.username)] Failed to parse search reply!")
+            #if DEBUG
+            let dataPreview = data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
             logger.debug("[\(self.peerInfo.username)] Data starts with: \(dataPreview)")
+            #endif
             return
         }
 
@@ -1683,8 +1742,11 @@ public actor PeerConnection {
 
     private func handleTransferRequest(_ data: Data) async {
         guard let parsed = MessageParser.parseTransferRequest(data) else {
+            logger.error("Failed to parse TransferRequest (\(data.count) bytes)")
+            #if DEBUG
             let hexDump = data.prefix(50).map { String(format: "%02x", $0) }.joined(separator: " ")
-            logger.error("Failed to parse TransferRequest, data: \(hexDump)")
+            logger.debug("TransferRequest data: \(hexDump)")
+            #endif
             return
         }
 
@@ -1837,11 +1899,11 @@ public actor PeerConnection {
 
         // Verify zlib header (first byte should have compression method 8 = deflate)
         let cmf = data[data.startIndex]
-        let flg = data[data.startIndex + 1]
         let compressionMethod = cmf & 0x0F
-        let cmfHex = String(format: "%02x", cmf)
-        let flgHex = String(format: "%02x", flg)
-        logger.debug("Decompression: CMF=0x\(cmfHex) FLG=0x\(flgHex) method=\(compressionMethod)")
+        #if DEBUG
+        let flg = data[data.startIndex + 1]
+        logger.debug("Decompression: CMF=0x\(String(format: "%02x", cmf)) FLG=0x\(String(format: "%02x", flg)) method=\(compressionMethod)")
+        #endif
 
         guard compressionMethod == 8 else {
             logger.debug("Not zlib format (method != 8), trying raw deflate")
@@ -1854,11 +1916,10 @@ public actor PeerConnection {
         logger.debug("Stripped zlib header/footer: \(data.count) -> \(deflateData.count) bytes")
 
         let result = try decompressRawDeflate(Data(deflateData))
-        logger.debug("Decompressed: \(deflateData.count) -> \(result.count) bytes")
-
-        // Log first few bytes of decompressed data
+        #if DEBUG
         let preview = result.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("Decompressed preview: \(preview)")
+        logger.debug("Decompressed: \(deflateData.count) -> \(result.count) bytes, preview: \(preview)")
+        #endif
 
         return result
     }

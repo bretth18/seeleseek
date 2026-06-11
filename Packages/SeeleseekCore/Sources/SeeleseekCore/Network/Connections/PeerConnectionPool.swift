@@ -552,6 +552,9 @@ public final class PeerConnectionPool {
         lastActivities.removeAll()
         connectionsPerIP.removeAll()
         heldIPSlots.removeAll()
+        // In-flight establishment stamps would otherwise leak across
+        // sessions and mislabel a future incoming PierceFirewall.
+        pierceFirewallExpectedUsernames.removeAll()
         activeConnections = 0
     }
 

@@ -51,6 +51,9 @@ final class WishlistState {
     private var nextToken: UInt32 = 0x8000_0000
     private var rotationIndex: Int = 0
 
+    /// Per-item result cap within a search cycle (matches SearchState default)
+    private static let maxResultsPerItem = 500
+
     // MARK: - Network
     weak var networkClient: NetworkClient?
 
@@ -165,6 +168,8 @@ final class WishlistState {
         }
 
         let token = nextWishlistToken()
+        // Drop the item's previous token so the map doesn't grow each cycle.
+        tokenToWishlistId = tokenToWishlistId.filter { $0.value != item.id }
         tokenToWishlistId[token] = item.id
         logger.info("searchNow: query='\(item.query)' token=\(String(format: "0x%08X", token)) itemId=\(item.id) activeTokens=\(self.tokenToWishlistId.count)")
 
@@ -209,13 +214,16 @@ final class WishlistState {
             return
         }
 
-        // Accumulate results
+        // Accumulate results, capped per item (mirrors SearchState's limit)
         var existing = self.results[itemId] ?? []
-        existing.append(contentsOf: results)
+        let remaining = Self.maxResultsPerItem - existing.count
+        guard remaining > 0 else { return }
+        let accepted = results.prefix(remaining)
+        existing.append(contentsOf: accepted)
         self.results[itemId] = existing
 
-        unviewedResultCount += results.count
-        logger.info("Wishlist results: +\(results.count) for item \(itemId) (total: \(existing.count))")
+        unviewedResultCount += accepted.count
+        logger.info("Wishlist results: +\(accepted.count) for item \(itemId) (total: \(existing.count))")
 
         // Update result count on the item
         if let index = items.firstIndex(where: { $0.id == itemId }) {
