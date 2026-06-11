@@ -1326,11 +1326,10 @@ public actor PeerConnection {
             return
         }
 
-        #if DEBUG
-        // Hex preview only in debug builds; ran per receive event in release.
-        let preview = data.prefix(40).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("[\(self.peerInfo.username)] Received \(data.count) bytes, buffer=\(self.receiveBuffer.count) bytes, preview: \(preview)")
-        #endif
+        // No per-receive logging here, even in debug builds: a healthy
+        // distributed parent delivers 5-50 packets/s continuously, and a
+        // hex dump per packet drowns the console. Parse-FAILURE paths
+        // still dump hex (rare, actually diagnostic).
 
         // Parse messages - init messages use 1-byte codes, peer messages use 4-byte codes
         while receiveBuffer.count >= 5 {
@@ -1397,8 +1396,12 @@ public actor PeerConnection {
                     break
                 }
                 #if DEBUG
-                let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid(\(code))"
-                logger.debug("[\(self.peerInfo.username)] Peer message: code=\(code) (\(codeDescription)) length=\(length)")
+                // Skip the distributed stream: 5-50 search packets/s would
+                // drown the console even in debug builds.
+                if connectionType != .distributed {
+                    let codeDescription = code <= 255 ? (PeerMessageCode(rawValue: UInt8(code))?.description ?? "unknown") : "invalid(\(code))"
+                    logger.debug("[\(self.peerInfo.username)] Peer message: code=\(code) (\(codeDescription)) length=\(length)")
+                }
                 #endif
                 let payload = receiveBuffer.safeSubdata(in: 8..<totalLength) ?? Data()
 
