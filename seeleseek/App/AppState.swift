@@ -105,10 +105,15 @@ final class AppState {
         // Cancel/remove must stop the actual network work, not just flip the
         // row status — without this a "cancelled" transfer keeps streaming
         // and the completion path flips it back to .completed.
-        transferState.onCancelRequested = { [weak self] transferId in
+        transferState.onCancelRequested = { [weak self] transferId, isDownload in
             guard let self else { return }
-            self.downloadManager.cancelDownload(transferId: transferId)
-            Task { await self.uploadManager.cancelUpload(transferId: transferId) }
+            // Route by direction: cancelDownload on an upload id would stamp
+            // the row .cancelled in the wrong manager's bookkeeping.
+            if isDownload {
+                self.downloadManager.cancelDownload(transferId: transferId)
+            } else {
+                Task { await self.uploadManager.cancelUpload(transferId: transferId) }
+            }
         }
 
         uploadManager.uploadPermissionChecker = { [weak self] username in

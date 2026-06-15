@@ -11,6 +11,10 @@ public final class ShareManager {
 
     public private(set) var sharedFolders: [SharedFolder] = []
     public private(set) var fileIndex: [IndexedFile] = []
+    /// Inverted word index: lowercased token -> positions in `fileIndex`.
+    /// Rebuilt/extended at every `fileIndex` mutation so `search` is a
+    /// posting-list intersection instead of a linear substring scan.
+    private var wordIndex: [String: [Int]] = [:]
     public private(set) var isScanning = false
     public private(set) var scanProgress: Double = 0
     public private(set) var lastScanDate: Date?
@@ -231,6 +235,7 @@ public final class ShareManager {
         // removing `/Music` doesn't also drop files under a sibling
         // `/Music_archive` (same hazard that bit `setVisibility`).
         fileIndex.removeAll { $0.folderID == folder.id }
+        rebuildWordIndex()
 
         // Stop accessing security-scoped resource
         URL(fileURLWithPath: folder.path).stopAccessingSecurityScopedResource()
@@ -267,6 +272,7 @@ public final class ShareManager {
 
         // Atomic swap — old index served lookups during the scan.
         fileIndex = newIndex
+        rebuildWordIndex()
 
         lastScanDate = Date()
         isScanning = false
@@ -305,7 +311,9 @@ public final class ShareManager {
             logger.error("Failed to enumerate folder: \(folder.path)")
             return
         }
+        let start = fileIndex.count
         fileIndex.append(contentsOf: result.indexed)
+        appendToWordIndex(startingAt: start)
         applyFolderStats(result)
         logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
     }
@@ -421,30 +429,73 @@ public final class ShareManager {
 
     // MARK: - Search
 
+    /// Split into lowercased tokens on non-alphanumeric boundaries.
+    /// Shared by index building and query parsing so both sides agree.
+    nonisolated private static func tokenize(_ text: String) -> [String] {
+        text.lowercased()
+            .split(whereSeparator: { !($0.isLetter || $0.isNumber) })
+            .map(String.init)
+    }
+
+    /// Rebuild the inverted index from scratch (rescan swap / removal).
+    private func rebuildWordIndex() {
+        var index: [String: [Int]] = [:]
+        for (position, file) in fileIndex.enumerated() {
+            for token in Set(Self.tokenize(file.searchableText)) {
+                index[token, default: []].append(position)
+            }
+        }
+        wordIndex = index
+    }
+
+    /// Extend the inverted index for files appended at `start...`.
+    private func appendToWordIndex(startingAt start: Int) {
+        guard start < fileIndex.count else { return }
+        for position in start..<fileIndex.count {
+            for token in Set(Self.tokenize(fileIndex[position].searchableText)) {
+                wordIndex[token, default: []].append(position)
+            }
+        }
+    }
+
     /// Search local files for a query (used when peers search us).
     ///
-    /// Offloaded to `Task.detached` so the scan never runs on the main
-    /// actor. On a busy distributed-search relay this handler fires many
-    /// times per second, and the scan is O(files × terms) — keeping it
-    /// on main meant the UI stalled while peer traffic flowed. The
-    /// `fileIndex` snapshot is a value-type array and IndexedFile is
-    /// Sendable, so the detached task gets a safe copy-on-write view.
+    /// Inverted-index lookup: tokenize the query, fetch each term's
+    /// posting list, and intersect starting from the smallest list. This
+    /// replaced a per-packet linear scan (O(files × terms) substring
+    /// checks) that kept the CPU busy all day on a 5-50 queries/sec
+    /// distributed relay. Matching is whole-word (canonical SoulSeek /
+    /// Nicotine+ behavior), no longer substring-contains.
     ///
     /// `includeBuddyOnly` controls whether folders marked `.buddies` are
     /// visible to the requester. Callers resolve that flag from their
     /// knowledge of the requester (buddy-list membership) before calling.
     public func search(query: String, includeBuddyOnly: Bool) async -> [IndexedFile] {
-        let snapshot = fileIndex
-        return await Task.detached(priority: .utility) {
-            let terms = query.lowercased().split(separator: " ").map(String.init)
-            guard !terms.isEmpty else { return [] }
-            return snapshot.filter { file in
-                if !includeBuddyOnly && file.visibility == .buddies { return false }
-                // `searchableText` is precomputed at index time — no
-                // per-query allocation here.
-                return terms.allSatisfy { file.searchableText.contains($0) }
-            }
-        }.value
+        let terms = Set(Self.tokenize(query))
+        guard !terms.isEmpty else { return [] }
+
+        // Every term must have a posting list, else no file can match.
+        var lists: [[Int]] = []
+        lists.reserveCapacity(terms.count)
+        for term in terms {
+            guard let list = wordIndex[term] else { return [] }
+            lists.append(list)
+        }
+        lists.sort { $0.count < $1.count }
+
+        var candidates = Set(lists[0])
+        for list in lists.dropFirst() {
+            candidates.formIntersection(list)
+            if candidates.isEmpty { return [] }
+        }
+
+        // Materialize in index order; apply the visibility gate here,
+        // same semantics as the old linear filter.
+        return candidates.sorted().compactMap { position in
+            let file = fileIndex[position]
+            if !includeBuddyOnly && file.visibility == .buddies { return nil }
+            return file
+        }
     }
 
     /// Snapshot of all indexed files visible to a given requester. Used
@@ -556,6 +607,7 @@ public final class ShareManager {
     /// up the disk-walk code path.
     internal func _seedFileIndexForTest(_ files: [IndexedFile]) {
         fileIndex = files
+        rebuildWordIndex()
     }
 
     // MARK: - Persistence

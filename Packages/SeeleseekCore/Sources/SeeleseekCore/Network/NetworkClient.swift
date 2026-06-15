@@ -846,9 +846,15 @@ public final class NetworkClient {
         }
         pendingBrowseSharesContinuations.removeAll()
 
-        for (_, state) in pendingBrowseStates {
+        for (token, state) in pendingBrowseStates {
             state.timeoutTask?.cancel()
             state.continuation?.resume(throwing: error)
+            // The cancelled timeout task was the one path that would have
+            // cleared the pool's expected-username entry — clear it here or
+            // it leaks one entry per in-flight establishment per disconnect
+            // (and risks stamping a stale username on a token collision in
+            // a later session).
+            peerConnectionPool.clearExpectedPierceFirewallUsername(token: token)
         }
         pendingBrowseStates.removeAll()
 
@@ -1615,38 +1621,53 @@ public final class NetworkClient {
     /// in practice this is defense in depth: the local stamp guarantees
     /// it even if the pool's pre-registration map was cleared).
     public func handlePierceFirewallForBrowse(token: UInt32, connection: PeerConnection) async -> Bool {
-        if var state = pendingBrowseStates[token] {
-            // A browse that already failed (CantConnectToPeer) has no waiter
-            // left; storing the connection would orphan a live socket.
-            if state.timedOut || state.failureReason != nil {
-                logger.debug("Browse: late PierceFirewall token=\(token) for dead browse; closing")
-                pendingBrowseStates.removeValue(forKey: token)
-                await connection.disconnect()
-                return true
-            }
-            logger.debug("Browse: PierceFirewall token=\(token) matched pending browse for \(state.username)")
+        guard let initial = pendingBrowseStates[token] else { return false }
 
-            // Stamp username synchronously — must complete BEFORE we resume
-            // any waiter so callers always see a connection whose
-            // `peerInfo.username` matches the user they asked for.
-            await connection.setPeerUsername(state.username)
-            logger.debug("Browse: Set username '\(state.username)' on indirect connection")
-
-            // Store the connection
-            state.receivedConnection = connection
-            state.timeoutTask?.cancel()
-
-            // If there's a continuation waiting, resume it immediately
-            if let continuation = state.continuation {
-                pendingBrowseStates.removeValue(forKey: token)
-                continuation.resume(returning: connection)
-            } else {
-                // No one waiting yet - store for later
-                pendingBrowseStates[token] = state
-            }
+        // A browse that already failed (CantConnectToPeer) has no waiter
+        // left; storing the connection would orphan a live socket.
+        if initial.timedOut || initial.failureReason != nil {
+            logger.debug("Browse: late PierceFirewall token=\(token) for dead browse; closing")
+            pendingBrowseStates.removeValue(forKey: token)
+            await connection.disconnect()
             return true
         }
-        return false
+        logger.debug("Browse: PierceFirewall token=\(token) matched pending browse for \(initial.username)")
+
+        // Stamp username — must complete BEFORE we resume any waiter so
+        // callers always see a connection whose `peerInfo.username` matches
+        // the user they asked for.
+        await connection.setPeerUsername(initial.username)
+
+        // RE-FETCH after the await: that suspension lets the 30s timeout,
+        // CantConnectToPeer, or a cancelled waiter run on the main actor and
+        // consume the entry — resuming a stale copy's continuation here was
+        // a CheckedContinuation double-resume (fatal trap; field crash on
+        // build 15 whenever a PierceFirewall raced the timeout).
+        guard var state = pendingBrowseStates[token] else {
+            logger.debug("Browse: token=\(token) consumed while stamping username; closing connection")
+            await connection.disconnect()
+            return true
+        }
+        if state.timedOut || state.failureReason != nil {
+            pendingBrowseStates.removeValue(forKey: token)
+            await connection.disconnect()
+            return true
+        }
+
+        // Store the connection
+        state.receivedConnection = connection
+        state.timeoutTask?.cancel()
+
+        // If there's a continuation waiting, claim it and resume exactly once
+        if let continuation = state.continuation {
+            state.continuation = nil
+            pendingBrowseStates.removeValue(forKey: token)
+            continuation.resume(returning: connection)
+        } else {
+            // No one waiting yet - store for later
+            pendingBrowseStates[token] = state
+        }
+        return true
     }
 
     // MARK: - User Interests & Recommendations
@@ -2314,7 +2335,7 @@ public final class NetworkClient {
         }
         userInfoInFlight[username] = task
         let info = try await task.value
-        userInfoReplyCache[username] = info
+        cacheUserInfoReply(username: username, info)
         return info
     }
 
@@ -2323,8 +2344,33 @@ public final class NetworkClient {
         userInfoReplyCache.removeValue(forKey: username)
     }
 
-    private func handleUserInfoReplyEvent(username: String, info: MessageParser.UserInfoReplyInfo) {
+    /// Entries can carry multi-MB profile pictures and survive disconnect,
+    /// so the cache needs a hard cap — without one, any peer that connects
+    /// can park megabytes here forever by pushing an unsolicited reply.
+    private let maxUserInfoCacheEntries = 100
+
+    private func cacheUserInfoReply(username: String, _ info: MessageParser.UserInfoReplyInfo) {
+        if userInfoReplyCache.count >= maxUserInfoCacheEntries,
+           userInfoReplyCache[username] == nil {
+            // Simple pressure valve: drop half. LRU bookkeeping isn't worth
+            // it for a cache whose hits are user-driven profile views.
+            for key in userInfoReplyCache.keys.prefix(maxUserInfoCacheEntries / 2) {
+                userInfoReplyCache.removeValue(forKey: key)
+            }
+        }
         userInfoReplyCache[username] = info
+    }
+
+    private func handleUserInfoReplyEvent(username: String, info: MessageParser.UserInfoReplyInfo) {
+        // Unsolicited replies (no waiter) get cached without the picture —
+        // hostile or chatty peers shouldn't be able to park image bytes.
+        if userInfoReplyContinuations[username] == nil {
+            var stripped = info
+            stripped.pictureData = nil
+            cacheUserInfoReply(username: username, stripped)
+        } else {
+            cacheUserInfoReply(username: username, info)
+        }
         if let cont = userInfoReplyContinuations.removeValue(forKey: username) {
             cont.resume(returning: info)
         }
@@ -2371,30 +2417,22 @@ public final class NetworkClient {
     }
 
     private func performEstablishPeerConnection(for username: String) async throws -> PeerConnection {
+        // Resolve the address BEFORE registering the browse and sending
+        // ConnectToPeer: the server answers GetPeerAddress for an offline/
+        // unknown user with 0.0.0.0:0, and bailing here saves a wasted
+        // ConnectToPeer + 30s browse window per attempt — at retry-storm
+        // rates that was hundreds of pointless server messages per minute.
+        // A PierceFirewall can't arrive before ConnectToPeer is sent, so
+        // registering after the lookup loses nothing.
+        let (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
+
+        guard ip != "0.0.0.0", port > 0 || obfuscatedPort > 0 else {
+            throw NetworkError.connectionFailed("\(username) is offline (no address)")
+        }
+
         let token = UInt32.random(in: 0...UInt32.max)
         registerPendingBrowse(token: token, username: username, timeout: 30)
         await sendConnectToPeer(token: token, username: username, connectionType: "P")
-
-        let ip: String
-        let port: Int
-        let obfuscatedPort: Int
-        do {
-            (ip, port, obfuscatedPort) = try await getPeerAddress(for: username)
-        } catch {
-            // Without this the registered browse entry (and its 30s timer)
-            // leaks for the session whenever the address lookup fails.
-            cancelPendingBrowse(token: token)
-            throw error
-        }
-
-        // The server answers GetPeerAddress for an offline/unknown user with
-        // 0.0.0.0:0 — dialing port 0 throws immediately and the indirect
-        // wait can never succeed (the user isn't there to pierce). Fail fast
-        // instead of burning the full 30s window.
-        guard ip != "0.0.0.0", port > 0 || obfuscatedPort > 0 else {
-            cancelPendingBrowse(token: token)
-            throw NetworkError.connectionFailed("\(username) is offline (no address)")
-        }
 
         // Prefer the peer's obfuscated port whenever they advertise one.
         // Peers always advertise the plain port too, so falling back to plain
