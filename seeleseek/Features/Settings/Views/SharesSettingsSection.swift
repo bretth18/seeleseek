@@ -206,7 +206,7 @@ struct SharedFolderRow: View {
             "Visibility",
             selection: Binding(
                 get: { folder.visibility },
-                set: onVisibilityChange
+                set: { onVisibilityChange($0) }
             )
         ) {
             Label("Public", systemImage: "globe")

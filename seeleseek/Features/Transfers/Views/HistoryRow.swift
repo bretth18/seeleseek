@@ -37,18 +37,30 @@ struct HistoryRow: View {
     /// on screen — fine for historical entries.
     @State private var countryFlag: String?
 
+    /// Resolved once per row appear (and on item change) instead of per
+    /// body eval — `TransferHistoryItem.resolvedLocalPath` does multiple
+    /// synchronous `FileManager` stats, and with 200 history rows that
+    /// disk I/O inside `body` caused scroll hitching.
+    @State private var resolvedPath: URL?
+
+    private var fileExists: Bool { resolvedPath != nil }
+
     /// True only if the app-wide audio preview is currently playing
     /// *this row's* file. See `RowAudioPreview` — preview state lives on
     /// `AppState` so starting playback on another row flips this row's
     /// button back to "play".
     private var isPlayingPreview: Bool {
-        guard let path = item.resolvedLocalPath else { return false }
+        guard let path = resolvedPath else { return false }
         return appState.audioPreview.isPlaying(url: path)
     }
 
     private func refreshCountryFlag() {
         let f = appState.networkClient.userInfoCache.flag(for: item.username)
         countryFlag = f.isEmpty ? nil : f
+    }
+
+    private func refreshResolvedPath() {
+        resolvedPath = item.resolvedLocalPath
     }
 
     var body: some View {
@@ -64,21 +76,25 @@ struct HistoryRow: View {
                 actionCluster
             }
         }
-        .opacity(item.fileExists ? 1 : SeeleColors.alphaHalf)
+        .opacity(fileExists ? 1 : SeeleColors.alphaHalf)
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityActions {
-            if item.isAudioFile, item.fileExists {
+            if item.isAudioFile, fileExists {
                 Button(isPlayingPreview ? "Stop preview" : "Play preview", action: toggleAudioPreview)
                 Button("Edit metadata", action: openMetadataEditor)
             }
-            if item.fileExists {
+            if fileExists {
                 Button("Reveal in Finder", action: revealInFinder)
             }
         }
-        .onAppear(perform: refreshCountryFlag)
+        .onAppear {
+            refreshCountryFlag()
+            refreshResolvedPath()
+        }
         .onChange(of: item.username) { _, _ in refreshCountryFlag() }
+        .onChange(of: item.id) { _, _ in refreshResolvedPath() }
     }
 
     // MARK: - Direction glyph
@@ -118,7 +134,7 @@ struct HistoryRow: View {
                 countryFlag: countryFlag
             )
 
-            if !item.fileExists {
+            if !fileExists {
                 HStack(spacing: SeeleSpacing.xs) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: SeeleSpacing.iconSizeXS))
@@ -206,7 +222,7 @@ struct HistoryRow: View {
         // `accessibilityAction` on the row, VoiceOver rotor) can reach
         // these actions. The invisible focus ring is an accepted tradeoff.
         HStack(spacing: SeeleSpacing.xxs) {
-            if item.isAudioFile, item.fileExists {
+            if item.isAudioFile, fileExists {
                 RowIconButton(
                     systemName: isPlayingPreview ? "pause.fill" : "play.fill",
                     help: isPlayingPreview ? "Pause preview" : "Play preview",
@@ -220,7 +236,7 @@ struct HistoryRow: View {
                 )
             }
 
-            if item.fileExists {
+            if fileExists {
                 RowIconButton(
                     systemName: "folder",
                     help: "Reveal in Finder",
@@ -236,7 +252,7 @@ struct HistoryRow: View {
 
     @ViewBuilder
     private var contextMenu: some View {
-        if item.isAudioFile, item.fileExists {
+        if item.isAudioFile, fileExists {
             Button(action: toggleAudioPreview) {
                 Label(
                     isPlayingPreview ? "Stop Preview" : "Play Preview",
@@ -248,7 +264,7 @@ struct HistoryRow: View {
             }
         }
 
-        if item.fileExists {
+        if fileExists {
             Button(action: revealInFinder) {
                 Label("Reveal in Finder", systemImage: "folder")
             }
@@ -267,24 +283,24 @@ struct HistoryRow: View {
         parts.append(item.formattedDuration)
         parts.append(item.formattedSize)
         parts.append(item.formattedDate)
-        if !item.fileExists { parts.append("file missing") }
+        if !fileExists { parts.append("file missing") }
         return parts.joined(separator: ", ")
     }
 
     // MARK: - Actions
 
     private func revealInFinder() {
-        guard let path = item.resolvedLocalPath else { return }
+        guard let path = resolvedPath else { return }
         FileReveal.inFinder(path)
     }
 
     private func openMetadataEditor() {
-        guard let path = item.resolvedLocalPath else { return }
+        guard let path = resolvedPath else { return }
         appState.metadataState.showEditor(for: path)
     }
 
     private func toggleAudioPreview() {
-        guard let path = item.resolvedLocalPath else { return }
+        guard let path = resolvedPath else { return }
         appState.audioPreview.toggle(url: path)
     }
 }

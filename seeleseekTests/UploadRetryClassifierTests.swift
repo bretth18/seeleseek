@@ -38,17 +38,24 @@ struct UploadRetryClassifierTests {
         #expect(UploadManager.isRetriableError("Unexpected error") == true)
     }
 
-    // MARK: - Terminal
-
-    @Test("User-driven cancellation is terminal (both spellings)",
+    // The bare "cancel" stem was removed from the upload classifier (same
+    // fix as the download side): NWError/POSIX teardown surfaces as
+    // "Operation canceled" / "Connection was cancelled", i.e. transient
+    // failures. Genuine cancels never reach the classifier —
+    // `cancelledTransferIds` + the `.cancelled` status guard in
+    // `failUpload` short-circuit user cancels, and peer "Cancelled"
+    // rejections map to `.cancelled` via `status(forReject:)`.
+    @Test("Canceled strings are transient teardown, not user cancel",
           arguments: [
-            "Cancelled",
-            "Cancelled by user",
             "Operation canceled",
+            "The operation couldn’t be completed. (Network.NWError error 89 - Operation canceled)",
+            "Connection was cancelled",
           ])
-    func cancellationIsTerminal(message: String) {
-        #expect(UploadManager.isRetriableError(message) == false)
+    func canceledIsRetriable(message: String) {
+        #expect(UploadManager.isRetriableError(message) == true)
     }
+
+    // MARK: - Terminal
 
     @Test("Peer-side stop reasons are not retried",
           arguments: [

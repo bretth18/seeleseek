@@ -163,9 +163,13 @@ struct WishlistItemRow: View {
                     .foregroundStyle(item.enabled ? SeeleColors.textPrimary : SeeleColors.textTertiary)
                     .lineLimit(1)
 
-                Text(wishlistState.relativeTime(from: item.lastSearchedAt))
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
+                // TimelineView so "5m ago" keeps ticking — the string is
+                // otherwise only recomputed when the row re-renders.
+                TimelineView(.everyMinute) { _ in
+                    Text(wishlistState.relativeTime(from: item.lastSearchedAt))
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
             }
 
             Spacer()

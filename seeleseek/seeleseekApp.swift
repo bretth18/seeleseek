@@ -48,11 +48,6 @@ struct SeeleSeekApp: App {
                 }
             }
             CommandMenu("Connection") {
-                Button("Connect...") {
-                    // Show login if disconnected
-                }
-                .keyboardShortcut("k", modifiers: [.command])
-
                 Button("Disconnect") {
                     appState.networkClient.disconnect()
                     appState.connection.setDisconnected()

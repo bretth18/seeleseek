@@ -45,6 +45,45 @@ final class AppState {
     }
 
     private func wireNetworkClient(_ client: NetworkClient) {
+        // App-wide connection lifecycle handling. Lives here (installed
+        // exactly once) rather than in LoginView.connect(), which used to
+        // re-install it on every Connect tap.
+        client.onConnectionStatusChanged = { [weak self] status in
+            guard let self else { return }
+            switch status {
+            case .connected:
+                if self.connection.rememberCredentials {
+                    CredentialStorage.save(
+                        username: self.connection.loginUsername,
+                        password: self.connection.loginPassword
+                    )
+                }
+                self.connection.setConnected(
+                    username: self.connection.loginUsername,
+                    ip: "",
+                    greeting: nil
+                )
+                // Resume all retriable downloads from previous session
+                self.downloadManager.resumeDownloadsOnConnect()
+                // Same on the upload side: persisted `.failed` rows
+                // whose error is retriable get a fresh 4-attempt budget.
+                self.uploadManager.resumeUploadsOnConnect()
+                // Re-send peer-status watches (earlier attempts made
+                // during the connecting phase may have been dropped).
+                self.socialState.resubscribeWatchedPeers()
+            case .disconnected:
+                self.connection.setDisconnected()
+            case .connecting:
+                self.connection.setConnecting()
+            case .reconnecting:
+                // `self.networkClient` (not the captured `client`) so the
+                // closure doesn't retain-cycle the client instance.
+                self.connection.setReconnecting(reason: self.networkClient.connectionError)
+            case .error:
+                self.connection.setError(self.networkClient.connectionError ?? "Unknown error")
+            }
+        }
+
         searchState.settings = settings
         searchState.setupCallbacks(client: client)
         chatState.setupCallbacks(client: client)

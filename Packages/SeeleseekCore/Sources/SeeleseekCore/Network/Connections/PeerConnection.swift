@@ -250,6 +250,11 @@ public actor PeerConnection {
         }
     }
 
+    /// Bounds the dial attempt: `.waiting` with a POSIX code outside the
+    /// definitive-failure list otherwise parks the continuation forever, and
+    /// `PeerConnectionPool.connect` is public with no wrapping timeout.
+    private static let connectTimeoutSeconds: Int = 15
+
     private func performConnect(to endpoint: NWEndpoint, bindTo localPort: UInt16?) async throws {
         updateState(.connecting)
         connectContinuationResumed = false
@@ -261,19 +266,39 @@ public actor PeerConnection {
         logger.debug("Creating TCP connection to \(self.peerInfo.ip):\(self.peerInfo.port) (localPort=\(localPort ?? 0))")
         connection = conn
 
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                conn.stateUpdateHandler = { [weak self] newState in
-                    guard let self else { return }
-                    Task {
-                        await self.handleConnectionState(newState, generation: generation, continuation: continuation)
+        // Race the dial against an intrinsic timeout. On timeout, cancelling
+        // `conn` drives the state handler to `.cancelled`, which resumes the
+        // pending continuation (single-resume held by the
+        // `connectContinuationResumed` guard) so the dial child finishes.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { continuation in
+                        conn.stateUpdateHandler = { [weak self] newState in
+                            guard let self else { return }
+                            Task {
+                                await self.handleConnectionState(newState, generation: generation, continuation: continuation)
+                            }
+                        }
+                        conn.start(queue: .global(qos: .userInitiated))
                     }
+                } onCancel: {
+                    self.logger.debug("Task cancelled, stopping NWConnection to \(self.peerInfo.ip):\(self.peerInfo.port)...")
+                    conn.cancel()
                 }
-                conn.start(queue: .global(qos: .userInitiated))
             }
-        } onCancel: {
-            logger.debug("Task cancelled, stopping NWConnection to \(self.peerInfo.ip):\(self.peerInfo.port)...")
-            conn.cancel()
+            group.addTask {
+                try await Task.sleep(for: .seconds(Self.connectTimeoutSeconds))
+                throw PeerError.timeout
+            }
+            do {
+                _ = try await group.next()
+            } catch {
+                conn.cancel()
+                group.cancelAll()
+                throw error
+            }
+            group.cancelAll()
         }
     }
 
@@ -581,7 +606,7 @@ public actor PeerConnection {
         if isObfuscated {
             guard data.count >= 4 else {
                 logger.error("[\(self.peerInfo.username)] obfuscated send: data shorter than 4 bytes, no length prefix")
-                throw PeerError.notConnected
+                throw PeerError.malformedOutboundMessage
             }
             wire = ObfuscationCodec.encodeMessage(payload: Data(data.dropFirst(4)))
         } else {
@@ -590,60 +615,28 @@ public actor PeerConnection {
 
         // No per-send debug logs: forwarding distributed traffic to
         // children makes this a steady-state hot path.
-        return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: wire, completion: .contentProcessed { [weak self] error in
-                if let error {
-                    self?.logger.error("[\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
-                    continuation.resume(throwing: error)
-                } else {
-                    Task {
-                        await self?.recordSent(wire.count)
+        //
+        // Cancellation-aware: under TCP backpressure `contentProcessed` may
+        // not fire for minutes; cancelling the socket forces it to fire
+        // (with an error) so a cancelled caller (e.g. user cancels an
+        // upload) resolves instead of sitting wedged. The callback fires
+        // exactly once either way, so single-resume holds.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                connection.send(content: wire, completion: .contentProcessed { [weak self] error in
+                    if let error {
+                        self?.logger.error("[\(self?.peerInfo.username ?? "??")] send failed: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        Task {
+                            await self?.recordSent(wire.count)
+                        }
+                        continuation.resume()
                     }
-                    continuation.resume()
-                }
-            })
-        }
-    }
-
-    public func receive(exactLength: Int) async throws -> Data {
-        guard let connection else {
-            throw PeerError.notConnected
-        }
-
-        // Serve from the file transfer buffer first (bytes the stopped
-        // message loop already pulled off the socket).
-        if fileTransferBuffer.count >= exactLength {
-            let data = fileTransferBuffer.prefix(exactLength)
-            consumeFileBufferHead(exactLength)
-            return Data(data)
-        }
-
-        // Let the message loop's in-flight receive land, then re-check.
-        await waitForMessageLoopReceiveToLand()
-        if fileTransferBuffer.count >= exactLength {
-            let data = fileTransferBuffer.prefix(exactLength)
-            consumeFileBufferHead(exactLength)
-            return Data(data)
-        }
-
-        let bufferedData = fileTransferBuffer
-        clearFileBuffer()
-        let neededFromNetwork = exactLength - bufferedData.count
-
-        return try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: neededFromNetwork, maximumLength: neededFromNetwork) { [weak self] data, _, _, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if let data, data.count == neededFromNetwork {
-                    Task {
-                        await self?.recordReceived(data.count)
-                    }
-                    continuation.resume(returning: bufferedData + data)
-                } else {
-                    // Short delivery (connection closed mid-read)
-                    continuation.resume(throwing: PeerError.connectionClosed)
-                }
+                })
             }
+        } onCancel: {
+            connection.cancel()
         }
     }
 
@@ -655,19 +648,25 @@ public actor PeerConnection {
 
         logger.debug("[\(self.peerInfo.username)] Sending RAW \(data.count) bytes")
 
-        return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: data, completion: .contentProcessed { [weak self] error in
-                if let error {
-                    self?.logger.error("[\(self?.peerInfo.username ?? "??")] sendRaw failed: \(error.localizedDescription)")
-                    continuation.resume(throwing: error)
-                } else {
-                    self?.logger.debug("[\(self?.peerInfo.username ?? "??")] sendRaw succeeded")
-                    Task {
-                        await self?.recordSent(data.count)
+        // Cancellation-aware for the same reason as `send(_:)`: a wedged
+        // `contentProcessed` under backpressure must not outlive the caller.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                connection.send(content: data, completion: .contentProcessed { [weak self] error in
+                    if let error {
+                        self?.logger.error("[\(self?.peerInfo.username ?? "??")] sendRaw failed: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        self?.logger.debug("[\(self?.peerInfo.username ?? "??")] sendRaw succeeded")
+                        Task {
+                            await self?.recordSent(data.count)
+                        }
+                        continuation.resume()
                     }
-                    continuation.resume()
-                }
-            })
+                })
+            }
+        } onCancel: {
+            connection.cancel()
         }
     }
 
@@ -696,7 +695,7 @@ public actor PeerConnection {
                     // Let the message loop's in-flight receive land first so
                     // we never have two competing receives on one socket;
                     // its bytes go to fileTransferBuffer and are re-checked.
-                    await waitForMessageLoopReceiveToLand()
+                    await waitForMessageLoopToStop()
                     return try await receiveRawBytesFromSocket(count: count, timeout: timeout, connection: connection)
                 } onCancel: {
                     // Force the pending receive to fire its callback (with an
@@ -785,7 +784,7 @@ public actor PeerConnection {
 
         // Let the message loop's in-flight receive land, then re-check the
         // buffer: its bytes must be consumed in order, before fresh receives.
-        await waitForMessageLoopReceiveToLand()
+        await waitForMessageLoopToStop()
         if let chunk = takeFileChunkFromBuffer(maxLength: maxLength) {
             logger.debug("Using \(chunk.count) bytes from file transfer buffer (post-quiesce)")
             return .data(chunk)
@@ -884,8 +883,11 @@ public actor PeerConnection {
         }
     }
 
-    /// Suspends until the message loop's in-flight receive has landed.
-    private func waitForMessageLoopReceiveToLand() async {
+    /// Suspends until the message loop has stopped entirely — i.e. its
+    /// in-flight receive has landed on a non-rearm exit and no new receive
+    /// was armed. Callers must have set `shouldStopReceiving` (directly or
+    /// via a handshake message) or this can wait indefinitely.
+    private func waitForMessageLoopToStop() async {
         guard messageLoopReceiveArmed else { return }
         let id = UUID()
         await withTaskCancellationHandler {
@@ -991,7 +993,6 @@ public actor PeerConnection {
         switch state {
         case .ready:
             logger.info("Peer connected: \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
-            logger.info("Connected to peer \(self.peerInfo.username) at \(self.peerInfo.ip):\(self.peerInfo.port)")
             connectedAt = Date()
             connectionEstablishedGeneration = generation
             updateState(.connected)
@@ -1124,6 +1125,14 @@ public actor PeerConnection {
                 let username = self.peerInfo.username
                 if let error {
                     self.logger.debug("[\(username)] Receive error: \(error.localizedDescription)")
+                }
+
+                // Wire-level accounting: this is the P-connection message
+                // loop's only entry point, so count here regardless of
+                // whether the bytes go to the parser or the file buffer.
+                // (The raw/file receive paths record at their own sockets.)
+                if let data, !data.isEmpty {
+                    await self.recordReceived(data.count)
                 }
 
                 // Check if we should stop BEFORE processing data
@@ -1271,9 +1280,10 @@ public actor PeerConnection {
     /// Must be larger than max message size (100MB) to allow buffering of large share lists
     private static let maxReceiveBufferSize = 150 * 1024 * 1024  // 150MB
 
-    /// Maximum peer-message payload length we'll accept. Matches the plain-path
-    /// ceiling at line 1075 so obfuscated connections don't silently reject
-    /// large browse/share-list responses that would succeed plain.
+    /// Maximum peer-message payload length we'll accept. Matches the plain
+    /// parser's per-message length sanity check in `handleReceivedData` so
+    /// obfuscated connections don't silently reject large browse/share-list
+    /// responses that would succeed plain.
     private static let maxPeerMessageLength = 100_000_000  // 100MB
 
     private func handleReceivedData(_ data: Data) async {
@@ -1421,7 +1431,6 @@ public actor PeerConnection {
             // Firewall pierce - extract token and notify for matching to pending downloads
             // This connection will now be used for file transfer (raw bytes, no message framing)
             if let token = payload.readUInt32(at: 0) {
-                logger.info("PierceFirewall with token: \(token)")
                 logger.info("PierceFirewall received with token: \(token)")
 
                 // CRITICAL: Stop receive loop IMMEDIATELY before invoking callback
@@ -1508,8 +1517,11 @@ public actor PeerConnection {
 
         default:
             logger.warning("Unknown init message code: \(code)")
-            // Assume handshake is done and this might be a peer message
+            // Assume handshake is done and this might be a peer message.
+            // Also release waitForPeerHandshake callers — without this they
+            // block the full 10s timeout and then fail.
             handshakeComplete = true
+            markPeerHandshakeReceived()
         }
     }
 
@@ -1671,7 +1683,6 @@ public actor PeerConnection {
 
     private func handleSearchReply(_ data: Data) async {
         logger.debug("[\(self.peerInfo.username)] handleSearchReply called with \(data.count) bytes")
-        logger.info("handleSearchReply called with \(data.count) bytes")
 
         // Search replies may be zlib compressed - try decompression first.
         // If decompressed bytes do not parse, fall back to raw payload parsing.
@@ -1679,8 +1690,7 @@ public actor PeerConnection {
         if data.count > 4 {
             do {
                 let decompressed = try decompressZlib(data)
-                logger.debug("[\(self.peerInfo.username)] Decompressed from \(data.count) to \(decompressed.count) bytes")
-                logger.info("Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
+                logger.debug("[\(self.peerInfo.username)] Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
                 candidatePayloads.insert((decompressed, true), at: 0)
             } catch {
                 logger.debug("[\(self.peerInfo.username)] Not compressed or decompression failed: \(error)")
@@ -1873,6 +1883,12 @@ public actor PeerConnection {
         eventContinuation.yield(.stateChanged(newState))
     }
 
+    /// One-hop snapshot of the wire-level traffic counters, for the pool's
+    /// stats refresh (two separate property reads would cost two actor hops).
+    var trafficSnapshot: (bytesReceived: UInt64, bytesSent: UInt64) {
+        (bytesReceived, bytesSent)
+    }
+
     private func recordSent(_ bytes: Int) {
         bytesSent += UInt64(bytes)
         messagesSent += 1
@@ -2012,6 +2028,7 @@ public enum PeerError: Error, LocalizedError {
     case decompressionFailed
     case timeout
     case invalidPort
+    case malformedOutboundMessage
 
     public var errorDescription: String? {
         switch self {
@@ -2021,8 +2038,7 @@ public enum PeerError: Error, LocalizedError {
         case .decompressionFailed: return "Failed to decompress data"
         case .timeout: return "Connection timed out"
         case .invalidPort: return "Invalid port number"
+        case .malformedOutboundMessage: return "Outbound message is malformed"
         }
     }
 }
-
-import Compression

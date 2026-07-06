@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import os
+import Synchronization
 
 public actor ServerConnection {
     // MARK: - Types
@@ -14,6 +15,7 @@ public actor ServerConnection {
 
     public enum ConnectionError: Error, LocalizedError {
         case notConnected
+        case alreadyConnecting
         case connectionFailed(String)
         case loginFailed(String)
         case timeout
@@ -22,6 +24,7 @@ public actor ServerConnection {
         public var errorDescription: String? {
             switch self {
             case .notConnected: "Not connected to server"
+            case .alreadyConnecting: "A connection attempt is already in progress"
             case .connectionFailed(let reason): "Connection failed: \(reason)"
             case .loginFailed(let reason): "Login failed: \(reason)"
             case .timeout: "Connection timed out"
@@ -38,9 +41,6 @@ public actor ServerConnection {
     private var receiveBuffer = Data()
 
     private(set) var state: State = .disconnected
-
-    private var messageHandler: ((UInt32, Data) async -> Void)?
-    private var stateHandler: ((State) -> Void)?
 
     // Connection continuation - stored as property to ensure single-resume safety
     private var connectContinuation: CheckedContinuation<Void, Error>?
@@ -59,6 +59,9 @@ public actor ServerConnection {
     // where messages would otherwise be dropped). Flushed on registration.
     private var pendingMessages: [Data] = []
     private static let maxPendingMessages = 2048
+    /// True once we've warned about dropping frames in the current
+    /// no-consumer overflow episode, so the log fires once, not per frame.
+    private var pendingOverflowLogged = false
     private var streamGeneration = 0
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "ServerConnection")
@@ -77,12 +80,27 @@ public actor ServerConnection {
 
     // MARK: - Async Message Stream
 
-    /// Async stream of complete message frames from the server
+    /// Stream minted for the current session; repeated `messages` accesses
+    /// return it instead of finishing the active consumer's stream.
+    private nonisolated let cachedMessageStream = Mutex<AsyncStream<Data>?>(nil)
+
+    /// Async stream of complete message frames from the server.
+    ///
+    /// Single-consumer: only one `for await` loop may iterate it at a time.
+    /// Accesses within one session return the same cached stream (so an
+    /// accidental second access can't finish the active consumer's stream);
+    /// `disconnect()` finishes it and clears the cache so the next session
+    /// mints a fresh one.
     public nonisolated var messages: AsyncStream<Data> {
-        AsyncStream { continuation in
-            Task {
-                await self.setMessageContinuation(continuation)
+        cachedMessageStream.withLock { cached in
+            if let cached { return cached }
+            let stream = AsyncStream<Data> { continuation in
+                Task {
+                    await self.setMessageContinuation(continuation)
+                }
             }
+            cached = stream
+            return stream
         }
     }
 
@@ -101,6 +119,7 @@ public actor ServerConnection {
             continuation.yield(frame)
         }
         pendingMessages.removeAll()
+        pendingOverflowLogged = false
     }
 
     private func clearContinuation(ifGeneration generation: Int) {
@@ -111,18 +130,13 @@ public actor ServerConnection {
 
     // MARK: - Public Interface
 
-    public func setMessageHandler(_ handler: @escaping (UInt32, Data) async -> Void) async {
-        self.messageHandler = handler
-    }
-
-    public func setStateHandler(_ handler: @escaping (State) -> Void) {
-        self.stateHandler = handler
-    }
-
     public func connect() async throws {
         guard case .disconnected = state else {
-            logger.warning("Already connected or connecting")
-            return
+            // Silently returning here made a concurrent connect() look
+            // successful while the first attempt was still in flight —
+            // surface it so the caller can decide how to handle it.
+            logger.warning("connect() called while already connected or connecting")
+            throw ConnectionError.alreadyConnecting
         }
 
         updateState(.connecting)
@@ -204,6 +218,9 @@ public actor ServerConnection {
         messageContinuation?.finish()
         messageContinuation = nil
         pendingMessages.removeAll()
+        pendingOverflowLogged = false
+        // Next session's `messages` access must mint a fresh stream.
+        cachedMessageStream.withLock { $0 = nil }
         updateState(.disconnected)
     }
 
@@ -214,16 +231,24 @@ public actor ServerConnection {
 
         logger.debug("Sending \(data.count) bytes")
 
-        return try await withCheckedThrowingContinuation { continuation in
-            connection.send(content: data, completion: .contentProcessed { [weak self] error in
-                if let error {
-                    self?.logger.error("Send failed: \(error.localizedDescription)")
-                    continuation.resume(throwing: error)
-                } else {
-                    self?.logger.debug("Send completed")
-                    continuation.resume()
-                }
-            })
+        // Under TCP backpressure `contentProcessed` may not fire for minutes;
+        // cancelling the socket forces it to fire (with an error) so a
+        // cancelled caller resolves instead of sitting wedged. The callback
+        // fires exactly once either way, so single-resume holds.
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                connection.send(content: data, completion: .contentProcessed { [weak self] error in
+                    if let error {
+                        self?.logger.error("Send failed: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        self?.logger.debug("Send completed")
+                        continuation.resume()
+                    }
+                })
+            }
+        } onCancel: {
+            connection.cancel()
         }
     }
 
@@ -320,21 +345,50 @@ public actor ServerConnection {
 
     private func startReceiving() async {
         guard let connection else { return }
+        let generation = connectGeneration
 
         connection.receive(minimumIncompleteLength: 1, maximumLength: 262144) { [weak self] data, _, isComplete, error in
             guard let self else { return }
 
             Task {
-                if let data {
-                    await self.handleReceivedData(data)
-                }
-
-                if isComplete || error != nil {
-                    await self.disconnect()
-                } else {
-                    await self.startReceiving()
-                }
+                await self.handleReceiveCallback(
+                    data: data,
+                    isComplete: isComplete,
+                    error: error,
+                    generation: generation,
+                    armedConnection: connection
+                )
             }
+        }
+    }
+
+    private func handleReceiveCallback(
+        data: Data?,
+        isComplete: Bool,
+        error: Error?,
+        generation: Int,
+        armedConnection: NWConnection
+    ) async {
+        // A stale callback from a cancelled socket must not append its bytes
+        // to the new connection's buffer, tear the new connection down, or
+        // rearm a receive on the dead socket during quick reconnects.
+        guard generation == connectGeneration, armedConnection === connection else {
+            logger.debug("Ignoring receive callback from a previous connection")
+            return
+        }
+
+        if let data {
+            await handleReceivedData(data)
+        }
+
+        // handleReceivedData can disconnect (buffer overflow); re-check
+        // before disconnecting again or rearming.
+        guard generation == connectGeneration, armedConnection === connection else { return }
+
+        if isComplete || error != nil {
+            disconnect()
+        } else {
+            await startReceiving()
         }
     }
 
@@ -376,16 +430,17 @@ public actor ServerConnection {
                 messageContinuation.yield(completeMessage)
             } else if pendingMessages.count < Self.maxPendingMessages {
                 pendingMessages.append(completeMessage)
+            } else if !pendingOverflowLogged {
+                // Once per overflow episode — the flag resets when a
+                // consumer registers or the connection tears down.
+                pendingOverflowLogged = true
+                logger.warning("pendingMessages exceeded \(Self.maxPendingMessages) frames with no consumer registered; dropping frames")
             }
-
-            // Also call legacy handler if set
-            await messageHandler?(frame.code, frame.payload)
         }
     }
 
     private func updateState(_ newState: State) {
         state = newState
-        stateHandler?(newState)
     }
 }
 

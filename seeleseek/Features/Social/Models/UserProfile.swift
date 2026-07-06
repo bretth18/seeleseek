@@ -56,10 +56,15 @@ struct UserProfile: Identifiable, Sendable {
         averageSpeed.formattedSpeed
     }
 
-    /// Format file count for display
-    var formattedFileCount: String {
+    /// Cached — allocating a NumberFormatter per call is expensive.
+    private static let fileCountFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: sharedFiles)) ?? "\(sharedFiles)"
+        return formatter
+    }()
+
+    /// Format file count for display
+    var formattedFileCount: String {
+        Self.fileCountFormatter.string(from: NSNumber(value: sharedFiles)) ?? "\(sharedFiles)"
     }
 }

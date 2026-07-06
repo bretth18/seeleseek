@@ -106,7 +106,7 @@ public enum ObfuscationCodec {
         from buffer: Data,
         // Matches MessageParser's plain-frame limit — large share lists can
         // exceed 16MB and must parse identically on obfuscated connections.
-        maxPayloadLength: Int = 100_000_000
+        maxPayloadLength: Int = Int(MessageParser.maxMessageSize)
     ) throws -> (payload: Data, bytesConsumed: Int)? {
         guard buffer.count >= keyLength + 4 else { return nil }
 
@@ -123,7 +123,7 @@ public enum ObfuscationCodec {
         let lenBytes = stream.transform(encodedLen)
         let payloadLen = lenBytes.withUnsafeBytes { Int(UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self))) }
 
-        if payloadLen < 0 || payloadLen > maxPayloadLength {
+        if payloadLen > maxPayloadLength {
             throw DecodingError.payloadTooLarge(advertised: payloadLen, max: maxPayloadLength)
         }
 

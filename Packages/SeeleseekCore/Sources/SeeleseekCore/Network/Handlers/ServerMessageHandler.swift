@@ -201,7 +201,7 @@ public final class ServerMessageHandler {
             logger.info("Server reports our IP: \(ip)")
             logger.info("Peers will connect to: \(ip):\(self.client?.listenPort ?? 0)")
             client?.setLoggedIn(true, message: greeting)
-            ActivityLogger.shared?.logConnectionSuccess(username: client?.username ?? "unknown", server: "server.slsknet.org")
+            ActivityLogger.shared?.logConnectionSuccess(username: client?.username ?? "unknown", server: client?.serverHost ?? "unknown")
 
         case .failure(let reason):
             logger.error("Login failed: \(reason)")
@@ -345,9 +345,7 @@ public final class ServerMessageHandler {
         guard let info = MessageParser.parseWatchUser(data) else { return }
 
         guard info.exists else {
-            Task { @MainActor in
-                self.client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: nil)
-            }
+            client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: nil)
             return
         }
 
@@ -357,12 +355,13 @@ public final class ServerMessageHandler {
         let files = info.files ?? 0
         let dirs = info.dirs ?? 0
 
-        Task { @MainActor in
-            // WatchUser replies don't carry privileged — nil keeps the
-            // last server-reported value instead of fabricating false.
-            self.client?.handleUserStatusResponse(username: info.username, status: status, privileged: nil)
-            self.client?.dispatchUserStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
-        }
+        // WatchUser replies don't carry privileged — nil keeps the
+        // last server-reported value instead of fabricating false.
+        // Direct calls: this class is already @MainActor, and a
+        // `Task { @MainActor in }` hop here would allow reordering
+        // against later messages.
+        client?.handleUserStatusResponse(username: info.username, status: status, privileged: nil)
+        client?.dispatchUserStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
 
         if let country = info.countryCode {
             logger.debug("WatchUser country for \(info.username): \(country)")
@@ -375,14 +374,14 @@ public final class ServerMessageHandler {
     private func handleGetUserStatus(_ data: Data) {
         guard let info = MessageParser.parseGetUserStatus(data) else { return }
         logger.info("User \(info.username) status: \(info.status.description), privileged: \(info.privileged)")
-        Task { @MainActor in
-            self.client?.handleUserStatusResponse(username: info.username, status: info.status, privileged: info.privileged)
-        }
+        // Direct call — already on @MainActor; a Task hop would allow reordering.
+        client?.handleUserStatusResponse(username: info.username, status: info.status, privileged: info.privileged)
     }
 
     // Track pending connections to avoid duplicates
     private var pendingConnections: Set<String> = []
     private var connectToPeerCount = 0
+    private var droppedConnectToPeerCount = 0
     private var hasWarnedAboutListener = false
 
     // Rate limiting for outbound connections
@@ -421,9 +420,15 @@ public final class ServerMessageHandler {
             return
         }
 
-        // Limit queue size to prevent unbounded memory growth
+        // Limit queue size to prevent unbounded memory growth. Don't drop
+        // silently — a full queue means peers waiting on us won't get
+        // their PierceFirewall. Throttled so a storm can't flood the log.
         if connectionQueue.count >= 100 {
-            return // Queue is full
+            droppedConnectToPeerCount += 1
+            if droppedConnectToPeerCount == 1 || droppedConnectToPeerCount % 100 == 0 {
+                logger.warning("ConnectToPeer queue full — dropped \(self.droppedConnectToPeerCount) request(s) so far (latest: \(username))")
+            }
+            return
         }
 
         let connectionKey = "\(username)-\(token)"
@@ -880,10 +885,16 @@ public final class ServerMessageHandler {
         client.registerPendingBrowse(token: indirectToken, username: username, timeout: 15)
         await client.sendConnectToPeer(token: indirectToken, username: username, connectionType: "P")
 
-        do {
-            let connection: PeerConnection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
-                // Direct path: get address + connect + handshake
-                group.addTask {
+        // Tolerate individual path failures: a fast direct refusal must not
+        // kill the still-viable indirect (PierceFirewall) path — rethrowing
+        // the first child's error + cancelAll did exactly that, so search
+        // results were never delivered to firewalled peers. Each child
+        // reports its own outcome; we only give up when both paths failed
+        // or the overall deadline passes.
+        let connection: PeerConnection? = await withTaskGroup(of: SearchDeliveryOutcome.self) { group in
+            // Direct path: get address + connect + handshake
+            group.addTask {
+                do {
                     let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
                     let connectionToken = UInt32.random(in: 0...UInt32.max)
                     let useObf = address.obfuscatedPort > 0
@@ -894,32 +905,71 @@ public final class ServerMessageHandler {
                         token: connectionToken,
                         obfuscated: useObf
                     )
-                    try await conn.waitForPeerHandshake(timeout: .seconds(8))
-                    return conn
+                    do {
+                        try await conn.waitForPeerHandshake(timeout: .seconds(8))
+                    } catch {
+                        // Tear down exactly the connection this dial created
+                        // (handshake failure or cancellation after the
+                        // indirect path won).
+                        await conn.disconnect()
+                        throw error
+                    }
+                    return .connected(conn)
+                } catch {
+                    return .pathFailed
                 }
+            }
 
-                // Indirect path: wait for PierceFirewall
-                group.addTask {
+            // Indirect path: wait for PierceFirewall
+            group.addTask {
+                do {
                     let conn = try await client.waitForPendingBrowse(token: indirectToken)
                     await conn.resumeReceivingForPeerConnection()
                     // PierceFirewall IS the handshake for indirect connections -- do NOT send PeerInit
-                    return conn
+                    return .connected(conn)
+                } catch {
+                    return .pathFailed
                 }
-
-                // Timeout: give up after 12s
-                group.addTask {
-                    try await Task.sleep(for: .seconds(12))
-                    throw NetworkError.timeout
-                }
-
-                let result = try await group.next()!
-                group.cancelAll()
-                return result
             }
 
-            // Cancel the pending indirect if we got direct
-            client.cancelPendingBrowse(token: indirectToken)
+            // Overall deadline: give up after 12s
+            group.addTask {
+                try? await Task.sleep(for: .seconds(12))
+                return .deadline
+            }
 
+            var failedPaths = 0
+            for await outcome in group {
+                switch outcome {
+                case .connected(let conn):
+                    group.cancelAll()
+                    return conn
+                case .deadline:
+                    group.cancelAll()
+                    return nil
+                case .pathFailed:
+                    failedPaths += 1
+                    if failedPaths == 2 {
+                        // Both real paths failed — no point waiting out
+                        // the deadline child.
+                        group.cancelAll()
+                        return nil
+                    }
+                }
+            }
+            return nil
+        }
+
+        // Always clear the indirect registration — on success (the direct
+        // path may have won) and on failure alike.
+        client.cancelPendingBrowse(token: indirectToken)
+
+        guard let connection else {
+            logger.debug("Search result delivery to \(username) failed: direct + indirect both failed or timed out")
+            return
+        }
+
+        do {
             try await connection.sendSearchReply(
                 username: client.username,
                 token: token,
@@ -928,9 +978,16 @@ public final class ServerMessageHandler {
             )
             logger.debug("Sent \(publicResults.count) public + \(privateResults.count) private search results to \(username) for token \(token)")
         } catch {
-            client.cancelPendingBrowse(token: indirectToken)
             logger.debug("Search result delivery to \(username) failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Outcome of one leg of the direct/indirect race in
+    /// `sendDistributedSearchResponse`.
+    private enum SearchDeliveryOutcome: Sendable {
+        case connected(PeerConnection)
+        case pathFailed
+        case deadline
     }
 
     private func handleResetDistributed() {
@@ -1233,6 +1290,13 @@ public final class ServerMessageHandler {
         }
 
         logger.warning("CantConnectToPeer token=\(token) — peer couldn't reach our listen port")
+        // Fail the pending browse directly — fast-failing in-flight
+        // operations must not depend on an app-layer round-trip through
+        // the single-closure callback below (unconfigured or overwritten,
+        // every failed indirect connection would wait out the full
+        // registration timeout). `failPendingBrowse` is idempotent, so
+        // the app callback calling it again is harmless.
+        client?.failPendingBrowse(token: token, reason: "peer could not connect to us (CantConnectToPeer)")
         client?.onCantConnectToPeer?(token)
     }
 

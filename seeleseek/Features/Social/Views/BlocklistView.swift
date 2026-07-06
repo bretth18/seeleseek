@@ -178,10 +178,15 @@ struct BlocklistView: View {
         .background(SeeleColors.surface)
     }
 
-    private func formatDate(_ date: Date) -> String {
+    /// Cached — allocating a formatter per row render is expensive.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return formatter
+    }()
+
+    private func formatDate(_ date: Date) -> String {
+        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

@@ -22,7 +22,21 @@ public final class ShareManager {
     // Computed stats
     public var totalFiles: Int { fileIndex.count }
     public var totalFolders: Int { sharedFolders.count }
-    public var totalSize: UInt64 { fileIndex.reduce(0) { $0 + $1.size } }
+    /// Cached — recomputed whenever `fileIndex` changes. As a computed
+    /// property this was an O(n) reduce on every access from an
+    /// @Observable, re-run on each observation invalidation.
+    public private(set) var totalSize: UInt64 = 0
+
+    private func recomputeTotalSize() {
+        totalSize = fileIndex.reduce(0) { $0 + $1.size }
+    }
+
+    /// Share-folder paths whose security-scoped access has already been
+    /// started this app run. Access must OUTLIVE any scan — uploads serve
+    /// files from these folders at arbitrary later times — so it is never
+    /// stopped after a scan; but re-starting on every rescan accumulated
+    /// unbalanced access counts. One start per folder per run.
+    private var securityScopedPaths: Set<String> = []
 
     /// Per-subscriber continuations. Vanilla `AsyncStream` is
     /// single-consumer, so we fan out yields ourselves.
@@ -218,13 +232,21 @@ public final class ShareManager {
         }
 
         sharedFolders.append(folder)
+        // The direct `start` above already grants access for this run;
+        // record it so `scanFolderResult` doesn't stack a bookmark start.
+        securityScopedPaths.insert(url.path)
         save()
 
         // Notify after the scan so the (folders, files) broadcast pair
-        // is atomic — never folders=N+1 with the old file count.
-        Task {
-            await scanFolder(folder)
-            notifyCountsChanged()
+        // is atomic — never folders=N+1 with the old file count. The scan
+        // rides the serialized chain: if a rescan is mid-flight, this runs
+        // after its index swap so the new folder's files can't be dropped.
+        enqueueScan { [weak self] in
+            guard let self else { return }
+            self.isScanning = true
+            await self.scanFolder(folder)
+            self.isScanning = false
+            self.notifyCountsChanged()
         }
     }
 
@@ -236,9 +258,11 @@ public final class ShareManager {
         // `/Music_archive` (same hazard that bit `setVisibility`).
         fileIndex.removeAll { $0.folderID == folder.id }
         rebuildWordIndex()
+        recomputeTotalSize()
 
         // Stop accessing security-scoped resource
         URL(fileURLWithPath: folder.path).stopAccessingSecurityScopedResource()
+        securityScopedPaths.remove(folder.path)
 
         // Remove bookmark
         defaults.removeObject(forKey: "bookmark-\(folder.path)")
@@ -249,9 +273,40 @@ public final class ShareManager {
 
     // MARK: - Scanning
 
-    public func rescanAll() async {
-        guard !isScanning else { return }
+    /// Serializes every scan — `addFolder`'s single-folder scan and
+    /// `rescanAll` — so they can never interleave. Without this, addFolder
+    /// kicked an unguarded Task that appended to `fileIndex` while a
+    /// running `rescanAll` built `newIndex` from an older folder snapshot
+    /// and swapped it in at the end, clobbering the just-added folder's
+    /// files (and racing the word-index append).
+    private var scanChain: Task<Void, Never>?
+    /// True while a rescan is running or queued on the chain; folds
+    /// concurrent `rescanAll` requests into one (the old `!isScanning`
+    /// dedupe, adapted to the serialized chain).
+    private var rescanPending = false
 
+    @discardableResult
+    private func enqueueScan(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let previous = scanChain
+        let task = Task { @MainActor in
+            await previous?.value
+            await operation()
+        }
+        scanChain = task
+        return task
+    }
+
+    public func rescanAll() async {
+        guard !rescanPending else { return }
+        rescanPending = true
+        await enqueueScan { [weak self] in
+            guard let self else { return }
+            await self.performRescanAll()
+            self.rescanPending = false
+        }.value
+    }
+
+    private func performRescanAll() async {
         isScanning = true
         scanProgress = 0
 
@@ -270,9 +325,14 @@ public final class ShareManager {
             scanProgress = Double(index + 1) / Double(sharedFolders.count)
         }
 
-        // Atomic swap — old index served lookups during the scan.
-        fileIndex = newIndex
+        // Atomic swap — old index served lookups during the scan. Filter
+        // by live folder IDs so a folder removed mid-scan isn't
+        // resurrected by the swap (removeFolder mutates `fileIndex`
+        // directly, but this loop scanned from a snapshot).
+        let liveFolderIDs = Set(sharedFolders.map(\.id))
+        fileIndex = newIndex.filter { liveFolderIDs.contains($0.folderID) }
         rebuildWordIndex()
+        recomputeTotalSize()
 
         lastScanDate = Date()
         isScanning = false
@@ -314,6 +374,7 @@ public final class ShareManager {
         let start = fileIndex.count
         fileIndex.append(contentsOf: result.indexed)
         appendToWordIndex(startingAt: start)
+        recomputeTotalSize()
         applyFolderStats(result)
         logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
     }
@@ -349,17 +410,20 @@ public final class ShareManager {
         let folderURL = URL(fileURLWithPath: folder.path)
 
         // Restore bookmark access on the main actor before handing the URL
-        // to a detached task — security-scoped resource access is per-URL
-        // and must be balanced, but the access call itself is cheap.
-        if let bookmarkData = defaults.data(forKey: "bookmark-\(folder.path)") {
+        // to a detached task. Started at most once per folder per app run
+        // (see `securityScopedPaths`) — the access must persist for
+        // serving uploads, so it is deliberately never stopped here, and
+        // re-starting on every rescan would pile up unbalanced counts.
+        if !securityScopedPaths.contains(folder.path),
+           let bookmarkData = defaults.data(forKey: "bookmark-\(folder.path)") {
             var isStale = false
             if let url = try? URL(
                 resolvingBookmarkData: bookmarkData,
                 options: .withSecurityScope,
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            ) {
-                _ = url.startAccessingSecurityScopedResource()
+            ), url.startAccessingSecurityScopedResource() {
+                securityScopedPaths.insert(folder.path)
             }
         }
 
@@ -538,67 +602,10 @@ public final class ShareManager {
         // broadcast semantics to public-only.
     }
 
-    /// Convert indexed files to SharedFile format for responses
-    public func toSharedFiles() -> [SharedFile] {
-        // Group by folder
-        var folders: [String: [IndexedFile]] = [:]
-
-        for file in fileIndex {
-            let components = file.sharedPath.split(separator: "\\")
-            if components.count > 1 {
-                let folderPath = components.dropLast().joined(separator: "\\")
-                folders[folderPath, default: []].append(file)
-            }
-        }
-
-        // Build folder tree
-        return sharedFolders.map { folder in
-            SharedFile(
-                filename: folder.displayName,
-                isDirectory: true,
-                children: buildChildren(for: folder.displayName, from: folders)
-            )
-        }
-    }
-
-    private func buildChildren(for prefix: String, from folders: [String: [IndexedFile]]) -> [SharedFile] {
-        var result: [SharedFile] = []
-
-        // Find direct children (files and subfolders)
-        let directFiles = fileIndex.filter { file in
-            let components = file.sharedPath.split(separator: "\\")
-            return components.count == 2 && file.sharedPath.hasPrefix(prefix)
-        }
-
-        for file in directFiles {
-            result.append(SharedFile(
-                filename: file.sharedPath,
-                size: file.size,
-                bitrate: file.bitrate,
-                duration: file.duration
-            ))
-        }
-
-        // Find subfolders
-        let subfolders = Set(folders.keys.filter { $0.hasPrefix(prefix + "\\") }
-            .compactMap { path -> String? in
-                let remaining = path.dropFirst(prefix.count + 1)
-                if let nextSeparator = remaining.firstIndex(of: "\\") {
-                    return prefix + "\\" + remaining[..<nextSeparator]
-                }
-                return path
-            })
-
-        for subfolder in subfolders {
-            result.append(SharedFile(
-                filename: subfolder,
-                isDirectory: true,
-                children: buildChildren(for: subfolder, from: folders)
-            ))
-        }
-
-        return result
-    }
+    // The old `toSharedFiles()` / `buildChildren(for:from:)` tree builder
+    // lived here. It had no callers anywhere in the repo (the shares-browse
+    // reply is built from the database via `SharedFileRecord.toSharedFiles`
+    // in the app layer) and its child-matching logic was buggy — removed.
 
     // MARK: - Test seams
 
@@ -608,6 +615,7 @@ public final class ShareManager {
     internal func _seedFileIndexForTest(_ files: [IndexedFile]) {
         fileIndex = files
         rebuildWordIndex()
+        recomputeTotalSize()
     }
 
     // MARK: - Persistence

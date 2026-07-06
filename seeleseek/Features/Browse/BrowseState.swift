@@ -65,42 +65,55 @@ final class BrowseState {
         return result
     }
 
-    /// Filtered flat tree: if filterQuery is non-empty, only items whose displayName
-    /// matches the query (case-insensitive) plus their ancestor directories are included.
+    /// Filtered flat tree: if filterQuery is non-empty, walks the FULL
+    /// tree (not just expanded rows — the old behavior silently missed
+    /// matches inside collapsed folders) and includes every match plus
+    /// its ancestor chain, with matching subtrees rendered expanded for
+    /// display. The no-filter path is unchanged.
     var filteredFlatTree: [FlatTreeItem] {
         let query = filterQuery.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return visibleFlatTree }
 
-        let tree = visibleFlatTree
+        var result: [FlatTreeItem] = []
+        appendMatching(files: displayedFolders, depth: 0, query: query, to: &result)
+        return result
+    }
 
-        // Collect IDs of items that match the query
-        var matchingIDs: Set<UUID> = []
-        for item in tree where item.file.displayName.localizedCaseInsensitiveContains(query) {
-            matchingIDs.insert(item.id)
-        }
-
-        // Walk the flat tree to find ancestor directories that should be kept.
-        // We maintain a stack of (depth, id) for directories seen so far.
-        var ancestorStack: [(depth: Int, id: UUID)] = []
-        var keepIDs: Set<UUID> = matchingIDs
-
-        for item in tree {
-            // Pop entries from stack that are not ancestors of this item
-            while let last = ancestorStack.last, last.depth >= item.depth {
-                ancestorStack.removeLast()
-            }
-            if item.file.isDirectory {
-                ancestorStack.append((depth: item.depth, id: item.id))
-            }
-            if matchingIDs.contains(item.id) {
-                // Include all ancestors
-                for ancestor in ancestorStack {
-                    keepIDs.insert(ancestor.id)
+    /// Depth-first walk of the full tree, ignoring `expandedFolders`. A
+    /// directory is kept if its own name matches or any descendant does;
+    /// ancestors of matches come along for free because they're appended
+    /// before recursing and removed again when the subtree contributed
+    /// nothing. Returns true if anything at this level (or below) matched.
+    @discardableResult
+    private func appendMatching(
+        files: [SharedFile],
+        depth: Int,
+        query: String,
+        to result: inout [FlatTreeItem]
+    ) -> Bool {
+        var anyMatch = false
+        for file in files {
+            let selfMatch = file.displayName.localizedCaseInsensitiveContains(query)
+            if file.isDirectory {
+                let insertIndex = result.count
+                result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
+                var childMatch = false
+                if let children = file.children {
+                    childMatch = appendMatching(files: children, depth: depth + 1, query: query, to: &result)
                 }
+                if selfMatch || childMatch {
+                    anyMatch = true
+                } else {
+                    // Nothing in this subtree matched — drop the
+                    // speculatively-appended directory row.
+                    result.removeSubrange(insertIndex..<result.count)
+                }
+            } else if selfMatch {
+                result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
+                anyMatch = true
             }
         }
-
-        return tree.filter { keepIDs.contains($0.id) }
+        return anyMatch
     }
 
     private func appendVisible(files: [SharedFile], depth: Int, to result: inout [FlatTreeItem]) {

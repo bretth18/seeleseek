@@ -63,20 +63,26 @@ struct BuddyListView: View {
     }
 
     private var buddyList: some View {
-        List {
+        // Compute the filter + sort pass once per body eval instead of
+        // four times (two isEmpty checks + two ForEach sources).
+        let filtered = socialState.filteredBuddies
+        let online = filtered.filter { $0.status != .offline }
+        let offline = filtered.filter { $0.status == .offline }
+
+        return List {
             // Online section
-            if !socialState.filteredBuddies.filter({ $0.status != .offline }).isEmpty {
+            if !online.isEmpty {
                 Section("Online") {
-                    ForEach(socialState.filteredBuddies.filter { $0.status != .offline }) { buddy in
+                    ForEach(online) { buddy in
                         BuddyRowView(buddy: buddy)
                     }
                 }
             }
 
             // Offline section
-            if !socialState.filteredBuddies.filter({ $0.status == .offline }).isEmpty {
+            if !offline.isEmpty {
                 Section("Offline") {
-                    ForEach(socialState.filteredBuddies.filter { $0.status == .offline }) { buddy in
+                    ForEach(offline) { buddy in
                         BuddyRowView(buddy: buddy)
                     }
                 }

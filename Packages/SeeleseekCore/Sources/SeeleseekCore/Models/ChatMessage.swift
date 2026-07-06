@@ -30,16 +30,26 @@ public struct ChatMessage: Identifiable, Hashable, Sendable {
         self.isNewMessage = isNewMessage
     }
 
-    public var formattedTime: String {
+    /// Cached formatters — building a fresh DateFormatter per call is
+    /// expensive and these run 2-3× per message-bubble render.
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
-        return formatter.string(from: timestamp)
-    }
+        return formatter
+    }()
 
-    public var formattedDate: String {
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
-        return formatter.string(from: timestamp)
+        return formatter
+    }()
+
+    public var formattedTime: String {
+        Self.timeFormatter.string(from: timestamp)
+    }
+
+    public var formattedDate: String {
+        Self.dateFormatter.string(from: timestamp)
     }
 }

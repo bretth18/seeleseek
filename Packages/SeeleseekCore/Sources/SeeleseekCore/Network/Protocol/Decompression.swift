@@ -94,11 +94,16 @@ public enum ZlibDecompression {
                     nil, COMPRESSION_ZLIB
                 )
 
-                if decodedSize == 0 || decodedSize == destinationSize {
+                // 0 means error (corrupt/truncated input), NOT buffer-too-
+                // small — retrying with a bigger buffer just re-decodes the
+                // same hostile bytes at 4x the cost, up to 6 futile passes.
+                if decodedSize == 0 {
+                    throw DecompressionError.decompressionFailed
+                }
+
+                if decodedSize == destinationSize {
                     guard destinationSize < maxDecompressedSize else {
-                        throw decodedSize == 0
-                            ? DecompressionError.decompressionFailed
-                            : DecompressionError.decompressedSizeExceeded
+                        throw DecompressionError.decompressedSizeExceeded
                     }
                     destinationSize = min(destinationSize * 4, maxDecompressedSize)
                     continue

@@ -24,6 +24,9 @@ struct SimilarUsersView: View {
             // one eagerly-rendered LazyVStack child.
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: SeeleSpacing.xl) {
+                    if socialState.discoveryError != nil {
+                        discoveryErrorBanner
+                    }
                     similarUsersHeader
                     similarUsersBody
                     recommendationsHeader
@@ -161,6 +164,24 @@ struct SimilarUsersView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.lg)
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+    }
+
+    private var discoveryErrorBanner: some View {
+        HStack(spacing: SeeleSpacing.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(SeeleColors.warning)
+            Text(socialState.discoveryError ?? "")
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textSecondary)
+            Spacer()
+            Button("Retry") {
+                refresh()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(SeeleSpacing.md)
+        .background(SeeleColors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }
 
     private func noResultsView(_ message: String) -> some View {

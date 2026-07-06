@@ -31,11 +31,6 @@ class SearchActivityState {
         let matchCount: Int
     }
 
-    func startMonitoring(client: NetworkClient) {
-        // Monitor outgoing searches from SearchState if available
-        // This would be wired up from the SearchView
-    }
-
     func recordOutgoingSearch(query: String) {
         let event = SearchEvent(
             timestamp: Date(),
@@ -53,8 +48,11 @@ class SearchActivityState {
     }
 
     func recordSearchResults(query: String, count: Int) {
-        if let index = recentEvents.firstIndex(where: { $0.query == query && $0.resultsCount == nil }) {
-            recentEvents[index].resultsCount = count
+        // Accumulate across batches — results stream in over time, and
+        // matching only `resultsCount == nil` froze the display at the
+        // first batch's size.
+        if let index = recentEvents.firstIndex(where: { $0.query == query && $0.direction == .outgoing }) {
+            recentEvents[index].resultsCount = (recentEvents[index].resultsCount ?? 0) + count
         }
     }
 

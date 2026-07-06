@@ -5,6 +5,7 @@ struct TransfersView: View {
     @Environment(\.appState) private var appState
     @State private var selectedTab: TransferTab = .downloads
     @State private var isDashboardPresented = false
+    @State private var isClearHistoryConfirmationPresented = false
 
     private var transferState: TransferState { appState.transferState }
 
@@ -38,14 +39,23 @@ struct TransfersView: View {
             }
         }
         .background(SeeleColors.background)
-        .sheet(isPresented: Binding(
-            get: { appState.metadataState.isEditorPresented },
-            set: { appState.metadataState.isEditorPresented = $0 }
-        )) {
+        .sheet(isPresented: Bindable(appState.metadataState).isEditorPresented) {
             MetadataEditorSheet(state: appState.metadataState)
         }
         .sheet(isPresented: $isDashboardPresented) {
             QueueDashboardSheet()
+        }
+        .confirmationDialog(
+            "Clear all transfer history?",
+            isPresented: $isClearHistoryConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Clear History", role: .destructive) {
+                transferState.clearHistory()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes all completed-transfer records and totals. This cannot be undone.")
         }
     }
 
@@ -247,7 +257,7 @@ struct TransfersView: View {
                     )
                     Spacer()
                     Button {
-                        transferState.clearHistory()
+                        isClearHistoryConfirmationPresented = true
                     } label: {
                         Label("Clear History", systemImage: "trash")
                             .font(SeeleTypography.subheadline)

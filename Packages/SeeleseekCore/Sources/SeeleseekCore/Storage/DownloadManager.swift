@@ -884,6 +884,16 @@ public final class DownloadManager {
 
         logger.info("Initiating outgoing F connection to \(username) at \(ip):\(port)")
 
+        // Set once the TCP connection exists so the catch below can close
+        // it — previously any throw between connect and the receive loop
+        // (handshake failure, token mismatch, receive/verify errors)
+        // leaked the socket.
+        var fConnection: NWConnection?
+        // True once WE consumed the pendingFileTransfer entry (post-
+        // handshake). Lets the catch distinguish "we own this failure"
+        // from "the inbound F path consumed the entry and owns the stream".
+        var claimedPendingEntry = false
+
         do {
             // Create TCP connection
             guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
@@ -899,6 +909,7 @@ public final class DownloadManager {
             // collides with concurrent F-connections to the same peer on the
             // same 4-tuple (POSIX EEXIST/17) and offers no NAT benefit.
             let connection = try await openFileConnectionOnce(to: endpoint, bindTo: nil)
+            fConnection = connection
 
             logger.info("Outgoing F connection established to \(username)")
 
@@ -908,7 +919,8 @@ public final class DownloadManager {
             try await sendData(connection: connection, data: pierceMessage)
             logger.debug("Sent PierceFirewall token=\(transferToken) to \(username)")
 
-            // Capture offset (pending already removed above)
+            // Capture offset from the peeked entry (the entry itself is
+            // consumed after the handshake succeeds, below)
             let resumeOffset = pending.offset
 
             // Per SoulSeek/nicotine+ protocol on F connections:
@@ -940,10 +952,18 @@ public final class DownloadManager {
             logger.debug("Handshake complete, receiving file data")
 
             // Handshake succeeded — claim ownership of the pending entry now
-            // so the inbound F-handler / 60s watchdog won't race us. If
-            // something between here and the receive succeeds throws, the
-            // catch below treats the entry as already-consumed.
-            _ = removePendingFileTransfer(username: username, transferToken: transferToken)
+            // so the inbound F-handler / 60s watchdog won't race us. If the
+            // entry is already gone, the peer's inbound F connection arrived
+            // during the connect/handshake awaits above and
+            // `handleFileTransferWithTokenMatch` consumed it — that path is
+            // streaming to the same incomplete file, so continuing here
+            // would double-stream into it. Abort cleanly instead.
+            guard removePendingFileTransfer(username: username, transferToken: transferToken) != nil else {
+                logger.info("Pending entry for token \(transferToken) already consumed — another path owns this transfer, closing outgoing F connection")
+                connection.cancel()
+                return
+            }
+            claimedPendingEntry = true
 
             // Compute destination path preserving folder structure
             let desiredFinalPath = computeDestPath(for: pending.filename, username: username)
@@ -1007,6 +1027,9 @@ public final class DownloadManager {
 
         } catch {
             logger.error("Outgoing F connection failed: \(error.localizedDescription)")
+            // Don't leak the socket on any error path (handshake, token
+            // mismatch, receive/verify failures all throw to here).
+            fConnection?.cancel()
             if isCancelled(pending.transferId) {
                 _ = removePendingFileTransfer(username: username, transferToken: transferToken)
                 pendingDownloads.removeValue(forKey: downloadToken)
@@ -1017,13 +1040,20 @@ public final class DownloadManager {
             // will handle that"), but the watchdog only fires while the
             // pendingFileTransfer entry exists; any code path that
             // already removed it left the row wedged at `.transferring`
-            // forever. Now we own the failure: drop the pending entry
-            // (if it's still there — the success-path remove above may
-            // have run before we threw), drop the pendingDownloads slot,
-            // and route through `failDownload` so the retry classifier
-            // can schedule a re-attempt with the normal backoff.
-            if removePendingFileTransfer(username: username, transferToken: transferToken) != nil
-                || pendingDownloads[downloadToken] != nil {
+            // forever. Now we own the failure — but ONLY if this path
+            // actually owns the transfer:
+            //   - `claimedPendingEntry`: we consumed the entry after the
+            //     handshake, so a later throw (receive/finalize) is ours.
+            //   - `removePendingFileTransfer(...) != nil`: we threw before
+            //     the claim and the entry was still there — also ours.
+            // If neither holds, another path consumed the entry: either the
+            // inbound F handler is actively streaming this transfer
+            // (failing it here would stomp the row to `.failed`, schedule a
+            // retry that resets bytesTransferred, and open a second stream
+            // appending to the same incomplete file), or the watchdog /
+            // cancel path already resolved the row. Do nothing.
+            if claimedPendingEntry
+                || removePendingFileTransfer(username: username, transferToken: transferToken) != nil {
                 pendingDownloads.removeValue(forKey: downloadToken)
                 failDownload(
                     transferId: pending.transferId,
@@ -1032,6 +1062,8 @@ public final class DownloadManager {
                     size: pending.size,
                     reason: "F connection failed: \(error.localizedDescription)"
                 )
+            } else {
+                logger.info("Outgoing F failure for token \(transferToken) ignored — another path owns the transfer")
             }
         }
     }
@@ -1378,7 +1410,7 @@ public final class DownloadManager {
         let resultComponents = relativePath.split(separator: "/").map(String.init)
         var destURL = downloadDir
         for component in resultComponents {
-            destURL = destURL.appendingPathComponent(sanitizeFilename(component))
+            destURL = destURL.appendingPathComponent(Self.sanitizeFilename(component))
         }
 
         return destURL
@@ -1386,7 +1418,7 @@ public final class DownloadManager {
 
     private func computeIncompletePath(for soulseekPath: String, username: String) -> URL {
         let incompleteDir = getIncompleteDownloadDirectory()
-        let displayName = sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
+        let displayName = Self.sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
         let digest = SHA256.hash(data: Data("\(username)\u{0}\(soulseekPath)".utf8))
         let hash = digest.map { String(format: "%02x", $0) }.joined()
         // Constant prefix is 75 bytes ("INCOMPLETE" + 64-hex + "_"); macOS
@@ -1539,7 +1571,10 @@ public final class DownloadManager {
 
     /// Sanitize a filename/folder name for the filesystem
     /// Prevents directory traversal attacks and invalid filesystem characters
-    private func sanitizeFilename(_ name: String) -> String {
+    /// `nonisolated static` so off-main-actor workers (e.g. the metadata
+    /// reorganize task in `organizeCompletedDownload`) can call it without
+    /// a hop — that task previously re-implemented this logic inline.
+    nonisolated static func sanitizeFilename(_ name: String) -> String {
         // SECURITY: Prevent directory traversal attacks
         // Reject ".." and "." components that could escape the download directory
         if name == ".." || name == "." {
@@ -1651,7 +1686,12 @@ public final class DownloadManager {
 
         let directory = filePath.deletingLastPathComponent()
 
-        // Skip if we've already set an icon for this directory in this session
+        // Skip if we've already set an icon for this directory in this session.
+        // The memo is capped so a very long session can't grow it unbounded
+        // (entries are full URLs); a reset only costs re-applying an icon.
+        if iconAppliedDirs.count > 512 {
+            iconAppliedDirs.removeAll(keepingCapacity: true)
+        }
         guard !iconAppliedDirs.contains(directory) else { return }
         iconAppliedDirs.insert(directory)
 
@@ -1698,20 +1738,7 @@ public final class DownloadManager {
             let newComponents = newRelativePath.split(separator: "/").map(String.init)
             var newPath = downloadDir
             for component in newComponents {
-                // Inline the same sanitization logic
-                var sanitized = component
-                if sanitized == ".." || sanitized == "." { sanitized = "unnamed" }
-                for char: Character in [":", "/", "\\", "\0"] {
-                    sanitized = sanitized.replacingOccurrences(of: String(char), with: "_")
-                }
-                while sanitized.contains("..") {
-                    sanitized = sanitized.replacingOccurrences(of: "..", with: "_")
-                }
-                sanitized = sanitized.replacingOccurrences(of: "~", with: "_")
-                sanitized = sanitized.trimmingCharacters(in: .whitespaces)
-                if sanitized.hasPrefix(".") { sanitized = "_" + sanitized.dropFirst() }
-                if sanitized.isEmpty { sanitized = "unnamed" }
-                newPath = newPath.appendingPathComponent(sanitized)
+                newPath = newPath.appendingPathComponent(DownloadManager.sanitizeFilename(component))
             }
 
             // If the path didn't change, nothing to do
@@ -2742,9 +2769,10 @@ public final class DownloadManager {
     /// `NWError.canceled`'s "Operation canceled" (American spelling vs our
     /// British "cancelled") dropped straight through to "not retriable" —
     /// no retry ever scheduled, no resume on reconnect. With the retry
-    /// count capped at `maxRetries = 4` the downside of an over-eager
-    /// retry is bounded, so we now flip the default: retry unless the
-    /// error matches an explicit user- or peer-driven stop reason.
+    /// count capped at `maxRetries` (the length of `retryDelays`) the
+    /// downside of an over-eager retry is bounded, so we now flip the
+    /// default: retry unless the error matches an explicit user- or
+    /// peer-driven stop reason.
     static func isRetriableError(_ error: String?) -> Bool {
         guard let lowered = error?.lowercased(), !lowered.isEmpty else {
             return false
@@ -2819,31 +2847,29 @@ public final class DownloadManager {
 
             guard let self, !Task.isCancelled else { return }
 
-            await MainActor.run {
-                self.pendingRetries.removeValue(forKey: transferId)
+            self.pendingRetries.removeValue(forKey: transferId)
 
-                // Only proceed if the transfer is still in a failed
-                // state. Between schedule and wake, the original attempt
-                // may have completed (late data), transitioned into
-                // `.transferring`/`.connecting`, been `.cancelled` by
-                // the user, or been re-queued manually. In all those
-                // cases this scheduled retry is stale — firing it would
-                // stomp a good transfer back to `.queued` with
-                // `bytesTransferred = 0`.
-                guard let current = self.transferState?.getTransfer(id: transferId),
-                      current.status == .failed else {
-                    self.logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
-                    return
-                }
-
-                self.retryDownload(
-                    transferId: transferId,
-                    username: username,
-                    filename: filename,
-                    size: size,
-                    retryCount: retryCount + 1
-                )
+            // Only proceed if the transfer is still in a failed
+            // state. Between schedule and wake, the original attempt
+            // may have completed (late data), transitioned into
+            // `.transferring`/`.connecting`, been `.cancelled` by
+            // the user, or been re-queued manually. In all those
+            // cases this scheduled retry is stale — firing it would
+            // stomp a good transfer back to `.queued` with
+            // `bytesTransferred = 0`.
+            guard let current = self.transferState?.getTransfer(id: transferId),
+                  current.status == .failed else {
+                self.logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
+                return
             }
+
+            self.retryDownload(
+                transferId: transferId,
+                username: username,
+                filename: filename,
+                size: size,
+                retryCount: retryCount + 1
+            )
         }
 
         pendingRetries[transferId] = task
@@ -3004,21 +3030,19 @@ public final class DownloadManager {
             let task = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard let self, !Task.isCancelled else { return }
-                await MainActor.run {
-                    self.pendingRetries.removeValue(forKey: transferId)
-                    guard let current = self.transferState?.getTransfer(id: transferId),
-                          current.status == .failed else {
-                        self.logger.info("Skipping rearmed retry for \(filename): no longer in .failed state")
-                        return
-                    }
-                    self.retryDownload(
-                        transferId: transferId,
-                        username: username,
-                        filename: filename,
-                        size: size,
-                        retryCount: retryCount + 1
-                    )
+                self.pendingRetries.removeValue(forKey: transferId)
+                guard let current = self.transferState?.getTransfer(id: transferId),
+                      current.status == .failed else {
+                    self.logger.info("Skipping rearmed retry for \(filename): no longer in .failed state")
+                    return
                 }
+                self.retryDownload(
+                    transferId: transferId,
+                    username: username,
+                    filename: filename,
+                    size: size,
+                    retryCount: retryCount + 1
+                )
             }
             pendingRetries[transferId] = task
         }
@@ -3083,15 +3107,13 @@ public final class DownloadManager {
         guard !peerUsername.isEmpty, !alreadyPending else {
             return .dropped
         }
-        guard let transfer = transferState?.downloads
-            .filter({ t in
-                t.direction == .download &&
-                t.username == peerUsername &&
-                t.filename == request.filename &&
-                (t.status == .queued || t.status == .waiting || t.status == .connecting)
-            })
-            .min(by: { ($0.startTime ?? .distantFuture) < ($1.startTime ?? .distantFuture) })
-        else {
+        // Same salvage lookup as `handlePoolTransferRequest`. The seam
+        // previously re-implemented salvage with the retired
+        // `.min(by: startTime)` scan and could disagree with production.
+        guard let transfer = transferState?.findSalvageableDownload(
+            username: peerUsername,
+            filename: request.filename
+        ), transfer.direction == .download else {
             return .dropped
         }
 

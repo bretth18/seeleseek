@@ -228,6 +228,10 @@ public actor NATService {
         // Work off a snapshot; iterate indices so we can update createdAt in place.
         let indices = mappedPorts.indices.filter { mappedPorts[$0].leaseSeconds > 0 }
         for idx in indices {
+            // removeAllMappings cancels the refresh task and awaits it before
+            // tearing down; each per-mapping refresh can block for seconds, so
+            // bail between iterations instead of racing the teardown.
+            guard !Task.isCancelled else { return }
             let mapping = mappedPorts[idx]
             do {
                 let refreshedPort: UInt16
@@ -461,6 +465,7 @@ public actor NATService {
                         $0 = true
                         return true
                     }) else { return }
+                    connection.cancel()
                     continuation.resume(throwing: error)
 
                 default:
@@ -675,43 +680,50 @@ public actor NATService {
                 case .ready:
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
-                    connection.receiveMessage { data, _, _, _ in
-                        guard let data = data, data.count >= 16 else { return }
+                    @Sendable func receiveNext() {
+                        connection.receiveMessage { data, _, _, error in
+                            guard !didComplete.withLock({ $0 }) else { return }
+                            // Socket errors mustn't spin the re-arm loop; let the timeout fire.
+                            guard error == nil else { return }
 
-                        let respVersion = data.readByte(at: 0) ?? 0xFF
-                        let respOpcode = data.readByte(at: 1) ?? 0
-                        let resultCode = data.readUInt16BE(at: 2) ?? 0xFFFF
-                        let mappedPort = data.readUInt16BE(at: 10) ?? 0
-
-                        guard didComplete.withLock({
-                            guard !$0 else { return false }
-                            $0 = true
-                            return true
-                        }) else { return }
-                        connection.cancel()
-
-                        // RFC 6886: response version must echo request version (0) and
-                        // opcode must be request_opcode + 128.
-                        guard respVersion == 0, respOpcode == expectedResponseOpcode else {
-                            continuation.resume(throwing: NATError.mappingFailed)
-                            return
-                        }
-
-                        if lifetime == 0 {
-                            // Unmap: success is just resultCode==0.
-                            if resultCode == 0 {
-                                continuation.resume(returning: 0)
-                            } else {
-                                continuation.resume(throwing: NATError.natpmpError(code: resultCode))
+                            // RFC 6886: response version must echo request version (0) and
+                            // opcode must be request_opcode + 128. A short, foreign, or
+                            // stale datagram re-arms the receive instead of converting a
+                            // working query into a failure/timeout.
+                            guard let data, data.count >= 16,
+                                  data.readByte(at: 0) == 0,
+                                  data.readByte(at: 1) == expectedResponseOpcode else {
+                                receiveNext()
+                                return
                             }
-                        } else {
-                            if resultCode == 0 && mappedPort > 0 {
-                                continuation.resume(returning: mappedPort)
+
+                            let resultCode = data.readUInt16BE(at: 2) ?? 0xFFFF
+                            let mappedPort = data.readUInt16BE(at: 10) ?? 0
+
+                            guard didComplete.withLock({
+                                guard !$0 else { return false }
+                                $0 = true
+                                return true
+                            }) else { return }
+                            connection.cancel()
+
+                            if lifetime == 0 {
+                                // Unmap: success is just resultCode==0.
+                                if resultCode == 0 {
+                                    continuation.resume(returning: 0)
+                                } else {
+                                    continuation.resume(throwing: NATError.natpmpError(code: resultCode))
+                                }
                             } else {
-                                continuation.resume(throwing: NATError.natpmpError(code: resultCode))
+                                if resultCode == 0 && mappedPort > 0 {
+                                    continuation.resume(returning: mappedPort)
+                                } else {
+                                    continuation.resume(throwing: NATError.natpmpError(code: resultCode))
+                                }
                             }
                         }
                     }
+                    receiveNext()
 
                 case .failed(let error):
                     guard didComplete.withLock({
@@ -719,6 +731,7 @@ public actor NATService {
                         $0 = true
                         return true
                     }) else { return }
+                    connection.cancel()
                     continuation.resume(throwing: error)
 
                 default:
@@ -807,26 +820,39 @@ public actor NATService {
                 case .ready:
                     connection.send(content: request, completion: .contentProcessed { _ in })
 
-                    connection.receiveMessage { data, _, _, _ in
-                        guard let data, data.count >= 20 else { return }
-                        // Drop replies whose transaction ID doesn't match ours — guards
-                        // against stale responses from prior queries to the same server.
-                        guard data.readUInt32BE(at: 8) == txnID.0,
-                              data.readUInt32BE(at: 12) == txnID.1,
-                              data.readUInt32BE(at: 16) == txnID.2 else { return }
+                    @Sendable func receiveNext() {
+                        connection.receiveMessage { data, _, _, error in
+                            guard !didComplete.withLock({ $0 }) else { return }
+                            // Socket errors mustn't spin the re-arm loop; let the timeout fire.
+                            guard error == nil else { return }
 
-                        if let reflex = Self.parseSTUNResponse(data) {
-                            guard didComplete.withLock({
-                                guard !$0 else { return false }
-                                $0 = true
-                                return true
-                            }) else { return }
-                            connection.cancel()
-                            continuation.resume(returning: reflex.ip)
-                        } else {
-                            queryLogger.debug("STUN \(host):\(port) parse failed; bytes: \(data.hexString)")
+                            // Short datagrams and replies whose transaction ID doesn't
+                            // match ours (stale responses from prior queries to the same
+                            // server) re-arm the receive instead of converting a working
+                            // query into a timeout.
+                            guard let data, data.count >= 20,
+                                  data.readUInt32BE(at: 8) == txnID.0,
+                                  data.readUInt32BE(at: 12) == txnID.1,
+                                  data.readUInt32BE(at: 16) == txnID.2 else {
+                                receiveNext()
+                                return
+                            }
+
+                            if let reflex = Self.parseSTUNResponse(data) {
+                                guard didComplete.withLock({
+                                    guard !$0 else { return false }
+                                    $0 = true
+                                    return true
+                                }) else { return }
+                                connection.cancel()
+                                continuation.resume(returning: reflex.ip)
+                            } else {
+                                queryLogger.debug("STUN \(host):\(port) parse failed; bytes: \(data.hexString)")
+                                receiveNext()
+                            }
                         }
                     }
+                    receiveNext()
 
                 case .failed(let error):
                     guard didComplete.withLock({
@@ -834,6 +860,7 @@ public actor NATService {
                         $0 = true
                         return true
                     }) else { return }
+                    connection.cancel()
                     continuation.resume(throwing: error)
 
                 default:
@@ -908,7 +935,10 @@ public actor NATService {
             guard let url = URL(string: urlString) else { continue }
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                if let ip = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                if let ip = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   Self.isDottedQuadIPv4(ip) {
+                    // Validate before storing: a captive portal or error page
+                    // would otherwise get advertised as our external IP.
                     return ip
                 }
             } catch {
@@ -916,6 +946,15 @@ public actor NATService {
             }
         }
         throw NATError.ipDiscoveryFailed
+    }
+
+    /// True iff `string` is a plain dotted-quad IPv4 address (e.g. "203.0.113.7").
+    nonisolated static func isDottedQuadIPv4(_ string: String) -> Bool {
+        let parts = string.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            !part.isEmpty && part.count <= 3 && part.allSatisfy(\.isNumber) && UInt8(part) != nil
+        }
     }
 
     // MARK: - Local networking

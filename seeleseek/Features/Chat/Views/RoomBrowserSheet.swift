@@ -53,14 +53,40 @@ struct RoomBrowserSheet: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            // Room list
+            // Room list — filter once per body eval instead of twice
+            // (isEmpty check + ForEach).
+            let rooms = chatState.filteredRooms
+
             if chatState.isLoadingRooms {
                 Spacer()
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(SeeleColors.accent)
                 Spacer()
-            } else if chatState.filteredRooms.isEmpty {
+            } else if let error = chatState.roomListError {
+                Spacer()
+                VStack(spacing: SeeleSpacing.md) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: SeeleSpacing.iconSizeLarge))
+                        .foregroundStyle(SeeleColors.warning)
+                    Text(error)
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                    Button("Retry") {
+                        chatState.requestRoomList()
+                    }
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textOnAccent)
+                    .padding(.horizontal, SeeleSpacing.md)
+                    .padding(.vertical, SeeleSpacing.sm)
+                    .background(SeeleColors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .buttonStyle(.plain)
+                }
+                .padding(SeeleSpacing.lg)
+                Spacer()
+            } else if rooms.isEmpty {
                 Spacer()
                 VStack(spacing: SeeleSpacing.sm) {
                     Text("No rooms found")
@@ -76,7 +102,7 @@ struct RoomBrowserSheet: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                        ForEach(chatState.filteredRooms) { room in
+                        ForEach(rooms) { room in
                             roomRow(room)
                         }
                     }

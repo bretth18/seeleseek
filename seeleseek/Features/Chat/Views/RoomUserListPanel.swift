@@ -6,11 +6,15 @@ struct RoomUserListPanel: View {
     var chatState: ChatState
     var appState: AppState
 
+    /// Cached sorted copy of `room.users` — sorting 1000+ names on every
+    /// body eval (which used to happen per user-stats reply) made the
+    /// panel expensive. Refreshed onAppear and when the user list changes.
+    @State private var sortedUsers: [String] = []
+
     var filteredUsers: [String] {
         let query = chatState.userListSearchQuery
-        let users = room.users.sorted()
-        if query.isEmpty { return users }
-        return users.filter { $0.localizedCaseInsensitiveContains(query) }
+        if query.isEmpty { return sortedUsers }
+        return sortedUsers.filter { $0.localizedCaseInsensitiveContains(query) }
     }
 
     var body: some View {
@@ -56,7 +60,6 @@ struct RoomUserListPanel: View {
                             username: username,
                             isOwner: room.owner == username,
                             isOp: room.operators.contains(username),
-                            stats: chatState.userStatsCache[username],
                             room: room,
                             chatState: chatState,
                             appState: appState
@@ -65,7 +68,10 @@ struct RoomUserListPanel: View {
                 }
             }
             .onAppear {
-                chatState.requestUserStats(for: room.users)
+                sortedUsers = room.users.sorted()
+            }
+            .onChange(of: room.users) { _, users in
+                sortedUsers = users.sorted()
             }
         }
         .background(SeeleColors.surface)
@@ -79,16 +85,39 @@ private struct RoomUserRow: View {
     let username: String
     let isOwner: Bool
     let isOp: Bool
-    let stats: (speed: UInt32, files: UInt32)?
     let room: ChatRoom
     var chatState: ChatState
     var appState: AppState
 
     @State private var countryFlag: String?
 
+    /// Captured per-row (same idea as `countryFlag`): reading
+    /// `chatState.userStatsCache` in the parent's body meant every stats
+    /// reply re-rendered the whole 1000+ row panel. Stats are now
+    /// requested lazily per visible row and polled briefly for the reply.
+    @State private var stats: (speed: UInt32, files: UInt32)?
+
     private func refreshCountryFlag() {
         let f = appState.networkClient.userInfoCache.flag(for: username)
         countryFlag = f.isEmpty ? nil : f
+    }
+
+    private func loadStats() async {
+        if let cached = chatState.userStatsCache[username] {
+            stats = cached
+            return
+        }
+        chatState.requestUserStats(for: [username])
+        // Bounded poll for the reply; the task is cancelled when the row
+        // scrolls offscreen, so this can't pile up.
+        for _ in 0..<10 {
+            try? await Task.sleep(for: .milliseconds(500))
+            if Task.isCancelled { return }
+            if let cached = chatState.userStatsCache[username] {
+                stats = cached
+                return
+            }
+        }
     }
 
     var body: some View {
@@ -161,5 +190,8 @@ private struct RoomUserRow: View {
         }
         .onAppear(perform: refreshCountryFlag)
         .onChange(of: username) { _, _ in refreshCountryFlag() }
+        .task(id: username) {
+            await loadStats()
+        }
     }
 }

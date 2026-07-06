@@ -16,7 +16,13 @@ struct FileTreeRow: View {
     @State private var showArtworkPopover = false
 
     private var isExpanded: Bool {
-        browseState.expandedFolders.contains(file.id)
+        // While a filter is active the tree renders matches with their
+        // ancestor chain regardless of expansion state, so show every
+        // directory chevron as expanded for display purposes.
+        if !browseState.filterQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+            return true
+        }
+        return browseState.expandedFolders.contains(file.id)
     }
 
     private var downloadStatus: Transfer.TransferStatus? {

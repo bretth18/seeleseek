@@ -159,13 +159,18 @@ public actor ListenerService {
                         return true
                     })
                     if shouldResume {
+                        // Cancel before throwing — a failed-at-startup
+                        // listener is never stored, so this is the only
+                        // place it can be released (one leak per port probed
+                        // otherwise).
+                        newListener.cancel()
                         continuation.resume(throwing: error)
                     } else {
                         // Post-startup death (network change, interface drop):
                         // without this the listener stays non-nil and
                         // listeningPort keeps advertising a dead port.
                         Task { [weak self] in
-                            await self?.handlePlainListenerFailure(error)
+                            await self?.handlePlainListenerFailure(error, failedListener: newListener)
                         }
                     }
                 case .cancelled:
@@ -224,10 +229,12 @@ public actor ListenerService {
                         return true
                     })
                     if shouldResume {
+                        // See startListener: release the never-stored listener.
+                        newListener.cancel()
                         continuation.resume(throwing: error)
                     } else {
                         Task { [weak self] in
-                            await self?.handleObfuscatedListenerFailure(error)
+                            await self?.handleObfuscatedListenerFailure(error, failedListener: newListener)
                         }
                     }
                 default:
@@ -247,16 +254,21 @@ public actor ListenerService {
         self.obfuscatedListener = newListener
     }
 
-    private func handlePlainListenerFailure(_ error: Error) {
+    private func handlePlainListenerFailure(_ error: Error, failedListener: NWListener) {
+        // Always release the failed listener itself, but only touch the
+        // bookkeeping if it's still the active one — a late .failed from a
+        // superseded listener must not nil out a healthy replacement.
+        failedListener.cancel()
+        guard listener === failedListener else { return }
         logger.error("Listener failed after startup: \(error.localizedDescription)")
-        listener?.cancel()
         listener = nil
         listeningPort = 0
     }
 
-    private func handleObfuscatedListenerFailure(_ error: Error) {
+    private func handleObfuscatedListenerFailure(_ error: Error, failedListener: NWListener) {
+        failedListener.cancel()
+        guard obfuscatedListener === failedListener else { return }
         logger.error("Obfuscated listener failed: \(error.localizedDescription)")
-        obfuscatedListener?.cancel()
         obfuscatedListener = nil
         obfuscatedPort = 0
     }
