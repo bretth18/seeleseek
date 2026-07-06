@@ -125,6 +125,9 @@ struct UploadRetryRowReuseTests {
             error: retriable.error,
             retryCount: 4
         )
+        // "Denied" is a terminal classifier pattern. (This fixture used
+        // "Cancelled" until the bare `cancel` stem was dropped from the
+        // classifier — it matched transient NWError teardown strings.)
         let terminal = Transfer(
             id: UUID(),
             username: "bob",
@@ -132,7 +135,7 @@ struct UploadRetryRowReuseTests {
             size: 1,
             direction: .upload,
             status: .failed,
-            error: "Cancelled",
+            error: "Denied",
             retryCount: 4
         )
 
@@ -144,7 +147,7 @@ struct UploadRetryRowReuseTests {
         manager.resumeUploadsOnConnect()
 
         // Synchronous reset hits the retriable row only. The terminal
-        // ("Cancelled") row keeps its retryCount untouched — it's not
+        // ("Denied") row keeps its retryCount untouched — it's not
         // eligible to be resumed.
         let resumed = tracking.uploads.first { $0.id == retriable.id }
         let untouched = tracking.uploads.first { $0.id == terminal.id }
@@ -154,6 +157,8 @@ struct UploadRetryRowReuseTests {
 
     @Test("resumeUploadsOnConnect with no retriable rows is a no-op")
     func resumeWithoutRetriableIsNoOp() async {
+        // Terminal reason ("Denied") — see note in the reset test above
+        // about the retired `cancel` stem.
         let cancelled = Transfer(
             id: UUID(),
             username: "alice",
@@ -161,7 +166,7 @@ struct UploadRetryRowReuseTests {
             size: 1,
             direction: .upload,
             status: .failed,
-            error: "Cancelled",
+            error: "Denied",
             retryCount: 2
         )
 

@@ -386,8 +386,25 @@ final class SettingsState: DownloadSettingsProviding {
 
     // MARK: - Persistence
 
-    /// Save settings to both database and UserDefaults (for backwards compatibility)
+    @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
+
+    /// Debounced save. Every settings property calls this from its
+    /// `didSet`, and `resetToDefaults()` fires it ~30×; each call used to
+    /// rewrite all ~20 UserDefaults keys and schedule a full DB save.
+    /// Coalesce bursts into a single write half a second after the last
+    /// change.
     func save() {
+        pendingSaveTask?.cancel()
+        pendingSaveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled else { return }
+            self.pendingSaveTask = nil
+            self.saveNow()
+        }
+    }
+
+    /// Save settings to both database and UserDefaults (for backwards compatibility)
+    private func saveNow() {
         // Save to UserDefaults (legacy support)
         UserDefaults.standard.set(listenPort, forKey: listenPortKey)
         UserDefaults.standard.set(enableUPnP, forKey: enableUPnPKey)

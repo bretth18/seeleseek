@@ -48,10 +48,7 @@ struct UpdateSettingsSection: View {
                     }
                 }
 
-                settingsToggle("Check automatically on launch", isOn: Binding(
-                    get: { updateState.autoCheckEnabled },
-                    set: { updateState.autoCheckEnabled = $0 }
-                ))
+                settingsToggle("Check automatically on launch", isOn: $updateState.autoCheckEnabled)
 
                 if let lastCheck = updateState.lastCheckDate {
                     settingsRow {

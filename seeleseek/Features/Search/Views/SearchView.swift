@@ -239,7 +239,9 @@ struct SearchView: View {
     @ViewBuilder
     private var resultsArea: some View {
         if let search = searchState.currentSearch {
-            if search.results.isEmpty && search.isSearching {
+            if let error = searchState.currentSearchError, search.results.isEmpty {
+                searchErrorView(error)
+            } else if search.results.isEmpty && search.isSearching {
                 searchingView
             } else if search.results.isEmpty {
                 noResultsView
@@ -249,6 +251,40 @@ struct SearchView: View {
         } else {
             emptyStateView
         }
+    }
+
+    /// Distinct state for "the search request itself failed to send" —
+    /// previously this silently rendered as "No results found".
+    private func searchErrorView(_ message: String) -> some View {
+        VStack(spacing: SeeleSpacing.lg) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
+                .foregroundStyle(SeeleColors.warning)
+
+            Text("Search failed")
+                .font(SeeleTypography.headline)
+                .foregroundStyle(SeeleColors.textPrimary)
+
+            Text(message)
+                .font(SeeleTypography.subheadline)
+                .foregroundStyle(SeeleColors.textSecondary)
+                .multilineTextAlignment(.center)
+
+            Button {
+                retryCurrentSearch()
+            } label: {
+                Text("Retry")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textOnAccent)
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.sm)
+                    .background(SeeleColors.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(SeeleSpacing.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var searchingView: some View {
@@ -467,12 +503,23 @@ struct SearchView: View {
     private func executeSearch() {
         let token = UInt32.random(in: 1..<0x8000_0000)
         searchState.startSearch(token: token)
+        send(query: searchState.searchQuery, token: token)
+    }
 
+    /// Re-send the currently-selected (failed) search with a fresh token.
+    private func retryCurrentSearch() {
+        guard let search = searchState.currentSearch else { return }
+        let token = UInt32.random(in: 1..<0x8000_0000)
+        searchState.retrySearch(at: searchState.selectedSearchIndex, newToken: token)
+        send(query: search.query, token: token)
+    }
+
+    private func send(query: String, token: UInt32) {
         Task {
             do {
-                try await appState.networkClient.search(query: searchState.searchQuery, token: token)
+                try await appState.networkClient.search(query: query, token: token)
             } catch {
-                searchState.markSearchComplete(token: token)
+                searchState.markSearchFailed(token: token, message: error.localizedDescription)
             }
         }
     }

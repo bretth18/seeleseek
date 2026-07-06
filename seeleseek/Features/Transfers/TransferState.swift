@@ -82,11 +82,17 @@ struct TransferHistoryItem: Identifiable, Sendable {
         return "\(seconds)s"
     }
 
-    var formattedDate: String {
+    /// Cached — allocating a DateFormatter per call is expensive and this
+    /// runs on every history-row render.
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
-        return formatter.string(from: timestamp)
+        return formatter
+    }()
+
+    var formattedDate: String {
+        Self.dateFormatter.string(from: timestamp)
     }
 }
 

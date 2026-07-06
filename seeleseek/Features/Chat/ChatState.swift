@@ -27,11 +27,39 @@ final class ChatState {
     var selectedPrivateChat: String?
 
     // MARK: - Input
-    var messageInput: String = ""
+    /// Per-conversation drafts keyed by conversation (room name or DM
+    /// username, prefixed to avoid collisions). A single shared draft
+    /// meant typing in room A then pressing Return in a DM sent the
+    /// draft there, and switching conversations lost the text.
+    private var drafts: [String: String] = [:]
+
+    /// Draft for the currently-selected conversation. Computed so the
+    /// existing `$chatState.messageInput` bindings keep working while
+    /// the storage is per-conversation.
+    var messageInput: String {
+        get { currentDraftKey.map { drafts[$0] ?? "" } ?? "" }
+        set {
+            guard let key = currentDraftKey else { return }
+            if newValue.isEmpty {
+                drafts.removeValue(forKey: key)
+            } else {
+                drafts[key] = newValue
+            }
+        }
+    }
+
+    private var currentDraftKey: String? {
+        if let room = selectedRoom { return "room:\(room)" }
+        if let user = selectedPrivateChat { return "dm:\(user)" }
+        return nil
+    }
+
     var roomSearchQuery: String = ""
 
     // MARK: - Room Browser State
-    var roomListTab: RoomListTab = .all
+    var roomListTab: RoomListTab = .all {
+        didSet { if roomListTab != oldValue { recomputeSortedRooms() } }
+    }
     var showCreateRoom: Bool = false
     var createRoomName: String = ""
     var createRoomIsPrivate: Bool = false
@@ -51,6 +79,10 @@ final class ChatState {
 
     // MARK: - Loading State
     var isLoadingRooms: Bool = false
+    /// Set when the room-list request fails or times out; surfaced in
+    /// `RoomBrowserSheet` with a Retry button.
+    var roomListError: String? = nil
+    @ObservationIgnored private var roomListTimeoutTask: Task<Void, Never>?
 
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
@@ -226,7 +258,8 @@ final class ChatState {
         ownedPrivateRooms = ownedPrivate
         memberPrivateRooms = memberPrivate
         operatedRoomNames = Set(operated)
-        isLoadingRooms = false
+        recomputeSortedRooms()
+        roomListResponseArrived()
     }
 
     // MARK: - User Status Updates
@@ -261,6 +294,7 @@ final class ChatState {
 
     private func handleRoomLeft(_ roomName: String) {
         joinedRooms.removeAll { $0.name == roomName }
+        drafts.removeValue(forKey: "room:\(roomName)")
         if selectedRoom == roomName {
             selectedRoom = joinedRooms.first?.name
         }
@@ -323,7 +357,13 @@ final class ChatState {
         return privateChats.first { $0.username == username }
     }
 
-    var filteredRooms: [ChatRoom] {
+    /// Sorted room list for the current tab. Cached — sorting thousands
+    /// of rooms on every body eval (twice: isEmpty check + ForEach) made
+    /// the browser sheet sluggish. Recomputed only when the source lists
+    /// or the tab change.
+    private(set) var sortedRooms: [ChatRoom] = []
+
+    private func recomputeSortedRooms() {
         let source: [ChatRoom]
         switch roomListTab {
         case .all:
@@ -333,12 +373,14 @@ final class ChatState {
         case .owned:
             source = ownedPrivateRooms
         }
+        sortedRooms = source.sorted { $0.userCount > $1.userCount }
+    }
 
-        let sorted = source.sorted { $0.userCount > $1.userCount }
+    var filteredRooms: [ChatRoom] {
         if roomSearchQuery.isEmpty {
-            return sorted
+            return sortedRooms
         }
-        return sorted.filter {
+        return sortedRooms.filter {
             $0.name.localizedCaseInsensitiveContains(roomSearchQuery)
         }
     }
@@ -395,9 +437,36 @@ final class ChatState {
 
     func requestRoomList() {
         isLoadingRooms = true
+        roomListError = nil
         Task {
-            try? await networkClient?.getRoomList()
+            do {
+                try await networkClient?.getRoomList()
+            } catch {
+                roomListRequestFailed("Couldn't request room list: \(error.localizedDescription)")
+            }
         }
+        // The server can silently never reply — without a timeout the
+        // spinner spins forever. Cleared by roomListResponseArrived().
+        roomListTimeoutTask?.cancel()
+        roomListTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard let self, !Task.isCancelled, self.isLoadingRooms else { return }
+            self.roomListRequestFailed("The server didn't respond.")
+        }
+    }
+
+    private func roomListRequestFailed(_ message: String) {
+        isLoadingRooms = false
+        roomListError = message
+        roomListTimeoutTask?.cancel()
+        roomListTimeoutTask = nil
+    }
+
+    private func roomListResponseArrived() {
+        isLoadingRooms = false
+        roomListError = nil
+        roomListTimeoutTask?.cancel()
+        roomListTimeoutTask = nil
     }
 
     func selectRoom(_ name: String) {
@@ -544,6 +613,7 @@ final class ChatState {
 
     func closePrivateChat(_ username: String) {
         privateChats.removeAll { $0.username == username }
+        drafts.removeValue(forKey: "dm:\(username)")
         if selectedPrivateChat == username {
             selectedPrivateChat = nil
         }
@@ -590,7 +660,8 @@ final class ChatState {
     // MARK: - Room List
     func setAvailableRooms(_ rooms: [ChatRoom]) {
         availableRooms = rooms
-        isLoadingRooms = false
+        recomputeSortedRooms()
+        roomListResponseArrived()
     }
 
     // MARK: - DM Persistence

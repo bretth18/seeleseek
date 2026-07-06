@@ -35,13 +35,22 @@ struct PrivateChatContentView: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            ScrollView {
-                LazyVStack(spacing: SeeleSpacing.sm) {
-                    ForEach(chat.messages) { message in
-                        MessageBubble(message: message, chatState: chatState, appState: appState)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: SeeleSpacing.sm) {
+                        ForEach(chat.messages) { message in
+                            MessageBubble(message: message, chatState: chatState, appState: appState)
+                                .id(message.id)
+                        }
+                    }
+                    .padding(SeeleSpacing.md)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: chat.messages.count) { _, _ in
+                    if let latest = chat.messages.last {
+                        proxy.scrollTo(latest.id, anchor: .bottom)
                     }
                 }
-                .padding(SeeleSpacing.md)
             }
 
             Divider().background(SeeleColors.surfaceSecondary)

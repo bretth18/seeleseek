@@ -68,6 +68,11 @@ final class SocialState: PeerWatching {
     var globalRecommendations: [(item: String, score: Int32)] = []  // Network-wide popular interests
     var isLoadingSimilar = false
     var isLoadingRecommendations = false
+    /// Set when a discovery request fails or the server never replies;
+    /// surfaced in `SimilarUsersView` with a Retry affordance.
+    var discoveryError: String? = nil
+    @ObservationIgnored private var similarTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var recommendationsTimeoutTask: Task<Void, Never>?
 
     // MARK: - Network
     weak var networkClient: NetworkClient?
@@ -77,9 +82,11 @@ final class SocialState: PeerWatching {
     // MARK: - Computed Properties
 
     var filteredBuddies: [Buddy] {
-        let sorted = buddies.sorted { $0.status > $1.status }
-        guard !buddySearchQuery.isEmpty else { return sorted }
-        return sorted.filter { $0.username.localizedCaseInsensitiveContains(buddySearchQuery) }
+        // Filter before sorting so the (n log n) pass runs on the reduced set.
+        let filtered = buddySearchQuery.isEmpty
+            ? buddies
+            : buddies.filter { $0.username.localizedCaseInsensitiveContains(buddySearchQuery) }
+        return filtered.sorted { $0.status > $1.status }
     }
 
     var onlineBuddies: [Buddy] {
@@ -243,6 +250,8 @@ final class SocialState: PeerWatching {
             guard let self else { return }
             self.similarUsers = users
             self.isLoadingSimilar = false
+            self.similarTimeoutTask?.cancel()
+            self.similarTimeoutTask = nil
             self.logger.info("Received \(users.count) similar users")
         }
 
@@ -252,6 +261,8 @@ final class SocialState: PeerWatching {
             self.recommendations = recs
             self.unrecommendations = unrecs
             self.isLoadingRecommendations = false
+            self.recommendationsTimeoutTask?.cancel()
+            self.recommendationsTimeoutTask = nil
             self.logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
         }
 
@@ -455,12 +466,19 @@ final class SocialState: PeerWatching {
     func updateBuddyStatus(username: String, status: UserStatus, privileged: Bool) {
         guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
 
-        buddies[index].status = BuddyStatus(from: status)
+        let newStatus = BuddyStatus(from: status)
+        // The server re-pushes unchanged statuses; skip the DB write when
+        // nothing actually changed so status chatter doesn't churn disk.
+        let changed = buddies[index].status != newStatus || buddies[index].isPrivileged != privileged
+
+        buddies[index].status = newStatus
         buddies[index].isPrivileged = privileged
 
         if status != .offline {
             buddies[index].lastSeen = Date()
         }
+
+        guard changed else { return }
 
         // Update in database
         Task {
@@ -761,26 +779,47 @@ final class SocialState: PeerWatching {
 
     func loadSimilarUsers() async {
         isLoadingSimilar = true
+        discoveryError = nil
 
         do {
             try await networkClient?.getSimilarUsers()
             logger.info("Requested similar users")
+            // The server can silently never reply — clear the flag after a
+            // timeout so the spinner doesn't spin forever. The response
+            // callback (setupCallbacks) clears the flag on success.
+            similarTimeoutTask?.cancel()
+            similarTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, !Task.isCancelled, self.isLoadingSimilar else { return }
+                self.isLoadingSimilar = false
+                self.discoveryError = "The server didn't respond."
+            }
         } catch {
             logger.error("Failed to get similar users: \(error.localizedDescription)")
             isLoadingSimilar = false
+            discoveryError = "Couldn't load similar users: \(error.localizedDescription)"
         }
     }
 
     func loadRecommendations() async {
         isLoadingRecommendations = true
+        discoveryError = nil
 
         do {
             try await networkClient?.getRecommendations()
             try await networkClient?.getGlobalRecommendations()
             logger.info("Requested recommendations and global recommendations")
+            recommendationsTimeoutTask?.cancel()
+            recommendationsTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard let self, !Task.isCancelled, self.isLoadingRecommendations else { return }
+                self.isLoadingRecommendations = false
+                self.discoveryError = "The server didn't respond."
+            }
         } catch {
             logger.error("Failed to get recommendations: \(error.localizedDescription)")
             isLoadingRecommendations = false
+            discoveryError = "Couldn't load recommendations: \(error.localizedDescription)"
         }
     }
 

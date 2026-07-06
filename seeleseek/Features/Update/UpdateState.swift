@@ -26,7 +26,7 @@ final class UpdateState {
 
     // UserDefaults keys
     private let lastCheckKey = "updateLastCheckDate"
-    private let autoCheckKey = "updateAutoCheckEnabled"
+    private nonisolated static let autoCheckKey = "updateAutoCheckEnabled"
     private let skippedVersionKey = "updateSkippedVersion"
 
     /// Whether the launch prompt sheet should be shown. Separate from
@@ -50,12 +50,15 @@ final class UpdateState {
         "\(currentVersion).\(currentBuild)"
     }
 
-    var autoCheckEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: autoCheckKey) == nil { return true }
-            return UserDefaults.standard.bool(forKey: autoCheckKey)
-        }
-        set { UserDefaults.standard.set(newValue, forKey: autoCheckKey) }
+    /// Stored (not computed-over-UserDefaults) so @Observable actually
+    /// tracks it — a pure computed property registered no observation and
+    /// the Settings toggle could desync. Seeded from defaults, persisted
+    /// in didSet.
+    var autoCheckEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: UpdateState.autoCheckKey) == nil { return true }
+        return UserDefaults.standard.bool(forKey: UpdateState.autoCheckKey)
+    }() {
+        didSet { UserDefaults.standard.set(autoCheckEnabled, forKey: Self.autoCheckKey) }
     }
 
     func checkForUpdate() async {

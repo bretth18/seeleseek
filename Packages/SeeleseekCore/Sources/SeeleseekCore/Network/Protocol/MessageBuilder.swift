@@ -439,7 +439,7 @@ public enum MessageBuilder {
         }
 
         // Add Adler-32 checksum
-        let checksum = adler32(data)
+        let checksum = ZlibDecompression.adler32(data)
         var bigEndianChecksum = checksum.bigEndian
         compressed.append(Data(bytes: &bigEndianChecksum, count: 4))
 
@@ -469,28 +469,18 @@ public enum MessageBuilder {
         return out
     }
 
-    /// Calculate Adler-32 checksum for zlib
-    nonisolated private static func adler32(_ data: Data) -> UInt32 {
-        var a: UInt32 = 1
-        var b: UInt32 = 0
-        let MOD_ADLER: UInt32 = 65521
-
-        for byte in data {
-            a = (a + UInt32(byte)) % MOD_ADLER
-            b = (b + a) % MOD_ADLER
-        }
-
-        return (b << 16) | a
-    }
-
     public nonisolated static func transferRequestMessage(direction: FileTransferDirection, token: UInt32, filename: String, fileSize: UInt64? = nil) -> Data {
         var payload = Data()
         payload.appendUInt32(UInt32(PeerMessageCode.transferRequest.rawValue))
         payload.appendUInt32(UInt32(direction.rawValue))
         payload.appendUInt32(token)
         payload.appendString(filename)
-        if direction == .upload, let size = fileSize {
-            payload.appendUInt64(size)
+        if direction == .upload {
+            // Mandatory per protocol: a code-40 upload request without the
+            // uint64 size is truncated on the wire and the receiving peer
+            // silently drops it. Zero-byte files legitimately send 0.
+            assert(fileSize != nil, "upload TransferRequest requires fileSize")
+            payload.appendUInt64(fileSize ?? 0)
         }
         return wrapMessage(payload)
     }

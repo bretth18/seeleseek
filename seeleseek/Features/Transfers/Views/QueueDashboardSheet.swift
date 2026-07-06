@@ -129,7 +129,6 @@ struct QueueDashboardSheet: View {
     private var statsRow: some View {
         let counts = Dictionary(grouping: liveTransfers, by: { QueueBucket.from($0)! }).mapValues(\.count)
         let totalBytes = liveTransfers.reduce(UInt64(0)) { $0 + $1.size }
-        let activeSpeed = transferState.totalDownloadSpeed + transferState.totalUploadSpeed
 
         return HStack(alignment: .top, spacing: SeeleSpacing.lg) {
             ForEach(QueueBucket.allCases) { bucket in
@@ -137,14 +136,16 @@ struct QueueDashboardSheet: View {
             }
             Divider().frame(height: 36).background(SeeleColors.divider)
             statCell(label: "Pending bytes", count: nil, secondary: totalBytes.formattedBytes, color: SeeleColors.textPrimary)
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                statCell(
-                    label: "Throughput",
-                    count: nil,
-                    secondary: activeSpeed.formattedSpeed,
-                    color: SeeleColors.accent
-                )
-            }
+            // Speeds are @Observable stored properties updated at 1 Hz by
+            // TransferState's timer, so reading them directly gives the
+            // liveness the old TimelineView was reaching for (it repainted
+            // a `let` captured outside the closure, which never changed).
+            statCell(
+                label: "Throughput",
+                count: nil,
+                secondary: (transferState.totalDownloadSpeed + transferState.totalUploadSpeed).formattedSpeed,
+                color: SeeleColors.accent
+            )
         }
     }
 
@@ -338,9 +339,9 @@ private struct PeerLane: View {
         }
         .padding(SeeleSpacing.sm)
         .background(SeeleColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall))
+        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS))
         .overlay(
-            RoundedRectangle(cornerRadius: SeeleSpacing.cornerRadiusSmall)
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusXS)
                 .stroke(SeeleColors.divider, lineWidth: 1)
         )
     }

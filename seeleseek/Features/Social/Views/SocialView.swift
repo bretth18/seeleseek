@@ -57,10 +57,7 @@ struct SocialView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(SeeleColors.background)
-        .sheet(isPresented: Binding(
-            get: { socialState.showAddBuddySheet },
-            set: { socialState.showAddBuddySheet = $0 }
-        )) {
+        .sheet(isPresented: Bindable(socialState).showAddBuddySheet) {
             AddBuddySheet()
         }
         // Profile sheet is now on MainView for global access

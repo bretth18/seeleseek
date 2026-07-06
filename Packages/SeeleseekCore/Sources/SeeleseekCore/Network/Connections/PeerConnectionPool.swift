@@ -147,6 +147,10 @@ public final class PeerConnectionPool {
         public let port: Int
         public var state: PeerConnection.State
         public var connectionType: PeerConnection.ConnectionType
+        // Wire-level counters for THIS connection (P-connection message
+        // traffic; file-transfer bytes ride dedicated F connections and are
+        // accounted in the pool totals). Refreshed at 1Hz by the speed
+        // tracking task via `refreshConnectionTraffic()`.
         public var bytesReceived: UInt64 = 0
         public var bytesSent: UInt64 = 0
         public var connectedAt: Date?
@@ -336,6 +340,20 @@ public final class PeerConnectionPool {
         activeConnections = connections.count
         totalConnections += 1
 
+        // The connection can die between connect()/sendPeerInit and the
+        // tracking insertion above — the death event is consumed before the
+        // entry exists, so the `.stateChanged` removal path no-ops and the
+        // hardcoded `.connected` entry would sit dead until the cleanup
+        // sweep. Re-check liveness and run the same removal path.
+        if await !connection.isConnected {
+            releaseIPSlot(connectionId: connectionId, ip: ip)
+            connections.removeValue(forKey: connectionId)
+            activeConnections_.removeValue(forKey: connectionId)
+            activeConnections = connections.count
+            logger.debug("Connection to \(username) died during setup, removed from tracking")
+            throw PeerConnectionError.connectionFailed("Connection died during setup")
+        }
+
         logger.info("Connected to peer \(username) at \(ip):\(port)")
         logger.info("Outgoing connection stored: \(connectionId)")
 
@@ -403,8 +421,9 @@ public final class PeerConnectionPool {
 
         let peerIP = Self.canonicalIP(from: nwConnection.endpoint)
         // Generate the id before taking the per-IP slot so the catch below
-        // can release it idempotently.
-        let connectionId = "incoming-\(UUID().uuidString.prefix(8))"
+        // can release it idempotently. Full UUID — a truncated prefix has a
+        // 32-bit keyspace and silently merges tracking on collision.
+        let connectionId = "incoming-\(UUID().uuidString)"
 
         // Enforce per-IP connection limit to prevent single peer from exhausting resources
         if !peerIP.isEmpty {
@@ -657,17 +676,28 @@ public final class PeerConnectionPool {
             }
         }
 
+        var connectionsToClose: [PeerConnection] = []
         for id in toRemove {
             if let info = connections[id] {
                 releaseIPSlot(connectionId: id, ip: info.ip)
             }
             if let conn = activeConnections_[id] {
-                Task { await conn.disconnect() }
+                connectionsToClose.append(conn)
                 logger.info("Closed idle connection: \(id)")
             }
             connections.removeValue(forKey: id)
             activeConnections_.removeValue(forKey: id)
             lastActivities.removeValue(forKey: id)
+        }
+        // One bounded task for the whole sweep instead of an unstructured
+        // Task per reaped connection. disconnect() is a quick actor hop
+        // (cancel + finish), so sequential is fine.
+        if !connectionsToClose.isEmpty {
+            Task {
+                for conn in connectionsToClose {
+                    await conn.disconnect()
+                }
+            }
         }
 
         activeConnections = connections.count
@@ -748,8 +778,44 @@ public final class PeerConnectionPool {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
                 self.captureSpeedSample()
+                await self.refreshConnectionTraffic()
             }
         }
+    }
+
+    /// Previous per-connection totals for speed deltas: id → (time, rx+tx).
+    @ObservationIgnored private var trafficSamples: [String: (date: Date, total: UInt64)] = [:]
+
+    /// Pulls each live connection's wire-level byte counters into the
+    /// observable `connections` info and derives `currentSpeed` from the
+    /// delta since the previous tick. Only writes entries whose counters
+    /// actually moved, so idle sessions don't invalidate SwiftUI observers.
+    private func refreshConnectionTraffic() async {
+        let now = Date()
+        for (id, connection) in activeConnections_ {
+            let (rx, tx) = await connection.trafficSnapshot
+            // Re-fetch after the hop: the entry can be removed (handoff,
+            // disconnect) while we were suspended.
+            guard var info = connections[id] else { continue }
+
+            let total = rx &+ tx
+            var speed = 0.0
+            if let sample = trafficSamples[id] {
+                let elapsed = now.timeIntervalSince(sample.date)
+                if elapsed > 0 {
+                    speed = Double(total &- min(sample.total, total)) / elapsed
+                }
+            }
+            trafficSamples[id] = (now, total)
+
+            if info.bytesReceived != rx || info.bytesSent != tx || info.currentSpeed != speed {
+                info.bytesReceived = rx
+                info.bytesSent = tx
+                info.currentSpeed = speed
+                connections[id] = info
+            }
+        }
+        trafficSamples = trafficSamples.filter { connections[$0.key] != nil }
     }
 
     private func captureSpeedSample() {
@@ -823,11 +889,19 @@ public final class PeerConnectionPool {
             // or when one username is a dash-prefix of another
             // (e.g. "bob-1" vs "bob-12").
             connections[connectionId]?.state = state
-            if case .disconnected = state {
+            // `.failed` is terminal too: the connection cancels its socket
+            // and finishes its event stream right after yielding it, so the
+            // follow-up `.disconnected` never arrives. Without removal here,
+            // dead entries pin `connections`/per-IP slots toward the limits
+            // until the cleanup sweep 60-90s later, rejecting inbound peers.
+            switch state {
+            case .disconnected, .failed:
                 releaseIPSlot(connectionId: connectionId, ip: capturedIP)
                 connections.removeValue(forKey: connectionId)
                 activeConnections_.removeValue(forKey: connectionId)
                 activeConnections = connections.count
+            default:
+                break
             }
 
         case .searchReply(let token, let results):
@@ -1037,13 +1111,6 @@ public final class PeerConnectionPool {
         }
         guard !durations.isEmpty else { return 0 }
         return durations.reduce(0, +) / Double(durations.count)
-    }
-
-    public var topPeersByTraffic: [PeerConnectionInfo] {
-        connections.values
-            .sorted { ($0.bytesReceived + $0.bytesSent) > ($1.bytesReceived + $1.bytesSent) }
-            .prefix(10)
-            .map { $0 }
     }
 
     // MARK: - Test-only accessors

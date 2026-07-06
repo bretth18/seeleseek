@@ -994,20 +994,6 @@ struct TransferSparkline: View {
         localPath: URL(fileURLWithPath: "/tmp/placeholder.flac")
     )
 
-    // Synthetic sparkline data for preview only.
-    let sparkDownloading = (0..<28).map { i -> Int64 in
-        let base = 180_000.0
-        let wave = sin(Double(i) * 0.35) * 40_000
-        let noise = Double.random(in: -15_000...15_000)
-        return max(20_000, Int64(base + wave + noise))
-    }
-    let sparkUploading = (0..<28).map { i -> Int64 in
-        let base = 245_000.0
-        let ramp = Double(i) * 2_500
-        let noise = Double.random(in: -20_000...20_000)
-        return max(60_000, Int64(base + ramp + noise))
-    }
-
     ScrollView {
         LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
             TransferRow(

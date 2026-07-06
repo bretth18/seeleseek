@@ -17,13 +17,22 @@ struct ChatRoomContentView: View {
 
                 Divider().background(SeeleColors.surfaceSecondary)
 
-                ScrollView {
-                    LazyVStack(spacing: SeeleSpacing.sm) {
-                        ForEach(room.messages) { message in
-                            MessageBubble(message: message, chatState: chatState, appState: appState)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: SeeleSpacing.sm) {
+                            ForEach(room.messages) { message in
+                                MessageBubble(message: message, chatState: chatState, appState: appState)
+                                    .id(message.id)
+                            }
+                        }
+                        .padding(SeeleSpacing.md)
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: room.messages.count) { _, _ in
+                        if let latest = room.messages.last {
+                            proxy.scrollTo(latest.id, anchor: .bottom)
                         }
                     }
-                    .padding(SeeleSpacing.md)
                 }
 
                 Divider().background(SeeleColors.surfaceSecondary)
@@ -135,7 +144,9 @@ struct ChatRoomContentView: View {
             if !chatState.tickersCollapsed {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: SeeleSpacing.lg) {
-                        ForEach(Array(room.tickers), id: \.key) { username, ticker in
+                        // Sort by username — a Dictionary's iteration order is
+                        // nondeterministic and would shuffle tickers per render.
+                        ForEach(room.tickers.sorted(by: { $0.key < $1.key }), id: \.key) { username, ticker in
                             HStack(spacing: SeeleSpacing.xs) {
                                 Text(username)
                                     .font(SeeleTypography.caption2)

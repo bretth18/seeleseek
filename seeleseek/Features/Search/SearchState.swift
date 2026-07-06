@@ -36,6 +36,42 @@ final class SearchState {
     /// Map of token -> search index for routing incoming results
     private var tokenToSearchIndex: [UInt32: Int] = [:]
 
+    // MARK: - Inactivity Timers
+    /// SoulSeek has no "search finished" message — without a client-side
+    /// inactivity timer any search that stays under `maxSearchResults`
+    /// spins forever, and zero-result searches never reach the empty
+    /// state. One Task per token, reset on each incoming batch; fires
+    /// `markSearchComplete` after `searchInactivityTimeout` of silence.
+    @ObservationIgnored private var inactivityTimers: [UInt32: Task<Void, Never>] = [:]
+    private static let searchInactivityTimeout: Duration = .seconds(20)
+
+    private func scheduleInactivityTimer(token: UInt32) {
+        inactivityTimers[token]?.cancel()
+        inactivityTimers[token] = Task { [weak self] in
+            try? await Task.sleep(for: Self.searchInactivityTimeout)
+            guard let self, !Task.isCancelled else { return }
+            self.inactivityTimers.removeValue(forKey: token)
+            self.markSearchComplete(token: token)
+        }
+    }
+
+    private func cancelInactivityTimer(token: UInt32) {
+        inactivityTimers[token]?.cancel()
+        inactivityTimers.removeValue(forKey: token)
+    }
+
+    // MARK: - Send Failures
+    /// Error message per search tab (keyed by `SearchQuery.id`), set when
+    /// the search request itself failed to send. Rendered by `SearchView`
+    /// as a distinct error state (instead of "No results found").
+    private(set) var searchErrors: [UUID: String] = [:]
+
+    /// Error message for the currently-selected tab, if any.
+    var currentSearchError: String? {
+        guard let search = currentSearch else { return nil }
+        return searchErrors[search.id]
+    }
+
     // MARK: - Network Client Reference
     weak var networkClient: NetworkClient?
 
@@ -170,7 +206,6 @@ final class SearchState {
     var sortOrder: SortOrder = .relevance {
         didSet { if sortOrder != oldValue { recomputeFilteredResults() } }
     }
-    var resultGrouping: ResultGrouping = .flat
     var showFilters: Bool = false
 
     var hasActiveFilters: Bool {
@@ -271,13 +306,6 @@ final class SearchState {
         case queue = "Queue"
     }
 
-    enum ResultGrouping: String, CaseIterable {
-        case flat = "Flat"
-        case byUser = "By User"
-        case byFolder = "By Folder"
-        case byAlbum = "By Album"
-    }
-
     // MARK: - Filtered Results (cached)
 
     /// Cached filter + sort output for the currently-selected search tab.
@@ -340,57 +368,6 @@ final class SearchState {
         !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
-    /// Results grouped according to the current grouping mode
-    var groupedResults: [String: [SearchResult]] {
-        let results = filteredResults
-
-        switch resultGrouping {
-        case .flat:
-            return ["All Results": results]
-
-        case .byUser:
-            return Dictionary(grouping: results) { $0.username }
-
-        case .byFolder:
-            return Dictionary(grouping: results) { $0.folderPath.isEmpty ? "Root" : $0.folderPath }
-
-        case .byAlbum:
-            // Try to detect album from path structure (e.g., "Artist/Album/track.mp3")
-            return Dictionary(grouping: results) { result in
-                let components = result.folderPath.components(separatedBy: "\\")
-                if components.count >= 2 {
-                    // Return last two path components as "Artist - Album"
-                    let album = components.suffix(2).joined(separator: " - ")
-                    return album.isEmpty ? "Unknown Album" : album
-                } else if !result.folderPath.isEmpty {
-                    return result.folderPath
-                } else {
-                    return "Unknown Album"
-                }
-            }
-        }
-    }
-
-    /// Sorted group keys for display
-    var sortedGroupKeys: [String] {
-        switch resultGrouping {
-        case .flat:
-            return ["All Results"]
-        case .byUser:
-            // Sort by number of results (most first), then alphabetically
-            return groupedResults.keys.sorted { key1, key2 in
-                let count1 = groupedResults[key1]?.count ?? 0
-                let count2 = groupedResults[key2]?.count ?? 0
-                if count1 != count2 {
-                    return count1 > count2
-                }
-                return key1.localizedCaseInsensitiveCompare(key2) == .orderedAscending
-            }
-        case .byFolder, .byAlbum:
-            return groupedResults.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        }
-    }
-
     var isSearching: Bool {
         currentSearch?.isSearching ?? false
     }
@@ -406,6 +383,9 @@ final class SearchState {
         let newIndex = searches.count - 1
         tokenToSearchIndex[token] = newIndex
         selectedSearchIndex = newIndex
+
+        // Start the completion watchdog
+        scheduleInactivityTimer(token: token)
 
         // Record in activity tracker
         SearchState.activityTracker.recordOutgoingSearch(query: searchQuery)
@@ -458,7 +438,13 @@ final class SearchState {
                 logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
                 searches[index].isSearching = false
             }
+            cancelInactivityTimer(token: token)
             return
+        }
+
+        // Fresh activity — push the completion watchdog out again.
+        if searches[index].isSearching {
+            scheduleInactivityTimer(token: token)
         }
 
         // Calculate how many results we can add
@@ -484,17 +470,49 @@ final class SearchState {
         if maxResults > 0 && searches[index].results.count >= maxResults {
             logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
             searches[index].isSearching = false
+            cancelInactivityTimer(token: token)
         }
     }
 
     /// Mark a search as complete (no longer receiving results)
     func markSearchComplete(token: UInt32) {
+        cancelInactivityTimer(token: token)
         guard let index = tokenToSearchIndex[token], index < searches.count else { return }
 
         searches[index].isSearching = false
 
         // Persist the completed search for caching
         persistSearch(searches[index])
+    }
+
+    /// Mark a search as failed to send. The tab stops spinning and
+    /// `SearchView` renders a distinct error state with a Retry button.
+    func markSearchFailed(token: UInt32, message: String) {
+        cancelInactivityTimer(token: token)
+        guard let index = tokenToSearchIndex[token], index < searches.count else { return }
+
+        searches[index].isSearching = false
+        searchErrors[searches[index].id] = message
+        logger.error("Search '\(self.searches[index].query)' failed to send: \(message)")
+    }
+
+    /// Reset a failed tab in place for a fresh attempt with `newToken`.
+    /// The caller is responsible for actually re-sending the request.
+    func retrySearch(at index: Int, newToken: UInt32) {
+        guard index >= 0, index < searches.count else { return }
+
+        let old = searches[index]
+        cancelInactivityTimer(token: old.token)
+        tokenToSearchIndex.removeValue(forKey: old.token)
+        searchErrors.removeValue(forKey: old.id)
+
+        searches[index] = SearchQuery(query: old.query, token: newToken)
+        tokenToSearchIndex[newToken] = index
+        scheduleInactivityTimer(token: newToken)
+        if index == selectedSearchIndex {
+            recomputeFilteredResults()
+        }
+        logger.info("Retrying search '\(old.query)' with token \(newToken)")
     }
 
     /// Close a search tab
@@ -508,6 +526,8 @@ final class SearchState {
             persistSearch(search)
         }
 
+        cancelInactivityTimer(token: search.token)
+        searchErrors.removeValue(forKey: search.id)
         tokenToSearchIndex.removeValue(forKey: search.token)
         searches.remove(at: index)
 
@@ -542,7 +562,6 @@ final class SearchState {
         filterExtensions = []
         filterFreeSlotOnly = false
         sortOrder = .relevance
-        resultGrouping = .flat
     }
 
     /// Clean up expired search cache

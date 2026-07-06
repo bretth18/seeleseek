@@ -109,40 +109,8 @@ struct LoginView: View {
     private func connect() async {
         appState.connection.setConnecting()
 
-        // Set up callbacks
-        appState.networkClient.onConnectionStatusChanged = { status in
-            switch status {
-            case .connected:
-                if appState.connection.rememberCredentials {
-                    CredentialStorage.save(
-                        username: appState.connection.loginUsername,
-                        password: appState.connection.loginPassword
-                    )
-                }
-                appState.connection.setConnected(
-                    username: appState.connection.loginUsername,
-                    ip: "",
-                    greeting: nil
-                )
-                // Resume all retriable downloads from previous session
-                appState.downloadManager.resumeDownloadsOnConnect()
-                // Same on the upload side: persisted `.failed` rows
-                // whose error is retriable get a fresh 4-attempt budget.
-                appState.uploadManager.resumeUploadsOnConnect()
-                // Re-send peer-status watches (earlier attempts made
-                // during the connecting phase may have been dropped).
-                appState.socialState.resubscribeWatchedPeers()
-            case .disconnected:
-                appState.connection.setDisconnected()
-            case .connecting:
-                appState.connection.setConnecting()
-            case .reconnecting:
-                appState.connection.setReconnecting(reason: appState.networkClient.connectionError)
-            case .error:
-                appState.connection.setError(appState.networkClient.connectionError ?? "Unknown error")
-            }
-        }
-
+        // Connection-status handling is wired app-wide in
+        // AppState.wireNetworkClient() — this stays form-local.
         appState.networkClient.acceptDistributedChildren = appState.settings.respondToSearches
 
         await appState.networkClient.connect(
@@ -159,10 +127,14 @@ struct LoginView: View {
     }
 
     private func loadSavedCredentials() {
-        if let credentials = CredentialStorage.load() {
-            appState.connection.loginUsername = credentials.username
-            appState.connection.loginPassword = credentials.password
-        }
+        // Only prefill when both fields are empty — the view re-appears
+        // (e.g. after a failed attempt) and reloading would clobber
+        // whatever the user has typed.
+        guard appState.connection.loginUsername.isEmpty,
+              appState.connection.loginPassword.isEmpty,
+              let credentials = CredentialStorage.load() else { return }
+        appState.connection.loginUsername = credentials.username
+        appState.connection.loginPassword = credentials.password
     }
 }
 

@@ -48,12 +48,17 @@ public extension Data {
         let end = start.advanced(by: len)
         let stringData = self[start..<end]
 
-        // Soulseek peers in the wild still send Latin-1 filenames (old Windows
-        // clients, non-English locales). Fall back rather than dropping the
-        // whole message — isoLatin1 will never fail since every byte maps to a
-        // codepoint, so the final `return nil` is only a safety belt.
+        // Soulseek peers in the wild still send legacy-encoded filenames (old
+        // Windows clients, non-English locales). Try CP1252 before Latin-1:
+        // they differ only in 0x80–0x9F, where CP1252 has real glyphs (smart
+        // quotes, en-dashes) and Latin-1 has invisible C1 controls. Latin-1
+        // never fails since every byte maps to a codepoint, so the final
+        // `return nil` is only a safety belt.
         if let utf8 = String(data: stringData, encoding: .utf8) {
             return (utf8, 4 + len)
+        }
+        if let cp1252 = String(data: stringData, encoding: .windowsCP1252) {
+            return (cp1252, 4 + len)
         }
         if let latin1 = String(data: stringData, encoding: .isoLatin1) {
             return (latin1, 4 + len)
@@ -70,7 +75,10 @@ public extension Data {
         readUInt8(at: offset)
     }
 
-    // Safe subdata extraction
+    // Safe subdata extraction. Returns a copy (not a slice) so callers that
+    // retain the result don't pin the entire source buffer alive — payload
+    // slices held across `receiveBuffer.removeFirst` were forcing full CoW
+    // copies of the remaining buffer on every frame.
     nonisolated func safeSubdata(in range: Range<Int>) -> Data? {
         guard range.lowerBound >= 0,
               range.upperBound <= count,
@@ -79,7 +87,7 @@ public extension Data {
         }
         let start = self.startIndex.advanced(by: range.lowerBound)
         let end = self.startIndex.advanced(by: range.upperBound)
-        return self[start..<end]
+        return Data(self[start..<end])
     }
 }
 
@@ -121,11 +129,11 @@ public extension Data {
 
 // MARK: - Data Utilities
 public extension Data {
-    public var hexString: String {
+    var hexString: String {
         map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 
-    public init(hexString: String) {
+    init(hexString: String) {
         let hex = hexString.replacingOccurrences(of: " ", with: "")
         var data = Data()
         var index = hex.startIndex

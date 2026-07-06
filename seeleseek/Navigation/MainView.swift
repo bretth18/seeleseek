@@ -7,6 +7,11 @@ struct MainView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     #endif
+    #if DEBUG
+    /// Held so the local key monitor is installed exactly once —
+    /// `onAppear` can fire repeatedly and each un-removed monitor stacked.
+    @State private var protocolTestKeyMonitor: Any?
+    #endif
 
     var body: some View {
         Group {
@@ -40,10 +45,7 @@ struct MainView: View {
             }
         }
         #endif
-        .alert("Server Message", isPresented: Binding(
-            get: { appState.showAdminMessageAlert },
-            set: { appState.showAdminMessageAlert = $0 }
-        )) {
+        .alert("Server Message", isPresented: Bindable(appState).showAdminMessageAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             if let msg = appState.latestAdminMessage {
@@ -52,8 +54,10 @@ struct MainView: View {
         }
         #if DEBUG
         .onAppear {
-            // Cmd+Shift+T to run protocol test
-            NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Cmd+Shift+T to run protocol test. Install once; onAppear
+            // can re-fire and monitors are never auto-removed.
+            guard protocolTestKeyMonitor == nil else { return }
+            protocolTestKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 if event.modifierFlags.contains([.command, .shift]) && event.charactersIgnoringModifiers == "t" {
                     Task {
                         await ProtocolTest.runLocalServerTest()
@@ -61,6 +65,12 @@ struct MainView: View {
                     return nil
                 }
                 return event
+            }
+        }
+        .onDisappear {
+            if let monitor = protocolTestKeyMonitor {
+                NSEvent.removeMonitor(monitor)
+                protocolTestKeyMonitor = nil
             }
         }
         #endif
@@ -74,10 +84,7 @@ struct MainView: View {
             detailView
         }
         .frame(minWidth: 900, minHeight: 600)
-        .sheet(isPresented: Binding(
-            get: { appState.socialState.showProfileSheet },
-            set: { appState.socialState.showProfileSheet = $0 }
-        )) {
+        .sheet(isPresented: Bindable(appState.socialState).showProfileSheet) {
             if let profile = appState.socialState.viewingProfile {
                 UserProfileSheet(profile: profile)
             }

@@ -4,6 +4,8 @@ import SeeleseekCore
 struct ChatView: View {
     @Environment(\.appState) private var appState
     @State private var showRoomBrowser = false
+    /// Username whose DM history is pending delete confirmation.
+    @State private var pendingHistoryDeletion: String?
 
     private var chatState: ChatState {
         appState.chatState
@@ -17,6 +19,26 @@ struct ChatView: View {
             chatContent
         }
         .background(SeeleColors.background)
+        .confirmationDialog(
+            "Delete chat history with \(pendingHistoryDeletion ?? "")?",
+            isPresented: Binding(
+                get: { pendingHistoryDeletion != nil },
+                set: { if !$0 { pendingHistoryDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete History", role: .destructive) {
+                if let username = pendingHistoryDeletion {
+                    chatState.deleteConversationHistory(username)
+                }
+                pendingHistoryDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingHistoryDeletion = nil
+            }
+        } message: {
+            Text("This permanently deletes the saved message history from the database. This cannot be undone.")
+        }
     }
 
     // MARK: - Sidebar
@@ -194,7 +216,7 @@ struct ChatView: View {
             Divider()
 
             Button(role: .destructive) {
-                chatState.deleteConversationHistory(chat.username)
+                pendingHistoryDeletion = chat.username
             } label: {
                 Label("Delete History", systemImage: "trash")
             }

@@ -13,8 +13,8 @@ public enum MessageParser {
     nonisolated static let maxItemCount: UInt32 = 100_000
     /// Maximum number of attributes per file
     nonisolated static let maxAttributeCount: UInt32 = 100
-    /// Maximum message size (reduced from 100MB)
-    nonisolated static let maxMessageSize: UInt32 = 100_000_000  // 100MB - large share lists can exceed 10MB
+    /// Maximum message size — large share lists can exceed 10MB compressed.
+    public nonisolated static let maxMessageSize: UInt32 = 100_000_000  // 100MB
 
     // MARK: - Frame Parsing
 
@@ -89,8 +89,11 @@ public enum MessageParser {
     }
 
     /// Parse RoomList payload (code 64). Returns all four sections per spec.
-    /// Sections after `publicRooms` are absent on older responses — those are
-    /// returned empty rather than nil.
+    /// Sections after `publicRooms` are absent on older responses — absence
+    /// means the payload ends exactly at the section boundary. A section that
+    /// is present but malformed stops parsing (the offset is unrecoverable
+    /// once misaligned); we keep the sections already parsed rather than
+    /// decoding garbage into the later ones.
     public nonisolated static func parseRoomList(_ payload: Data) -> RoomListInfo? {
         var offset = 0
 
@@ -98,15 +101,37 @@ public enum MessageParser {
             return nil
         }
 
-        let ownedPrivate = readRoomNamesAndCounts(payload, offset: &offset) ?? []
-        let memberPrivate = readRoomNamesAndCounts(payload, offset: &offset) ?? []
-
-        // Operator room section: names only (no user counts).
+        var ownedPrivate: [RoomListEntry] = []
+        var memberPrivate: [RoomListEntry] = []
         var operatedPrivate: [String] = []
-        if let opCount = payload.readUInt32(at: offset), opCount <= maxItemCount {
+
+        parseTail: if offset < payload.count {
+            guard let owned = readRoomNamesAndCounts(payload, offset: &offset) else {
+                logger.warning("RoomList: malformed owned-private section, dropping tail")
+                break parseTail
+            }
+            ownedPrivate = owned
+            if offset >= payload.count { break parseTail }
+
+            guard let member = readRoomNamesAndCounts(payload, offset: &offset) else {
+                logger.warning("RoomList: malformed member-private section, dropping tail")
+                break parseTail
+            }
+            memberPrivate = member
+            if offset >= payload.count { break parseTail }
+
+            // Operator room section: names only (no user counts).
+            guard let opCount = payload.readUInt32(at: offset), opCount <= maxItemCount else {
+                logger.warning("RoomList: malformed operator section, dropping tail")
+                break parseTail
+            }
             offset += 4
             for _ in 0..<opCount {
-                guard let (name, len) = payload.readString(at: offset) else { break }
+                guard let (name, len) = payload.readString(at: offset) else {
+                    logger.warning("RoomList: truncated operator room name")
+                    operatedPrivate = []
+                    break parseTail
+                }
                 operatedPrivate.append(name)
                 offset += len
             }
@@ -122,8 +147,7 @@ public enum MessageParser {
 
     /// Shared helper: reads `count + names[]` followed by `count + counts[]` —
     /// the pattern used for public, owned-private, and member-private sections.
-    /// Returns nil when either length prefix is missing, so callers can detect
-    /// a truncated payload and decide whether the section was optional.
+    /// Returns nil on any malformation; `offset` is only valid on success.
     private nonisolated static func readRoomNamesAndCounts(_ payload: Data, offset: inout Int) -> [RoomListEntry]? {
         guard let roomCount = payload.readUInt32(at: offset) else { return nil }
         guard roomCount <= maxItemCount else { return nil }
@@ -142,7 +166,7 @@ public enum MessageParser {
 
         var counts: [UInt32] = []
         for _ in 0..<userCountsCount {
-            guard let count = payload.readUInt32(at: offset) else { break }
+            guard let count = payload.readUInt32(at: offset) else { return nil }
             counts.append(count)
             offset += 4
         }
@@ -327,6 +351,78 @@ public enum MessageParser {
         }
     }
 
+    // MARK: - Shared file-entry readers
+    // One file entry is `uint8 code, string filename, uint64 size, string ext,
+    // uint32 attrCount, (uint32 type, uint32 value)*` — identical across
+    // SearchReply (public + private sections), SharesReply, and
+    // FolderContentsReply. On failure `offset` is mid-entry and unusable;
+    // callers must stop parsing the section (never continue an outer loop).
+
+    private nonisolated static func readFileAttributes(_ payload: Data, offset: inout Int) -> [FileAttribute]? {
+        guard let attrCount = payload.readUInt32(at: offset), attrCount <= maxAttributeCount else { return nil }
+        offset += 4
+
+        var attributes: [FileAttribute] = []
+        for _ in 0..<attrCount {
+            guard let attrType = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+            guard let attrValue = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+            attributes.append(FileAttribute(type: attrType, value: attrValue))
+        }
+        return attributes
+    }
+
+    private nonisolated static func readSearchFileEntry(_ payload: Data, offset: inout Int, isPrivate: Bool) -> SearchResultFile? {
+        guard payload.readUInt8(at: offset) != nil else { return nil }
+        offset += 1
+
+        guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
+        offset += filenameLen
+
+        guard let size = payload.readUInt64(at: offset) else { return nil }
+        offset += 8
+
+        guard let (ext, extLen) = payload.readString(at: offset) else { return nil }
+        offset += extLen
+
+        guard let attributes = readFileAttributes(payload, offset: &offset) else { return nil }
+
+        return SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes, isPrivate: isPrivate)
+    }
+
+    /// Same wire layout as `readSearchFileEntry`, projected into `ShareFileInfo`
+    /// (bitrate/duration pulled out of the attribute list). `dirName`, when
+    /// present, is prepended with the SoulSeek path separator.
+    private nonisolated static func readShareFileEntry(_ payload: Data, offset: inout Int, dirName: String?, isPrivate: Bool) -> ShareFileInfo? {
+        guard payload.readUInt8(at: offset) != nil else { return nil }
+        offset += 1
+
+        guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
+        offset += filenameLen
+
+        guard let size = payload.readUInt64(at: offset) else { return nil }
+        offset += 8
+
+        guard let (_, extLen) = payload.readString(at: offset) else { return nil }
+        offset += extLen
+
+        guard let attributes = readFileAttributes(payload, offset: &offset) else { return nil }
+
+        var bitrate: UInt32?
+        var duration: UInt32?
+        for attr in attributes {
+            switch attr.type {
+            case 0: bitrate = attr.value
+            case 1: duration = attr.value
+            default: break
+            }
+        }
+
+        let fullName = dirName.map { "\($0)\\\(filename)" } ?? filename
+        return ShareFileInfo(filename: fullName, size: size, bitrate: bitrate, duration: duration, isPrivate: isPrivate)
+    }
+
     public struct SearchReplyInfo: Sendable, Equatable {
         public let username: String
         public let token: UInt32
@@ -352,42 +448,20 @@ public enum MessageParser {
 
         var files: [SearchResultFile] = []
         for _ in 0..<fileCount {
-            guard payload.readUInt8(at: offset) != nil else { return nil }
-            offset += 1
-
-            guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
-            offset += filenameLen
-
-            guard let size = payload.readUInt64(at: offset) else { return nil }
-            offset += 8
-
-            guard let (ext, extLen) = payload.readString(at: offset) else { return nil }
-            offset += extLen
-
-            guard let attrCount = payload.readUInt32(at: offset) else { return nil }
-            // SECURITY: Limit attribute count to prevent DoS
-            guard attrCount <= maxAttributeCount else { return nil }
-            offset += 4
-
-            var attributes: [FileAttribute] = []
-            for _ in 0..<attrCount {
-                guard let attrType = payload.readUInt32(at: offset) else { return nil }
-                offset += 4
-                guard let attrValue = payload.readUInt32(at: offset) else { return nil }
-                offset += 4
-                attributes.append(FileAttribute(type: attrType, value: attrValue))
-            }
-
-            files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes, isPrivate: false))
+            guard let file = readSearchFileEntry(payload, offset: &offset, isPrivate: false) else { return nil }
+            files.append(file)
         }
 
-        let freeSlots = payload.readBool(at: offset) ?? true
+        // Slot/speed/queue fields are mandatory per spec (Peer Code 9). A
+        // truncated message must not default to freeSlots=true — download
+        // scheduling would treat the peer as advertising a slot it never did.
+        guard let freeSlots = payload.readBool(at: offset) else { return nil }
         offset += 1
 
-        let uploadSpeed = payload.readUInt32(at: offset) ?? 0
+        guard let uploadSpeed = payload.readUInt32(at: offset) else { return nil }
         offset += 4
 
-        let queueLength = payload.readUInt32(at: offset) ?? 0
+        guard let queueLength = payload.readUInt32(at: offset) else { return nil }
         offset += 4
 
         // Parse privately shared results (buddy-only files)
@@ -404,41 +478,13 @@ public enum MessageParser {
             // SECURITY: Limit private file count
             if potentialPrivateCount > 0 && potentialPrivateCount <= maxItemCount {
                 offset += 4
-                var privateFilesParsed = 0
 
+                // Lenient: the private tail is optional and some clients omit
+                // or truncate it — stop at the first malformed entry but keep
+                // the public results already parsed.
                 for _ in 0..<potentialPrivateCount {
-                    guard payload.readUInt8(at: offset) != nil else { break }
-                    offset += 1
-
-                    guard let (filename, filenameLen) = payload.readString(at: offset) else { break }
-                    offset += filenameLen
-
-                    guard let size = payload.readUInt64(at: offset) else { break }
-                    offset += 8
-
-                    guard let (ext, extLen) = payload.readString(at: offset) else { break }
-                    offset += extLen
-
-                    guard let attrCount = payload.readUInt32(at: offset) else { break }
-                    // SECURITY: Limit attribute count
-                    guard attrCount <= maxAttributeCount else { break }
-                    offset += 4
-
-                    var attributes: [FileAttribute] = []
-                    for _ in 0..<attrCount {
-                        guard let attrType = payload.readUInt32(at: offset) else { break }
-                        offset += 4
-                        guard let attrValue = payload.readUInt32(at: offset) else { break }
-                        offset += 4
-                        attributes.append(FileAttribute(type: attrType, value: attrValue))
-                    }
-
-                    files.append(SearchResultFile(filename: filename, size: size, extension: ext, attributes: attributes, isPrivate: true))
-                    privateFilesParsed += 1
-                }
-
-                if privateFilesParsed > 0 {
-                    logger.debug("Parsed \(privateFilesParsed) private/buddy-only files from \(username)")
+                    guard let file = readSearchFileEntry(payload, offset: &offset, isPrivate: true) else { break }
+                    files.append(file)
                 }
             }
         }
@@ -463,78 +509,33 @@ public enum MessageParser {
     public nonisolated static func parseTransferRequest(_ payload: Data) -> TransferRequestInfo? {
         var offset = 0
 
-        // Debug: show raw bytes
-        let preview = payload.prefix(min(100, payload.count)).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("TransferRequest raw (\(payload.count) bytes): \(preview)")
-
-        // Need at least 4 (direction) + 4 (token) + 4 (filename length) = 12 bytes minimum
-        guard payload.count >= 12 else {
-            logger.debug("Payload too short: \(payload.count) bytes, need at least 12")
-            return nil
-        }
-
-        guard let directionRaw = payload.readUInt32(at: offset) else {
-            logger.debug("Failed to read direction at offset \(offset)")
-            return nil
-        }
-        logger.debug("direction raw: \(directionRaw) at offset \(offset)")
+        guard let directionRaw = payload.readUInt32(at: offset) else { return nil }
         offset += 4
 
         guard let directionByte = UInt8(exactly: directionRaw),
               let direction = FileTransferDirection(rawValue: directionByte) else {
-            logger.debug("Invalid direction: \(directionRaw)")
+            logger.warning("TransferRequest: invalid direction \(directionRaw)")
             return nil
         }
 
-        guard let token = payload.readUInt32(at: offset) else {
-            logger.debug("Failed to read token at offset \(offset)")
-            return nil
-        }
-        logger.debug("token: \(token) at offset \(offset)")
+        guard let token = payload.readUInt32(at: offset) else { return nil }
         offset += 4
 
-        guard let (filename, filenameLen) = payload.readString(at: offset) else {
-            logger.debug("Failed to read filename at offset \(offset)")
-            return nil
-        }
-        logger.debug("filename: '\(filename)' (consumed=\(filenameLen) bytes) at offset \(offset)")
+        guard let (filename, filenameLen) = payload.readString(at: offset) else { return nil }
         offset += filenameLen
 
         var fileSize: UInt64?
         if direction == .upload {
             // For upload direction (peer wants to upload to us), file size
             // is mandatory per protocol — it tells us how many bytes the
-            // F connection will deliver. The previous shape returned a
-            // parsed message with `fileSize == nil` whenever bytes were
-            // missing or zero, which downstream callers coerced to `0`,
-            // making a corrupt or truncated TransferRequest look like a
-            // valid empty-file transfer. Reject the parse instead so the
-            // caller treats the message as malformed.
-            let remainingBytes = payload.count - offset
-            logger.debug("Remaining bytes after filename: \(remainingBytes), need 8 for fileSize")
-
-            guard remainingBytes >= 8 else {
-                logger.warning("TransferRequest: Not enough bytes for fileSize! Have \(remainingBytes), need 8")
-                logger.debug("Full payload hex dump: \(payload.map { String(format: "%02x", $0) }.joined(separator: " "))")
-                return nil
-            }
-
-            // Debug: show the 8 bytes we're reading for file size
-            let sizeBytes = payload.dropFirst(offset).prefix(8)
-            let sizeBytesHex = sizeBytes.map { String(format: "%02x", $0) }.joined(separator: " ")
-            logger.debug("fileSize bytes at offset \(offset): \(sizeBytesHex)")
-
+            // F connection will deliver. Reject the parse when it's missing
+            // rather than returning nil fileSize, which downstream callers
+            // coerced to 0, making a truncated TransferRequest look like a
+            // valid empty-file transfer. Zero-byte files ARE legal shares
+            // (slskd/Seeker advertise size 0), so 0 itself is accepted.
             guard let parsed = payload.readUInt64(at: offset) else {
-                logger.warning("TransferRequest: failed to read 8 bytes for fileSize at offset \(offset)")
+                logger.warning("TransferRequest: truncated before mandatory fileSize (token \(token))")
                 return nil
-            }
-            logger.debug("fileSize parsed: \(parsed)")
-
-            // Zero-byte files are legal shares (slskd/Seeker advertise
-            // size 0 for them); rejecting the message would stall a queued
-            // 0-byte download forever.
-            if parsed == 0 {
-                logger.debug("TransferRequest: fileSize is 0 (zero-byte file)")
             }
             fileSize = parsed
         }
@@ -575,45 +576,8 @@ public enum MessageParser {
             offset += 4
 
             for _ in 0..<fileCount {
-                guard decompressed.readByte(at: offset) != nil else { return nil }
-                offset += 1
-
-                guard let (filename, filenameLen) = decompressed.readString(at: offset) else { return nil }
-                offset += filenameLen
-
-                guard let size = decompressed.readUInt64(at: offset) else { return nil }
-                offset += 8
-
-                guard let (_, extLen) = decompressed.readString(at: offset) else { return nil }
-                offset += extLen
-
-                guard let attrCount = decompressed.readUInt32(at: offset) else { return nil }
-                guard attrCount <= maxAttributeCount else { return nil }
-                offset += 4
-
-                var bitrate: UInt32?
-                var duration: UInt32?
-
-                for _ in 0..<attrCount {
-                    guard let attrType = decompressed.readUInt32(at: offset) else { return nil }
-                    offset += 4
-                    guard let attrValue = decompressed.readUInt32(at: offset) else { return nil }
-                    offset += 4
-
-                    switch attrType {
-                    case 0: bitrate = attrValue
-                    case 1: duration = attrValue
-                    default: break
-                    }
-                }
-
-                files.append(ShareFileInfo(
-                    filename: "\(dirName)\\\(filename)",
-                    size: size,
-                    bitrate: bitrate,
-                    duration: duration,
-                    isPrivate: false
-                ))
+                guard let file = readShareFileEntry(decompressed, offset: &offset, dirName: dirName, isPrivate: false) else { return nil }
+                files.append(file)
             }
         }
 
@@ -622,59 +586,23 @@ public enum MessageParser {
             offset += 4
         }
 
-        // Parse private directories
+        // Parse private directories. Lenient (this tail is optional), but a
+        // malformed entry stops the WHOLE section — the offset is misaligned
+        // past that point, so continuing the outer loop would decode garbage.
         if let privateDirCount = decompressed.readUInt32(at: offset),
            privateDirCount > 0, privateDirCount <= maxItemCount {
             offset += 4
 
-            for _ in 0..<privateDirCount {
-                guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break }
+            privateSection: for _ in 0..<privateDirCount {
+                guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break privateSection }
                 offset += dirLen
 
-                guard let fileCount = decompressed.readUInt32(at: offset) else { break }
-                guard fileCount <= maxItemCount else { break }
+                guard let fileCount = decompressed.readUInt32(at: offset), fileCount <= maxItemCount else { break privateSection }
                 offset += 4
 
                 for _ in 0..<fileCount {
-                    guard decompressed.readByte(at: offset) != nil else { break }
-                    offset += 1
-
-                    guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-                    offset += filenameLen
-
-                    guard let size = decompressed.readUInt64(at: offset) else { break }
-                    offset += 8
-
-                    guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-                    offset += extLen
-
-                    guard let attrCount = decompressed.readUInt32(at: offset) else { break }
-                    guard attrCount <= maxAttributeCount else { break }
-                    offset += 4
-
-                    var bitrate: UInt32?
-                    var duration: UInt32?
-
-                    for _ in 0..<attrCount {
-                        guard let attrType = decompressed.readUInt32(at: offset) else { break }
-                        offset += 4
-                        guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                        offset += 4
-
-                        switch attrType {
-                        case 0: bitrate = attrValue
-                        case 1: duration = attrValue
-                        default: break
-                        }
-                    }
-
-                    files.append(ShareFileInfo(
-                        filename: "\(dirName)\\\(filename)",
-                        size: size,
-                        bitrate: bitrate,
-                        duration: duration,
-                        isPrivate: true
-                    ))
+                    guard let file = readShareFileEntry(decompressed, offset: &offset, dirName: dirName, isPrivate: true) else { break privateSection }
+                    files.append(file)
                 }
             }
         }
@@ -704,54 +632,18 @@ public enum MessageParser {
 
         var files: [ShareFileInfo] = []
 
-        for _ in 0..<folderCount {
-            guard let (_, dirLen) = decompressed.readString(at: offset) else { break }
+        // A malformed entry stops the whole scan (misaligned offset), keeping
+        // whatever parsed cleanly before it.
+        folderScan: for _ in 0..<folderCount {
+            guard let (_, dirLen) = decompressed.readString(at: offset) else { break folderScan }
             offset += dirLen
 
-            guard let fileCount = decompressed.readUInt32(at: offset) else { break }
-            guard fileCount <= maxItemCount else { break }
+            guard let fileCount = decompressed.readUInt32(at: offset), fileCount <= maxItemCount else { break folderScan }
             offset += 4
 
             for _ in 0..<fileCount {
-                guard decompressed.readByte(at: offset) != nil else { break }
-                offset += 1
-
-                guard let (filename, filenameLen) = decompressed.readString(at: offset) else { break }
-                offset += filenameLen
-
-                guard let size = decompressed.readUInt64(at: offset) else { break }
-                offset += 8
-
-                guard let (_, extLen) = decompressed.readString(at: offset) else { break }
-                offset += extLen
-
-                guard let attrCount = decompressed.readUInt32(at: offset) else { break }
-                guard attrCount <= maxAttributeCount else { break }
-                offset += 4
-
-                var bitrate: UInt32?
-                var duration: UInt32?
-
-                for _ in 0..<attrCount {
-                    guard let attrType = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-                    guard let attrValue = decompressed.readUInt32(at: offset) else { break }
-                    offset += 4
-
-                    switch attrType {
-                    case 0: bitrate = attrValue
-                    case 1: duration = attrValue
-                    default: break
-                    }
-                }
-
-                files.append(ShareFileInfo(
-                    filename: filename,
-                    size: size,
-                    bitrate: bitrate,
-                    duration: duration,
-                    isPrivate: false
-                ))
+                guard let file = readShareFileEntry(decompressed, offset: &offset, dirName: nil, isPrivate: false) else { break folderScan }
+                files.append(file)
             }
         }
 
@@ -826,7 +718,17 @@ public enum MessageParser {
         var reason: String?
 
         if allowed {
-            fileSize = payload.readUInt64(at: offset)
+            // Two legal shapes: 41a (accept with uint64 filesize) and 41b
+            // (bare accept, nothing after the bool). Distinguish a genuine
+            // 41b (0 trailing bytes) from a truncated 41a (1-7 trailing
+            // bytes) — the latter is corrupt and must not parse as an
+            // accept with unknown size.
+            let remaining = payload.count - offset
+            if remaining >= 8 {
+                fileSize = payload.readUInt64(at: offset)
+            } else if remaining > 0 {
+                return nil
+            }
         } else {
             reason = payload.readString(at: offset)?.string
         }
@@ -856,7 +758,9 @@ public enum MessageParser {
 
         var users: [String] = []
         for _ in 0..<userCount {
-            guard let (username, usernameLen) = payload.readString(at: offset) else { break }
+            // A malformed entry makes every later offset garbage (the status/
+            // stats skips below would misread counts) — reject the payload.
+            guard let (username, usernameLen) = payload.readString(at: offset) else { return nil }
             users.append(username)
             offset += usernameLen
         }
