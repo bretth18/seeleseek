@@ -20,22 +20,40 @@ struct SeeleSeekApp: App {
             || env["XCODE_RUNNING_FOR_PLAYGROUNDS"] == "1"
     }
 
+    /// True when this process hosts the unit-test bundle. The app must stay
+    /// inert then — no database load, no update check, and no login UI that
+    /// a stray click could connect to the real server with saved
+    /// credentials. Tests construct their own instances. UI tests are
+    /// unaffected: they launch the app as a separate process without XCTest
+    /// injected.
+    private static var isRunningTests: Bool {
+        NSClassFromString("XCTestCase") != nil
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
+    }
+
     var body: some Scene {
         WindowGroup {
-            MainView()
-                .environment(\.appState, appState)
-                .tint(SeeleColors.accent)
-                .task {
-                    if Self.isRunningInPreview { return }
-                    #if DEBUG
-                    if DemoDataSeeder.isEnabled {
-                        DemoDataSeeder.seed(into: appState)
-                        return
+            if Self.isRunningTests {
+                Text("seeleseek test host")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 320, height: 120)
+            } else {
+                MainView()
+                    .environment(\.appState, appState)
+                    .tint(SeeleColors.accent)
+                    .task {
+                        if Self.isRunningInPreview { return }
+                        #if DEBUG
+                        if DemoDataSeeder.isEnabled {
+                            DemoDataSeeder.seed(into: appState)
+                            return
+                        }
+                        #endif
+                        appState.configure()
+                        SeeleSeekShortcuts.updateAppShortcutParameters()
                     }
-                    #endif
-                    appState.configure()
-                    SeeleSeekShortcuts.updateAppShortcutParameters()
-                }
+            }
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)

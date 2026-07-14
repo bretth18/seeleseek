@@ -51,7 +51,8 @@ struct PeerConnectivityTests {
             server: "127.0.0.1",
             port: closedPort,
             username: "never-logged-in",
-            password: "test"
+            password: "test",
+            preferredListenPort: UInt16(Int.random(in: 40000...59998) & ~1)
         )
 
         // Give any (incorrect) reconnect scheduling a chance to fire.
