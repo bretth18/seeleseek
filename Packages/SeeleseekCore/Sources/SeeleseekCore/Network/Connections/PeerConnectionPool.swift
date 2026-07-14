@@ -266,7 +266,8 @@ public final class PeerConnectionPool {
     ///   - port: Peer's port
     ///   - token: Connection token
     ///   - isIndirect: If true, this is an indirect connection (responding to ConnectToPeer) - don't send PeerInit
-    public func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false, obfuscated: Bool = false) async throws -> PeerConnection {
+    ///   - connectionType: Soulseek socket type. File-transfer sockets stay in raw mode after their initializer.
+    public func connect(to username: String, ip: String, port: Int, token: UInt32, isIndirect: Bool = false, obfuscated: Bool = false, connectionType: PeerConnection.ConnectionType = .peer) async throws -> PeerConnection {
         // Reject outbound dials to blocked usernames (e.g. bot patterns like `slsk_*`).
         // Most outbound connections here are server-instructed ConnectToPeer responses,
         // which are effectively remote-initiated — we have no reason to dial a blocked user.
@@ -294,7 +295,17 @@ public final class PeerConnectionPool {
         // starts. There's no NAT-hole-punching benefit here either: peers
         // reach us via PierceFirewall on the listen port, not by dialing the
         // ephemeral source port of one of our outbound TCP sessions.
-        let connection = PeerConnection(peerInfo: peerInfo, token: token, isObfuscated: obfuscated)
+        let connection = PeerConnection(
+            peerInfo: peerInfo,
+            type: connectionType,
+            token: token,
+            isObfuscated: obfuscated,
+            // An F socket switches to unframed transfer bytes immediately
+            // after PeerInit/PierceFirewall. Starting the normal peer-message
+            // parser here can consume the 4-byte FileTransferInit token before
+            // DownloadManager takes ownership of the connection.
+            autoStartReceiving: connectionType != .file
+        )
 
         // Start consuming events BEFORE connecting to avoid missing early events
         outgoingConnectionSequence += 1
@@ -329,7 +340,7 @@ public final class PeerConnectionPool {
             ip: ip,
             port: port,
             state: .connected,
-            connectionType: .peer,
+            connectionType: connectionType,
             connectedAt: Date()
         )
         connections[info.id] = info
@@ -361,6 +372,30 @@ public final class PeerConnectionPool {
         ActivityLogger.shared?.logPeerConnected(username: username, ip: ip)
 
         return connection
+    }
+
+    /// Transfer ownership of an outgoing server-instructed F connection to
+    /// DownloadManager. Unlike inbound F sockets, no remote PeerInit arrives
+    /// to generate this event: we connected in response to ConnectToPeer and
+    /// sent PierceFirewall ourselves, so the handoff must be explicit.
+    public func handoffOutgoingFileTransfer(
+        username: String,
+        token: UInt32,
+        connection: PeerConnection
+    ) {
+        if let entry = activeConnections_.first(where: { $0.value === connection }) {
+            let connectionId = entry.key
+            if let info = connections[connectionId] {
+                releaseIPSlot(connectionId: connectionId, ip: info.ip)
+            }
+            connections.removeValue(forKey: connectionId)
+            activeConnections_.removeValue(forKey: connectionId)
+            lastActivities.removeValue(forKey: connectionId)
+            activeConnections = connections.count
+        }
+
+        logger.info("Handing outgoing F connection to transfer manager: \(username) token=\(token)")
+        eventContinuation.yield(.fileTransferConnection(username: username, token: token, connection: connection))
     }
 
     public func acceptIncoming(_ nwConnection: NWConnection, obfuscated: Bool) async throws -> PeerConnection {

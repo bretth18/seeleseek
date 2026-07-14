@@ -143,7 +143,7 @@ public actor PeerConnection {
     /// Local port to bind outgoing connections to (for NAT traversal)
     private var localPort: UInt16 = 0
 
-    public init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0, isObfuscated: Bool = false) {
+    public init(peerInfo: PeerInfo, type: ConnectionType = .peer, token: UInt32 = 0, isIncoming: Bool = false, localPort: UInt16 = 0, isObfuscated: Bool = false, autoStartReceiving: Bool = true) {
         let (stream, continuation) = AsyncStream.makeStream(of: PeerConnectionEvent.self)
         self.events = stream
         self.eventContinuation = continuation
@@ -153,6 +153,7 @@ public actor PeerConnection {
         self.isIncoming = isIncoming
         self.localPort = localPort
         self.isObfuscated = isObfuscated
+        self.autoStartReceiving = autoStartReceiving
     }
 
     public init(connection: NWConnection, isIncoming: Bool = true, autoStartReceiving: Bool = true, isObfuscated: Bool = false) {
@@ -1241,8 +1242,10 @@ public actor PeerConnection {
         }
     }
 
-    /// Wait for the peer to complete handshake (send their PeerInit)
-    /// This is needed before sending requests like GetShareFileList
+    /// Wait for an inbound peer initializer (PeerInit or PierceFirewall).
+    /// Outgoing direct P connections must not call this after sending their
+    /// own PeerInit: direct initialization is one-way, and the remote peer is
+    /// not required to send a reciprocal PeerInit on the same socket.
     public func waitForPeerHandshake(timeout: Duration = .seconds(10)) async throws {
         if !peerHandshakeReceived {
             try await withThrowingTaskGroup(of: Void.self) { group in

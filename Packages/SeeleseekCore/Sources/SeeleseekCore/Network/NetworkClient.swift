@@ -2516,21 +2516,13 @@ public final class NetworkClient {
                     let conn = try await self.peerConnectionPool.connect(
                         to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
                     )
-                    do {
-                        // Handshake must also complete — the peer may not respond
-                        // via PeerInit on the direct connection if they already
-                        // connected back to us via PierceFirewall.
-                        try await conn.waitForPeerHandshake(timeout: .seconds(8))
-                    } catch {
-                        // Tear down exactly the connection THIS dial created
-                        // (covers handshake failure AND the 10s-timeout
-                        // cancellation). Disconnecting whatever
-                        // `getConnectionForUser` returned from the outer
-                        // catch could kill an unrelated healthy inbound
-                        // connection established during the race window.
-                        await conn.disconnect()
-                        throw error
-                    }
+                    // PeerInit is a one-way direct-connection initializer in
+                    // the Soulseek protocol. `pool.connect` has already sent
+                    // our PeerInit successfully, so the P connection is ready
+                    // for peer messages now. Most clients (including
+                    // SoulseekQt) do not send a reciprocal PeerInit; waiting
+                    // for one here turns a healthy direct connection into an
+                    // artificial handshake timeout.
                     return conn
                 }
                 group.addTask {
@@ -2554,12 +2546,12 @@ public final class NetworkClient {
             // PierceFirewall stops the receive loop assuming file-transfer
             // mode. P connections need it resumed for peer messages.
             await connection.resumeReceivingForPeerConnection()
-        }
 
-        // For indirect, PierceFirewall sets peerHandshakeReceived=true so
-        // this returns immediately. For direct, the handshake was already
-        // awaited inside the race.
-        try await connection.waitForPeerHandshake(timeout: .seconds(5))
+            // The incoming PierceFirewall is the handshake for an indirect
+            // connection. Keep this validation scoped to that path; direct
+            // connections are initialized by the PeerInit we send.
+            try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        }
         return connection
     }
 
