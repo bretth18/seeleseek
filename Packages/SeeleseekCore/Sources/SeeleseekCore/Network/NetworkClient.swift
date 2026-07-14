@@ -569,7 +569,6 @@ public final class NetworkClient {
             lastPort = port
             lastPassword = password
             lastPreferredListenPort = preferredListenPort
-            shouldAutoReconnect = true
             reconnectAttempt = 0
             reconnectTask?.cancel()
             reconnectTask = nil
@@ -744,6 +743,9 @@ public final class NetworkClient {
             isConnected = true
             reconnectAttempt = 0  // Reset backoff on successful connection
             reconnectTask = nil
+            // Armed only on login success — a session that never logged in
+            // must fail visibly, not auto-retry.
+            shouldAutoReconnect = true
             onConnectionStatusChanged?(.connected)
             logger.info("Login successful!")
 

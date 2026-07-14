@@ -21,6 +21,51 @@ struct PeerConnectivityTests {
         #expect(delays == [5, 10, 30, 60, 60])
     }
 
+    @Test("First connect failure fails visibly instead of auto-retrying")
+    func firstConnectFailureDoesNotAutoReconnect() async throws {
+        // Auto-reconnect is armed on login success, never on attempt start:
+        // a session that has never logged in (typo'd server, server down)
+        // must surface the failure on the login screen, not loop forever in
+        // `.reconnecting` behind an empty main UI.
+        //
+        // Grab a loopback port that is guaranteed closed: bind, read, release.
+        let listener = try NWListener(using: .tcp, on: .any)
+        let closedPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+        listener.cancel()
+        try await Task.sleep(for: .milliseconds(100))
+
+        let client = NetworkClient()
+        client._setReconnectDelayForTest(0.05)
+        client._setSkipNATSetupForTest(true)
+        var statuses: [ConnectionStatus] = []
+        client.onConnectionStatusChanged = { statuses.append($0) }
+
+        await client.connect(
+            server: "127.0.0.1",
+            port: closedPort,
+            username: "never-logged-in",
+            password: "test"
+        )
+
+        // Give any (incorrect) reconnect scheduling a chance to fire.
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(statuses.contains(.disconnected),
+                "a failed first connect must publish disconnected so LoginView shows")
+        #expect(!statuses.contains(.reconnecting),
+                "no auto-retry before a session has ever logged in")
+        #expect(client.connectionError != nil,
+                "the failure reason must be surfaced to the login screen")
+        await client.disconnectAsync()
+    }
+
     @Test("Unexpected server loss reconnects without publishing disconnected")
     func unexpectedServerLossReconnectsWithoutLoginFlash() async throws {
         let listener = try NWListener(using: .tcp, on: .any)

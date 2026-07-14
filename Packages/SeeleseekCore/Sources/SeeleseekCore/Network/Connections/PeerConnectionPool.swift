@@ -385,9 +385,6 @@ public final class PeerConnectionPool {
     ) {
         if let entry = activeConnections_.first(where: { $0.value === connection }) {
             let connectionId = entry.key
-            if let info = connections[connectionId] {
-                releaseIPSlot(connectionId: connectionId, ip: info.ip)
-            }
             connections.removeValue(forKey: connectionId)
             activeConnections_.removeValue(forKey: connectionId)
             lastActivities.removeValue(forKey: connectionId)
