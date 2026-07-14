@@ -3,13 +3,154 @@ import Network
 import Foundation
 @testable import SeeleseekCore
 
-/// Regression tests for the peer-connectivity bug fixes:
+/// Tests for the peer-connectivity:
 ///  - obfuscated listener retention
 ///  - multi-waiter getPeerAddress coalescing
 ///  - TransferRequest routing ambiguity
 ///  - outbound NWParameters construction
-@Suite("Peer Connectivity Fixes", .serialized)
-struct PeerConnectivityFixTests {
+@Suite("Peer Connectivity", .serialized)
+struct PeerConnectivityTests {
+
+    // MARK: - Server auto-reconnect
+
+    @Test("Reconnect backoff progresses and caps at 60 seconds")
+    func reconnectBackoffProgresses() {
+        let delays = (0...4).map {
+            NetworkClient._reconnectDelayForTest(failedAttempts: $0)
+        }
+        #expect(delays == [5, 10, 30, 60, 60])
+    }
+
+    @Test("Unexpected server loss reconnects without publishing disconnected")
+    func unexpectedServerLossReconnectsWithoutLoginFlash() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inboundStream = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { continuation.yield($0) }
+        }
+        let serverPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+
+        let fakeServer = Task { () throws -> Void in
+            var iterator = inboundStream.makeAsyncIterator()
+            var accepted: [NWConnection] = []
+            defer { accepted.forEach { $0.cancel() } }
+
+            for attempt in 0..<2 {
+                guard let connection = await iterator.next() else {
+                    throw PeerError.connectionClosed
+                }
+                accepted.append(connection)
+                connection.start(queue: .global())
+
+                let login = try await Self.receiveServerFrame(from: connection)
+                #expect(login.readUInt32(at: 4) == 1, "first client frame must be Login")
+                try await Self.sendLoginSuccess(on: connection)
+
+                if attempt == 0 {
+                    // Let NetworkClient finish its post-login messages, then
+                    // reproduce the socket loss caused by an internet outage.
+                    try await Task.sleep(for: .milliseconds(250))
+                    connection.cancel()
+                }
+            }
+
+            // Hold the replacement connection open until the assertions have
+            // observed the second successful login.
+            try await Task.sleep(for: .seconds(5))
+        }
+
+        let client = NetworkClient()
+        client._setReconnectDelayForTest(0.05)
+        client._setSkipNATSetupForTest(true)
+        var statuses: [ConnectionStatus] = []
+        client.onConnectionStatusChanged = { statuses.append($0) }
+
+        let preferredListenPort = UInt16(Int.random(in: 40000...59998) & ~1)
+        await client.connect(
+            server: "127.0.0.1",
+            port: serverPort,
+            username: "reconnect-test",
+            password: "test",
+            preferredListenPort: preferredListenPort
+        )
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while statuses.filter({ $0 == .connected }).count < 2,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let observed = statuses
+        #expect(observed.filter({ $0 == .connected }).count == 2,
+                "client must successfully log in again after the socket returns")
+        #expect(observed.contains(.reconnecting),
+                "the outage must enter reconnecting state")
+        #expect(!observed.contains(.disconnected),
+                "automatic retries must not flash the login screen")
+
+        await client.disconnectAsync()
+        fakeServer.cancel()
+        _ = try? await fakeServer.value
+        listener.cancel()
+    }
+
+    private static func receiveServerFrame(from connection: NWConnection) async throws -> Data {
+        var buffer = Data()
+        while true {
+            if let length = buffer.readUInt32(at: 0) {
+                let totalLength = Int(length) + 4
+                if buffer.count >= totalLength {
+                    return Data(buffer.prefix(totalLength))
+                }
+            }
+
+            let chunk = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Data, Error>) in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) {
+                    data, _, isComplete, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let data, !data.isEmpty {
+                        continuation.resume(returning: data)
+                    } else if isComplete {
+                        continuation.resume(throwing: PeerError.connectionClosed)
+                    } else {
+                        continuation.resume(returning: Data())
+                    }
+                }
+            }
+            buffer.append(chunk)
+        }
+    }
+
+    private static func sendLoginSuccess(on connection: NWConnection) async throws {
+        var payload = Data()
+        payload.appendBool(true)
+        payload.appendString("Welcome")
+        payload.appendUInt32(0x0100007F)
+
+        var frame = Data()
+        frame.appendUInt32(UInt32(payload.count + 4))
+        frame.appendUInt32(1)
+        frame.append(payload)
+
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: frame, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
 
     // MARK: - Direct PeerInit semantics
 

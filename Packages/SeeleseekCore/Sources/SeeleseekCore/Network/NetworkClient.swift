@@ -116,12 +116,19 @@ public final class NetworkClient {
     private var reconnectTask: Task<Void, Never>?
     private var reconnectAttempt = 0
     private var shouldAutoReconnect = false
+    private enum ConnectionAttemptOrigin: Equatable {
+        case userInitiated
+        case autoReconnect
+    }
     private var lastServer: String?
     private var lastPort: UInt16?
     private var lastPassword: String?
     private var lastPreferredListenPort: UInt16?
     /// Base delays for exponential backoff: 5s, 10s, 30s, 60s, then cap at 60s
     private static let reconnectDelays: [TimeInterval] = [5, 10, 30, 60]
+    /// Kept internal-only for deterministic reconnect integration tests.
+    private var reconnectDelayOverrideForTesting: TimeInterval?
+    private var skipNATSetupForTesting = false
 
     /// Host used for the current/last connect attempt. Exposed so the
     /// server-message handler can log the ACTUAL server instead of a
@@ -273,6 +280,21 @@ public final class NetworkClient {
     internal func _runDisconnectTeardownForTest() async {
         await peerConnectionPool.disconnectAll()
         await clearDistributedState()
+    }
+
+    /// Test-only: shorten the real reconnect scheduler without replacing it.
+    internal func _setReconnectDelayForTest(_ delay: TimeInterval?) {
+        reconnectDelayOverrideForTesting = delay
+    }
+
+    /// Test-only: keep loopback reconnect tests off the real LAN/WAN.
+    internal func _setSkipNATSetupForTest(_ skip: Bool) {
+        skipNATSetupForTesting = skip
+    }
+
+    /// Test-only: expose the production backoff calculation.
+    internal static func _reconnectDelayForTest(failedAttempts: Int) -> TimeInterval {
+        reconnectDelay(afterFailedAttempts: failedAttempts)
     }
 
     // MARK: - Initialization
@@ -518,23 +540,48 @@ public final class NetworkClient {
     // MARK: - Connection
 
     public func connect(server: String, port: UInt16, username: String, password: String, preferredListenPort: UInt16? = nil) async {
+        await performConnect(
+            server: server,
+            port: port,
+            username: username,
+            password: password,
+            preferredListenPort: preferredListenPort,
+            origin: .userInitiated
+        )
+    }
+
+    private func performConnect(
+        server: String,
+        port: UInt16,
+        username: String,
+        password: String,
+        preferredListenPort: UInt16?,
+        origin: ConnectionAttemptOrigin
+    ) async {
         guard !isConnecting && !isConnected else { return }
 
-        // Store for auto-reconnect
-        lastServer = server
-        lastPort = port
-        lastPassword = password
-        lastPreferredListenPort = preferredListenPort
-        shouldAutoReconnect = true
-        reconnectAttempt = 0
-        reconnectTask?.cancel()
-        reconnectTask = nil
+        if origin == .userInitiated {
+            // A user-initiated connect starts a fresh reconnect lifecycle.
+            // Auto-reconnect attempts must NOT run this block: cancelling
+            // reconnectTask there cancels the task currently executing this
+            // method, and resetting reconnectAttempt pins backoff at 5s.
+            lastServer = server
+            lastPort = port
+            lastPassword = password
+            lastPreferredListenPort = preferredListenPort
+            shouldAutoReconnect = true
+            reconnectAttempt = 0
+            reconnectTask?.cancel()
+            reconnectTask = nil
+        }
 
         isConnecting = true
         connectionError = nil
         self.username = username
         peerConnectionPool.ourUsername = username  // Set for PeerInit messages
-        onConnectionStatusChanged?(.connecting)
+        if origin == .userInitiated {
+            onConnectionStatusChanged?(.connecting)
+        }
 
         logger.info("Starting connection to \(server):\(port) as \(username)")
 
@@ -615,27 +662,20 @@ public final class NetworkClient {
             } catch {
                 loginTimeoutTask?.cancel()
                 loginTimeoutTask = nil
-                // Route through the full teardown so the listener, NAT, peer
-                // pool, pending waiters, distributed state, and server socket
-                // all get cleaned up — previously this path only stopped the
-                // listener, leaving stale state for the next connect().
-                isConnecting = false
-                connectionError = error.localizedDescription
                 // Only a credential rejection should disable auto-reconnect;
                 // a timeout or socket error during the handshake is transient
                 // and the user asked for a persistent connection.
-                let wasEligibleForReconnect: Bool
+                let credentialRejected: Bool
                 if case ServerConnection.ConnectionError.loginFailed = error {
-                    shouldAutoReconnect = false
-                    wasEligibleForReconnect = false
+                    credentialRejected = true
                 } else {
-                    wasEligibleForReconnect = shouldAutoReconnect
+                    credentialRejected = false
                 }
-                performDisconnect()
-                await teardownTask?.value
-                if wasEligibleForReconnect {
-                    scheduleReconnect(reason: error.localizedDescription)
-                }
+                await handleConnectionAttemptFailure(
+                    error,
+                    origin: origin,
+                    credentialRejected: credentialRejected
+                )
                 return
             }
 
@@ -703,6 +743,7 @@ public final class NetworkClient {
             isConnecting = false
             isConnected = true
             reconnectAttempt = 0  // Reset backoff on successful connection
+            reconnectTask = nil
             onConnectionStatusChanged?(.connected)
             logger.info("Login successful!")
 
@@ -710,31 +751,59 @@ public final class NetworkClient {
             startPingTimer()
 
             // Run NAT mapping in background (don't block connection)
-            Task {
-                await self.setupNATInBackground()
+            if !skipNATSetupForTesting {
+                Task {
+                    await self.setupNATInBackground()
+                }
             }
 
         } catch {
             logger.error("Connection failed: \(error.localizedDescription)")
-            isConnecting = false
-            connectionError = error.localizedDescription
-
-            // Route through the full teardown (listener + NAT + peer pool +
-            // pending waiters + distributed state + server socket) instead
-            // of only stopping the listener. Partially-established sessions
-            // can otherwise leak server connections, distributed sockets,
-            // or peer-pool entries into the next connect().
-            let wasEligibleForReconnect = shouldAutoReconnect
-            performDisconnect()
-            await teardownTask?.value
-
-            // performDisconnect fires onConnectionStatusChanged(.disconnected)
-            // itself; the scheduleReconnect path takes over status updates
-            // from here (.connecting, etc.).
-            if wasEligibleForReconnect {
-                scheduleReconnect(reason: error.localizedDescription)
-            }
+            await handleConnectionAttemptFailure(error, origin: origin)
         }
+    }
+
+    /// Tear down a failed connection attempt without bouncing the app through
+    /// `.disconnected` when another automatic attempt is pending. Publishing
+    /// `.disconnected` here made MainView flash LoginView on every retry, and
+    /// logging it produced an unbounded wall of identical console entries.
+    private func handleConnectionAttemptFailure(
+        _ error: Error,
+        origin: ConnectionAttemptOrigin,
+        credentialRejected: Bool = false
+    ) async {
+        // A user-triggered disconnect already performed teardown and disabled
+        // reconnect. Don't let the cancelled in-flight attempt do it again.
+        if Task.isCancelled && !shouldAutoReconnect {
+            isConnecting = false
+            return
+        }
+
+        isConnecting = false
+        connectionError = error.localizedDescription
+        if credentialRejected {
+            shouldAutoReconnect = false
+        }
+        let willReconnect = shouldAutoReconnect
+
+        // During an automatic attempt reconnectTask is the task executing
+        // this method. Drop the completed/failed handle before scheduling the
+        // next task so scheduleReconnect doesn't cancel its own caller.
+        if origin == .autoReconnect {
+            reconnectTask = nil
+        }
+
+        performDisconnect(
+            reportActivity: !willReconnect,
+            publishDisconnectedStatus: !willReconnect
+        )
+        if willReconnect {
+            // Publish `.reconnecting` immediately; teardown can continue in
+            // parallel with the backoff sleep, and performConnect awaits it
+            // before opening the next listener/socket.
+            scheduleReconnect(reason: error.localizedDescription)
+        }
+        await teardownTask?.value
     }
 
     public func disconnect() {
@@ -767,9 +836,14 @@ public final class NetworkClient {
     private var teardownTask: Task<Void, Never>?
 
     /// Internal disconnect that preserves auto-reconnect eligibility
-    private func performDisconnect() {
+    private func performDisconnect(
+        reportActivity: Bool = true,
+        publishDisconnectedStatus: Bool = true
+    ) {
         logger.info("Disconnecting...")
-        ActivityLogger.shared?.logDisconnected()
+        if reportActivity {
+            ActivityLogger.shared?.logDisconnected()
+        }
 
         // Cancel any pending login wait
         if let continuation = loginContinuation {
@@ -825,14 +899,18 @@ public final class NetworkClient {
             await self?.clearDistributedState()
         }
 
+        isConnecting = false
         isConnected = false
         loggedIn = false
         listenPort = 0
         obfuscatedPort = 0
         externalIP = nil
-        onConnectionStatusChanged?(.disconnected)
-
-        logger.info("Disconnected")
+        if publishDisconnectedStatus {
+            onConnectionStatusChanged?(.disconnected)
+            logger.info("Disconnected")
+        } else {
+            logger.info("Connection teardown started for auto-reconnect")
+        }
     }
 
     /// Resume every peer-operation continuation with an error so no caller
@@ -920,7 +998,9 @@ public final class NetworkClient {
         // or a healthy new one established since.
         guard isConnected else { return }
 
-        performDisconnect()
+        // Record the actual connection loss once, but keep the public state
+        // inside the reconnect flow so MainView never flashes LoginView.
+        performDisconnect(reportActivity: true, publishDisconnectedStatus: false)
         scheduleReconnect(reason: reason)
     }
 
@@ -938,8 +1018,8 @@ public final class NetworkClient {
               let port = lastPort,
               let password = lastPassword else { return }
 
-        let delayIndex = min(reconnectAttempt, Self.reconnectDelays.count - 1)
-        let delay = Self.reconnectDelays[delayIndex]
+        let delay = reconnectDelayOverrideForTesting
+            ?? Self.reconnectDelay(afterFailedAttempts: reconnectAttempt)
         reconnectAttempt += 1
 
         let attempt = reconnectAttempt
@@ -957,14 +1037,20 @@ public final class NetworkClient {
 
             guard let self, self.shouldAutoReconnect else { return }
             self.logger.info("Auto-reconnect attempt \(attempt) starting...")
-            await self.connect(
+            await self.performConnect(
                 server: server,
                 port: port,
                 username: self.username,
                 password: password,
-                preferredListenPort: self.lastPreferredListenPort
+                preferredListenPort: self.lastPreferredListenPort,
+                origin: .autoReconnect
             )
         }
+    }
+
+    private static func reconnectDelay(afterFailedAttempts count: Int) -> TimeInterval {
+        let index = min(max(count, 0), reconnectDelays.count - 1)
+        return reconnectDelays[index]
     }
 
     // MARK: - Keepalive
