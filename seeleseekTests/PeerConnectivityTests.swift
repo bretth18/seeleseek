@@ -3,13 +3,331 @@ import Network
 import Foundation
 @testable import SeeleseekCore
 
-/// Regression tests for the peer-connectivity bug fixes:
+/// Tests for the peer-connectivity:
 ///  - obfuscated listener retention
 ///  - multi-waiter getPeerAddress coalescing
 ///  - TransferRequest routing ambiguity
 ///  - outbound NWParameters construction
-@Suite("Peer Connectivity Fixes", .serialized)
-struct PeerConnectivityFixTests {
+@Suite("Peer Connectivity", .serialized)
+struct PeerConnectivityTests {
+
+    // MARK: - Server auto-reconnect
+
+    @Test("Reconnect backoff progresses and caps at 60 seconds")
+    func reconnectBackoffProgresses() {
+        let delays = (0...4).map {
+            NetworkClient._reconnectDelayForTest(failedAttempts: $0)
+        }
+        #expect(delays == [5, 10, 30, 60, 60])
+    }
+
+    @Test("Unexpected server loss reconnects without publishing disconnected")
+    func unexpectedServerLossReconnectsWithoutLoginFlash() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inboundStream = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { continuation.yield($0) }
+        }
+        let serverPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+
+        let fakeServer = Task { () throws -> Void in
+            var iterator = inboundStream.makeAsyncIterator()
+            var accepted: [NWConnection] = []
+            defer { accepted.forEach { $0.cancel() } }
+
+            for attempt in 0..<2 {
+                guard let connection = await iterator.next() else {
+                    throw PeerError.connectionClosed
+                }
+                accepted.append(connection)
+                connection.start(queue: .global())
+
+                let login = try await Self.receiveServerFrame(from: connection)
+                #expect(login.readUInt32(at: 4) == 1, "first client frame must be Login")
+                try await Self.sendLoginSuccess(on: connection)
+
+                if attempt == 0 {
+                    // Let NetworkClient finish its post-login messages, then
+                    // reproduce the socket loss caused by an internet outage.
+                    try await Task.sleep(for: .milliseconds(250))
+                    connection.cancel()
+                }
+            }
+
+            // Hold the replacement connection open until the assertions have
+            // observed the second successful login.
+            try await Task.sleep(for: .seconds(5))
+        }
+
+        let client = NetworkClient()
+        client._setReconnectDelayForTest(0.05)
+        client._setSkipNATSetupForTest(true)
+        var statuses: [ConnectionStatus] = []
+        client.onConnectionStatusChanged = { statuses.append($0) }
+
+        let preferredListenPort = UInt16(Int.random(in: 40000...59998) & ~1)
+        await client.connect(
+            server: "127.0.0.1",
+            port: serverPort,
+            username: "reconnect-test",
+            password: "test",
+            preferredListenPort: preferredListenPort
+        )
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+        while statuses.filter({ $0 == .connected }).count < 2,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let observed = statuses
+        #expect(observed.filter({ $0 == .connected }).count == 2,
+                "client must successfully log in again after the socket returns")
+        #expect(observed.contains(.reconnecting),
+                "the outage must enter reconnecting state")
+        #expect(!observed.contains(.disconnected),
+                "automatic retries must not flash the login screen")
+
+        await client.disconnectAsync()
+        fakeServer.cancel()
+        _ = try? await fakeServer.value
+        listener.cancel()
+    }
+
+    private static func receiveServerFrame(from connection: NWConnection) async throws -> Data {
+        var buffer = Data()
+        while true {
+            if let length = buffer.readUInt32(at: 0) {
+                let totalLength = Int(length) + 4
+                if buffer.count >= totalLength {
+                    return Data(buffer.prefix(totalLength))
+                }
+            }
+
+            let chunk = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Data, Error>) in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) {
+                    data, _, isComplete, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let data, !data.isEmpty {
+                        continuation.resume(returning: data)
+                    } else if isComplete {
+                        continuation.resume(throwing: PeerError.connectionClosed)
+                    } else {
+                        continuation.resume(returning: Data())
+                    }
+                }
+            }
+            buffer.append(chunk)
+        }
+    }
+
+    private static func sendLoginSuccess(on connection: NWConnection) async throws {
+        var payload = Data()
+        payload.appendBool(true)
+        payload.appendString("Welcome")
+        payload.appendUInt32(0x0100007F)
+
+        var frame = Data()
+        frame.appendUInt32(UInt32(payload.count + 4))
+        frame.appendUInt32(1)
+        frame.append(payload)
+
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: frame, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    // MARK: - Direct PeerInit semantics
+
+    @Test("Direct PeerInit is one-way and peer messages can follow without a reply")
+    func directPeerInitDoesNotRequireReciprocalHandshake() async throws {
+        // SoulseekQt and other protocol-compatible peers accept our PeerInit
+        // but do not reply with their own PeerInit on the same direct socket.
+        // Reproduce that peer here: it only reads, never sends a byte back.
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inboundStream = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { continuation.yield($0) }
+        }
+        let boundPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+        defer { listener.cancel() }
+
+        let username = "direct-init-test"
+        let filename = "Music\\Artist\\track.mp3"
+        let expected = MessageBuilder.peerInitMessage(
+            username: username,
+            connectionType: "P",
+            token: 0
+        ) + MessageBuilder.seeleseekHandshakeMessage()
+          + MessageBuilder.queueDownloadMessage(filename: filename)
+
+        let receiver = Task { () throws -> Data in
+            var iterator = inboundStream.makeAsyncIterator()
+            guard let connection = await iterator.next() else {
+                throw PeerError.connectionClosed
+            }
+            connection.start(queue: .global())
+            defer { connection.cancel() }
+
+            return try await withCheckedThrowingContinuation { continuation in
+                connection.receive(
+                    minimumIncompleteLength: expected.count,
+                    maximumLength: expected.count
+                ) { data, _, _, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: data ?? Data())
+                    }
+                }
+            }
+        }
+
+        let peer = PeerConnection(
+            peerInfo: .init(username: "silent-peer", ip: "127.0.0.1", port: Int(boundPort))
+        )
+        defer { Task { await peer.disconnect() } }
+
+        try await peer.connect()
+        try await peer.sendPeerInit(username: username)
+        // No reciprocal PeerInit arrives. QueueUpload must still be sent
+        // immediately on the established P connection.
+        try await peer.queueDownload(filename: filename)
+
+        let received = try await receiver.value
+        #expect(received == expected)
+    }
+
+    @Test("Outgoing indirect F connection preserves raw FileTransferInit bytes")
+    func outgoingIndirectFileConnectionPreservesRawToken() async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inboundStream = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { continuation.yield($0) }
+        }
+        let boundPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+        defer { listener.cancel() }
+
+        let connectToken: UInt32 = 0x11223344
+        let transferToken: UInt32 = 0xA1B2C3D4
+        let expectedPierce = MessageBuilder.pierceFirewallMessage(token: connectToken)
+        let uploader = Task { () throws -> (Data, NWConnection) in
+            var iterator = inboundStream.makeAsyncIterator()
+            guard let connection = await iterator.next() else {
+                throw PeerError.connectionClosed
+            }
+            connection.start(queue: .global())
+
+            let pierce = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                connection.receive(
+                    minimumIncompleteLength: expectedPierce.count,
+                    maximumLength: expectedPierce.count
+                ) { data, _, _, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: data ?? Data())
+                    }
+                }
+            }
+
+            var rawToken = Data()
+            rawToken.appendUInt32(transferToken)
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                connection.send(content: rawToken, completion: .contentProcessed { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                })
+            }
+            // Keep the uploader side alive until the test has consumed the
+            // raw token; cancelling immediately after send can race delivery.
+            return (pierce, connection)
+        }
+
+        let peer = PeerConnection(
+            peerInfo: .init(username: "file-uploader", ip: "127.0.0.1", port: Int(boundPort)),
+            type: .file,
+            token: connectToken,
+            autoStartReceiving: false
+        )
+        defer { Task { await peer.disconnect() } }
+
+        try await peer.connect()
+        try await peer.sendPierceFirewall()
+
+        let (receivedPierce, uploaderConnection) = try await uploader.value
+        defer { uploaderConnection.cancel() }
+        #expect(receivedPierce == expectedPierce)
+
+        // If the normal framed receive loop had started, it could consume
+        // these four raw bytes as a message length before DownloadManager.
+        let receivedRawToken = try await peer.receiveRawBytes(count: 4, timeout: 3)
+        #expect(receivedRawToken.readUInt32(at: 0) == transferToken)
+    }
+
+    @Test("Outgoing F handoff emits the existing file-transfer pool event")
+    func outgoingFileHandoffEmitsPoolEvent() async throws {
+        let pool = PeerConnectionPool()
+        let events = pool.events
+        let peer = PeerConnection(
+            peerInfo: .init(username: "file-uploader", ip: "10.0.0.2", port: 2234),
+            type: .file,
+            token: 77,
+            autoStartReceiving: false
+        )
+
+        let received = Task { () -> PeerPoolEvent? in
+            var iterator = events.makeAsyncIterator()
+            return await iterator.next()
+        }
+        pool.handoffOutgoingFileTransfer(
+            username: "file-uploader",
+            token: 77,
+            connection: peer
+        )
+
+        guard let event = await received.value else {
+            Issue.record("pool did not emit file-transfer handoff")
+            return
+        }
+        guard case .fileTransferConnection(let username, let token, let connection) = event else {
+            Issue.record("expected fileTransferConnection event")
+            return
+        }
+        #expect(username == "file-uploader")
+        #expect(token == 77)
+        #expect(connection === peer)
+    }
 
     // MARK: - Obfuscated listener plumbing
     //
@@ -102,7 +420,7 @@ struct PeerConnectivityFixTests {
         var iterator = inboundStream.makeAsyncIterator()
         let inbound = try #require(await iterator.next(), "listener did not surface inbound connection")
 
-        let pool = await PeerConnectionPool()
+        let pool = PeerConnectionPool()
         let peer = try await pool.acceptIncoming(inbound, obfuscated: true)
         #expect(peer.isObfuscated == true, "PeerConnection must carry isObfuscated=true when accepted from obfuscated listener")
 
@@ -122,19 +440,19 @@ struct PeerConnectivityFixTests {
 
     @Test("Peer address response propagates obfuscated port to waiters (defaults to 0 when omitted)")
     func peerAddressResponseCarriesObfuscatedPort() async throws {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         // With obfuscated port omitted, the tuple's third component is 0.
         let plainWaiter = Task { try await client._awaitPeerAddressWaiter(for: "plain", timeout: .seconds(5)) }
         try? await Task.sleep(for: .milliseconds(50))
-        await client.handlePeerAddressResponse(username: "plain", ip: "10.0.0.1", port: 2234)
+        client.handlePeerAddressResponse(username: "plain", ip: "10.0.0.1", port: 2234)
         let plain = try await plainWaiter.value
         #expect(plain.obfuscatedPort == 0)
 
         // With obfuscated port advertised, it propagates through to the waiter.
         let obfWaiter = Task { try await client._awaitPeerAddressWaiter(for: "obf", timeout: .seconds(5)) }
         try? await Task.sleep(for: .milliseconds(50))
-        await client.handlePeerAddressResponse(username: "obf", ip: "10.0.0.2", port: 2234, obfuscatedPort: 2235)
+        client.handlePeerAddressResponse(username: "obf", ip: "10.0.0.2", port: 2234, obfuscatedPort: 2235)
         let obf = try await obfWaiter.value
         #expect(obf.obfuscatedPort == 2235, "obfuscated port should flow through handlePeerAddressResponse to waiter")
         #expect(obf.ip == "10.0.0.2" && obf.port == 2234)
@@ -142,14 +460,14 @@ struct PeerConnectivityFixTests {
 
     @Test("Concurrent peer-address waiters all resume on single response")
     func multiWaiterPeerAddressCoalesces() async throws {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let a = Task { try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(5)) }
         let b = Task { try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(5)) }
         let c = Task { try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(5)) }
 
         try? await Task.sleep(for: .milliseconds(50))
-        await client.handlePeerAddressResponse(username: "alice", ip: "10.0.0.1", port: 2345)
+        client.handlePeerAddressResponse(username: "alice", ip: "10.0.0.1", port: 2345)
 
         let ra = try await a.value
         let rb = try await b.value
@@ -161,7 +479,7 @@ struct PeerConnectivityFixTests {
 
     @Test("One waiter timing out does not affect the others")
     func singleWaiterTimesOutWithoutAffectingOthers() async throws {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let early = Task { try await client._awaitPeerAddressWaiter(for: "bob", timeout: .seconds(10)) }
         try? await Task.sleep(for: .milliseconds(20))
@@ -174,7 +492,7 @@ struct PeerConnectivityFixTests {
             // expected
         }
 
-        await client.handlePeerAddressResponse(username: "bob", ip: "10.0.0.2", port: 1111)
+        client.handlePeerAddressResponse(username: "bob", ip: "10.0.0.2", port: 1111)
         let result = try await early.value
         #expect(result.ip == "10.0.0.2")
     }
@@ -301,70 +619,70 @@ struct PeerConnectivityFixTests {
 
     @Test("Concurrent artwork requests for the same (peer, file) coalesce into one")
     func artworkCoalescesSamePeerSameFile() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         // Two waiters for the SAME (peer, file) key.
         let result1 = LockedResult<Data?>()
         let result2 = LockedResult<Data?>()
-        let key1 = await client._registerArtworkWaiterForTest(
+        let key1 = client._registerArtworkWaiterForTest(
             username: "alice", filePath: "Music/foo.mp3"
         ) { result1.set($0) }
-        let key2 = await client._registerArtworkWaiterForTest(
+        let key2 = client._registerArtworkWaiterForTest(
             username: "alice", filePath: "Music/foo.mp3"
         ) { result2.set($0) }
         #expect(key1 == key2, "same (peer, file) must produce same coalescing key")
 
-        let count = await client._pendingArtworkWaiterCount(key: key1)
+        let count = client._pendingArtworkWaiterCount(key: key1)
         #expect(count == 2, "both waiters share one pending entry")
 
         // One delivery fans out to all waiters.
         let payload = Data([0xCA, 0xFE])
-        await client._deliverArtworkForTest(key: key1, data: payload)
+        client._deliverArtworkForTest(key: key1, data: payload)
 
         #expect(result1.get() == payload)
         #expect(result2.get() == payload)
 
-        let countAfter = await client._pendingArtworkWaiterCount(key: key1)
+        let countAfter = client._pendingArtworkWaiterCount(key: key1)
         #expect(countAfter == 0, "delivery cleans up the coalesced entry")
     }
 
     @Test("Different (peer, file) keys do NOT coalesce")
     func artworkDoesNotCoalesceDifferentKeys() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let resultA = LockedResult<Data?>()
         let resultB = LockedResult<Data?>()
-        let keyA = await client._registerArtworkWaiterForTest(
+        let keyA = client._registerArtworkWaiterForTest(
             username: "alice", filePath: "Music/a.mp3"
         ) { resultA.set($0) }
-        let keyB = await client._registerArtworkWaiterForTest(
+        let keyB = client._registerArtworkWaiterForTest(
             username: "bob", filePath: "Music/a.mp3"
         ) { resultB.set($0) }
         #expect(keyA != keyB, "different peers for same filename must NOT share a key")
 
-        await client._deliverArtworkForTest(key: keyA, data: Data([0x01]))
+        client._deliverArtworkForTest(key: keyA, data: Data([0x01]))
         #expect(resultA.get() == Data([0x01]))
         #expect(resultB.get() == nil, "delivering A must not trigger B's waiter")
 
-        await client._deliverArtworkForTest(key: keyB, data: Data([0x02]))
+        client._deliverArtworkForTest(key: keyB, data: Data([0x02]))
         #expect(resultB.get() == Data([0x02]))
     }
 
     @Test("Late artwork delivery (timeout firing after reply) is a no-op")
     func artworkLateDeliveryIsIdempotent() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let result = LockedResult<Data?>()
-        let key = await client._registerArtworkWaiterForTest(
+        let key = client._registerArtworkWaiterForTest(
             username: "alice", filePath: "Music/foo.mp3"
         ) { result.set($0) }
 
-        await client._deliverArtworkForTest(key: key, data: Data([0xFF]))
+        client._deliverArtworkForTest(key: key, data: Data([0xFF]))
         #expect(result.get() == Data([0xFF]))
 
         // A second delivery (e.g. timeout firing late) must not crash or
         // double-call the waiter.
-        await client._deliverArtworkForTest(key: key, data: nil)
+        client._deliverArtworkForTest(key: key, data: nil)
         // Result still the original payload — nothing was overwritten.
         #expect(result.get() == Data([0xFF]))
     }
@@ -373,9 +691,9 @@ struct PeerConnectivityFixTests {
 
     @Test("Pool removes F-connection from tracking on handoff")
     func poolRemovesFConnectionOnHandoff() async {
-        let pool = await PeerConnectionPool()
+        let pool = PeerConnectionPool()
 
-        let info = await PeerConnectionPool.PeerConnectionInfo(
+        let info = PeerConnectionPool.PeerConnectionInfo(
             id: "incoming-TEST",
             username: "alice",
             ip: "10.0.0.5",
@@ -384,16 +702,16 @@ struct PeerConnectivityFixTests {
             connectionType: .peer,
             connectedAt: Date()
         )
-        await pool._seedConnectionForTest(info)
-        #expect(await pool._connectionInfo(id: "incoming-TEST") != nil,
+        pool._seedConnectionForTest(info)
+        #expect(pool._connectionInfo(id: "incoming-TEST") != nil,
                 "precondition: connection seeded")
 
         // Simulate the .fileTransferConnection event arriving — the pool
         // must hand the connection off (untrack it) so `cleanupStaleConnections`
         // can't kill it mid-transfer.
-        await pool._simulateFileTransferHandoffForTest(connectionId: "incoming-TEST", ip: "10.0.0.5")
+        pool._simulateFileTransferHandoffForTest(connectionId: "incoming-TEST", ip: "10.0.0.5")
 
-        #expect(await pool._connectionInfo(id: "incoming-TEST") == nil,
+        #expect(pool._connectionInfo(id: "incoming-TEST") == nil,
                 "F-connection must be removed from pool tracking after handoff")
     }
 
@@ -406,9 +724,9 @@ struct PeerConnectivityFixTests {
     /// socket B. handlePeerEvent now routes every event by `connectionId`.
     @Test("Disconnect on one socket leaves the other socket alone when both share a username")
     func poolStateChangedKeysByConnectionIdNotUsername() async {
-        let pool = await PeerConnectionPool()
+        let pool = PeerConnectionPool()
 
-        let first = await PeerConnectionPool.PeerConnectionInfo(
+        let first = PeerConnectionPool.PeerConnectionInfo(
             id: "alice-1",
             username: "alice",
             ip: "10.0.0.1",
@@ -417,7 +735,7 @@ struct PeerConnectivityFixTests {
             connectionType: .peer,
             connectedAt: Date()
         )
-        let second = await PeerConnectionPool.PeerConnectionInfo(
+        let second = PeerConnectionPool.PeerConnectionInfo(
             id: "alice-2",
             username: "alice",
             ip: "10.0.0.1",
@@ -426,16 +744,16 @@ struct PeerConnectivityFixTests {
             connectionType: .peer,
             connectedAt: Date()
         )
-        await pool._seedConnectionForTest(first)
-        await pool._seedConnectionForTest(second)
+        pool._seedConnectionForTest(first)
+        pool._seedConnectionForTest(second)
 
         // Simulate .stateChanged(.disconnected) arriving for socket #2 only.
-        await pool._simulateOutgoingStateChangedForTest(
+        pool._simulateOutgoingStateChangedForTest(
             connectionId: "alice-2", username: "alice", state: .disconnected
         )
 
-        let stillFirst = await pool._connectionInfo(id: "alice-1")
-        let dropped = await pool._connectionInfo(id: "alice-2")
+        let stillFirst = pool._connectionInfo(id: "alice-1")
+        let dropped = pool._connectionInfo(id: "alice-2")
         #expect(stillFirst != nil, "socket #1 must survive — only #2 disconnected")
         #expect(dropped == nil, "socket #2 must be removed")
     }
@@ -445,9 +763,9 @@ struct PeerConnectivityFixTests {
     /// `disconnect(username:)` now matches exact `PeerConnectionInfo.username`.
     @Test("disconnect(username:) does not fire on dash-prefix username collisions")
     func poolDisconnectMatchesExactUsername() async {
-        let pool = await PeerConnectionPool()
+        let pool = PeerConnectionPool()
 
-        let bob = await PeerConnectionPool.PeerConnectionInfo(
+        let bob = PeerConnectionPool.PeerConnectionInfo(
             id: "bob-1",
             username: "bob",
             ip: "10.0.0.1",
@@ -455,7 +773,7 @@ struct PeerConnectivityFixTests {
             state: .connected,
             connectionType: .peer
         )
-        let bobDashOne = await PeerConnectionPool.PeerConnectionInfo(
+        let bobDashOne = PeerConnectionPool.PeerConnectionInfo(
             id: "bob-1-42",
             username: "bob-1",
             ip: "10.0.0.2",
@@ -463,13 +781,13 @@ struct PeerConnectivityFixTests {
             state: .connected,
             connectionType: .peer
         )
-        await pool._seedConnectionForTest(bob)
-        await pool._seedConnectionForTest(bobDashOne)
+        pool._seedConnectionForTest(bob)
+        pool._seedConnectionForTest(bobDashOne)
 
         await pool.disconnect(username: "bob")
 
-        #expect(await pool._connectionInfo(id: "bob-1") == nil, "exact-match user should disconnect")
-        #expect(await pool._connectionInfo(id: "bob-1-42") != nil,
+        #expect(pool._connectionInfo(id: "bob-1") == nil, "exact-match user should disconnect")
+        #expect(pool._connectionInfo(id: "bob-1-42") != nil,
                 "user 'bob-1' should NOT be caught by a disconnect for 'bob'")
     }
 
@@ -477,14 +795,14 @@ struct PeerConnectivityFixTests {
 
     @Test("Concurrent status waiters all resume on a single server response")
     func multiWaiterStatusCoalesces() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let a = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
         let b = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
         let c = Task { await client._awaitStatusWaiter(for: "alice", timeout: .seconds(5)) }
 
         try? await Task.sleep(for: .milliseconds(50))
-        await client.handleUserStatusResponse(username: "alice", status: .online, privileged: true)
+        client.handleUserStatusResponse(username: "alice", status: .online, privileged: true)
 
         let ra = await a.value
         let rb = await b.value
@@ -496,7 +814,7 @@ struct PeerConnectivityFixTests {
 
     @Test("Status waiter timeout removes only its own entry")
     func statusWaiterTimeoutIsIsolated() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let early = Task { await client._awaitStatusWaiter(for: "bob", timeout: .seconds(10)) }
         try? await Task.sleep(for: .milliseconds(20))
@@ -505,7 +823,7 @@ struct PeerConnectivityFixTests {
         let lateResult = await late.value
         #expect(lateResult.status == .offline, "short-timeout waiter returns offline")
 
-        await client.handleUserStatusResponse(username: "bob", status: .online, privileged: false)
+        client.handleUserStatusResponse(username: "bob", status: .online, privileged: false)
         let earlyResult = await early.value
         #expect(earlyResult.status == .online, "long-timeout waiter gets the real reply")
     }
@@ -514,7 +832,7 @@ struct PeerConnectivityFixTests {
 
     @Test("Disconnect resumes every pending peer-operation waiter")
     func disconnectFailsAllPendingWaiters() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
         let addressWaiter = Task {
             try await client._awaitPeerAddressWaiter(for: "alice", timeout: .seconds(30))
@@ -524,7 +842,7 @@ struct PeerConnectivityFixTests {
         }
 
         try? await Task.sleep(for: .milliseconds(50))
-        await client._failAllPendingPeerOperationsForTest()
+        client._failAllPendingPeerOperationsForTest()
 
         do {
             _ = try await addressWaiter.value
@@ -544,11 +862,11 @@ struct PeerConnectivityFixTests {
     /// cancel each task before dropping our reference.
     @Test("Disconnect cancels in-flight peer-establishment tasks")
     func disconnectCancelsPendingEstablishments() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
-        let sentinel = await client._seedSentinelEstablishmentForTest(username: "alice")
+        let sentinel = client._seedSentinelEstablishmentForTest(username: "alice")
 
-        await client._failAllPendingPeerOperationsForTest()
+        client._failAllPendingPeerOperationsForTest()
 
         do {
             _ = try await sentinel.value
@@ -569,19 +887,19 @@ struct PeerConnectivityFixTests {
     /// the new session. Teardown now wipes both.
     @Test("Disconnect clears distributed children and branch state")
     func disconnectClearsDistributedState() async {
-        let client = await NetworkClient()
+        let client = NetworkClient()
 
-        _ = await client._seedDistributedChildForTest()
-        #expect(await client._distributedChildCountForTest() == 1,
+        _ = client._seedDistributedChildForTest()
+        #expect(client._distributedChildCountForTest() == 1,
                 "precondition: distributed child seeded")
-        #expect(await client._distributedBranchLevelForTest() == 5,
+        #expect(client._distributedBranchLevelForTest() == 5,
                 "precondition: branch state seeded")
 
         await client._runDisconnectTeardownForTest()
 
-        #expect(await client._distributedChildCountForTest() == 0,
+        #expect(client._distributedChildCountForTest() == 0,
                 "children must be disconnected and dropped on teardown")
-        #expect(await client._distributedBranchLevelForTest() == 0,
+        #expect(client._distributedBranchLevelForTest() == 0,
                 "branch level must reset on teardown")
     }
 
@@ -589,12 +907,12 @@ struct PeerConnectivityFixTests {
 
     @Test("touchActivity updates lastActivity so cleanup doesn't reap a live connection")
     func poolTouchActivityKeepsConnectionFresh() async {
-        let pool = await PeerConnectionPool()
+        let pool = PeerConnectionPool()
 
         // Seed a connection that's been "alive" longer than the 10s
         // stuck-handshake cutoff but with no activity yet.
         let staleConnectedAt = Date().addingTimeInterval(-15)
-        let info = await PeerConnectionPool.PeerConnectionInfo(
+        let info = PeerConnectionPool.PeerConnectionInfo(
             id: "alice-42",
             username: "alice",
             ip: "10.0.0.6",
@@ -603,19 +921,19 @@ struct PeerConnectivityFixTests {
             connectionType: .peer,
             connectedAt: staleConnectedAt
         )
-        await pool._seedConnectionForTest(info)
-        #expect(await pool.lastActivity(for: "alice-42") == nil,
+        pool._seedConnectionForTest(info)
+        #expect(pool.lastActivity(for: "alice-42") == nil,
                 "precondition: lastActivity unset")
 
         // Real wiring: handlePeerEvent calls this on every event.
-        await pool._touchActivityForTest(connectionId: "alice-42")
+        pool._touchActivityForTest(connectionId: "alice-42")
 
-        #expect(await pool.lastActivity(for: "alice-42") != nil,
+        #expect(pool.lastActivity(for: "alice-42") != nil,
                 "lastActivity must be set after activity")
         // Now run cleanup. The stuck-handshake branch only fires when
         // lastActivity is nil — with our touch, it should be skipped.
-        await pool.cleanupStaleConnections()
-        #expect(await pool._connectionInfo(id: "alice-42") != nil,
+        pool.cleanupStaleConnections()
+        #expect(pool._connectionInfo(id: "alice-42") != nil,
                 "live connection must survive cleanup tick")
     }
 
@@ -631,12 +949,12 @@ struct PeerConnectivityFixTests {
 
     @Test("Salvage lifts a transferState entry into pendingDownloads")
     func salvageLiftsTransferStateEntry() async {
-        let dm = await DownloadManager()
-        let tracking = await MockTransferTracking()
-        await dm._setTransferStateForTest(tracking)
+        let dm = DownloadManager()
+        let tracking = MockTransferTracking()
+        dm._setTransferStateForTest(tracking)
 
         let transferId = UUID()
-        await tracking.addDownload(Transfer(
+        tracking.addDownload(Transfer(
             id: transferId,
             username: "alice",
             filename: "Music/song.mp3",
@@ -646,7 +964,7 @@ struct PeerConnectivityFixTests {
         ))
 
         let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
-        let decision = await dm._evaluatePoolTransferRequestForTest(
+        let decision = dm._evaluatePoolTransferRequestForTest(
             TransferRequest(direction: .upload, token: 999,
                             filename: "Music/song.mp3", size: 5_000_000,
                             username: "alice"),
@@ -659,7 +977,7 @@ struct PeerConnectivityFixTests {
         }
         #expect(salvagedTransferId == transferId, "salvaged decision must reference the matching transferState transfer")
 
-        let pending = await dm._pendingDownloadFor(username: "alice", filename: "Music/song.mp3")
+        let pending = dm._pendingDownloadFor(username: "alice", filename: "Music/song.mp3")
         #expect(pending?.transferId == transferId)
         #expect(pending?.size == 5_000_000)
         #expect(pending?.peerIP == "10.0.0.7")
@@ -669,12 +987,12 @@ struct PeerConnectivityFixTests {
 
     @Test("Salvage refuses to duplicate when a pendingDownload already exists")
     func salvageSkipsWhenPendingExists() async {
-        let dm = await DownloadManager()
-        let tracking = await MockTransferTracking()
-        await dm._setTransferStateForTest(tracking)
+        let dm = DownloadManager()
+        let tracking = MockTransferTracking()
+        dm._setTransferStateForTest(tracking)
 
         let transferId = UUID()
-        await dm._seedPendingDownloadForTest(
+        dm._seedPendingDownloadForTest(
             DownloadManager.PendingDownload(
                 transferId: transferId,
                 username: "alice",
@@ -686,7 +1004,7 @@ struct PeerConnectivityFixTests {
             token: 7
         )
 
-        await tracking.addDownload(Transfer(
+        tracking.addDownload(Transfer(
             id: transferId,
             username: "alice",
             filename: "Music/song.mp3",
@@ -696,7 +1014,7 @@ struct PeerConnectivityFixTests {
         ))
 
         let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
-        let decision = await dm._evaluatePoolTransferRequestForTest(
+        let decision = dm._evaluatePoolTransferRequestForTest(
             TransferRequest(direction: .upload, token: 999,
                             filename: "Music/song.mp3", size: 5_000_000,
                             username: "alice"),
@@ -707,17 +1025,17 @@ struct PeerConnectivityFixTests {
         // does — expect a `matched` decision pointing at our seeded token.
         // Critically, NOT a `salvaged` decision creating a duplicate entry.
         #expect(decision == .matched(token: 7))
-        let count = await dm._pendingDownloadCount
+        let count = dm._pendingDownloadCount
         #expect(count == 1, "no duplicate pending entry created")
     }
 
     @Test("Salvage refuses .failed transfers — user gave up; peer offer is stale")
     func salvageRefusesFailedTransfers() async {
-        let dm = await DownloadManager()
-        let tracking = await MockTransferTracking()
-        await dm._setTransferStateForTest(tracking)
+        let dm = DownloadManager()
+        let tracking = MockTransferTracking()
+        dm._setTransferStateForTest(tracking)
 
-        await tracking.addDownload(Transfer(
+        tracking.addDownload(Transfer(
             id: UUID(),
             username: "alice",
             filename: "Music/song.mp3",
@@ -728,7 +1046,7 @@ struct PeerConnectivityFixTests {
         ))
 
         let conn = PeerConnection(peerInfo: .init(username: "alice", ip: "10.0.0.7", port: 2234))
-        let decision = await dm._evaluatePoolTransferRequestForTest(
+        let decision = dm._evaluatePoolTransferRequestForTest(
             TransferRequest(direction: .upload, token: 999,
                             filename: "Music/song.mp3", size: 5_000_000,
                             username: "alice"),
@@ -736,7 +1054,7 @@ struct PeerConnectivityFixTests {
         )
 
         #expect(decision == .dropped, ".failed transfers must NOT be silently re-accepted via salvage")
-        let count = await dm._pendingDownloadCount
+        let count = dm._pendingDownloadCount
         #expect(count == 0)
     }
 }

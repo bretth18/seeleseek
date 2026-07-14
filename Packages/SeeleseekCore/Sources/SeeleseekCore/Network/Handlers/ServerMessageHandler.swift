@@ -499,13 +499,19 @@ public final class ServerMessageHandler {
             // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
             // We'll send PierceFirewall instead (correct protocol for indirect connections)
             logger.debug("connectToPeerThrottled: calling pool.connect with 10s timeout...")
+            let peerConnectionType: PeerConnection.ConnectionType = switch connectionType {
+            case "F": .file
+            case "D": .distributed
+            default: .peer
+            }
             let connection = try await withTimeout(seconds: 10) {
                 let conn = try await pool.connect(
                     to: username,
                     ip: ip,
                     port: Int(port),
                     token: token,
-                    isIndirect: true
+                    isIndirect: true,
+                    connectionType: peerConnectionType
                 )
                 return conn
             }
@@ -517,6 +523,16 @@ public final class ServerMessageHandler {
             // would misinterpret an extra 13-byte message as file data.
             if connectionType == "P" {
                 try? await connection.sendSeeleSeekHandshake()
+            } else if connectionType == "F" {
+                // This is the downloader side of an indirect F connection.
+                // The uploader will now send the raw 4-byte FileTransferInit
+                // token, so remove the socket from the framed peer pool and
+                // hand it to DownloadManager before any bytes are consumed.
+                pool.handoffOutgoingFileTransfer(
+                    username: username,
+                    token: token,
+                    connection: connection
+                )
             }
             logger.info("connectToPeerThrottled SUCCESS: \(username)")
 
