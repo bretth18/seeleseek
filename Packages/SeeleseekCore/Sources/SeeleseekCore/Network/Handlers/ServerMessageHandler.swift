@@ -908,7 +908,7 @@ public final class ServerMessageHandler {
         // reports its own outcome; we only give up when both paths failed
         // or the overall deadline passes.
         let connection: PeerConnection? = await withTaskGroup(of: SearchDeliveryOutcome.self) { group in
-            // Direct path: get address + connect + handshake
+            // Direct path: get address + connect
             group.addTask {
                 do {
                     let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
@@ -921,15 +921,8 @@ public final class ServerMessageHandler {
                         token: connectionToken,
                         obfuscated: useObf
                     )
-                    do {
-                        try await conn.waitForPeerHandshake(timeout: .seconds(8))
-                    } catch {
-                        // Tear down exactly the connection this dial created
-                        // (handshake failure or cancellation after the
-                        // indirect path won).
-                        await conn.disconnect()
-                        throw error
-                    }
+                    // Direct PeerInit is one-way — never wait for a
+                    // reciprocal (most clients don't send one).
                     return .connected(conn)
                 } catch {
                     return .pathFailed

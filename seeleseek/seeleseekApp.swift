@@ -20,22 +20,45 @@ struct SeeleSeekApp: App {
             || env["XCODE_RUNNING_FOR_PLAYGROUNDS"] == "1"
     }
 
+    /// True when this process hosts the unit-test bundle. The app must stay
+    /// inert then — no database load, no update check, and no login UI that
+    /// a stray click could connect to the real server with saved
+    /// credentials. Tests construct their own instances. UI tests are
+    /// unaffected: they launch the app as a separate process without XCTest
+    /// injected.
+    nonisolated static var isRunningTests: Bool {
+        NSClassFromString("XCTestCase") != nil
+            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
+    }
+
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(TestHostSafeAppDelegate.self) private var appDelegate
+    #endif
+
     var body: some Scene {
         WindowGroup {
-            MainView()
-                .environment(\.appState, appState)
-                .tint(SeeleColors.accent)
-                .task {
-                    if Self.isRunningInPreview { return }
-                    #if DEBUG
-                    if DemoDataSeeder.isEnabled {
-                        DemoDataSeeder.seed(into: appState)
-                        return
+            if Self.isRunningTests {
+                Text("seeleseek test host — closing this window is fine")
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(width: 360, height: 120)
+            } else {
+                MainView()
+                    .environment(\.appState, appState)
+                    .tint(SeeleColors.accent)
+                    .task {
+                        if Self.isRunningInPreview { return }
+                        #if DEBUG
+                        if DemoDataSeeder.isEnabled {
+                            DemoDataSeeder.seed(into: appState)
+                            return
+                        }
+                        #endif
+                        appState.configure()
+                        SeeleSeekShortcuts.updateAppShortcutParameters()
                     }
-                    #endif
-                    appState.configure()
-                    SeeleSeekShortcuts.updateAppShortcutParameters()
-                }
+            }
         }
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
@@ -127,3 +150,27 @@ struct SeeleSeekApp: App {
         #endif
     }
 }
+
+#if os(macOS)
+/// Closing the last window normally quits a SwiftUI macOS app. When the
+/// process is hosting unit tests, the window is a decoy — quitting on
+/// close killed the test host mid-run and failed whichever test was
+/// executing ("test runner exited with code 0").
+///
+/// Outside tests the delegate pretends not to implement the method at all
+/// (via `responds(to:)`), so SwiftUI's own last-window-closed behavior —
+/// including staying alive while the menu-bar extra is active — is
+/// untouched.
+final class TestHostSafeAppDelegate: NSObject, NSApplicationDelegate {
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(NSApplicationDelegate.applicationShouldTerminateAfterLastWindowClosed(_:)) {
+            return SeeleSeekApp.isRunningTests
+        }
+        return super.responds(to: aSelector)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false  // Only consulted under tests — see responds(to:).
+    }
+}
+#endif

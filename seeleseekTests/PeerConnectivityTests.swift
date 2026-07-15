@@ -21,6 +21,44 @@ struct PeerConnectivityTests {
         #expect(delays == [5, 10, 30, 60, 60])
     }
 
+    @Test("First connect failure fails visibly instead of auto-retrying", .timeLimit(.minutes(1)))
+    func firstConnectFailureDoesNotAutoReconnect() async throws {
+        // Auto-reconnect is armed on login success, never on attempt start:
+        // a session that has never logged in (typo'd server, server down)
+        // must surface the failure on the login screen, not loop forever in
+        // `.reconnecting` behind an empty main UI.
+        //
+        // Loopback port 1 is privileged and never listening — connects are
+        // refused immediately, with no bind/release race against other
+        // tests' sockets in the shared host process.
+        let closedPort: UInt16 = 1
+
+        let client = NetworkClient()
+        client._setReconnectDelayForTest(0.05)
+        client._setSkipNATSetupForTest(true)
+        var statuses: [ConnectionStatus] = []
+        client.onConnectionStatusChanged = { statuses.append($0) }
+
+        await client.connect(
+            server: "127.0.0.1",
+            port: closedPort,
+            username: "never-logged-in",
+            password: "test",
+            preferredListenPort: UInt16(Int.random(in: 40000...59998) & ~1)
+        )
+
+        // Give any (incorrect) reconnect scheduling a chance to fire.
+        try await Task.sleep(for: .milliseconds(300))
+
+        #expect(statuses.contains(.disconnected),
+                "a failed first connect must publish disconnected so LoginView shows")
+        #expect(!statuses.contains(.reconnecting),
+                "no auto-retry before a session has ever logged in")
+        #expect(client.connectionError != nil,
+                "the failure reason must be surfaced to the login screen")
+        await client.disconnectAsync()
+    }
+
     @Test("Unexpected server loss reconnects without publishing disconnected")
     func unexpectedServerLossReconnectsWithoutLoginFlash() async throws {
         let listener = try NWListener(using: .tcp, on: .any)
