@@ -26,18 +26,23 @@ struct SeeleSeekApp: App {
     /// credentials. Tests construct their own instances. UI tests are
     /// unaffected: they launch the app as a separate process without XCTest
     /// injected.
-    private static var isRunningTests: Bool {
+    nonisolated static var isRunningTests: Bool {
         NSClassFromString("XCTestCase") != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
     }
 
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(TestHostSafeAppDelegate.self) private var appDelegate
+    #endif
+
     var body: some Scene {
         WindowGroup {
             if Self.isRunningTests {
-                Text("seeleseek test host")
+                Text("seeleseek test host — closing this window is fine")
                     .foregroundStyle(.secondary)
-                    .frame(width: 320, height: 120)
+                    .padding()
+                    .frame(width: 360, height: 120)
             } else {
                 MainView()
                     .environment(\.appState, appState)
@@ -145,3 +150,27 @@ struct SeeleSeekApp: App {
         #endif
     }
 }
+
+#if os(macOS)
+/// Closing the last window normally quits a SwiftUI macOS app. When the
+/// process is hosting unit tests, the window is a decoy — quitting on
+/// close killed the test host mid-run and failed whichever test was
+/// executing ("test runner exited with code 0").
+///
+/// Outside tests the delegate pretends not to implement the method at all
+/// (via `responds(to:)`), so SwiftUI's own last-window-closed behavior —
+/// including staying alive while the menu-bar extra is active — is
+/// untouched.
+final class TestHostSafeAppDelegate: NSObject, NSApplicationDelegate {
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(NSApplicationDelegate.applicationShouldTerminateAfterLastWindowClosed(_:)) {
+            return SeeleSeekApp.isRunningTests
+        }
+        return super.responds(to: aSelector)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false  // Only consulted under tests — see responds(to:).
+    }
+}
+#endif

@@ -21,25 +21,17 @@ struct PeerConnectivityTests {
         #expect(delays == [5, 10, 30, 60, 60])
     }
 
-    @Test("First connect failure fails visibly instead of auto-retrying")
+    @Test("First connect failure fails visibly instead of auto-retrying", .timeLimit(.minutes(1)))
     func firstConnectFailureDoesNotAutoReconnect() async throws {
         // Auto-reconnect is armed on login success, never on attempt start:
         // a session that has never logged in (typo'd server, server down)
         // must surface the failure on the login screen, not loop forever in
         // `.reconnecting` behind an empty main UI.
         //
-        // Grab a loopback port that is guaranteed closed: bind, read, release.
-        let listener = try NWListener(using: .tcp, on: .any)
-        let closedPort = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
-            listener.stateUpdateHandler = { state in
-                if case .ready = state, let port = listener.port {
-                    continuation.resume(returning: port.rawValue)
-                }
-            }
-            listener.start(queue: .global())
-        }
-        listener.cancel()
-        try await Task.sleep(for: .milliseconds(100))
+        // Loopback port 1 is privileged and never listening — connects are
+        // refused immediately, with no bind/release race against other
+        // tests' sockets in the shared host process.
+        let closedPort: UInt16 = 1
 
         let client = NetworkClient()
         client._setReconnectDelayForTest(0.05)
