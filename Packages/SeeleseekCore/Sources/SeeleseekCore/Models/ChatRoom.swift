@@ -1,7 +1,7 @@
 import Foundation
 
-/// A user joining or leaving a room. Kept separate from the message
-/// transcript so the UI can surface these in a compact activity pane.
+/// A user joined or left a room. Kept out of the message transcript so
+/// the UI can show these events in an activity pane.
 public struct RoomEvent: Identifiable, Hashable, Sendable {
     public enum Kind: Hashable, Sendable {
         case joined

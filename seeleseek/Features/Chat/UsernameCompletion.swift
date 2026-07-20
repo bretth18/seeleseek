@@ -1,12 +1,12 @@
 import Foundation
 
-/// Tab-completion of usernames in the message field: completes the last
-/// token against room users, cycling through matches on repeated Tab.
+/// Tab-completion of usernames in the message field. Completes the last
+/// token against room users. Repeated Tab selects the next match.
 enum UsernameCompletion {
     struct Context: Equatable {
-        /// Text preceding the completed token, unchanged by completion.
+        /// Text before the completed token. Completion does not change it.
         let base: String
-        /// The stem originally typed, kept so cycling re-matches consistently.
+        /// The stem the user typed.
         let stem: String
         let matches: [String]
         var index: Int
@@ -14,10 +14,10 @@ enum UsernameCompletion {
         var completedText: String { base + matches[index] }
     }
 
-    /// Returns the completed text and cycling context, or nil when nothing
-    /// matches. Pass the previous context back in; it is reused only when
-    /// the text still equals its completion result (i.e. the user pressed
-    /// Tab again without editing), otherwise a fresh match is computed.
+    /// Returns the completion context, or nil if there is no match.
+    /// Pass the previous context back in. It is used again only if the
+    /// text equals its completion result. If not, a new match starts
+    /// from the current text.
     static func complete(
         text: String,
         candidates: [String],

@@ -1,9 +1,10 @@
 import SwiftUI
 import SeeleseekCore
 
-/// Compact strip under the room header collecting join/leave events, keeping
-/// them out of the message transcript. Collapsed it shows the latest event;
-/// expanded it becomes a scrollable list resizable via a drag handle.
+/// Strip under the room header that shows join/leave events. This keeps
+/// them out of the message transcript. Collapsed, it shows the latest
+/// event. Expanded, it shows a scrollable list with a drag handle to
+/// change the height.
 struct RoomActivityPane: View {
     let events: [RoomEvent]
 

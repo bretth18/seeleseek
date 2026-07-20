@@ -156,8 +156,8 @@ struct MessageBubble: View {
         ChatMessageFormatter.isAction(message)
     }
 
-    /// Content with links tappable; `/me` messages render italic as
-    /// "* username action".
+    /// Message content with tappable links. A `/me` message shows in
+    /// italic as "* username action".
     private var messageText: Text {
         let text = Text(ChatMessageFormatter.attributed(for: message))
         return isAction ? text.italic() : text
@@ -176,7 +176,7 @@ struct MessageBubble: View {
 
 struct MessageInput: View {
     @Binding var text: String
-    /// Usernames offered by Tab-completion of the last typed token.
+    /// Usernames that Tab-completion offers for the last typed token.
     var completionCandidates: [String] = []
     let onSend: () -> Void
 

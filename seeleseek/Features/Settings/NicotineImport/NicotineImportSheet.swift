@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 import SeeleseekCore
 
-/// One-shot migration of settings from a Nicotine+ install. Auto-detects
-/// the config, previews what was found grouped behind checkboxes, and
-/// applies only the selected groups.
+/// One-shot migration of settings from a Nicotine+ install. Finds the
+/// config, shows the found values with checkboxes, and applies only the
+/// selected groups.
 struct NicotineImportSheet: View {
     @Environment(\.appState) private var appState
     @Binding var isPresented: Bool

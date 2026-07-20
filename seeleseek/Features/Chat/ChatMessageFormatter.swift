@@ -2,8 +2,8 @@ import Foundation
 import SwiftUI
 import SeeleseekCore
 
-/// Builds display text for chat messages: URLs become tappable links and
-/// `/me` messages render as "* username action" lines.
+/// Builds display text for chat messages. URLs become links. A `/me`
+/// message becomes a "* username action" line.
 @MainActor
 enum ChatMessageFormatter {
     private static var cache: [UUID: AttributedString] = [:]
@@ -23,7 +23,7 @@ enum ChatMessageFormatter {
             display = message.content
         }
         let result = linkified(display)
-        // Bound the cache; entries are tiny but rooms are long-lived.
+        // Limit the cache size.
         if cache.count > 2000 {
             cache.removeAll(keepingCapacity: true)
         }

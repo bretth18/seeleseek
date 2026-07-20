@@ -2353,9 +2353,9 @@ public final class NetworkClient {
         // walk + per-file split + sorts off-main — with large shares this
         // hitched the UI on every incoming shares request.
         let fileIndex = shareManager.fileIndex
-        // No tuple destructuring here: with Swift 6.3's added
-        // `Task.detached(name:priority:operation:)` overload, a
-        // destructuring `let (a, b) =` makes this call ambiguous.
+        // Do not destructure the result. Swift 6.3 adds the overload
+        // Task.detached(name:priority:operation:). A tuple pattern
+        // makes this call ambiguous.
         let dirs = await Task.detached(priority: .utility) {
             Self.buildSharesDirectories(fileIndex: fileIndex, isBuddy: isBuddy)
         }.value

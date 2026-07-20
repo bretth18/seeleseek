@@ -200,9 +200,9 @@ public final class ShareManager {
     // MARK: - Folder Management
 
     public func addFolder(_ url: URL) {
-        // URLs from NSOpenPanel carry security scope; plain file URLs
-        // (e.g. settings import) don't and are readable without it in a
-        // non-sandboxed process — so scope is best-effort, never a gate.
+        // NSOpenPanel URLs have security scope. Plain file URLs (for
+        // example, from settings import) do not. A non-sandboxed process
+        // can read them without it. Thus scope is optional, not a gate.
         let hasScope = url.startAccessingSecurityScopedResource()
 
         if hasScope {

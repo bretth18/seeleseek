@@ -316,7 +316,7 @@ final class ChatState {
         }
     }
 
-    /// Cap per room so busy rooms don't grow unboundedly.
+    /// Maximum events kept per room.
     private static let maxRoomEvents = 200
 
     private func appendEvent(_ event: RoomEvent, toRoomAt index: Int) {
@@ -642,7 +642,7 @@ final class ChatState {
         if let command = SlashCommand.parse(content) {
             switch command {
             case .me:
-                break  // Sent over the wire verbatim; rendered as an action line.
+                break  // Send unchanged. The UI shows it as an action line.
             case .join(let room):
                 joinRoom(room)
                 return
@@ -689,8 +689,8 @@ final class ChatState {
         }
     }
 
-    /// `/clear` — empties the visible transcript of the current
-    /// conversation. DM history in the database is untouched.
+    /// Empties the visible transcript of the current conversation.
+    /// Does not change DM history in the database.
     func clearTranscript() {
         if let room = selectedRoom, let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
             joinedRooms[idx].messages.removeAll()
@@ -699,8 +699,8 @@ final class ChatState {
         }
     }
 
-    /// Local-only system line in the current conversation (never sent or
-    /// persisted).
+    /// Adds a local system line to the current conversation. The line is
+    /// not sent and not persisted.
     private func appendLocalSystemMessage(_ text: String) {
         let message = ChatMessage(username: "", content: text, isSystem: true)
         if let room = selectedRoom, let idx = joinedRooms.firstIndex(where: { $0.name == room }) {

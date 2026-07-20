@@ -1,13 +1,13 @@
 import SwiftUI
 import SeeleseekCore
 
-/// Shared chat transcript with smart autoscroll: follows new messages only
-/// while the user is at the bottom. Scrolling up pauses following and new
-/// messages accumulate behind a jump-to-latest pill instead of yanking the
-/// view down. Sending your own message always re-pins.
+/// Chat transcript with smart autoscroll. The view follows new messages
+/// only when the user is at the bottom. If the user scrolls up, new
+/// messages collect behind a jump-to-latest pill. A sent message pins
+/// the view to the bottom again.
 struct ChatTranscriptView: View {
     let messages: [ChatMessage]
-    /// Room name or DM username — resets scroll state when it changes.
+    /// Room name or DM username. A change resets the scroll state.
     let conversationID: String
     var chatState: ChatState
     var appState: AppState
@@ -36,8 +36,8 @@ struct ChatTranscriptView: View {
                     unseenCount = 0
                 }
             }
-            // Keyed on last id, not count — the message cap drops from the
-            // head at 1000, leaving the count constant while ids still change.
+            // Observe the last id, not the count. At the 1000-message
+            // cap, the count stays constant but the ids change.
             .onChange(of: messages.last?.id) {
                 guard let last = messages.last else { return }
                 if last.isOwn || isPinnedToBottom {

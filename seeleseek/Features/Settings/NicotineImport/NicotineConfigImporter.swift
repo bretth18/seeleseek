@@ -8,7 +8,7 @@ struct NicotineConfig: Equatable {
     var downloadDirectory: String?
     var incompleteDirectory: String?
     var uploadSlots: Int?
-    /// KB/s, 0 = unlimited (same convention as SettingsState).
+    /// KB/s. 0 = unlimited. Same convention as SettingsState.
     var uploadSpeedLimit: Int?
     var downloadSpeedLimit: Int?
     var sharedFolders: [String] = []
@@ -23,14 +23,15 @@ struct NicotineConfig: Equatable {
     }
 }
 
-/// Reads Nicotine+'s `config` file: INI sections written by Python's
-/// configparser, with values that are Python literals (bare strings, ints,
-/// True/False/None, and repr'd lists/tuples like `[('Music', '/path')]`).
-/// Parsing is tolerant — anything unrecognized is skipped, never fatal.
+/// Reads the Nicotine+ `config` file. The file has INI sections from
+/// Python's configparser. Values are Python literals: bare strings, ints,
+/// True/False/None, and lists/tuples such as `[('Music', '/path')]`.
+/// The parser skips values it cannot read. It does not fail.
 enum NicotineConfigImporter {
 
-    /// `$XDG_CONFIG_HOME/nicotine/config` falling back to
-    /// `~/.config/nicotine/config`; nil when neither exists.
+    /// Returns `$XDG_CONFIG_HOME/nicotine/config`, or
+    /// `~/.config/nicotine/config` if XDG_CONFIG_HOME is not set.
+    /// Returns nil if the file does not exist.
     static func defaultConfigURL() -> URL? {
         let base: URL
         if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
@@ -112,8 +113,8 @@ enum NicotineConfigImporter {
         }
     }
 
-    /// Nicotine+ shares are `[('Virtual Name', '/path'), …]`; some old
-    /// configs held plain path strings. Accept both shapes.
+    /// Nicotine+ shares are `[('Virtual Name', '/path'), …]`. Some old
+    /// configs hold plain path strings. This accepts both shapes.
     private static func folderPaths(_ raw: String?) -> [String] {
         guard let raw, case .list(let items) = PythonLiteral.parse(raw) else { return [] }
         var paths: [String] = []
@@ -139,8 +140,8 @@ enum NicotineConfigImporter {
 
     // MARK: - INI parsing
 
-    /// section → key → raw value string. Handles `[section]` headers,
-    /// `key = value` pairs, and indented continuation lines.
+    /// Returns section → key → raw value string. Reads `[section]`
+    /// headers, `key = value` pairs, and indented continuation lines.
     private static func parseINI(_ text: String) -> [String: [String: String]] {
         var sections: [String: [String: String]] = [:]
         var currentSection: String?
@@ -159,7 +160,8 @@ enum NicotineConfigImporter {
                 continue
             }
 
-            // Continuation line: leading whitespace, belongs to the last key.
+            // A continuation line starts with whitespace. It extends the
+            // value of the last key.
             if line.first?.isWhitespace == true, let section = currentSection, let key = currentKey {
                 sections[section]?[key, default: ""] += " " + trimmed
                 continue
@@ -184,10 +186,10 @@ enum NicotineConfigImporter {
     }
 }
 
-/// Minimal parser for the Python literal shapes configparser writes:
-/// quoted strings, ints, True/False/None, and (nested) lists/tuples.
-/// Anything unparseable falls back to `.string(raw)` for scalars or is
-/// dropped from collections.
+/// Minimal parser for the Python literals configparser writes: quoted
+/// strings, ints, True/False/None, and nested lists/tuples. A scalar
+/// that does not parse becomes `.string(raw)`. A collection element
+/// that does not parse is dropped.
 enum PythonLiteral: Equatable {
     case string(String)
     case int(Int)
@@ -216,7 +218,7 @@ enum PythonLiteral: Equatable {
             if let value = Int(token) {
                 return .int(value)
             }
-            // Bare (unquoted) string — configparser writes strings raw.
+            // Bare string. configparser writes strings without quotes.
             return .string(token)
         }
     }

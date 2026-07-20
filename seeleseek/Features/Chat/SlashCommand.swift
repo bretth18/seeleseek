@@ -1,8 +1,8 @@
 import Foundation
 
-/// Commands typed with a leading `/` in the message field. `/me` is special:
-/// it is sent over the wire verbatim (Soulseek convention — clients render
-/// it as an action line); everything else is handled locally.
+/// Commands that start with `/` in the message field. The client sends
+/// `/me` unchanged (Soulseek convention; peers show it as an action
+/// line). The client handles all other commands locally.
 enum SlashCommand: Equatable {
     case me
     case join(String)
@@ -10,7 +10,7 @@ enum SlashCommand: Equatable {
     case clear
     case unknown(String)
 
-    /// nil when the input is not a command (doesn't start with `/`).
+    /// Returns nil if the input does not start with `/`.
     static func parse(_ input: String) -> SlashCommand? {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("/") else { return nil }
