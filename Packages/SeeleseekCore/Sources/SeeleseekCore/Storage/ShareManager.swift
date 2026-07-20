@@ -200,22 +200,23 @@ public final class ShareManager {
     // MARK: - Folder Management
 
     public func addFolder(_ url: URL) {
-        // Start accessing security-scoped resource
-        guard url.startAccessingSecurityScopedResource() else {
-            logger.error("Failed to access security-scoped resource: \(url.path)")
-            return
-        }
+        // URLs from NSOpenPanel carry security scope; plain file URLs
+        // (e.g. settings import) don't and are readable without it in a
+        // non-sandboxed process — so scope is best-effort, never a gate.
+        let hasScope = url.startAccessingSecurityScopedResource()
 
-        // Store bookmark for persistence
-        do {
-            let bookmarkData = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            defaults.set(bookmarkData, forKey: "bookmark-\(url.path)")
-        } catch {
-            logger.error("Failed to create bookmark: \(error.localizedDescription)")
+        if hasScope {
+            // Store bookmark for persistence
+            do {
+                let bookmarkData = try url.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                defaults.set(bookmarkData, forKey: "bookmark-\(url.path)")
+            } catch {
+                logger.error("Failed to create bookmark: \(error.localizedDescription)")
+            }
         }
 
         let folder = SharedFolder(path: url.path)
@@ -226,7 +227,9 @@ public final class ShareManager {
         // accumulate access counts that are never balanced (the matching
         // `stop` in `removeFolder` only fires once).
         guard !sharedFolders.contains(where: { $0.path == folder.path }) else {
-            url.stopAccessingSecurityScopedResource()
+            if hasScope {
+                url.stopAccessingSecurityScopedResource()
+            }
             logger.info("Folder already shared: \(url.path)")
             return
         }
@@ -234,7 +237,9 @@ public final class ShareManager {
         sharedFolders.append(folder)
         // The direct `start` above already grants access for this run;
         // record it so `scanFolderResult` doesn't stack a bookmark start.
-        securityScopedPaths.insert(url.path)
+        if hasScope {
+            securityScopedPaths.insert(url.path)
+        }
         save()
 
         // Notify after the scan so the (folders, files) broadcast pair

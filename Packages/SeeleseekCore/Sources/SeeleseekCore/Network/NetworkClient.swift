@@ -2353,9 +2353,14 @@ public final class NetworkClient {
         // walk + per-file split + sorts off-main — with large shares this
         // hitched the UI on every incoming shares request.
         let fileIndex = shareManager.fileIndex
-        let (publicDirs, privateDirs) = await Task.detached(priority: .utility) {
+        // No tuple destructuring here: with Swift 6.3's added
+        // `Task.detached(name:priority:operation:)` overload, a
+        // destructuring `let (a, b) =` makes this call ambiguous.
+        let dirs = await Task.detached(priority: .utility) {
             Self.buildSharesDirectories(fileIndex: fileIndex, isBuddy: isBuddy)
         }.value
+        let publicDirs = dirs.publicDirs
+        let privateDirs = dirs.privateDirs
 
         logger.info("Sending \(publicDirs.count) public + \(privateDirs.count) private directories to \(username)")
 
