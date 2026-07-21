@@ -9,7 +9,7 @@ struct ChatSettingsSection: View {
             settingsHeader("Chat")
 
             settingsGroup("Messages") {
-                settingsToggle("Show join/leave messages", isOn: $settings.showJoinLeaveMessages)
+                settingsToggle("Show join/leave activity pane", isOn: $settings.showJoinLeaveMessages)
             }
 
             settingsGroup("Notifications") {

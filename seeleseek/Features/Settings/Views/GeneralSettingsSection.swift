@@ -3,6 +3,7 @@ import SeeleseekCore
 
 struct GeneralSettingsSection: View {
     @Bindable var settings: SettingsState
+    @State private var showNicotineImport = false
 
     private var folderStructurePreview: String {
         let template = settings.activeDownloadTemplate
@@ -92,6 +93,30 @@ struct GeneralSettingsSection: View {
                 settingsToggle("Launch at login", isOn: $settings.launchAtLogin)
                 settingsToggle("Show in menu bar", isOn: $settings.showInMenuBar)
             }
+
+            settingsGroup("Import") {
+                settingsRow {
+                    HStack {
+                        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                            Text("Migrate from Nicotine+")
+                                .font(SeeleTypography.body)
+                                .foregroundStyle(SeeleColors.textPrimary)
+                            Text("Login, ports, folders, shares, and ignore list")
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                        }
+
+                        Spacer()
+
+                        Button("Import from Nicotine+…") {
+                            showNicotineImport = true
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showNicotineImport) {
+            NicotineImportSheet(isPresented: $showNicotineImport)
         }
     }
 }

@@ -35,27 +35,16 @@ struct PrivateChatContentView: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: SeeleSpacing.sm) {
-                        ForEach(chat.messages) { message in
-                            MessageBubble(message: message, chatState: chatState, appState: appState)
-                                .id(message.id)
-                        }
-                    }
-                    .padding(SeeleSpacing.md)
-                }
-                .defaultScrollAnchor(.bottom)
-                .onChange(of: chat.messages.count) { _, _ in
-                    if let latest = chat.messages.last {
-                        proxy.scrollTo(latest.id, anchor: .bottom)
-                    }
-                }
-            }
+            ChatTranscriptView(
+                messages: chat.messages,
+                conversationID: chat.username,
+                chatState: chatState,
+                appState: appState
+            )
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            MessageInput(text: $chatState.messageInput) {
+            MessageInput(text: $chatState.messageInput, completionCandidates: [chat.username]) {
                 chatState.sendMessage()
             }
         }
@@ -76,20 +65,23 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: message.isOwn ? .trailing : .leading, spacing: SeeleSpacing.xxs) {
-                if !message.isOwn && !message.isSystem {
+                if !message.isOwn && !message.isSystem && !isAction {
                     Text(message.username)
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.accent)
                 }
 
-                Text(message.content)
+                messageText
                     .font(SeeleTypography.body)
-                    .foregroundStyle(message.isSystem ? SeeleColors.textTertiary : SeeleColors.textPrimary)
+                    .foregroundStyle(
+                        message.isSystem ? SeeleColors.textTertiary :
+                        isAction ? SeeleColors.textSecondary : SeeleColors.textPrimary
+                    )
                     .padding(.horizontal, SeeleSpacing.md)
                     .padding(.vertical, SeeleSpacing.sm)
                     .background(
-                        message.isOwn ? SeeleColors.accent.opacity(0.2) :
-                        message.isSystem ? .clear : SeeleColors.surface
+                        message.isSystem || isAction ? .clear :
+                        message.isOwn ? SeeleColors.accent.opacity(0.2) : SeeleColors.surface
                     )
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     .contextMenu {
@@ -160,6 +152,17 @@ struct MessageBubble: View {
         }
     }
 
+    private var isAction: Bool {
+        ChatMessageFormatter.isAction(message)
+    }
+
+    /// Message content with tappable links. A `/me` message shows in
+    /// italic as "* username action".
+    private var messageText: Text {
+        let text = Text(ChatMessageFormatter.attributed(for: message))
+        return isAction ? text.italic() : text
+    }
+
     private var messageBubbleAccessibilityLabel: String {
         if message.isSystem {
             return "System: \(message.content), \(message.formattedTime)"
@@ -173,7 +176,11 @@ struct MessageBubble: View {
 
 struct MessageInput: View {
     @Binding var text: String
+    /// Usernames that Tab-completion offers for the last typed token.
+    var completionCandidates: [String] = []
     let onSend: () -> Void
+
+    @State private var completionContext: UsernameCompletion.Context?
 
     private static let maxLength = 2000
 
@@ -199,6 +206,18 @@ struct MessageInput: View {
                         if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                             onSend()
                         }
+                    }
+                    .onKeyPress(.tab) {
+                        guard !completionCandidates.isEmpty,
+                              let context = UsernameCompletion.complete(
+                                  text: text,
+                                  candidates: completionCandidates,
+                                  previous: completionContext
+                              )
+                        else { return .ignored }
+                        completionContext = context
+                        text = context.completedText
+                        return .handled
                     }
 
                 Button(action: onSend) {

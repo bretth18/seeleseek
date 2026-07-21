@@ -305,16 +305,25 @@ final class ChatState {
             if !joinedRooms[index].users.contains(username) {
                 joinedRooms[index].users.append(username)
             }
-            let message = ChatMessage(username: "", content: "\(username) joined the room", isSystem: true)
-            Self.appendCapped(message, to: &joinedRooms[index].messages)
+            appendEvent(RoomEvent(kind: .joined, username: username), toRoomAt: index)
         }
     }
 
     private func handleUserLeftRoom(_ roomName: String, username: String) {
         if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
             joinedRooms[index].users.removeAll { $0 == username }
-            let message = ChatMessage(username: "", content: "\(username) left the room", isSystem: true)
-            Self.appendCapped(message, to: &joinedRooms[index].messages)
+            appendEvent(RoomEvent(kind: .left, username: username), toRoomAt: index)
+        }
+    }
+
+    /// Maximum events kept per room.
+    private static let maxRoomEvents = 200
+
+    private func appendEvent(_ event: RoomEvent, toRoomAt index: Int) {
+        joinedRooms[index].events.append(event)
+        let overflow = joinedRooms[index].events.count - Self.maxRoomEvents
+        if overflow > 0 {
+            joinedRooms[index].events.removeFirst(overflow)
         }
     }
 
@@ -630,6 +639,29 @@ final class ChatState {
         }
         messageInput = ""
 
+        if let command = SlashCommand.parse(content) {
+            switch command {
+            case .me:
+                break  // Send unchanged. The UI shows it as an action line.
+            case .join(let room):
+                joinRoom(room)
+                return
+            case .leave:
+                if let room = selectedRoom {
+                    leaveRoom(room)
+                } else {
+                    appendLocalSystemMessage("Not in a room")
+                }
+                return
+            case .clear:
+                clearTranscript()
+                return
+            case .unknown(let name):
+                appendLocalSystemMessage("Unknown command: \(name)")
+                return
+            }
+        }
+
         if let roomName = selectedRoom {
             // Send to room via network
             let message = ChatMessage(
@@ -654,6 +686,27 @@ final class ChatState {
             Task {
                 try? await networkClient?.sendPrivateMessage(to: username, message: content)
             }
+        }
+    }
+
+    /// Empties the visible transcript of the current conversation.
+    /// Does not change DM history in the database.
+    func clearTranscript() {
+        if let room = selectedRoom, let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            joinedRooms[idx].messages.removeAll()
+        } else if let user = selectedPrivateChat, let idx = privateChats.firstIndex(where: { $0.username == user }) {
+            privateChats[idx].messages.removeAll()
+        }
+    }
+
+    /// Adds a local system line to the current conversation. The line is
+    /// not sent and not persisted.
+    private func appendLocalSystemMessage(_ text: String) {
+        let message = ChatMessage(username: "", content: text, isSystem: true)
+        if let room = selectedRoom, let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+            Self.appendCapped(message, to: &joinedRooms[idx].messages)
+        } else if let user = selectedPrivateChat, let idx = privateChats.firstIndex(where: { $0.username == user }) {
+            Self.appendCapped(message, to: &privateChats[idx].messages)
         }
     }
 

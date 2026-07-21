@@ -93,6 +93,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let notificationSoundNameKey = "settingsNotificationSoundName"
     private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
     private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
+    private let showJoinLeaveMessagesKey = "settingsShowJoinLeaveMessages"
 
     /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
     /// created by "streaming-service" apps that queue uploads en masse without sharing.
@@ -247,7 +248,12 @@ final class SettingsState: DownloadSettingsProviding {
     var organizationPattern: String = "{artist}/{album}/{track} - {title}"
 
     // MARK: - Chat Settings
-    var showJoinLeaveMessages: Bool = true
+    var showJoinLeaveMessages: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
     var enableNotifications: Bool = true
     var notificationSound: Bool = true
     var selectedNotificationSound: NotificationSound = .default {
@@ -426,6 +432,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
         UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
         UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
+        UserDefaults.standard.set(showJoinLeaveMessages, forKey: showJoinLeaveMessagesKey)
 
         // Save to database asynchronously
         Task {
@@ -522,6 +529,9 @@ final class SettingsState: DownloadSettingsProviding {
         }
         if let patterns = UserDefaults.standard.stringArray(forKey: blockedUsernamePatternsKey) {
             blockedUsernamePatterns = patterns
+        }
+        if UserDefaults.standard.object(forKey: showJoinLeaveMessagesKey) != nil {
+            showJoinLeaveMessages = UserDefaults.standard.bool(forKey: showJoinLeaveMessagesKey)
         }
     }
 

@@ -11,33 +11,26 @@ struct ChatRoomContentView: View {
             VStack(spacing: 0) {
                 roomHeader
 
+                if appState.settings.showJoinLeaveMessages && !room.events.isEmpty {
+                    RoomActivityPane(events: room.events)
+                }
+
                 if !room.tickers.isEmpty {
                     tickerStrip
                 }
 
                 Divider().background(SeeleColors.surfaceSecondary)
 
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: SeeleSpacing.sm) {
-                            ForEach(room.messages) { message in
-                                MessageBubble(message: message, chatState: chatState, appState: appState)
-                                    .id(message.id)
-                            }
-                        }
-                        .padding(SeeleSpacing.md)
-                    }
-                    .defaultScrollAnchor(.bottom)
-                    .onChange(of: room.messages.count) { _, _ in
-                        if let latest = room.messages.last {
-                            proxy.scrollTo(latest.id, anchor: .bottom)
-                        }
-                    }
-                }
+                ChatTranscriptView(
+                    messages: room.messages,
+                    conversationID: room.name,
+                    chatState: chatState,
+                    appState: appState
+                )
 
                 Divider().background(SeeleColors.surfaceSecondary)
 
-                MessageInput(text: $chatState.messageInput) {
+                MessageInput(text: $chatState.messageInput, completionCandidates: room.users) {
                     chatState.sendMessage()
                 }
             }
