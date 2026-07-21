@@ -1,72 +1,77 @@
 ---
-title: Downloads & Transfers
-description: Managing downloads, uploads, and transfer queues in seeleseek.
+title: Downloads and Transfers
+description: Control downloads, uploads, and transfer queues in seeleseek.
 order: 4
 section: guide
 ---
 
 ## Transfers View
 
-Navigate to **Transfers** (⌘3) to see all your active, queued, and completed transfers. The view has three tabs: **Downloads**, **Uploads**, and **History**.
+Go to **Transfers** (⌘3) to see the active, queued, and completed transfers. The view has three tabs: **Downloads**, **Uploads**, and **History**.
 
-The header shows real-time stats:
+The header shows this data in real time:
+
 - **Download speed** (blue arrow)
 - **Upload speed** (green arrow)
-- **Slots summary** when uploading (e.g., "3 active · Queue: 12")
+- **Slot summary** during uploads, for example "3 active · Queue: 12"
 
 ## Downloads
 
-### Starting a Download
+### Start a Download
 
-You can start downloads from:
-- **Search results** — double-click a result, or right-click and choose Download
-- **Browse view** — download individual files or folders from a user's shares
-- **Wishlists** — download results from automatic wishlist searches
+You can start downloads from these locations:
+
+- **Search results** — Double-click a result. Or right-click a result and select Download.
+- **Browse view** — Download files or folders from the shares of a user.
+- **Wishlists** — Download results from automatic wishlist searches.
 
 ### Download States
 
 | Status | Icon | Meaning |
 |--------|------|---------|
-| Queued | ⏳ | Waiting in the remote user's upload queue |
-| Connecting | ⟳ | Establishing a peer connection |
-| Transferring | ⟳ | Actively downloading with a progress bar |
-| Completed | ✓ | Download finished successfully |
-| Failed | ✗ | Something went wrong (error shown) |
-| Waiting | ⏸ | Paused or waiting for a slot |
+| Queued | ⏳ | The download is in the upload queue of the remote user |
+| Connecting | ⟳ | The app opens a peer connection |
+| Transferring | ⟳ | The download is in progress. A progress bar shows |
+| Completed | ✓ | The download is complete |
+| Failed | ✗ | An error occurred. The error shows |
+| Waiting | ⏸ | The download is on hold, or waits for a slot |
 
 ### Queue Positions
 
-When a remote user has a full upload queue, your download waits in line. The queue position is shown next to the transfer — seeleseek automatically starts the download when your turn comes.
+If the upload queue of the remote user is full, your download stays in the queue. The queue position shows adjacent to the transfer. seeleseek starts the download automatically when you are at the front of the queue.
 
 ### Download Actions
 
-Hover over a download to reveal action buttons:
-- **Play** — preview completed audio files (30-second limit)
-- **Tags** — edit metadata for completed audio files
-- **Reveal** — open the file in Finder
-- **Cancel** — cancel an active transfer
-- **Retry** — retry a failed transfer
-- **Remove** — remove from the list
+Move the pointer over a download to show the action buttons:
 
-Right-click for more options including "Move to Top" and "Move to Bottom" to reorder the queue.
+- **Play** — Plays the first 30 seconds of a completed audio file.
+- **Tags** — Opens the metadata editor for a completed audio file.
+- **Reveal** — Shows the file in the Finder.
+- **Cancel** — Stops an active transfer.
+- **Retry** — Starts a failed transfer again.
+- **Remove** — Removes the transfer from the list.
 
-### Clearing Transfers
+Right-click a download for more functions. **Move to Top** and **Move to Bottom** change the sequence of the queue.
 
-Use the **Clear** menu in the header to:
-- **Clear Completed** — remove all finished downloads
-- **Clear Failed** — remove all errored downloads
+### Remove Transfers from the List
+
+Use the **Clear** menu in the header:
+
+- **Clear Completed** — Removes all completed downloads.
+- **Clear Failed** — Removes all failed downloads.
 
 ## Uploads
 
-The Uploads tab shows files being sent to other users. Uploads happen automatically when another user requests a file you're sharing.
+The Uploads tab shows the files that the app sends to other users. An upload starts automatically when a user requests a file from your shares.
 
-Upload slots are limited — by default, seeleseek allows 5 simultaneous uploads. Additional requests are queued.
+The number of upload slots has a limit. By default, seeleseek permits 5 uploads at the same time. Requests above this limit go into the queue.
 
 ## History
 
-The History tab logs all completed and failed transfers with timestamps. It also shows lifetime totals:
-- **Total downloaded** — cumulative bytes received
-- **Total uploaded** — cumulative bytes sent
+The History tab shows all completed and failed transfers, with timestamps. It also shows these totals:
+
+- **Total downloaded** — All bytes received.
+- **Total uploaded** — All bytes sent.
 
 ## Download Settings
 
@@ -74,13 +79,13 @@ Configure downloads in **Settings > General > Downloads**:
 
 ### Download Location
 
-Set where files are saved. Default: `~/Downloads/seeleseek/`.
+Set the folder for completed files. The default is `~/Downloads/seeleseek/`.
 
-There's also a separate location for **incomplete files** — partially-downloaded files are stored here until they finish.
+A different folder holds the **incomplete files**. The app keeps a download there until the download is complete.
 
-### Folder Organization
+### Folder Structure
 
-Choose how downloaded files are organized:
+Select the structure for downloaded files:
 
 | Template | Example |
 |----------|---------|
@@ -88,29 +93,31 @@ Choose how downloaded files are organized:
 | Full Path | `Music/Artist/Album/track.flac` |
 | Artist - Album | `Artist - Album/track.flac` |
 | Filename Only | `track.flac` |
-| Custom | Your own template using tokens |
+| Custom | A template that you make with tokens |
 
-Available tokens for custom templates: `{username}`, `{folders}`, `{artist}`, `{album}`, `{filename}`.
+These tokens are available for custom templates: `{username}`, `{folders}`, `{artist}`, `{album}`, `{filename}`.
 
 ### Transfer Slots
 
 In **Settings > Network > Transfer Slots**:
-- **Max Download Slots**: 1–20 (default: 5)
-- **Max Upload Slots**: 1–20 (default: 5)
+
+- **Max Download Slots** — 1 to 20. The default is 5.
+- **Max Upload Slots** — 1 to 20. The default is 5.
 
 ### Speed Limits
 
 In **Settings > Network > Speed Limits**:
-- **Upload Limit**: KB/s (0 = unlimited)
-- **Download Limit**: KB/s (0 = unlimited)
+
+- **Upload Limit** — KB/s. 0 is no limit.
+- **Download Limit** — KB/s. 0 is no limit.
 
 ## Metadata
 
-seeleseek can automatically fetch and apply metadata to downloaded audio files. Configure in **Settings > Metadata**:
+seeleseek can get and apply metadata for downloaded audio files automatically. Configure this function in **Settings > Metadata**:
 
-- **Fetch metadata automatically** — look up track info after download
-- **Fetch album art** — download cover art
-- **Embed album art in files** — write art into the audio file's tags
-- **Set album art as folder icon** — use cover art as the macOS folder icon
+- **Fetch metadata automatically** — Gets the track data after a download.
+- **Fetch album art** — Downloads the cover art.
+- **Embed album art in files** — Writes the art into the tags of the audio file.
+- **Set album art as folder icon** — Uses the cover art as the macOS folder icon.
 
-You can also enable **automatic file organization** which renames and moves files based on their metadata using a pattern like `{artist}/{album}/{track} - {title}`.
+The app can also organize files automatically. This function renames and moves files by their metadata. It uses a pattern, for example `{artist}/{album}/{track} - {title}`.

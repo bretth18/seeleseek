@@ -99,7 +99,7 @@ async function handleSearch() {
 			bind:this={searchInput}
 			oninput={handleSearch}
 			type="search"
-			placeholder="search documentation..."
+			placeholder="Search the documentation"
 			class="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground font-mono"
 		/>
 	</div>

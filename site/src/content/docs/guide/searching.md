@@ -1,42 +1,42 @@
 ---
-title: Searching for Files
-description: How to search the Soulseek network, filter results, and use wishlists.
+title: Search for Files
+description: Search the Soulseek network, filter the results, and use wishlists.
 order: 3
 section: guide
 ---
 
 ## Basic Search
 
-1. Navigate to **Search** (⌘1)
-2. Type your query in the search bar — it reads "Search or paste a music URL..."
-3. Press **Enter** or click the search button
+1. Go to **Search** (⌘1).
+2. Type your query in the search bar.
+3. Press **Enter**, or click the search button.
 
-Results stream in from other users on the network as they respond. You'll see a count of results and unique users updating in real time.
+Results come from other users on the network when they respond. The app shows the number of results and the number of users in real time.
 
 ## Search History
 
-seeleseek remembers your last 10 searches. Click the dropdown arrow on the search bar to quickly re-run a previous search.
+seeleseek keeps your last 10 searches. Click the arrow on the search bar to start a previous search again.
 
 ## Multiple Tabs
 
-You can have multiple searches open simultaneously. Each search gets its own tab, so you can compare results from different queries.
+You can keep more than one search open at the same time. Each search has its own tab. Use the tabs to compare the results of different queries.
 
-## Filtering Results
+## Filter the Results
 
 ### Quick Filters
 
-The filter bar above results offers preset filters:
+The filter bar above the results has these preset filters:
 
 - **MP3 320** — MP3 files at 320 kbps
 - **FLAC** — FLAC lossless files
-- **Lossless** — Any lossless format (FLAC, WAV, APE, AIFF)
-- **Hi-Res** — Files with sample rate above 44.1 kHz or bit depth above 16
+- **Lossless** — All lossless formats (FLAC, WAV, APE, AIFF)
+- **Hi-Res** — Files with a sample rate of more than 44.1 kHz, or a bit depth of more than 16
 
-An active filter badge shows how many filters are applied.
+A badge shows the number of active filters.
 
 ### Advanced Filters
 
-Expand the full filter panel to filter by:
+Open the full filter panel to filter by these properties:
 
 | Filter | Options |
 |--------|---------|
@@ -44,58 +44,59 @@ Expand the full filter panel to filter by:
 | **Bitrate** | Any, 128+, 192+, 256+, 320+ kbps |
 | **Sample Rate** | Any, 44.1k+, 48k+, 96k+ |
 | **Bit Depth** | Any, 16+, 24+, 32+ |
-| **Free Slots** | Only show results from users with available upload slots |
+| **Free Slots** | Show only results from users with free upload slots |
 
-## Understanding Results
+## Result Data
 
 Each search result shows:
 
-- **Filename** with a color-coded icon (green for lossless, blue for audio, gray for other)
-- **Username** and country flag (when available)
-- **Folder path** on the remote user's computer
-- **Quality badges** — format, bitrate (color-coded: green for 320+/lossless, blue for 256+, orange for 192+), sample rate, bit depth
-- **Duration** and **file size**
-- **Slot status** — a green checkmark means the user has free upload slots; an hourglass with a number shows your queue position
+- **Filename**, with an icon. Green is lossless, blue is audio, and gray is other.
+- **Username** and country flag (when available).
+- **Folder path** on the computer of the remote user.
+- **Quality badges** — the format, bitrate, sample rate, and bit depth. Green is 320 kbps or lossless. Blue is 256 kbps or more. Orange is 192 kbps or more.
+- **Duration** and **file size**.
+- **Slot status** — A green check mark shows that the user has free upload slots. An hourglass with a number shows your queue position.
 
 ### Private Files
 
-Some results show a lock icon — these are private files that the user has restricted. You may not be able to download them.
+Some results show a lock icon. These files are private. A download of a private file is possible only if the user gives permission.
 
 ## Result Actions
 
-- **Click** a result to select it
-- **Double-click** to start a download
-- **Right-click** for a context menu with more options:
-  - Download the file or entire folder
-  - Browse the user's shared files
-  - View the user's profile
-  - Preview album art (for audio files)
-  - Ignore/unignore the user
-  - Copy the filename or full path
+- **Click** a result to select it.
+- **Double-click** a result to start a download.
+- **Right-click** a result to open the context menu. The menu has these functions:
+  - Download the file or the full folder
+  - Browse the shared files of the user
+  - Show the profile of the user
+  - Show the album art (audio files only)
+  - Ignore the user, or remove the ignore
+  - Copy the filename or the full path
 
-### Bulk Downloads
+### Download More Than One Result
 
-Click the **Select** button to enter selection mode, where you can check multiple results and download them all at once.
+Click the **Select** button to start the selection mode. Select the applicable results. Then download all of them in one step.
 
 ## Wishlists
 
-Wishlists are saved searches that run automatically at regular intervals.
+A wishlist entry is a saved search. The app does the search again automatically at regular intervals.
 
-1. Navigate to **Wishlists** (⌘2)
-2. Type a search query and click **Add**
-3. seeleseek will periodically search for that query in the background
+1. Go to **Wishlists** (⌘2).
+2. Type a search query and click **Add**.
+3. seeleseek does the search in the background at each interval.
 
 Each wishlist entry shows:
-- A star toggle to enable/disable it
-- The query text
-- When it was last searched
-- A result count (expand to see results)
-- A manual "search now" button
 
-The server controls the wishlist search interval (typically every few minutes).
+- A star control that sets the entry to on or off
+- The query text
+- The time of the last search
+- The number of results (open the entry to see the results)
+- A button that starts the search immediately
+
+The server sets the wishlist search interval. The interval is usually some minutes.
 
 ## Search Settings
 
 In **Settings > General > Search**:
 
-- **Max Results** — Stop collecting results after this limit. Set to 0 for unlimited. Default: 500.
+- **Max Results** — The app stops the collection of results at this limit. Set the value to 0 for no limit. The default is 500.

@@ -37,7 +37,7 @@ const softwareLd = {
 	description: SITE_DESCRIPTION,
 	applicationCategory: 'MultimediaApplication',
 	applicationSubCategory: 'FileSharingApplication',
-	operatingSystem: 'macOS 14+',
+	operatingSystem: 'macOS 15.6+',
 	url: SITE_URL,
 	downloadUrl: DOWNLOAD_URL,
 	image: `${SITE_URL}${OG_IMAGE}`,
@@ -81,7 +81,7 @@ const softwareLd = {
 				/>
 				<h1 class="{typography.display} text-accent">seeleseek</h1>
 				<p class="max-w-xl text-foreground/50 text-[clamp(1rem,1.8vw,1.25rem)] leading-[1.4] tracking-[-0.01em]">
-					A Soulseek client for macOS. Built in Swift.
+					A native Soulseek client for macOS, written in Swift.
 				</p>
 			</div>
 		</Cell>
@@ -91,7 +91,7 @@ const softwareLd = {
 	<div class="grid grid-cols-1 md:grid-cols-2 border-b border-border">
 		<Cell href={DOWNLOAD_URL} external class="border-b md:border-b-0 md:border-r border-border flex items-baseline justify-between min-h-[7rem]">
 			<span class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-accent-soft group-hover:text-accent transition-colors">Download .pkg</span>
-			<span class="{typography.meta}">macOS 14+</span>
+			<span class="{typography.meta}">macOS 15.6+</span>
 		</Cell>
 		<Cell href="/docs/guide/getting-started" class="flex items-baseline justify-between min-h-[7rem]">
 			<span class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-foreground/80 group-hover:text-foreground transition-colors">Docs</span>

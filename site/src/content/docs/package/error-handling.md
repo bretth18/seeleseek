@@ -1,23 +1,23 @@
 ---
-title: Error Handling
-description: Error types, connection failures, and recovery strategies in SeeleseekCore.
+title: Errors and Recovery
+description: Error types, connection failures, and recovery procedures in SeeleseekCore.
 order: 17
 section: package
 ---
 
 ## Error Types
 
-SeeleseekCore defines domain-specific error types for each subsystem.
+SeeleseekCore defines error types for each subsystem.
 
 ### ServerConnection Errors
 
 ```swift
 public enum ConnectionError: Error, LocalizedError {
-    case notConnected         // Tried to send while disconnected
-    case connectionFailed(String)  // TCP connection failed
-    case loginFailed(String)       // Server rejected credentials
-    case timeout                   // Connection timed out
-    case invalidResponse           // Malformed server response
+    case notConnected         // A send occurred without a connection
+    case connectionFailed(String)  // The TCP connection failed
+    case loginFailed(String)       // The server rejected the credentials
+    case timeout                   // The connection timed out
+    case invalidResponse           // The server response was not valid
 }
 ```
 
@@ -25,9 +25,9 @@ public enum ConnectionError: Error, LocalizedError {
 
 ```swift
 public enum PeerConnectionError: Error, LocalizedError {
-    case invalidAddress    // Peer IP is multicast, loopback, or reserved
-    case timeout           // Connection timed out
-    case connectionFailed(String)  // TCP connection failed with reason
+    case invalidAddress    // The peer IP is multicast, loopback, or reserved
+    case timeout           // The connection timed out
+    case connectionFailed(String)  // The TCP connection failed, with the reason
 }
 ```
 
@@ -35,13 +35,13 @@ public enum PeerConnectionError: Error, LocalizedError {
 
 ```swift
 public enum DownloadError: Error, LocalizedError {
-    case invalidPort            // Peer's port is invalid
-    case connectionCancelled    // Connection was cancelled
-    case connectionClosed       // Connection closed unexpectedly
-    case cannotCreateFile       // Can't create the local file
-    case timeout                // Transfer timed out
+    case invalidPort            // The port of the peer is not valid
+    case connectionCancelled    // The connection was cancelled
+    case connectionClosed       // The connection closed unexpectedly
+    case cannotCreateFile       // The client cannot make the local file
+    case timeout                // The transfer timed out
     case incompleteTransfer(expected: UInt64, actual: UInt64)
-    case verificationFailed     // File verification failed
+    case verificationFailed     // The file verification failed
 }
 ```
 
@@ -49,12 +49,12 @@ public enum DownloadError: Error, LocalizedError {
 
 ```swift
 public enum UploadError: Error, LocalizedError {
-    case fileNotFound      // File doesn't exist on disk
-    case fileNotShared     // File isn't in shared folders
-    case cannotReadFile    // Can't open the file for reading
-    case connectionFailed  // Peer connection failed
-    case peerRejected      // Peer rejected the transfer
-    case timeout           // Transfer timed out
+    case fileNotFound      // The file is not on the disk
+    case fileNotShared     // The file is not in the shared folders
+    case cannotReadFile    // The client cannot open the file
+    case connectionFailed  // The peer connection failed
+    case peerRejected      // The peer rejected the transfer
+    case timeout           // The transfer timed out
 }
 ```
 
@@ -62,9 +62,9 @@ public enum UploadError: Error, LocalizedError {
 
 ```swift
 public enum DecompressionError: Error, LocalizedError {
-    case decompressionFailed  // Zlib decompression failed
-    case invalidData          // Data isn't valid zlib
-    case outputTooLarge       // Decompressed size exceeds limit
+    case decompressionFailed  // The zlib decompression failed
+    case invalidData          // The data is not valid zlib
+    case outputTooLarge       // The decompressed size is more than the limit
 }
 ```
 
@@ -72,8 +72,8 @@ public enum DecompressionError: Error, LocalizedError {
 
 ```swift
 public enum ListenerError: Error, LocalizedError {
-    case noAvailablePort    // All ports in range are in use
-    case bindFailed(String) // Can't bind to port
+    case noAvailablePort    // All ports in the range are in use
+    case bindFailed(String) // The bind to the port failed
 }
 ```
 
@@ -81,16 +81,16 @@ public enum ListenerError: Error, LocalizedError {
 
 ```swift
 public enum NATError: Error {
-    case noLocalIP         // Can't determine local IP
-    case noGatewayFound    // No UPnP gateway found
-    case mappingFailed     // Port mapping failed
-    case ipDiscoveryFailed // Can't discover external IP
+    case noLocalIP         // The local IP is not known
+    case noGatewayFound    // No UPnP gateway was found
+    case mappingFailed     // The port mapping failed
+    case ipDiscoveryFailed // The external IP is not known
 }
 ```
 
 ## Login Failures
 
-Login results are represented as an enum, not a thrown error:
+The login result is an enum, not a thrown error:
 
 ```swift
 public enum LoginResult: Sendable {
@@ -99,77 +99,78 @@ public enum LoginResult: Sendable {
 }
 ```
 
-Common failure reasons:
-- `"INVALIDPASS"` — wrong password
-- `"INVALIDUSERNAME"` — username contains invalid characters
-- Connection timeout — server unreachable
+Usual failure reasons:
+
+- `"INVALIDPASS"` — The password is not correct.
+- `"INVALIDUSERNAME"` — The username contains characters that are not permitted.
+- A connection timeout — The server is not available.
 
 ## Connection Recovery
 
-### Auto-Reconnect
+### Automatic Reconnection
 
-`NetworkClient` handles reconnection automatically for unexpected disconnects:
+`NetworkClient` connects again automatically after an unexpected disconnect:
 
 ```swift
-// Triggered internally on connection drop
+// Called internally when the connection stops
 client.handleUnexpectedDisconnect(reason: "Connection reset")
-// → Schedules reconnect with exponential backoff
+// → Plans a new connection with exponential backoff
 
-// Explicitly disconnect (disables auto-reconnect)
+// An explicit disconnect (this stops automatic reconnection)
 client.disconnect()
 ```
 
-The auto-reconnect uses exponential backoff — retrying after increasing intervals to avoid hammering the server.
+The interval between tries increases each time (exponential backoff). This prevents too many login tries in a short time.
 
-### Relogged Handling
+### Relogged Disconnects
 
-When the server sends a `Relogged` message (another client logged in), auto-reconnect is disabled:
+The server sends a `Relogged` message when a different client logs in with the same credentials. Automatic reconnection stops:
 
 ```swift
 client.handleReloggedDisconnect()
-// → Disconnects without scheduling reconnect
+// → Disconnects and does not try again
 ```
 
 ### Download Retry
 
-Failed downloads can be retried:
+You can start a failed download again:
 
 ```swift
 downloadManager.retryFailedDownload(transferId: transfer.id)
 ```
 
-Retry re-queues the download with the same filename and username, re-establishing the peer connection.
+The retry puts the download in the queue again, with the same filename and username. The client opens the peer connection again.
 
 ## Peer Connection Failures
 
 ### CantConnectToPeer
 
-When the server reports it can't connect us to a peer:
+The server reports when it cannot connect you to a peer:
 
 ```swift
 client.onCantConnectToPeer = { token in
-    // Connection to peer failed via server mediation
-    // The download manager handles this internally
+    // The server-mediated connection to the peer failed
+    // The download manager receives this event internally
 }
 ```
 
-### Upload Denied / Failed
+### Upload Denied and Upload Failed
 
-Peers can deny or report failed uploads:
+A peer can deny an upload, or report a failed upload:
 
 ```swift
 client.onUploadDenied = { filename, reason in
-    // Reasons: "Queued", "Too many files", "Blocked", etc.
+    // Possible reasons: "Queued", "Too many files", "Blocked"
 }
 
 client.onUploadFailed = { filename in
-    // Upload failed without a specific reason
+    // The upload failed. No reason was given
 }
 ```
 
-## Activity Logging
+## Activity Logs
 
-SeeleseekCore provides a logging protocol for monitoring all operations:
+SeeleseekCore has a log protocol. Use it to monitor all operations:
 
 ```swift
 @MainActor
@@ -202,4 +203,4 @@ Register your logger at app startup:
 ActivityLogger.shared = MyLogger()
 ```
 
-The package logs through `ActivityLogger.shared` when set, covering connection events, peer activity, search operations, transfer lifecycle, and errors.
+The package writes to `ActivityLogger.shared` when it is set. The logs cover connection events, peer activity, searches, the transfer lifecycle, and errors.

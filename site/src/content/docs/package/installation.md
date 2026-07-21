@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Add SeeleseekCore to your Swift project via Swift Package Manager.
+description: Add SeeleseekCore to your Swift project with Swift Package Manager.
 order: 11
 section: package
 ---
@@ -34,7 +34,7 @@ targets: [
 ]
 ```
 
-Or if you're using it as a local package (like the seeleseek app does), reference the path:
+For a local package (the seeleseek app uses this method), give the path:
 
 ```swift
 dependencies: [
@@ -44,30 +44,30 @@ dependencies: [
 
 ## Xcode
 
-1. Open your project in Xcode
-2. Go to **File > Add Package Dependencies**
-3. Enter the repository URL
-4. Select the SeeleseekCore library product
+1. Open your project in Xcode.
+2. Select **File > Add Package Dependencies**.
+3. Enter the repository URL.
+4. Select the SeeleseekCore library product.
 
-## What's Included
+## Package Contents
 
-The package provides a single library product, `SeeleseekCore`, which includes:
+The package has one library product, `SeeleseekCore`. It contains:
 
-- Protocol implementation (message building and parsing)
+- The protocol implementation (message construction and parsing)
 - Server and peer connection management
-- Download and upload managers
-- Share indexing and management
+- The download and upload managers
+- The shared folder index and its management
 - NAT traversal and port mapping
 - GeoIP resolution
 - All model types
 
 ## App-Layer Dependencies
 
-SeeleseekCore intentionally does **not** include:
+SeeleseekCore does **not** contain:
 
-- UI components (it's a networking package)
-- AppKit/UIKit imports
-- Notification handling
-- Persistent storage (the app handles settings/state persistence)
+- UI components (it is a networking package)
+- AppKit or UIKit imports
+- Notification code
+- Persistent storage (the app keeps the settings and the state)
 
-Your app needs to provide implementations of several protocols — see the [Overview](/docs/package/overview) for details on `TransferTracking`, `StatisticsRecording`, `DownloadSettingsProviding`, and `MetadataReading`.
+Your app must implement some protocols. See the [Overview](/docs/package/overview) for `TransferTracking`, `StatisticsRecording`, `DownloadSettingsProviding`, and `MetadataReading`.

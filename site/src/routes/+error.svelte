@@ -6,13 +6,13 @@ import { Seo } from '$lib/seo';
 const status = $derived(page.status);
 const isNotFound = $derived(status === 404);
 const message = $derived(
-	isNotFound ? 'page not found' : (page.error?.message ?? 'something broke')
+	isNotFound ? 'This page does not exist.' : (page.error?.message ?? 'An error occurred.')
 );
 </script>
 
 <Seo
 	title={isNotFound ? '404' : `${status}`}
-	description={isNotFound ? 'page not found' : 'something broke'}
+	description={isNotFound ? 'This page does not exist.' : 'An error occurred.'}
 	noindex
 />
 

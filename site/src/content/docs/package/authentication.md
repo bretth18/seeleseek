@@ -1,18 +1,18 @@
 ---
-title: Authentication & Connection Lifecycle
-description: Connecting to the Soulseek server, authentication, and managing the connection lifecycle.
+title: Authentication and Connection Lifecycle
+description: Connect to the Soulseek server, log in, and control the connection lifecycle.
 order: 12
 section: package
 ---
 
-## Connecting to the Server
+## Connect to the Server
 
-The main entry point is `NetworkClient`. Create an instance and call `connect`:
+The main entry point is `NetworkClient`. Make an instance and call `connect`:
 
 ```swift
 let client = NetworkClient()
 
-// Set up callbacks before connecting
+// Set the callbacks before you connect
 client.onConnectionStatusChanged = { status in
     print("Connection status: \(status)")
 }
@@ -29,44 +29,44 @@ await client.connect(
 
 ## Connection Status
 
-Monitor the connection through the `onConnectionStatusChanged` callback or the observable properties:
+Monitor the connection with the `onConnectionStatusChanged` callback, or with the observable properties:
 
 ```swift
 // Observable properties (for SwiftUI)
-client.isConnecting  // true while connecting
-client.isConnected   // true when logged in
-client.connectionError // error message if failed
+client.isConnecting  // true during the connection sequence
+client.isConnected   // true after a successful login
+client.connectionError // the error message after a failure
 
-// Callback-based
+// Callback
 client.onConnectionStatusChanged = { status in
     switch status {
     case .disconnected:
         print("Not connected")
     case .connecting:
-        print("Connecting...")
+        print("Connection in progress")
     case .connected:
         print("Logged in")
     case .reconnecting:
-        print("Reconnecting after drop")
+        print("New connection in progress")
     case .error:
         print("Connection error")
     }
 }
 ```
 
-The `ConnectionStatus` enum cases:
+The `ConnectionStatus` enum has these cases:
 
 | Case | Meaning |
 |------|---------|
-| `.disconnected` | Not connected to server |
-| `.connecting` | TCP connection or login in progress |
-| `.connected` | Successfully authenticated |
-| `.reconnecting` | Dropped, attempting auto-reconnect |
-| `.error` | Connection or login failed |
+| `.disconnected` | There is no connection to the server |
+| `.connecting` | The TCP connection or the login is in progress |
+| `.connected` | The login was successful |
+| `.reconnecting` | The connection stopped. The client tries to connect again |
+| `.error` | The connection or the login failed |
 
 ## Server Connection Details
 
-Under the hood, `NetworkClient` creates a `ServerConnection` actor:
+`NetworkClient` makes a `ServerConnection` actor:
 
 ```swift
 // ServerConnection is an actor for thread safety
@@ -74,7 +74,7 @@ public actor ServerConnection {
     public static let defaultHost = "server.slsknet.org"
     public static let defaultPort: UInt16 = 2242
 
-    // Async stream of complete message frames
+    // An async stream of complete message frames
     public nonisolated var messages: AsyncStream<Data>
 
     public func connect() async throws
@@ -83,70 +83,71 @@ public actor ServerConnection {
 }
 ```
 
-The server connection handles:
-- TCP connection with keepalive (60s interval, 3 probes)
-- Message framing (4-byte length prefix, little-endian)
-- A 50 MB receive buffer security limit
-- Automatic ping every 300 seconds
+The server connection does these tasks:
 
-## Login Flow
+- The TCP connection, with keepalive (60 s interval, 3 probes)
+- The message framing (4-byte length prefix, little-endian)
+- A 50 MB receive buffer limit, for security
+- An automatic ping every 300 seconds
 
-When you call `connect`, the following happens:
+## Login Sequence
 
-1. `ServerConnection.connect()` establishes the TCP connection
-2. A login message is sent with username, password hash, and client version info
-3. The server responds with success (including your external IP) or failure
-4. On success, SeeleseekCore sends: listen port, online status, shared file counts
-5. `ListenerService` starts listening for incoming peer connections
-6. `NATService` attempts UPnP port mapping in the background
-7. Callbacks fire with `ConnectionStatus.connected`
+When you call `connect`, this sequence occurs:
 
-## Disconnecting
+1. `ServerConnection.connect()` opens the TCP connection.
+2. The client sends a login message with the username, the password hash, and the client version.
+3. The server responds with success (the response includes your external IP) or with failure.
+4. On success, SeeleseekCore sends the listen port, the online status, and the shared file counts.
+5. `ListenerService` starts to listen for incoming peer connections.
+6. `NATService` tries the UPnP port mapping in the background.
+7. The callbacks fire with `ConnectionStatus.connected`.
+
+## Disconnect
 
 ```swift
-// User-initiated disconnect (disables auto-reconnect)
+// A disconnect by the user (this stops automatic reconnection)
 client.disconnect()
 
-// For unexpected disconnects (enables auto-reconnect)
+// For unexpected disconnects (this permits automatic reconnection)
 client.handleUnexpectedDisconnect(reason: "Connection lost")
 ```
 
-## Auto-Reconnect
+## Automatic Reconnection
 
-When the connection drops unexpectedly, `NetworkClient` automatically attempts to reconnect with exponential backoff. This is triggered by `handleUnexpectedDisconnect` and disabled by explicit `disconnect()` calls.
+When the connection stops unexpectedly, `NetworkClient` connects again automatically. The interval between tries increases each time (exponential backoff). `handleUnexpectedDisconnect` starts this behavior. An explicit `disconnect()` call stops it.
 
-The one exception is a "Relogged" disconnect — when another client logs in with the same credentials. Auto-reconnect is disabled in this case to prevent a login loop.
+There is one exception: the "Relogged" disconnect. This occurs when a different client logs in with the same credentials. Automatic reconnection stops in this case. This prevents a login loop.
 
 ```swift
-// Called internally when server sends Relogged message
+// Called internally when the server sends a Relogged message
 client.handleReloggedDisconnect()
 ```
 
-## Listening for Incoming Connections
+## Listen for Incoming Connections
 
-SeeleseekCore automatically starts a `ListenerService` to accept incoming peer connections:
+SeeleseekCore starts a `ListenerService` automatically. This service accepts incoming peer connections:
 
 ```swift
-// ListenerService tries ports in order: preferred, then 2234-2240
+// ListenerService tries the ports in sequence: the preferred port, then 2234-2240
 let (port, obfuscatedPort) = try await listener.start(
     preferredPort: 2234
 )
 ```
 
-Incoming connections are routed to `PeerConnectionPool` for handshake processing.
+Incoming connections go to `PeerConnectionPool` for the handshake.
 
 ## NAT Traversal
 
-The `NATService` actor handles UPnP port mapping:
+The `NATService` actor does the UPnP port mapping:
 
 ```swift
 let nat = NATService()
 
-// Map a port via UPnP
+// Map a port with UPnP
 let externalPort = try await nat.mapPort(2234)
 
-// Discover external IP
+// Find the external IP
 let externalIP = await nat.discoverExternalIP()
 ```
 
-If UPnP fails, connections still work via the server-mediated "pierce firewall" mechanism — see [Peer Connections](/docs/package/peer-connections).
+If UPnP fails, connections operate through the server-mediated "pierce firewall" procedure. See [Peer Connections](/docs/package/peer-connections).

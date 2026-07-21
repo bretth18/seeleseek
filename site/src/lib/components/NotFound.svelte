@@ -8,7 +8,7 @@ interface Props {
 	message?: string;
 }
 
-let { status = 404, message = 'page not found' }: Props = $props();
+let { status = 404, message = 'This page does not exist.' }: Props = $props();
 </script>
 
 <div class="flex-1 flex flex-col">

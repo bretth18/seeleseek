@@ -9,27 +9,27 @@ export interface FaqItem {
 export const homepageFaq: FaqItem[] = [
 	{
 		q: 'What is seeleseek?',
-		a: 'seeleseek is a native Soulseek client for macOS, built in Swift/SwiftUI. It connects to the Soulseek peer-to-peer network for discovering and transferring music between users.'
+		a: 'seeleseek is a native Soulseek client for macOS, written in Swift and SwiftUI. It connects to the Soulseek peer-to-peer network, where users find and transfer music.'
 	},
 	{
 		q: 'Which macOS versions does seeleseek support?',
-		a: 'seeleseek requires macOS 14 Sonoma or later. It runs natively on Apple Silicon and Intel Macs.'
+		a: 'seeleseek operates on macOS 15.6 or later. It is a native app for Apple Silicon and Intel Macs.'
 	},
 	{
 		q: 'Is seeleseek free?',
-		a: 'Yes. seeleseek is free to download and use. The source is available on GitHub.'
+		a: 'Yes. The download and the use of seeleseek are free. The source code is available on GitHub.'
 	},
 	{
 		q: 'How is seeleseek different from Nicotine+ or SoulseekQt?',
-		a: 'seeleseek is written in native Swift and SwiftUI, so it launches instantly, uses system controls, and feels at home on macOS — unlike cross-platform Qt and Python clients.'
+		a: 'seeleseek is written in native Swift and SwiftUI. It starts quickly, uses the system controls, and has the standard macOS look. Cross-platform Qt and Python clients do not.'
 	},
 	{
 		q: 'Does seeleseek work with the official Soulseek network?',
-		a: 'Yes. seeleseek speaks the standard Soulseek protocol and connects to server.slsknet.org, the same network used by every other Soulseek client.'
+		a: 'Yes. seeleseek uses the standard Soulseek protocol. It connects to server.slsknet.org, the same server that all other Soulseek clients use.'
 	},
 	{
 		q: 'Can I share files with seeleseek?',
-		a: 'Yes. seeleseek supports browsing, searching, downloading, uploading, chat, and wishlists — everything you would expect from a full Soulseek client.'
+		a: 'Yes. seeleseek has browse, search, download, upload, chat, and wishlist functions. It is a full Soulseek client.'
 	}
 ];
 

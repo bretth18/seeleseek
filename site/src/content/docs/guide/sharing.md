@@ -1,55 +1,56 @@
 ---
-title: Sharing Files
-description: How to configure shared folders and contribute to the Soulseek network.
+title: Share Files
+description: Configure shared folders and give files to the Soulseek network.
 order: 5
 section: guide
 ---
 
 ## Why Share?
 
-Soulseek is a peer-to-peer network — it works best when everyone contributes. Sharing files helps the community and may improve your download priority with other users. Some users enable **leech detection** and will block or deprioritize users who don't share anything.
+Soulseek is a peer-to-peer network. The network operates best when all users share files. Shared files help the community. They can also increase your download priority with other users. Some users have leech detection on. These users can block users who do not share files.
 
-## Setting Up Shares
+## Add Shared Folders
 
-1. Open **Settings** (⌘9)
-2. Navigate to the **Shares** tab
-3. Click **Add Folder** to open the file picker
-4. Select one or more folders to share
-5. seeleseek scans and indexes the files automatically
+1. Open **Settings** (⌘9).
+2. Go to the **Shares** tab.
+3. Click **Add Folder** to open the file picker.
+4. Select one or more folders.
+5. seeleseek scans the files and makes an index automatically.
 
-The Shares tab shows a summary at the top:
-- **Total Folders** shared
-- **Total Files** indexed
-- **Total Size** of all shared content
+The top of the Shares tab shows a summary:
 
-Each shared folder displays its name, path, file count, and total size.
+- **Total Folders** — the number of shared folders
+- **Total Files** — the number of files in the index
+- **Total Size** — the size of all shared content
 
-## Managing Shared Folders
+Each shared folder shows its name, path, file count, and total size.
 
-- **Remove** a folder by clicking the red minus button next to it
-- **Rescan** all folders manually with the Rescan button
-- Files are indexed with metadata like filename, size, bitrate, and duration
+## Manage Shared Folders
+
+- To remove a folder, click the red minus button adjacent to it.
+- To scan all folders again, click the **Rescan** button.
+- The index keeps metadata for each file: the filename, size, bitrate, and duration.
 
 ## Share Options
 
-- **Rescan on startup** — automatically re-index shared folders when seeleseek launches (enabled by default)
-- **Share hidden files** — include files starting with `.` in your shares (disabled by default)
+- **Rescan on startup** — The app scans the shared folders again at each start. The default is on.
+- **Share hidden files** — The shares include files with names that start with `.`. The default is off.
 
-## How Others See Your Shares
+## Your Shares as Other Users See Them
 
-When another user browses your files (via right-click > Browse User on a search result), they see a tree view of your shared folders and files. They can download individual files or entire folders from your shares.
+A user can browse your files. (Right-click a search result, then select Browse User.) The user sees a tree view of your shared folders and files. The user can download single files or full folders.
 
 ## Share Counts
 
-seeleseek reports your share counts (number of files and folders) to the server. Other users can see this information in your profile, and the network uses it for things like leech detection.
+seeleseek sends your share counts (the number of files and folders) to the server. Other users can see this data in your profile. The network uses the data for functions such as leech detection.
 
-Your share counts update automatically when you add, remove, or rescan folders.
+The share counts change automatically when you add, remove, or scan folders.
 
 ## Privacy Settings
 
-In **Settings > Privacy**, you can control who interacts with your shares:
+In **Settings > Privacy**, you can control the access to your shares:
 
-- **Allow users to browse my files** — when disabled, other users can't browse your shared folder tree (but can still download files they find via search)
-- **Respond to search requests** — when disabled, your files won't appear in other users' search results
-- **Min query length** — minimum number of characters in a search query before you'll respond (default: 3)
-- **Max results per response** — maximum files to return per search query (default: 50)
+- **Allow users to browse my files** — When this is off, other users cannot browse your folder tree. They can download files that they find with a search.
+- **Respond to search requests** — When this is off, your files do not show in the search results of other users.
+- **Min query length** — The minimum number of characters in a query before the app sends a response. The default is 3.
+- **Max results per response** — The maximum number of files in a response to one query. The default is 50.

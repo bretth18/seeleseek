@@ -14,7 +14,7 @@ function isActive(slug: string): boolean {
 		{#each sections as section}
 			<div>
 				<h3 class="mb-2 text-[10px] font-mono tracking-tighter text-muted-foreground uppercase">
-					// {section.name}
+					{section.name}
 				</h3>
 				<ul class="space-y-0 border-l border-border">
 					{#each section.pages as doc}
