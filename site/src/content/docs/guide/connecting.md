@@ -1,54 +1,54 @@
 ---
-title: Connecting
-description: How to connect to the Soulseek network, manage your login, and understand connection states.
+title: Connect to the Network
+description: Connect to the Soulseek network, log in, and monitor the connection status.
 order: 2
 section: guide
 ---
 
-## Logging In
+## Log In
 
-When you launch seeleseek, you'll see the login screen:
+When you start seeleseek, the login screen shows:
 
-1. Enter your **username** and **password**
-2. Optionally check **Remember me** to save your credentials locally
-3. Click **Connect** (or press Enter)
+1. Enter your **username** and **password**.
+2. Optional: select **Remember me** to keep your credentials on this Mac.
+3. Click **Connect**, or press Enter.
 
-seeleseek connects to the official Soulseek server at `server.slsknet.org` on port `2242`.
+seeleseek connects to the official Soulseek server at `server.slsknet.org`, port `2242`.
 
 ## Connection States
 
-The app shows your connection status in the toolbar:
+The toolbar shows the connection status:
 
-- **Disconnected** — Not connected. The login screen is shown.
-- **Connecting** — Establishing a connection to the server. The connect button shows a spinner.
-- **Connected** — Logged in and ready. The main app interface is shown.
-- **Reconnecting** — The connection dropped unexpectedly. seeleseek will automatically try to reconnect with exponential backoff.
-- **Error** — Something went wrong. An error message is shown on the login screen.
+- **Disconnected** — There is no connection. The login screen shows.
+- **Connecting** — The app opens a connection to the server. The connect button shows a spinner.
+- **Connected** — You are logged in. The main interface shows.
+- **Reconnecting** — The connection stopped unexpectedly. seeleseek tries to connect again automatically.
+- **Error** — An error occurred. The login screen shows an error message.
 
-## Auto-Reconnect
+## Automatic Reconnection
 
-If your connection drops unexpectedly (network hiccup, server restart, etc.), seeleseek will automatically try to reconnect. You don't need to do anything — just wait for it to re-establish the connection.
+If the connection stops unexpectedly, seeleseek connects again automatically. The interval between tries increases each time. No action is necessary.
 
-If another client logs in with your credentials, you'll be disconnected with a "Relogged" message. In this case, auto-reconnect is disabled to avoid a login loop.
+If a different client logs in with your credentials, the server disconnects you with a "Relogged" message. In this condition, seeleseek does not connect again automatically. This prevents a login loop between the two clients.
 
-## Disconnecting
+## Disconnect
 
-To disconnect manually:
+To disconnect manually, do one of these steps:
 
-- Use **Connection > Disconnect** in the menu bar
-- Or press **⌘⇧D**
+- Select **Connection > Disconnect** in the menu bar.
+- Press **⌘⇧D**.
 
 ## Network Configuration
 
-seeleseek listens for incoming peer connections on port **2234** by default. You can change this in Settings > Network.
+seeleseek listens for incoming peer connections on port **2234** by default. You can change the port in Settings > Network.
 
-**UPnP** is enabled by default, which means seeleseek will attempt to automatically configure your router's port forwarding. If UPnP isn't available, seeleseek uses **firewall piercing** (NAT traversal) to establish connections with other peers — no manual port forwarding required in most cases.
+**UPnP** is on by default. With UPnP, seeleseek configures the port forwarding on your router automatically. If UPnP is not available, seeleseek uses firewall piercing (NAT traversal) to connect to other peers. Manual port forwarding is usually not necessary.
 
 ## Menu Bar
 
-If **Show in menu bar** is enabled in Settings > General, seeleseek adds a menu bar icon that lets you:
+If **Show in menu bar** is on in Settings > General, seeleseek adds an icon to the menu bar. The icon menu has these functions:
 
-- **Open** the main window
-- **Quit** the app
+- **Open** — Opens the main window.
+- **Quit** — Stops the app.
 
-The menu bar icon stays active even when you close the main window.
+The icon stays in the menu bar when you close the main window.

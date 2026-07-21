@@ -1,19 +1,19 @@
 ---
 title: Peer Connections
-description: How SeeleseekCore establishes, manages, and routes peer-to-peer connections.
+description: How SeeleseekCore opens, manages, and routes peer-to-peer connections.
 order: 15
 section: package
 ---
 
 ## Connection Types
 
-Peer connections come in several flavors:
+There are three types of peer connections:
 
 ```swift
 public enum ConnectionType: String, Sendable {
-    case peer = "P"          // General peer messaging
-    case file = "F"          // File transfer
-    case distributed = "D"   // Distributed search network
+    case peer = "P"          // General peer messages
+    case file = "F"          // File transfers
+    case distributed = "D"   // The distributed search network
 }
 ```
 
@@ -29,7 +29,7 @@ public actor PeerConnection {
     public var port: Int
     public var connectionType: ConnectionType
 
-    // Event stream for messages and state changes
+    // The event stream for messages and state changes
     public nonisolated var events: AsyncStream<PeerConnectionEvent>
 
     // Send raw data
@@ -47,7 +47,7 @@ public actor PeerConnection {
 
 ## PeerConnectionPool
 
-The pool manages all peer connections with rate limiting and lifecycle management:
+The pool manages all peer connections. It applies rate limits and controls the connection lifecycle:
 
 ```swift
 let pool = client.peerConnectionPool
@@ -60,7 +60,7 @@ let connection = try await pool.connect(
     token: 12345
 )
 
-// Get an existing connection for a user
+// Get an open connection for a user
 let existing = await pool.getConnectionForUser("alice")
 
 // Accept an incoming connection
@@ -75,73 +75,74 @@ await pool.disconnectAll()
 
 ### Connection Limits
 
-The pool enforces several safety limits:
+The pool applies these safety limits:
 
-| Limit | Default | Purpose |
-|-------|---------|---------|
-| Max connections | 50 | Total concurrent peer connections |
-| Max per IP | 30 | Connections from a single IP |
-| Rate limit | 10/60s | Connection attempts per IP per minute |
-| Idle timeout | 60s | Auto-close idle connections |
-| Ghost timeout | 10s | Close connections with no initial activity |
+| Limit | Default | Function |
+|-------|---------|----------|
+| Max connections | 50 | The maximum number of open peer connections |
+| Max per IP | 30 | The maximum number of connections from one IP |
+| Rate limit | 10/60s | The maximum connection tries per IP each minute |
+| Idle timeout | 60s | The pool closes idle connections after this time |
+| Ghost timeout | 10s | The pool closes connections that show no initial activity |
 
 ### Statistics
 
-The pool tracks real-time statistics, all `@Observable`:
+The pool keeps statistics in real time. All properties are `@Observable`:
 
 ```swift
-pool.totalBytesReceived     // Lifetime bytes received
-pool.totalBytesSent         // Lifetime bytes sent
-pool.totalConnections       // Total connections created
-pool.activeConnections      // Currently open connections
+pool.totalBytesReceived     // All bytes received
+pool.totalBytesSent         // All bytes sent
+pool.totalConnections       // The number of connections made
+pool.activeConnections      // The number of open connections
 pool.currentDownloadSpeed   // bytes/sec
 pool.currentUploadSpeed     // bytes/sec
-pool.speedHistory           // Last 60 SpeedSample entries (1/sec)
-pool.peerLocations          // Geographic locations of peers
-pool.connectionsByType      // Connections grouped by type
-pool.topPeersByTraffic      // Top 10 peers by bytes transferred
+pool.speedHistory           // The last 60 SpeedSample entries (1 each second)
+pool.peerLocations          // The geographic locations of the peers
+pool.connectionsByType      // The connections, in groups by type
+pool.topPeersByTraffic      // The top 10 peers by transferred bytes
 pool.averageConnectionDuration
 ```
 
-## Connection Establishment
+## Open a Connection
 
 ### Direct Connection
 
-The simplest case — connect directly to a peer's IP and port:
+The simplest case. Connect directly to the IP and port of a peer:
 
 ```swift
 let conn = try await pool.connect(
     to: "alice", ip: "1.2.3.4", port: 2234, token: token
 )
-// Pool automatically sends PeerInit handshake
+// The pool sends the PeerInit handshake automatically
 ```
 
-### Server-Mediated (NAT Traversal)
+### Server-Mediated Connection (NAT Traversal)
 
-When direct connection fails (both peers behind NAT):
+A direct connection is not possible when the two peers are behind NAT. Then this sequence occurs:
 
 1. Your client asks the server to tell the peer to connect to you:
+
 ```swift
 await client.sendConnectToPeer(token: token, username: "alice")
 ```
 
-2. The server sends a `ConnectToPeer` message to the peer with your address
-3. The peer either connects directly to you, or...
-4. The peer sends a `PierceFirewall` connection — connecting to your listening port with a token instead of a username
+2. The server sends a `ConnectToPeer` message with your address to the peer.
+3. The peer connects directly to you, or:
+4. The peer sends a `PierceFirewall` connection. This connection goes to your listen port with a token, not a username.
 
-This "firewall piercing" mechanism means both peers race to establish a connection, and the first one to succeed wins.
+In this "firewall piercing" procedure, the two peers try to connect at the same time. The first connection that opens wins.
 
-### Getting Peer Addresses
+### Get the Address of a Peer
 
-To find a peer's IP and port:
+To find the IP and port of a peer:
 
 ```swift
 let (ip, port) = try await client.getPeerAddress(for: "alice")
 ```
 
-This is an async call that requests the address from the server and waits (with a 10-second timeout).
+This async call requests the address from the server. It waits a maximum of 10 seconds.
 
-## Event Handling
+## Events
 
 Peer events flow through `AsyncStream<PeerConnectionEvent>`:
 
@@ -167,29 +168,30 @@ public enum PeerConnectionEvent: Sendable {
 }
 ```
 
-These are consumed by `PeerConnectionPool` and re-emitted as `PeerPoolEvent`s, which `NetworkClient` routes to the appropriate callbacks.
+`PeerConnectionPool` consumes these events. It sends them out again as `PeerPoolEvent` values. `NetworkClient` routes them to the applicable callbacks.
 
-## Browsing Users
+## Browse a User
 
-To browse another user's shared files:
+To browse the shared files of a user:
 
 ```swift
 let files = try await client.browseUser("alice")
 
-// files is [SharedFile] — a flat list that can be built into a tree
+// files is a flat [SharedFile] list. buildTree makes a tree from it
 let tree = SharedFile.buildTree(from: files)
 ```
 
-`browseUser` internally handles the full connection lifecycle:
-1. Gets the peer's address
-2. Races a direct TCP connection (10s timeout) against a PierceFirewall connection
-3. Sends a shares request
-4. Waits for and decompresses the shares response
-5. Returns the parsed file list
+`browseUser` does the full connection lifecycle internally:
+
+1. Gets the address of the peer.
+2. Tries a direct TCP connection (10 s timeout) and a PierceFirewall connection at the same time.
+3. Sends a shares request.
+4. Waits for the shares response and decompresses it.
+5. Returns the parsed file list.
 
 ## IP Validation
 
-The pool validates peer IPs before connecting:
+The pool validates peer IPs before it connects:
 
 ```swift
 PeerConnectionPool.isValidPeerIP("192.168.1.100")  // true

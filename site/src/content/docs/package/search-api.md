@@ -1,13 +1,13 @@
 ---
 title: Search API
-description: Performing searches on the Soulseek network and handling results.
+description: Do searches on the Soulseek network and receive the results.
 order: 13
 section: package
 ---
 
-## Performing a Search
+## Start a Search
 
-Searches are token-based — you provide a unique token to match results back to the query:
+Searches use tokens. You supply a unique token. The token connects the results to the query:
 
 ```swift
 let token = UInt32.random(in: 0...UInt32.max)
@@ -23,13 +23,13 @@ client.onSearchResults = { resultToken, results in
 try await client.search(query: "boards of canada", token: token)
 ```
 
-Results arrive asynchronously as peers on the network respond. The callback may fire many times for a single search.
+Results arrive asynchronously when peers on the network respond. The callback can fire many times for one search.
 
 ## Search Types
 
 ### Network Search
 
-The standard search broadcasts your query across the distributed network:
+The standard search sends your query across the distributed network:
 
 ```swift
 try await client.search(query: "artist album", token: token)
@@ -37,7 +37,7 @@ try await client.search(query: "artist album", token: token)
 
 ### Room Search
 
-Search within a specific chat room's members:
+Search the members of one chat room:
 
 ```swift
 try await client.searchRoom("Electronic Music", query: "ambient", token: token)
@@ -45,7 +45,7 @@ try await client.searchRoom("Electronic Music", query: "ambient", token: token)
 
 ### User Search
 
-Search a specific user's shared files:
+Search the shared files of one user:
 
 ```swift
 try await client.userSearch(username: "alice", token: token, query: "flac")
@@ -53,14 +53,14 @@ try await client.userSearch(username: "alice", token: token, query: "flac")
 
 ### Wishlist Search
 
-Add a recurring search that the server runs periodically:
+Add a search that the server repeats at an interval:
 
 ```swift
 try await client.addWishlistSearch(query: "rare album", token: token)
 
-// The server tells us the interval
+// The server sets the interval
 client.onWishlistInterval = { seconds in
-    print("Wishlist searches run every \(seconds) seconds")
+    print("Wishlist searches occur every \(seconds) seconds")
 }
 ```
 
@@ -72,30 +72,30 @@ Each result is a `SearchResult` struct:
 public struct SearchResult: Identifiable, Hashable, Sendable {
     public let id: UUID
     public let username: String
-    public let filename: String      // Full path on remote user's machine
+    public let filename: String      // The full path on the computer of the remote user
     public let size: UInt64
     public let bitrate: UInt32?      // kbps
     public let duration: UInt32?     // seconds
     public let sampleRate: UInt32?   // Hz
     public let bitDepth: UInt32?
     public let isVBR: Bool
-    public let freeSlots: Bool       // User has free upload slots
-    public let uploadSpeed: UInt32   // User's upload speed
-    public let queueLength: UInt32   // User's upload queue length
-    public let isPrivate: Bool       // File is private/restricted
+    public let freeSlots: Bool       // The user has free upload slots
+    public let uploadSpeed: UInt32   // The upload speed of the user
+    public let queueLength: UInt32   // The length of the upload queue of the user
+    public let isPrivate: Bool       // The file is private
 }
 ```
 
 ### Computed Properties
 
-`SearchResult` includes convenience properties for display:
+`SearchResult` has properties for display:
 
 ```swift
-result.displayFilename   // Just the filename without path
-result.folderPath        // Directory path
-result.fileExtension     // "flac", "mp3", etc.
-result.isAudioFile       // True for known audio formats
-result.isLossless        // True for FLAC, WAV, APE, AIFF
+result.displayFilename   // The filename without the path
+result.folderPath        // The directory path
+result.fileExtension     // "flac", "mp3", and others
+result.isAudioFile       // true for known audio formats
+result.isLossless        // true for FLAC, WAV, APE, AIFF
 result.formattedSize     // "14.2 MB"
 result.formattedDuration // "3:45"
 result.formattedBitrate  // "320 kbps"
@@ -106,7 +106,7 @@ result.formattedBitDepth   // "24-bit"
 
 ## SearchQuery Model
 
-To track searches, use `SearchQuery`:
+Use `SearchQuery` to monitor searches:
 
 ```swift
 public struct SearchQuery: Identifiable, Hashable, Sendable {
@@ -122,12 +122,12 @@ public struct SearchQuery: Identifiable, Hashable, Sendable {
 }
 ```
 
-## Responding to Searches
+## Search Responses
 
-When other users search the network, your client receives distributed search requests. `NetworkClient` can automatically respond using your shared files:
+Other users search the network. Your client receives their distributed search requests. `NetworkClient` can respond automatically with your shared files:
 
 ```swift
-// Control search response behavior
+// Control of the search responses
 client.searchResponseFilter = {
     return (
         enabled: true,
@@ -137,20 +137,20 @@ client.searchResponseFilter = {
 }
 ```
 
-The response is handled internally — `NetworkClient` queries the `ShareManager` for matching files and sends results back via the peer connection.
+`NetworkClient` does the response internally. It asks `ShareManager` for files that match the query. Then it sends the results through the peer connection.
 
 ## Distributed Search Network
 
-Soulseek uses a distributed search tree where searches propagate through a hierarchy of nodes. SeeleseekCore manages this automatically:
+Soulseek uses a distributed search tree. Searches move through a hierarchy of nodes. SeeleseekCore manages this automatically:
 
 ```swift
-// Whether to accept distributed children nodes
+// Permit or block distributed child nodes
 try await client.setAcceptDistributedChildren(true)
 
-// Monitor distributed network state
-client.distributedBranchLevel  // Our level in the tree
-client.distributedBranchRoot   // Username of tree root
-client.distributedChildCount   // Number of child connections
+// Monitor the state of the distributed network
+client.distributedBranchLevel  // The level of this client in the tree
+client.distributedBranchRoot   // The username of the tree root
+client.distributedChildCount   // The number of child connections
 ```
 
-The distributed network is self-organizing — the server assigns parent nodes and your client forwards searches to its children.
+The distributed network organizes itself. The server assigns the parent nodes. Your client sends searches to its children.

@@ -1,122 +1,126 @@
 ---
 title: Troubleshooting
-description: Solutions for common issues with connections, downloads, and network configuration.
+description: Solutions for usual problems with connections, downloads, and network configuration.
 order: 7
 section: guide
 ---
 
-## Connection Issues
+## Connection Problems
 
-### Can't connect to server
+### No connection to the server
 
-1. **Check your internet connection** — make sure you can reach other websites
-2. **Verify credentials** — ensure your username and password are correct
-3. **Server may be down** — the Soulseek server (`server.slsknet.org:2242`) occasionally goes offline for maintenance. Try again in a few minutes.
-4. **Firewall** — make sure macOS isn't blocking seeleseek. Check **System Settings > Network > Firewall**.
+1. Make sure that your internet connection operates. Open a different website as a test.
+2. Make sure that your username and password are correct.
+3. The Soulseek server (`server.slsknet.org:2242`) is possibly not available. The server stops for maintenance at times. Try again after some minutes.
+4. Make sure that the macOS firewall does not block seeleseek. Look at **System Settings > Network > Firewall**.
 
 ### "Relogged" disconnect
 
-This means another Soulseek client logged in with your credentials. Only one client can be connected per account at a time. If you're running another Soulseek client (like Nicotine+ or the official Windows client), close it first.
+A different Soulseek client logged in with your credentials. Only one client can connect to an account at a time. If a different Soulseek client operates (for example, Nicotine+ or the official Windows client), stop that client first.
 
-Auto-reconnect is intentionally disabled for relogged disconnects to prevent a login loop.
+seeleseek does not connect again automatically after a relogged disconnect. This prevents a login loop.
 
-### Connection keeps dropping
+### The connection stops frequently
 
-If you're experiencing frequent disconnects:
-- Check if your network is stable
-- seeleseek sends keepalive pings every 5 minutes to maintain the connection
-- Auto-reconnect will handle temporary drops automatically
+If the connection stops frequently:
 
-## Search Issues
+- Make sure that your network is stable.
+- seeleseek sends a keepalive ping every 5 minutes to keep the connection open.
+- The app connects again automatically after temporary stops.
+
+## Search Problems
 
 ### No search results
 
-- Make sure you're connected (check the status indicator)
-- Try broader search terms — the network searches filenames, not metadata
-- Your search may be too short. Some users have a minimum query length setting.
-- The server filters certain phrases — check if your query contains restricted terms
+- Make sure that you are connected. Look at the status indicator.
+- Use more general search terms. The network searches filenames, not metadata.
+- Your query is possibly too short. Some users set a minimum query length.
+- The server blocks some phrases. Make sure that your query does not contain a blocked term.
 
-### Results are slow
+### Slow results
 
-Search results arrive as other users respond, which can take several seconds. Results from users who are online and have free slots tend to arrive faster.
+Results arrive when other users respond. This can take some seconds. Results from users with free slots usually arrive faster.
 
-### Max results limit
+### The result limit
 
-By default, seeleseek stops collecting after 500 results. Change this in **Settings > General > Max Results** (set to 0 for unlimited).
+By default, seeleseek stops the collection of results at 500. Change this limit in **Settings > General > Max Results**. Set the value to 0 for no limit.
 
 ## Download Problems
 
-### Downloads stuck in queue
+### A download stays in the queue
 
-This means the remote user's upload queue is full. Your position is shown next to the transfer. seeleseek will automatically start the download when your turn comes — just leave it running.
+The upload queue of the remote user is full. Your position shows adjacent to the transfer. seeleseek starts the download automatically when you are at the front of the queue. No action is necessary.
 
 ### Downloads fail immediately
 
-Common causes:
-- The remote user went offline
-- The file was removed from their shares
-- You're blocked by the remote user (possibly leech detection)
-- Network configuration prevents a direct connection
+Usual causes:
+
+- The remote user went offline.
+- The file is not in the shares of the user.
+- The remote user blocks you (a possible cause is leech detection).
+- The network configuration prevents a direct connection.
 
 ### Slow transfers
 
-Transfer speed depends on both your connection and the remote user's upload speed and limits. seeleseek shows the real-time transfer rate for each download.
+The transfer speed is a function of your connection, and of the upload speed and limits of the remote user. seeleseek shows the transfer rate for each download in real time.
 
 ### "Upload Denied" errors
 
-The remote user has denied your download request. Possible reasons:
-- You're not sharing enough files (leech detection)
-- You're on their block list
-- They have restricted downloads to certain users
+The remote user denied your download request. Possible causes:
 
-## Sharing & Upload Issues
+- You do not share a sufficient number of files (leech detection).
+- You are on the block list of the user.
+- The user permits downloads only for some users.
 
-### Other users can't browse my files
+## Share and Upload Problems
 
-1. Make sure **Allow users to browse my files** is enabled in Settings > Privacy
-2. Check that you have shared folders configured in Settings > Shares
-3. Try enabling UPnP or manually forwarding port 2234 on your router
+### Other users cannot browse my files
 
-### Users say they can't download from me
+1. Make sure that **Allow users to browse my files** is on in Settings > Privacy.
+2. Make sure that shared folders are configured in Settings > Shares.
+3. Set UPnP to on, or configure port forwarding for port 2234 on your router.
 
-1. Check your upload slots aren't full — the Transfers > Uploads tab shows active uploads
-2. Verify your shared folders are accessible and the files still exist
-3. Make sure **Respond to search requests** is enabled in Settings > Privacy
-4. If behind a strict NAT, try port forwarding your listen port
+### Users report that downloads from me fail
 
-## Network & Firewall
+1. Make sure that free upload slots are available. The Transfers > Uploads tab shows the active uploads.
+2. Make sure that the shared folders are accessible and that the files exist.
+3. Make sure that **Respond to search requests** is on in Settings > Privacy.
+4. If your NAT blocks incoming connections, configure port forwarding for your listen port.
 
-### NAT traversal / firewall piercing
+## Network and Firewall
 
-seeleseek supports automatic NAT traversal (firewall piercing). When a direct connection can't be established:
+### NAT traversal (firewall piercing)
 
-1. seeleseek asks the server to tell the peer to connect to us
-2. If that fails, it attempts a "pierce firewall" connection
-3. Both peers race to establish a connection
+seeleseek does NAT traversal (firewall piercing) automatically. When a direct connection is not possible:
 
-This works in most network configurations without any manual setup.
+1. seeleseek asks the server to tell the peer to connect to you.
+2. If this fails, the app tries a "pierce firewall" connection.
+3. The two peers try to connect at the same time. The first connection that opens wins.
+
+This procedure operates in most network configurations. Manual setup is not necessary.
 
 ### Manual port forwarding
 
-If automatic NAT traversal isn't working:
+If automatic NAT traversal does not operate:
 
-1. Note your listen port in **Settings > Network** (default: 2234)
-2. Log into your router's admin panel
-3. Create a port forwarding rule: external port 2234 → your Mac's local IP, port 2234, TCP
-4. Make sure macOS Firewall allows incoming connections for seeleseek
+1. Find your listen port in **Settings > Network**. The default is 2234.
+2. Log in to the admin panel of your router.
+3. Make a port forwarding rule: external port 2234 → the local IP of your Mac, port 2234, TCP.
+4. Make sure that the macOS firewall permits incoming connections for seeleseek.
 
 ### UPnP
 
-When UPnP is enabled (default), seeleseek will attempt to automatically configure port forwarding on your router. Not all routers support UPnP. If it fails, seeleseek falls back to NAT traversal.
+When UPnP is on (the default), seeleseek configures the port forwarding on your router automatically. Not all routers have UPnP. If UPnP fails, seeleseek uses NAT traversal.
 
-## Advanced Troubleshooting
+## More Tools
 
-For deeper investigation, check the **Diagnostics** tab in Settings and the **Network Monitor** view (⌘8).
+For more data, open the **Diagnostics** tab in Settings and the **Network Monitor** view (⌘8).
 
 The Network Monitor shows:
-- All active peer connections with their state, speed, and traffic
+
+- All active peer connections, with their state, speed, and traffic
 - Connection pool statistics
 - Speed history graphs
-- Geographic distribution of peers
+- The geographic distribution of the peers
 
-If you're experiencing issues related to the underlying protocol, see the [Protocol Reference](/docs/package/protocol-reference) for technical details.
+For protocol-level problems, see the [Protocol Reference](/docs/package/protocol-reference).

@@ -1,113 +1,115 @@
 ---
-title: Settings & Configuration
-description: Complete reference for all seeleseek settings and configuration options.
+title: Settings
+description: A reference for all seeleseek settings and configuration options.
 order: 6
 section: guide
 ---
 
-## Accessing Settings
+## Open the Settings
 
-Open Settings with **⌘9** or from the sidebar. Settings are organized into tabs on the left sidebar.
+Press **⌘9**, or use the sidebar. The settings show in tabs on the left sidebar.
 
 ## Profile
 
-Configure your user profile that other users see when they view your info:
-- Profile description text
-- Profile picture
-- Your buddy count and shared file count are shown automatically
+Configure the profile that other users see:
+
+- The profile description text
+- The profile picture
+- The app shows your buddy count and your shared file count automatically
 
 ## General
 
 ### Downloads
-- **Download Location** — where completed files are saved
-- **Incomplete Files** — where partial downloads are stored
-- **Folder Structure** — how files are organized (see [Downloads & Transfers](/docs/guide/transfers))
+- **Download Location** — The folder for completed files.
+- **Incomplete Files** — The folder for partial downloads.
+- **Folder Structure** — The structure for downloaded files. See [Downloads and Transfers](/docs/guide/transfers).
 
 ### Search
-- **Max Results** — stop collecting after this many results; 0 = unlimited (default: 500)
+- **Max Results** — The app stops the collection of results at this limit. 0 is no limit. The default is 500.
 
 ### Startup
-- **Launch at login** — start seeleseek when you log into macOS
-- **Show in menu bar** — add a persistent menu bar icon (default: on)
+- **Launch at login** — Starts seeleseek when you log in to macOS.
+- **Show in menu bar** — Adds an icon to the menu bar. The default is on.
 
 ## Network
 
 ### Connection
-- **Listen Port** — port for incoming peer connections; range 1024–65535 (default: 2234)
-- **Enable UPnP** — automatic router port forwarding (default: on)
+- **Listen Port** — The port for incoming peer connections. The range is 1024 to 65535. The default is 2234.
+- **Enable UPnP** — Configures the router port forwarding automatically. The default is on.
 
 ### Transfer Slots
-- **Max Download Slots** — simultaneous downloads; 1–20 (default: 5)
-- **Max Upload Slots** — simultaneous uploads; 1–20 (default: 5)
+- **Max Download Slots** — The number of parallel downloads. 1 to 20. The default is 5.
+- **Max Upload Slots** — The number of parallel uploads. 1 to 20. The default is 5.
 
 ### Speed Limits
-- **Upload Limit** — KB/s; 0 = unlimited (default: 0)
-- **Download Limit** — KB/s; 0 = unlimited (default: 0)
+- **Upload Limit** — KB/s. 0 is no limit. The default is 0.
+- **Download Limit** — KB/s. 0 is no limit. The default is 0.
 
 ## Shares
 
-See [Sharing Files](/docs/guide/sharing) for details on configuring shared folders.
+See [Share Files](/docs/guide/sharing) for the configuration of shared folders.
 
 ## Metadata
 
 ### Auto-fetch
-- **Fetch metadata automatically** — look up track info after download (default: on)
-- **Fetch album art** — download cover art (default: on)
-- **Embed album art in files** — write art into audio tags (default: on)
-- **Set album art as folder icon** — macOS folder icon (default: on)
+- **Fetch metadata automatically** — Gets the track data after a download. The default is on.
+- **Fetch album art** — Downloads the cover art. The default is on.
+- **Embed album art in files** — Writes the art into the audio tags. The default is on.
+- **Set album art as folder icon** — Sets the macOS folder icon. The default is on.
 
 ### Organization
-- **Organize downloads automatically** — rename/move files by metadata (default: off)
-- **Pattern** — template for organization, e.g., `{artist}/{album}/{track} - {title}`
-- Available tokens: `{artist}`, `{album}`, `{track}`, `{title}`, `{year}`
+- **Organize downloads automatically** — Renames and moves files by their metadata. The default is off.
+- **Pattern** — The template for the organization, for example `{artist}/{album}/{track} - {title}`.
+- These tokens are available: `{artist}`, `{album}`, `{track}`, `{title}`, `{year}`.
 
 ## Chat
 
-- **Show join/leave messages** — display when users enter/leave rooms (default: on)
+- **Show join/leave messages** — Shows a message when a user comes into a room or goes out of a room. The default is on.
 
 ## Notifications
 
 ### General
-- **Enable notifications** — show macOS notifications (default: on)
-- **Play notification sound** — audible alert (default: on)
-- **Only when app is in background** — suppress when seeleseek is focused (default: off)
-- **Notification sound** — choose from 15 macOS sounds (Default, Basso, Blow, Bottle, Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, Submarine, Tink)
+- **Enable notifications** — Shows macOS notifications. The default is on.
+- **Play notification sound** — Plays a sound with each notification. The default is on.
+- **Only when app is in background** — Stops notifications when seeleseek is the active app. The default is off.
+- **Notification sound** — A selection of 15 macOS sounds (Default, Basso, Blow, Bottle, Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, Submarine, Tink).
 
-### Notify me about
-- **Download completed** (default: on)
-- **Upload completed** (default: off)
-- **Private messages** (default: on)
+### Notification Events
+- **Download completed** — The default is on.
+- **Upload completed** — The default is off.
+- **Private messages** — The default is on.
 
 ## Privacy
 
 ### Visibility
-- **Show online status** — appear as online to other users (default: on)
-- **Allow users to browse my files** — let others see your share tree (default: on)
+- **Show online status** — Other users see you as online. The default is on.
+- **Allow users to browse my files** — Other users can see your share tree. The default is on.
 
 ### Search Responses
-- **Respond to search requests** — your files appear in others' searches (default: on)
-- **Min query length** — 1–20 characters (default: 3)
-- **Max results per response** — 0–500 (default: 50)
+- **Respond to search requests** — Your files show in the searches of other users. The default is on.
+- **Min query length** — 1 to 20 characters. The default is 3.
+- **Max results per response** — 0 to 500. The default is 50.
 
 ### Blocklist
-Block specific users by username with an optional reason. Blocked users can't interact with you. You can view and manage blocked users in the list below.
+Block users by username. A reason is optional. A blocked user cannot interact with you. The list below the controls shows the blocked users. You can manage the list there.
 
 ### Leech Detection
-Detect users who download without sharing:
-- **Enable Leech Detection** — monitor downloaders' share counts
-- **Minimum shared files** — threshold (default: 0)
-- **Minimum shared folders** — threshold (default: 0)
-- **Action** — Do nothing, Send message, Block user, or Send message and block
-- **Custom message** — template message sent to detected leeches
+This function finds users who download files but do not share files:
+
+- **Enable Leech Detection** — Monitors the share counts of users who download from you.
+- **Minimum shared files** — The minimum number of shared files. The default is 0.
+- **Minimum shared folders** — The minimum number of shared folders. The default is 0.
+- **Action** — Do nothing, Send message, Block user, or Send message and block.
+- **Custom message** — The message template that the app sends to these users.
 
 ## Diagnostics
 
-Access diagnostic tools and logs for troubleshooting connection and transfer issues.
+This tab has diagnostic tools and logs. Use them to find the causes of connection and transfer problems.
 
 ## Update
 
-Check for and install seeleseek updates.
+Find and install seeleseek updates.
 
 ## About
 
-View version information, credits, and links.
+This tab shows the version, the credits, and links.
