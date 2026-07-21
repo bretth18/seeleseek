@@ -59,9 +59,9 @@ const articleLd = $derived({
 <Seo title={`${title} · docs`} {description} type="article" jsonLd={[articleLd, breadcrumbLd]} />
 
 <article class="prose prose-invert max-w-none" data-pagefind-body>
-	<p class="text-xs font-mono text-muted-foreground tracking-tighter not-prose mb-2">
-		// {description}
+	<h1 class="tracking-tighter mb-3">{title}</h1>
+	<p class="not-prose mb-8 max-w-2xl text-lg text-foreground/50 leading-snug tracking-[-0.01em]">
+		{description}
 	</p>
-	<h1 class="tracking-tighter">{title}</h1>
 	{@render children()}
 </article>

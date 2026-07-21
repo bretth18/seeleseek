@@ -8,7 +8,7 @@ let { entries }: { entries: TocEntry[] } = $props();
 	<aside class="hidden w-48 shrink-0 xl:block" aria-label="Table of contents">
 		<div class="sticky top-16 py-2">
 			<h4 class="mb-3 text-[10px] font-mono tracking-tighter text-muted-foreground uppercase">
-				// on this page
+				On this page
 			</h4>
 			<ul class="space-y-0 border-l border-border">
 				{#each entries as entry}

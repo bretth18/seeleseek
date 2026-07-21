@@ -22,7 +22,7 @@ const label = $derived(current ? `${current.section} › ${current.doc}` : 'Docu
 	<summary
 		class="cursor-pointer list-none flex items-baseline justify-between gap-4 px-5 md:px-10 py-4 text-xs font-mono tracking-tighter text-muted-foreground"
 	>
-		<span class="truncate">// {label}</span>
+		<span class="truncate">{label}</span>
 		<span class="text-foreground/40 group-open:text-accent transition-colors" aria-hidden="true">
 			▾
 		</span>
@@ -36,7 +36,7 @@ const label = $derived(current ? `${current.section} › ${current.doc}` : 'Docu
 				<h3
 					class="mb-2 text-[10px] font-mono tracking-tighter text-muted-foreground uppercase"
 				>
-					// {section.name}
+					{section.name}
 				</h3>
 				<ul class="space-y-0 border-l border-border">
 					{#each section.pages as doc}
