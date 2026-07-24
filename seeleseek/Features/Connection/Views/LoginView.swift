@@ -1,4 +1,3 @@
-import Accessibility
 import SwiftUI
 import SeeleseekCore
 
@@ -111,10 +110,6 @@ struct LoginView: View {
         .background(SeeleColors.background)
         .onAppear {
             loadSavedCredentials()
-        }
-        .onChange(of: appState.connection.errorMessage) { _, error in
-            guard let error else { return }
-            AccessibilityNotification.Announcement("Connection error: \(error)").post()
         }
     }
 
