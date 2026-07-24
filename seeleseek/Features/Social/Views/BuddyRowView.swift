@@ -39,6 +39,7 @@ struct BuddyRowView: View {
                         Image(systemName: "star.fill")
                             .font(.system(size: SeeleSpacing.iconSizeXS))
                             .foregroundStyle(SeeleColors.warning)
+                            .accessibilityHidden(true)
                     }
 
                     if let flag = resolvedCountryFlag {
@@ -51,6 +52,7 @@ struct BuddyRowView: View {
                             .font(.system(size: SeeleSpacing.iconSizeXS))
                             .foregroundStyle(SeeleColors.warning)
                             .help("Ignored")
+                            .accessibilityHidden(true)
                     }
                 }
 
@@ -117,9 +119,39 @@ struct BuddyRowView: View {
                 }
             }
         }
+        // VoiceOver cannot see the hover-only buttons or the context
+        // menu. Show the row as one element with explicit actions.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        // A combined element in a List has no AX role on macOS
+        // ("Unknown role" in the audit). Declare the role explicitly.
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityActions {
+            Button("View profile") { viewProfile() }
+            Button("Browse files") { browseFiles() }
+            Button("Send message") { startChat() }
+            Button("Refresh status") {
+                Task { await appState.socialState.refreshBuddyStatus(buddy.username) }
+            }
+            Button("Remove buddy") {
+                Task { await appState.socialState.removeBuddy(buddy.username) }
+            }
+        }
         .onAppear(perform: refreshCountryFlag)
         .onChange(of: buddy.username) { _, _ in refreshCountryFlag() }
         .onChange(of: buddy.countryCode) { _, _ in refreshCountryFlag() }
+    }
+
+    /// Only the status dot shows the online, away, or offline state.
+    /// Thus this label speaks the state.
+    private var accessibilityLabel: String {
+        var parts: [String] = [buddy.username, buddy.status.description.lowercased()]
+        if buddy.isPrivileged { parts.append("privileged") }
+        if appState.socialState.isIgnored(buddy.username) { parts.append("ignored") }
+        if buddy.fileCount > 0 { parts.append("\(formatNumber(buddy.fileCount)) files") }
+        if buddy.averageSpeed > 0 { parts.append(formatSpeed(buddy.averageSpeed)) }
+        if let notes = buddy.notes, !notes.isEmpty { parts.append("note: \(notes)") }
+        return parts.joined(separator: ", ")
     }
 
     private func viewProfile() {

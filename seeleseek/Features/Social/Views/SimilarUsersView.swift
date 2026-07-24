@@ -68,6 +68,7 @@ struct SimilarUsersView: View {
             HStack {
                 Image(systemName: "person.2.fill")
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityHidden(true)
                 Text("Similar Users")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -77,6 +78,8 @@ struct SimilarUsersView: View {
                         .scaleEffect(0.7)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(socialState.isLoadingSimilar ? "Similar Users, loading" : "Similar Users")
 
             Text("Users with similar interests based on your likes and dislikes.")
                 .font(SeeleTypography.caption)
@@ -102,6 +105,7 @@ struct SimilarUsersView: View {
             HStack {
                 Image(systemName: "sparkles")
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityHidden(true)
                 Text("Recommended Interests")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -111,6 +115,8 @@ struct SimilarUsersView: View {
                         .scaleEffect(0.7)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(socialState.isLoadingRecommendations ? "Recommended Interests, loading" : "Recommended Interests")
 
             Text("Interests you might like based on similar users.")
                 .font(SeeleTypography.caption)
@@ -138,6 +144,7 @@ struct SimilarUsersView: View {
             HStack {
                 Image(systemName: "globe")
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityHidden(true)
                 Text("Popular Interests")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -170,6 +177,7 @@ struct SimilarUsersView: View {
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: "exclamationmark.triangle")
                 .foregroundStyle(SeeleColors.warning)
+                .accessibilityHidden(true)
             Text(socialState.discoveryError ?? "")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textSecondary)

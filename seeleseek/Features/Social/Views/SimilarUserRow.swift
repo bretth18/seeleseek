@@ -16,6 +16,7 @@ struct SimilarUserRow: View {
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
+                .accessibilityHidden(true)
 
             Text(username)
                 .font(SeeleTypography.body)
@@ -34,6 +35,8 @@ struct SimilarUserRow: View {
             .padding(.horizontal, SeeleSpacing.sm)
             .padding(.vertical, SeeleSpacing.xs)
             .background(SeeleColors.surface, in: Capsule())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Similarity rating \(rating)")
 
             HStack(spacing: SeeleSpacing.sm) {
                 Button {
@@ -42,6 +45,7 @@ struct SimilarUserRow: View {
                     Image(systemName: "person.crop.circle")
                 }
                 .help("View Profile")
+                .accessibilityLabel("View \(username)'s profile")
 
                 Button {
                     Task { await appState.socialState.addBuddy(username) }
@@ -49,6 +53,7 @@ struct SimilarUserRow: View {
                     Image(systemName: "person.badge.plus")
                 }
                 .help("Add Buddy")
+                .accessibilityLabel("Add \(username) as buddy")
 
                 Button {
                     appState.browseState.browseUser(username)
@@ -57,6 +62,7 @@ struct SimilarUserRow: View {
                     Image(systemName: "folder")
                 }
                 .help("Browse Files")
+                .accessibilityLabel("Browse \(username)'s files")
 
                 Button {
                     appState.chatState.selectPrivateChat(username)
@@ -65,6 +71,7 @@ struct SimilarUserRow: View {
                     Image(systemName: "bubble.left")
                 }
                 .help("Send Message")
+                .accessibilityLabel("Send message to \(username)")
             }
             .buttonStyle(.plain)
             .foregroundStyle(SeeleColors.accent)

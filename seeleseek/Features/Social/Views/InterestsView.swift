@@ -39,6 +39,7 @@ struct InterestsView: View {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: interestType == .like ? "heart" : "heart.slash")
                     .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
+                    .accessibilityHidden(true)
 
                 TextField("Add an interest...", text: $newInterest)
                     .textFieldStyle(.plain)
@@ -47,6 +48,7 @@ struct InterestsView: View {
                     .onSubmit {
                         addInterest()
                     }
+                    .accessibilityLabel("New interest")
 
                 if !newInterest.isEmpty {
                     Button {
@@ -56,6 +58,7 @@ struct InterestsView: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear interest text")
                 }
             }
             .padding(.horizontal, SeeleSpacing.md)
@@ -73,6 +76,7 @@ struct InterestsView: View {
             .labelsHidden()
             .pickerStyle(.segmented)
             .frame(width: 140)
+            .accessibilityLabel("Interest type")
 
             Button {
                 addInterest()
@@ -80,6 +84,7 @@ struct InterestsView: View {
                 Label("Add", systemImage: "plus")
             }
             .buttonStyle(.bordered)
+            .accessibilityLabel("Add interest")
             .disabled(newInterest.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(SeeleSpacing.lg)
@@ -91,6 +96,7 @@ struct InterestsView: View {
             HStack {
                 Image(systemName: "heart.fill")
                     .foregroundStyle(SeeleColors.success)
+                    .accessibilityHidden(true)
                 Text("Things I Like")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -128,6 +134,7 @@ struct InterestsView: View {
             HStack {
                 Image(systemName: "heart.slash.fill")
                     .foregroundStyle(SeeleColors.error)
+                    .accessibilityHidden(true)
                 Text("Things I Dislike")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -174,6 +181,7 @@ struct InterestsView: View {
                     .foregroundStyle(color.opacity(0.6))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Remove \(text)")
         }
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)

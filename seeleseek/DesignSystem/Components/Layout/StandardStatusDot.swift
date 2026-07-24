@@ -25,11 +25,23 @@ struct StandardStatusDot: View {
         }
     }
 
+    private var statusName: String {
+        switch status {
+        case .online: "Online"
+        case .away: "Away"
+        case .offline: "Offline"
+        }
+    }
+
     var body: some View {
         Circle()
             .fill(statusColor)
             .frame(width: size, height: size)
             .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: status)
+            // Only the color shows this state, so the label speaks it.
+            // Rows that put the status into a combined label replace or
+            // hide this label.
+            .accessibilityLabel(statusName)
     }
 }
 

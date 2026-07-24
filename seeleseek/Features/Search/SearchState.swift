@@ -437,6 +437,7 @@ final class SearchState {
             if searches[index].isSearching {
                 logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
                 searches[index].isSearching = false
+                announceSearchComplete(searches[index])
             }
             cancelInactivityTimer(token: token)
             return
@@ -471,6 +472,7 @@ final class SearchState {
             logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
             searches[index].isSearching = false
             cancelInactivityTimer(token: token)
+            announceSearchComplete(searches[index])
         }
     }
 
@@ -479,10 +481,23 @@ final class SearchState {
         cancelInactivityTimer(token: token)
         guard let index = tokenToSearchIndex[token], index < searches.count else { return }
 
+        let wasSearching = searches[index].isSearching
         searches[index].isSearching = false
+        if wasSearching {
+            announceSearchComplete(searches[index])
+        }
 
         // Persist the completed search for caching
         persistSearch(searches[index])
+    }
+
+    /// A VoiceOver user cannot see the spinner stop or the result
+    /// counter change. Speak the result one time when the search
+    /// completes.
+    private func announceSearchComplete(_ search: SearchQuery) {
+        let count = search.results.count
+        let results = count == 1 ? "1 result" : "\(count) results"
+        VoiceOverAnnouncer.shared.announce("Search complete: \(results) for \(search.query)")
     }
 
     /// Mark a search as failed to send. The tab stops spinning and

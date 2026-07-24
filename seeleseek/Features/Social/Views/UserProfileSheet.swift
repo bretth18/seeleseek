@@ -55,10 +55,12 @@ struct UserProfileSheet: View {
                         .scaledToFill()
                         .frame(width: 80, height: 80)
                         .clipShape(Circle())
+                        .accessibilityLabel("\(profile.username)'s profile picture")
                 } else {
                     Image(systemName: "person.fill")
                         .font(.system(size: SeeleSpacing.iconSizeXL + 4))
                         .foregroundStyle(SeeleColors.textTertiary)
+                        .accessibilityHidden(true)
                 }
             }
 
@@ -69,9 +71,13 @@ struct UserProfileSheet: View {
                         .foregroundStyle(SeeleColors.textPrimary)
 
                     if profile.isPrivileged {
+                        // Only the star shows the privileged state.
+                        // Thus the star gets a label and stays visible
+                        // to VoiceOver.
                         Image(systemName: "star.fill")
                             .font(.system(size: SeeleSpacing.iconSizeSmall))
                             .foregroundStyle(SeeleColors.warning)
+                            .accessibilityLabel("Privileged user")
                     }
 
                     if let flag = resolvedCountryFlag {
@@ -111,6 +117,7 @@ struct UserProfileSheet: View {
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close profile")
         }
     }
 
@@ -159,6 +166,8 @@ struct UserProfileSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(SeeleSpacing.sm)
         .background(SeeleColors.surfaceSecondary.opacity(0.5), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
     }
 
     private var interestsSection: some View {

@@ -36,6 +36,7 @@ struct BuddyListView: View {
                     Label("Add", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Add buddy")
             }
             .padding(SeeleSpacing.lg)
             .background(SeeleColors.surface)
@@ -91,6 +92,7 @@ struct BuddyListView: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .background(SeeleColors.background)
+        .accessibilityLabel("Buddies")
     }
 }
 

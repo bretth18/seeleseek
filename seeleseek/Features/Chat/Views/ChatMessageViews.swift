@@ -202,6 +202,7 @@ struct MessageInput: View {
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityLabel("Message")
                     .onSubmit {
                         if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                             onSend()

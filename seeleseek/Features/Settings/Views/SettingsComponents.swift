@@ -44,12 +44,14 @@ func settingsToggle(_ title: String, isOn: Binding<Bool>) -> some View {
             Text(title)
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityHidden(true)
 
             Spacer()
 
             Toggle("", isOn: isOn)
                 .toggleStyle(SeeleToggleStyle())
                 .labelsHidden()
+                .accessibilityLabel(title)
         }
     }
 }
@@ -60,6 +62,7 @@ func settingsPicker<T: Hashable>(_ title: String, selection: Binding<T>, options
             Text(title)
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityHidden(true)
 
             Spacer()
 
@@ -71,6 +74,7 @@ func settingsPicker<T: Hashable>(_ title: String, selection: Binding<T>, options
             }
             .pickerStyle(MenuPickerStyle())
             .labelsHidden()
+            .accessibilityLabel(title)
         }
     }
 }
@@ -82,6 +86,7 @@ func settingsNumberField(_ title: String, value: Binding<Int>, range: ClosedRang
             Text(title)
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityHidden(true)
 
             Spacer()
 
@@ -89,6 +94,7 @@ func settingsNumberField(_ title: String, value: Binding<Int>, range: ClosedRang
                 .textFieldStyle(SeeleTextFieldStyle())
                 .frame(width: 80)
                 .multilineTextAlignment(.trailing)
+                .accessibilityLabel(title)
         }
     }
 }
@@ -100,16 +106,20 @@ func settingsStepper(_ title: String, value: Binding<Int>, range: ClosedRange<In
             Text(title)
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityHidden(true)
 
             Spacer()
 
             Stepper("", value: value, in: range)
                 .labelsHidden()
+                .accessibilityLabel(title)
+                .accessibilityValue("\(value.wrappedValue)")
 
             Text("\(value.wrappedValue)")
                 .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .frame(width: 24, alignment: .trailing)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -121,6 +131,7 @@ func folderPicker(_ title: String, url: Binding<URL>) -> some View {
             Text(title)
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityHidden(true)
 
             Spacer()
             Button {
@@ -133,6 +144,9 @@ func folderPicker(_ title: String, url: Binding<URL>) -> some View {
                     .truncationMode(.middle)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(title) folder")
+            .accessibilityValue(url.wrappedValue.path)
+            .accessibilityHint("Opens the folder in Finder")
             Button("Choose...") {
                 #if os(macOS)
                 let panel = NSOpenPanel()
@@ -151,6 +165,7 @@ func folderPicker(_ title: String, url: Binding<URL>) -> some View {
             .font(SeeleTypography.caption)
             .foregroundStyle(SeeleColors.accent)
             .buttonStyle(.plain)
+            .accessibilityLabel("Choose \(title) folder")
         }
     }
 }

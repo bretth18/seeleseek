@@ -66,6 +66,8 @@ struct SharesSettingsSection: View {
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Scanning shared folders, \(Int(shareManager.scanProgress * 100)) percent")
                         } else {
                             Button {
                                 Task { await shareManager.rescanAll() }
@@ -104,6 +106,8 @@ struct SharesSettingsSection: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(value) \(label)")
     }
 
     private func showFolderPicker() {
@@ -146,6 +150,7 @@ struct SharedFolderRow: View {
             Image(systemName: "folder.fill")
                 .font(.system(size: SeeleSpacing.iconSizeSmall))
                 .foregroundStyle(SeeleColors.warning)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(folder.displayName)
@@ -176,6 +181,8 @@ struct SharedFolderRow: View {
             // Let the path/metadata subline collapse to zero width
             // before the trailing controls get clipped.
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(folder.displayName), \(folder.fileCount) files, \(folder.totalSize.formattedBytes)")
 
             visibilityPicker
                 .frame(width: Self.visibilityColumnWidth, alignment: .trailing)
@@ -216,6 +223,7 @@ struct SharedFolderRow: View {
         }
         .pickerStyle(.menu)
         .labelsHidden()
+        .accessibilityLabel("Visibility for \(folder.displayName)")
         .help("Buddies-only folders are sent in the Soulseek protocol's private section, only to peers on your buddy list. Honor-system — not cryptographically enforced.")
     }
 }

@@ -60,5 +60,20 @@ struct BrowseTabButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityHint("Shows this browse")
+        .accessibilityAction(named: "Close browse") { onClose() }
+    }
+
+    private var accessibilityLabel: String {
+        if browse.isLoading {
+            return "Browse of \(browse.username), loading"
+        }
+        if browse.error != nil {
+            return "Browse of \(browse.username), failed"
+        }
+        return "Browse of \(browse.username), \(browse.totalFiles) files"
     }
 }

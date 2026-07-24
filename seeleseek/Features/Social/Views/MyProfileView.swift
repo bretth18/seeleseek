@@ -55,6 +55,7 @@ struct MyProfileView: View {
                             .aspectRatio(contentMode: .fill)
                             .frame(width: 80, height: 80)
                             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                            .accessibilityLabel("Profile picture")
                     } else {
                         RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                             .fill(SeeleColors.surfaceSecondary)
@@ -64,6 +65,7 @@ struct MyProfileView: View {
                                     .font(.system(size: 32))
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
+                            .accessibilityHidden(true)
                     }
 
                     VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
@@ -103,6 +105,7 @@ struct MyProfileView: View {
                     .onChange(of: editingDescription) { _, newValue in
                         hasChanges = newValue != socialState.myDescription
                     }
+                    .accessibilityLabel("Profile description")
 
                 Text("\(editingDescription.count) / 1000 characters")
                     .font(SeeleTypography.caption)
@@ -131,6 +134,7 @@ struct MyProfileView: View {
                     Image(systemName: socialState.privilegeTimeRemaining > 0 ? "star.fill" : "star")
                         .font(.system(size: SeeleSpacing.iconSizeSmall))
                         .foregroundStyle(socialState.privilegeTimeRemaining > 0 ? SeeleColors.warning : SeeleColors.textTertiary)
+                        .accessibilityHidden(true)
 
                     Text(socialState.formattedPrivilegeTime)
                         .font(SeeleTypography.body)
@@ -163,6 +167,7 @@ struct MyProfileView: View {
                     }
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityLabel("Edit interests")
                 }
 
                 if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
@@ -172,6 +177,9 @@ struct MyProfileView: View {
                 } else {
                     VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
                         if !socialState.myLikes.isEmpty {
+                            // Only the heart icon shows the difference
+                            // between likes and dislikes. Thus the
+                            // combined label speaks it.
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: SeeleSpacing.iconSizeXS))
@@ -185,6 +193,8 @@ struct MyProfileView: View {
                                         .foregroundStyle(SeeleColors.textTertiary)
                                 }
                             }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(likesSummaryLabel)
                         }
 
                         if !socialState.myHates.isEmpty {
@@ -201,6 +211,8 @@ struct MyProfileView: View {
                                         .foregroundStyle(SeeleColors.textTertiary)
                                 }
                             }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(dislikesSummaryLabel)
                         }
                     }
                 }
@@ -212,6 +224,22 @@ struct MyProfileView: View {
             editingDescription = socialState.myDescription
             socialState.checkPrivileges()
         }
+    }
+
+    private var likesSummaryLabel: String {
+        var label = "Likes: " + socialState.myLikes.prefix(5).joined(separator: ", ")
+        if socialState.myLikes.count > 5 {
+            label += ", plus \(socialState.myLikes.count - 5) more"
+        }
+        return label
+    }
+
+    private var dislikesSummaryLabel: String {
+        var label = "Dislikes: " + socialState.myHates.prefix(5).joined(separator: ", ")
+        if socialState.myHates.count > 5 {
+            label += ", plus \(socialState.myHates.count - 5) more"
+        }
+        return label
     }
 
     private func saveProfile() {

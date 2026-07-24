@@ -88,6 +88,8 @@ struct SocialView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("\(tab.rawValue) tab")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 

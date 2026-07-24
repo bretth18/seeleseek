@@ -74,6 +74,7 @@ struct BrowseView: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear username")
                 }
             }
             .padding(SeeleSpacing.md)
@@ -251,6 +252,7 @@ struct BrowseView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Refresh (bypass cache)")
+                    .accessibilityLabel("Refresh shares")
 
                     Button {
                         withAnimation {
@@ -261,6 +263,7 @@ struct BrowseView: View {
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showVisualizations ? "Hide statistics panel" : "Show statistics panel")
                 }
                 .padding(.horizontal, SeeleSpacing.lg)
                 .padding(.vertical, SeeleSpacing.sm)
@@ -276,6 +279,7 @@ struct BrowseView: View {
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Go to root folder")
 
                         Button {
                             browseState.navigateUp()
@@ -285,6 +289,7 @@ struct BrowseView: View {
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Go up one folder")
 
                         Text(folderPath.replacingOccurrences(of: "\\", with: " / "))
                             .font(SeeleTypography.caption)

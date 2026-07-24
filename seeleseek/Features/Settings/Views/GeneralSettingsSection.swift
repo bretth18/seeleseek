@@ -33,6 +33,7 @@ struct GeneralSettingsSection: View {
                         Text("Folder Structure")
                             .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.textPrimary)
+                            .accessibilityHidden(true)
 
                         Spacer()
 
@@ -43,6 +44,7 @@ struct GeneralSettingsSection: View {
                         }
                         .labelsHidden()
                         .frame(width: 200)
+                        .accessibilityLabel("Folder Structure")
                     }
                 }
 

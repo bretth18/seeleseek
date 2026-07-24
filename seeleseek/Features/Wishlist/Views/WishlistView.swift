@@ -25,6 +25,7 @@ struct WishlistView: View {
             HStack(spacing: SeeleSpacing.sm) {
                 Image(systemName: "star")
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .accessibilityHidden(true)
 
                 TextField("Add wishlist search...", text: binding)
                     .textFieldStyle(.plain)
@@ -33,6 +34,7 @@ struct WishlistView: View {
                     .onSubmit {
                         wishlistState.addItem()
                     }
+                    .accessibilityLabel("Add wishlist search")
 
                 if !wishlistState.newQuery.isEmpty {
                     Button {
@@ -42,6 +44,7 @@ struct WishlistView: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search text")
                 }
             }
             .padding(SeeleSpacing.md)
@@ -110,6 +113,7 @@ struct WishlistView: View {
             Image(systemName: "star")
                 .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityHidden(true)
 
             Text("No wishlists")
                 .font(SeeleTypography.title2)
@@ -143,6 +147,12 @@ struct WishlistItemRow: View {
         wishlistState.results[item.id]?.count ?? 0
     }
 
+    private var resultsButtonAccessibilityLabel: String {
+        isExpanded
+            ? "Hide \(resultCount) results for \(item.query)"
+            : "Show \(resultCount) results for \(item.query)"
+    }
+
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
             // Enable/disable toggle
@@ -155,6 +165,8 @@ struct WishlistItemRow: View {
             }
             .buttonStyle(.plain)
             .help(item.enabled ? "Disable" : "Enable")
+            .accessibilityLabel("Automatic search for \(item.query)")
+            .accessibilityValue(item.enabled ? "Enabled" : "Disabled")
 
             // Query info
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -169,6 +181,7 @@ struct WishlistItemRow: View {
                     Text(wishlistState.relativeTime(from: item.lastSearchedAt))
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
+                        .accessibilityLabel("Last searched \(wishlistState.relativeTime(from: item.lastSearchedAt))")
                 }
             }
 
@@ -198,6 +211,7 @@ struct WishlistItemRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show results")
+                .accessibilityLabel(resultsButtonAccessibilityLabel)
             } else {
                 Text("0")
                     .font(SeeleTypography.monoSmall)
@@ -205,6 +219,7 @@ struct WishlistItemRow: View {
                     .padding(.horizontal, SeeleSpacing.sm)
                     .padding(.vertical, SeeleSpacing.xxs)
                     .background(SeeleColors.surfaceElevated, in: Capsule())
+                    .accessibilityLabel("No results for \(item.query)")
             }
 
             // Search now button
@@ -217,6 +232,7 @@ struct WishlistItemRow: View {
             }
             .buttonStyle(.plain)
             .help("Search now")
+            .accessibilityLabel("Search now for \(item.query)")
 
             // Delete button
             Button {
@@ -228,6 +244,7 @@ struct WishlistItemRow: View {
             }
             .buttonStyle(.plain)
             .help("Remove")
+            .accessibilityLabel("Remove wishlist entry \(item.query)")
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)

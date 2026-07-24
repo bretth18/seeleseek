@@ -33,6 +33,7 @@ struct IgnoredUsersView: View {
                     Label("Ignore", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
+                .accessibilityLabel("Ignore a user")
             }
             .padding(SeeleSpacing.lg)
             .background(SeeleColors.surface)
@@ -44,9 +45,11 @@ struct IgnoredUsersView: View {
                     TextField("Username", text: $usernameInput)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 220)
+                        .accessibilityLabel("Username to ignore")
 
                     TextField("Reason (optional)", text: $reasonInput)
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Reason for ignoring, optional")
 
                     Button("Ignore") {
                         let reason = reasonInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,6 +94,7 @@ struct IgnoredUsersView: View {
             Image(systemName: "eye.slash.fill")
                 .foregroundStyle(SeeleColors.warning)
                 .frame(width: SeeleSpacing.iconSize)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(ignored.username)
@@ -116,6 +120,7 @@ struct IgnoredUsersView: View {
                 Task { await socialState.unignoreUser(ignored.username) }
             }
             .buttonStyle(.bordered)
+            .accessibilityLabel("Unignore \(ignored.username)")
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)

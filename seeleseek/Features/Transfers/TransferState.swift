@@ -526,6 +526,15 @@ final class TransferState: TransferTracking {
             if before.status != .completed && transfer.status == .completed {
                 recordCompletion(transfer)
             }
+            if before.status != .failed && transfer.status == .failed {
+                // ActivityLog announces completed downloads, but failed
+                // downloads do not go to ActivityLog. Announce them here,
+                // so a non-visual user knows about the failure.
+                let reason = transfer.error.map { ": \($0)" } ?? ""
+                VoiceOverAnnouncer.shared.announce(
+                    "Download failed: \(transfer.displayFilename)\(reason)"
+                )
+            }
             markDirty(id, progressOnly: isProgressOnlyChange(before, transfer), urgent: statusChanged)
         } else if let index = uploads.firstIndex(where: { $0.id == id }) {
             let before = uploads[index]
