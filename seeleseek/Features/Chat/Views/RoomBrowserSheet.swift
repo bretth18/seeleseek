@@ -23,6 +23,7 @@ struct RoomBrowserSheet: View {
                         .foregroundStyle(SeeleColors.accent)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Create a room")
 
                 Button {
                     isPresented = false
@@ -32,6 +33,7 @@ struct RoomBrowserSheet: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
             .padding(SeeleSpacing.lg)
 
@@ -62,6 +64,7 @@ struct RoomBrowserSheet: View {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .tint(SeeleColors.accent)
+                    .accessibilityLabel("Loading rooms")
                 Spacer()
             } else if let error = chatState.roomListError {
                 Spacer()
@@ -69,6 +72,7 @@ struct RoomBrowserSheet: View {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: SeeleSpacing.iconSizeLarge))
                         .foregroundStyle(SeeleColors.warning)
+                        .accessibilityHidden(true)
                     Text(error)
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -138,6 +142,9 @@ struct RoomBrowserSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                // Only the tint shows which tab is active. Thus the
+                // selected trait speaks the state.
+                .accessibilityAddTraits(chatState.roomListTab == tab ? [.isSelected] : [])
             }
             Spacer()
         }
@@ -158,6 +165,7 @@ struct RoomBrowserSheet: View {
                     .padding(.vertical, SeeleSpacing.sm)
                     .background(SeeleColors.surfaceSecondary)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .accessibilityLabel("Room name")
 
                 Button("Create") {
                     chatState.createRoom()
@@ -202,17 +210,21 @@ struct RoomBrowserSheet: View {
         let isOwned = chatState.ownedPrivateRooms.contains { $0.name == room.name }
 
         return HStack {
-            // Room icon
+            // Room icon. Only the icon shows the owned or private
+            // state. Thus the icon gets a label and stays visible to
+            // VoiceOver.
             if isOwned {
                 Image(systemName: "crown.fill")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.warning)
                     .frame(width: SeeleSpacing.xl)
+                    .accessibilityLabel("Owned room")
             } else if room.isPrivate {
                 Image(systemName: "lock.fill")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.textTertiary)
                     .frame(width: SeeleSpacing.xl)
+                    .accessibilityLabel("Private room")
             }
 
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -239,6 +251,7 @@ struct RoomBrowserSheet: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.accent)
                 .buttonStyle(.plain)
+                .accessibilityLabel("Manage \(room.name)")
             } else {
                 Button("Join") {
                     chatState.joinRoom(room.name, isPrivate: room.isPrivate)
@@ -247,6 +260,7 @@ struct RoomBrowserSheet: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.accent)
                 .buttonStyle(.plain)
+                .accessibilityLabel("Join \(room.name)")
             }
         }
         .padding(.horizontal, SeeleSpacing.lg)

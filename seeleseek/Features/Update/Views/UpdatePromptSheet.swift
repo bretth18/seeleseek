@@ -30,6 +30,7 @@ struct UpdatePromptSheet: View {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 40))
                 .foregroundStyle(SeeleColors.accent)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
                 Text("Update Available")
@@ -40,6 +41,9 @@ struct UpdatePromptSheet: View {
                     Text("Version \(latest) — you're on \(updateState.currentFullVersionFormatted)")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        // The visible text uses an em dash. VoiceOver
+                        // speaks full sentences more clearly.
+                        .accessibilityLabel("Version \(latest) is available. You are on \(updateState.currentFullVersionFormatted).")
                 }
             }
         }
@@ -55,6 +59,7 @@ struct UpdatePromptSheet: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(SeeleSpacing.md)
+                    .accessibilityLabel("Release notes: \(notes)")
             }
             .background(SeeleColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
@@ -120,9 +125,12 @@ struct UpdatePromptSheet: View {
             }
             .progressViewStyle(.linear)
             .frame(width: 140)
-            
-        
+
+
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Downloading update")
+        .accessibilityValue(progressLabel)
     }
 
     private var progressLabel: String {

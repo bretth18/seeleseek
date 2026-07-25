@@ -266,6 +266,9 @@ struct UserProfileSheet: View {
                             Text("30 days").tag(UInt32(30))
                         }
                         .pickerStyle(.segmented)
+                        // The segmented style hides the picker title.
+                        // An explicit label keeps the purpose audible.
+                        .accessibilityLabel("Days of privileges")
 
                         Button("Give \(selectedDays) day\(selectedDays == 1 ? "" : "s")") {
                             appState.socialState.givePrivileges(to: profile.username, days: selectedDays)

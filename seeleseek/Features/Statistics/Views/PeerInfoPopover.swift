@@ -33,6 +33,14 @@ struct PeerInfoPopover: View {
         }
     }
 
+    private var connectionTypeName: String {
+        switch peer.connectionType {
+        case .peer: "Peer"
+        case .file: "File transfer"
+        case .distributed: "Distributed"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
             header
@@ -100,6 +108,8 @@ struct PeerInfoPopover: View {
                 .padding(.vertical, SeeleSpacing.xxs)
                 .background(SeeleColors.surfaceSecondary)
                 .clipShape(Capsule())
+                // The capsule shows only the protocol letter (P, F, D).
+                .accessibilityLabel("Connection type: \(connectionTypeName)")
         }
     }
 
@@ -143,6 +153,8 @@ struct PeerInfoPopover: View {
                         .foregroundStyle(SeeleColors.success)
                         .contentTransition(.numericText())
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Downloaded: \(peer.bytesReceived.formattedBytes)")
 
                 VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text("Uploaded")
@@ -153,6 +165,8 @@ struct PeerInfoPopover: View {
                         .foregroundStyle(SeeleColors.accent)
                         .contentTransition(.numericText())
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Uploaded: \(peer.bytesSent.formattedBytes)")
             }
 
             if peer.currentSpeed > 0 {
@@ -171,6 +185,7 @@ struct PeerInfoPopover: View {
                 Label("Browse", systemImage: "folder")
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Browse \(peer.username)'s files")
 
             Button {
                 appState.chatState.selectPrivateChat(peer.username)
@@ -180,6 +195,7 @@ struct PeerInfoPopover: View {
                 Label("Message", systemImage: "bubble.left")
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Send message to \(peer.username)")
 
             Spacer()
         }
@@ -201,5 +217,7 @@ struct DetailRow: View {
                 .foregroundStyle(SeeleColors.textSecondary)
                 .textSelection(.enabled)
         }
+        // Read the name and the value as one element.
+        .accessibilityElement(children: .combine)
     }
 }

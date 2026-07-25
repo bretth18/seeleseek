@@ -61,6 +61,7 @@ struct ChatView: View {
                         .foregroundStyle(SeeleColors.accent)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Browse rooms")
             }
             .padding(SeeleSpacing.md)
             .background(SeeleColors.surface)
@@ -163,6 +164,37 @@ struct ChatView: View {
                 Label("Leave Room", systemImage: "arrow.right.square")
             }
         }
+        // VoiceOver cannot see the context menu, and only the icon
+        // shows the room role. The label speaks both.
+        .accessibilityLabel(roomRowAccessibilityLabel(room))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityActions {
+            if room.isPrivate {
+                Button("Room info") {
+                    chatState.selectRoom(room.name)
+                    chatState.showRoomManagement = true
+                }
+            }
+            Button("Leave room") {
+                chatState.leaveRoom(room.name)
+            }
+        }
+    }
+
+    private func roomRowAccessibilityLabel(_ room: ChatRoom) -> String {
+        var parts: [String] = [room.name]
+        if chatState.isOwner(of: room.name) {
+            parts.append("owned room")
+        } else if chatState.operatedRoomNames.contains(room.name) {
+            parts.append("operated room")
+        } else if room.isPrivate {
+            parts.append("private room")
+        }
+        parts.append("\(room.userCount) users")
+        if room.unreadCount > 0 {
+            parts.append("\(room.unreadCount) unread")
+        }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -227,6 +259,32 @@ struct ChatView: View {
                 Label("Close Chat", systemImage: "xmark")
             }
         }
+        // VoiceOver cannot see the context menu. The label replaces
+        // the default one, which spoke the status twice.
+        .accessibilityLabel(dmRowAccessibilityLabel(chat))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityActions {
+            Button("View profile") {
+                Task { await appState.socialState.loadProfile(for: chat.username) }
+            }
+            Button("Browse files") {
+                appState.browseState.browseUser(chat.username)
+            }
+            Button("Delete history") {
+                pendingHistoryDeletion = chat.username
+            }
+            Button("Close chat") {
+                chatState.closePrivateChat(chat.username)
+            }
+        }
+    }
+
+    private func dmRowAccessibilityLabel(_ chat: PrivateChat) -> String {
+        var parts: [String] = [chat.username, chat.isOnline ? "online" : "offline"]
+        if chat.unreadCount > 0 {
+            parts.append("\(chat.unreadCount) unread")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var emptyListView: some View {
@@ -234,6 +292,7 @@ struct ChatView: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: SeeleSpacing.iconSizeXL, weight: .light))
                 .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityHidden(true)
 
             Text("No chats yet")
                 .font(SeeleTypography.subheadline)

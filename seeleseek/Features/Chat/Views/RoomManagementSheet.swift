@@ -37,6 +37,7 @@ struct RoomManagementSheet: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close")
             }
             .padding(SeeleSpacing.lg)
 
@@ -119,9 +120,11 @@ struct RoomManagementSheet: View {
                             .foregroundStyle(SeeleColors.textSecondary)
                         Spacer()
                         HStack(spacing: SeeleSpacing.xs) {
+                            // The "Owner" row title already speaks the role.
                             Image(systemName: "crown.fill")
                                 .font(.system(size: SeeleSpacing.iconSizeXS))
                                 .foregroundStyle(SeeleColors.warning)
+                                .accessibilityHidden(true)
                             Text(owner)
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.textPrimary)
@@ -154,6 +157,7 @@ struct RoomManagementSheet: View {
                         .textFieldStyle(.plain)
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityLabel("Set your ticker")
 
                     if !tickerText.isEmpty {
                         Button {
@@ -181,6 +185,11 @@ struct RoomManagementSheet: View {
                             .lineLimit(1)
                         Spacer()
                     }
+                    // A combined element has no AX role on macOS.
+                    // Declare the role explicitly.
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Ticker from \(username): \(ticker)")
+                    .accessibilityAddTraits(.isStaticText)
                 }
             }
         }
@@ -200,6 +209,7 @@ struct RoomManagementSheet: View {
                         .onSubmit {
                             addMember()
                         }
+                        .accessibilityLabel("Add member")
 
                     if !newMemberName.isEmpty {
                         Button {
@@ -210,6 +220,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Add \(newMemberName) as member")
                     }
                 }
             }
@@ -231,6 +242,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.error)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove member \(member)")
                     }
                 }
             }
@@ -251,6 +263,7 @@ struct RoomManagementSheet: View {
                         .onSubmit {
                             addOp()
                         }
+                        .accessibilityLabel("Add operator")
 
                     if !newOperatorName.isEmpty {
                         Button {
@@ -261,6 +274,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Add \(newOperatorName) as operator")
                     }
                 }
             }
@@ -269,9 +283,11 @@ struct RoomManagementSheet: View {
                 SeeleFormRow {
                     HStack {
                         HStack(spacing: SeeleSpacing.xs) {
+                            // The section title already speaks the role.
                             Image(systemName: "wrench.fill")
                                 .font(.system(size: SeeleSpacing.iconSizeXS))
                                 .foregroundStyle(SeeleColors.textTertiary)
+                                .accessibilityHidden(true)
                             Text(op)
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.textPrimary)
@@ -287,6 +303,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.error)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove operator \(op)")
                     }
                 }
             }
@@ -309,6 +326,7 @@ struct RoomManagementSheet: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: SeeleSpacing.iconSizeSmall))
                             .foregroundStyle(SeeleColors.error)
+                            .accessibilityHidden(true)
                     }
                 }
                 .buttonStyle(.plain)

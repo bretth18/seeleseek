@@ -31,6 +31,7 @@ struct RecordingSearchResults: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(state.isSearching)
+                .accessibilityLabel(state.isSearching ? "Searching MusicBrainz" : "Search MusicBrainz")
             }
 
             if let error = state.searchError {
@@ -65,6 +66,19 @@ struct RecordingSearchResults: View {
 struct RecordingRow: View {
     let recording: MusicBrainzClient.MBRecording
     @Bindable var state: MetadataState
+
+    private var isSelected: Bool {
+        state.selectedRecording?.id == recording.id
+    }
+
+    private var rowAccessibilityLabel: String {
+        var parts: [String] = [recording.title, recording.artist]
+        if let release = recording.releaseTitle {
+            parts.append(release)
+        }
+        parts.append("match score \(recording.score) percent")
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
         Button {
@@ -104,16 +118,18 @@ struct RecordingRow: View {
                     .background(scoreColor(recording.score).opacity(0.15))
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
 
-                if state.selectedRecording?.id == recording.id {
+                if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(SeeleColors.success)
                 }
             }
             .padding(SeeleSpacing.sm)
-            .background(state.selectedRecording?.id == recording.id ? SeeleColors.accent.opacity(0.1) : Color.clear)
+            .background(isSelected ? SeeleColors.accent.opacity(0.1) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(rowAccessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func scoreColor(_ score: Int) -> Color {

@@ -66,6 +66,10 @@ nonisolated final class AccessibilityAuditTests: XCTestCase {
         try auditScreen(shortcut: "7")
     }
 
+    func test_auditNetworkMonitor() throws {
+        try auditScreen(shortcut: "8")
+    }
+
     func test_auditSettings() throws {
         try auditScreen(shortcut: "9")
     }

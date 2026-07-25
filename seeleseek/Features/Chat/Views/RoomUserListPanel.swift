@@ -31,17 +31,24 @@ struct RoomUserListPanel: View {
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
+            // A combined element has no AX role on macOS.
+            // Declare the role explicitly.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Users: \(room.userCount)")
+            .accessibilityAddTraits(.isStaticText)
 
             // Search
             HStack(spacing: SeeleSpacing.xs) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .accessibilityHidden(true)
 
                 TextField("Filter...", text: Bindable(chatState).userListSearchQuery)
                     .textFieldStyle(.plain)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityLabel("Filter users")
             }
             .padding(.horizontal, SeeleSpacing.sm)
             .padding(.vertical, SeeleSpacing.xs)
@@ -188,10 +195,61 @@ private struct RoomUserRow: View {
                 }
             }
         }
+        // VoiceOver cannot see the context menu. Show the row as one
+        // element with explicit actions.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        // A combined element has no AX role on macOS.
+        // Declare the role explicitly.
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityActions {
+            Button("View profile") {
+                Task { await appState.socialState.loadProfile(for: username) }
+            }
+            Button("Browse files") {
+                appState.browseState.browseUser(username)
+            }
+            Button("Send message") {
+                appState.chatState.selectPrivateChat(username)
+            }
+            Button("Add buddy") {
+                Task { await appState.socialState.addBuddy(username) }
+            }
+            if room.isPrivate && chatState.isOwner(of: room.name) {
+                if !isOp {
+                    Button("Make operator") {
+                        chatState.addOperator(room: room.name, username: username)
+                    }
+                } else {
+                    Button("Remove operator") {
+                        chatState.removeOperator(room: room.name, username: username)
+                    }
+                }
+                Button("Remove from room") {
+                    chatState.removeMember(room: room.name, username: username)
+                }
+            }
+        }
         .onAppear(perform: refreshCountryFlag)
         .onChange(of: username) { _, _ in refreshCountryFlag() }
         .task(id: username) {
             await loadStats()
         }
+    }
+
+    /// Only the crown or wrench icon shows the owner or operator
+    /// state. Thus this label speaks the state.
+    private var accessibilityLabel: String {
+        var parts: [String] = [username]
+        if isOwner {
+            parts.append("room owner")
+        } else if isOp {
+            parts.append("room operator")
+        }
+        if let stats {
+            parts.append(stats.speed.formattedSpeed)
+            parts.append("\(stats.files.formatted()) files")
+        }
+        return parts.joined(separator: ", ")
     }
 }

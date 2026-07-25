@@ -66,6 +66,7 @@ struct FileTreeRow: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 300, maxHeight: 300)
                             .padding(SeeleSpacing.sm)
+                            .accessibilityLabel("Album art for \(file.displayName)")
                     }
                     .onTapGesture { showArtworkPopover.toggle() }
             } else {
