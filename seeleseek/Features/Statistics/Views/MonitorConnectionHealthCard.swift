@@ -77,6 +77,9 @@ struct MonitorConnectionHealthCard: View {
                 .contentTransition(.numericText())
         }
         .accessibilityElement(children: .ignore)
+        // A collapsed element has no AX role on macOS ("Unknown role"
+        // in the audit). Declare the role explicitly.
+        .accessibilityAddTraits(.isImage)
         .accessibilityLabel("Connection health")
         .accessibilityValue("\(Int(healthScore)) percent — \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active")
     }

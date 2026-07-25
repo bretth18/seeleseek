@@ -66,6 +66,7 @@ struct FileTreeRow: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(maxWidth: 300, maxHeight: 300)
                             .padding(SeeleSpacing.sm)
+                            .accessibilityLabel("Album art for \(file.displayName)")
                     }
                     .onTapGesture { showArtworkPopover.toggle() }
             } else {
@@ -212,6 +213,61 @@ struct FileTreeRow: View {
 
             UserContextMenuItems(username: username)
         }
+        // VoiceOver cannot see the hover-only buttons or the context
+        // menu. Show the row as one element with explicit actions.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isButton)
+        // The tap gesture does not become an AXPress action when the
+        // row is combined. Supply the default action explicitly.
+        .accessibilityAction {
+            browseState.selectFile(file)
+        }
+        .accessibilityHint(file.isDirectory ? "Opens or closes the folder" : "Selects the file")
+        .accessibilityActions {
+            if file.isDirectory {
+                Button("Download folder") { downloadFolder() }
+                Button("Copy folder name") { copyFilename() }
+            } else {
+                if !isQueued {
+                    Button("Download file") { downloadFile() }
+                }
+                Button("Download containing folder") { downloadContainingFolder() }
+                if file.isAudioFile {
+                    Button("Show album art") { fetchArtwork() }
+                }
+                Button("Copy filename") { copyFilename() }
+            }
+            Button("Copy full path") { copyPath() }
+        }
+    }
+
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        if file.isDirectory {
+            parts.append("Folder: \(file.displayName)")
+            if file.fileCount > 0 {
+                parts.append("\(file.fileCount) files")
+            }
+        } else {
+            parts.append(file.displayName)
+            parts.append(file.formattedSize)
+        }
+        if file.isPrivate {
+            parts.append("private, shared only with buddies")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private var accessibilityValue: String {
+        if file.isDirectory {
+            return isExpanded ? "Expanded" : "Collapsed"
+        }
+        if downloadStatus != nil {
+            return downloadButtonHelp
+        }
+        return ""
     }
 
     private func downloadFile() {

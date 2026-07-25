@@ -20,6 +20,7 @@ struct CoverArtEditView: View {
                         .overlay {
                             ProgressView()
                         }
+                        .accessibilityLabel("Loading cover art")
                 } else if let data = state.coverArtData {
                     #if os(macOS)
                     if let nsImage = NSImage(data: data) {
@@ -29,6 +30,7 @@ struct CoverArtEditView: View {
                             .frame(width: 150, height: 150)
                             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                             .shadow(radius: 4)
+                            .accessibilityLabel("Cover art")
                     }
                     #else
                     if let uiImage = UIImage(data: data) {
@@ -38,6 +40,7 @@ struct CoverArtEditView: View {
                             .frame(width: 150, height: 150)
                             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                             .shadow(radius: 4)
+                            .accessibilityLabel("Cover art")
                     }
                     #endif
                 } else {
@@ -49,10 +52,16 @@ struct CoverArtEditView: View {
                                 Image(systemName: "photo.badge.plus")
                                     .font(.system(size: SeeleSpacing.iconSizeXL))
                                     .foregroundStyle(SeeleColors.textTertiary)
+                                    .accessibilityHidden(true)
                                 Text("Drop image here")
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.textTertiary)
                             }
+                            // VoiceOver cannot use the drop target. The
+                            // Choose button below gives the same result.
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("No cover art. Use the Choose button to add an image.")
+                            .accessibilityAddTraits(.isStaticText)
                         }
                 }
             }
@@ -69,6 +78,7 @@ struct CoverArtEditView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .accessibilityLabel("Choose cover art image")
                 #endif
 
                 if state.coverArtData != nil {
@@ -78,6 +88,7 @@ struct CoverArtEditView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .foregroundStyle(SeeleColors.error)
+                    .accessibilityLabel("Clear cover art")
                 }
             }
 

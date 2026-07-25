@@ -15,6 +15,7 @@ struct LoginView: View {
                 VStack(spacing: SeeleSpacing.md) {
                     Image(nsImage: .gsgaag2)
                         .renderingMode(.template)
+                        .accessibilityHidden(true)
 
                     .foregroundStyle(SeeleColors.accent)
 
@@ -33,6 +34,7 @@ struct LoginView: View {
                         Text("Username")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textSecondary)
+                            .accessibilityHidden(true)
 
                         TextField("", text: $connectionState.loginUsername)
                             .textFieldStyle(SeeleTextFieldStyle())
@@ -41,16 +43,19 @@ struct LoginView: View {
                             .autocapitalization(.none)
                             #endif
                             .autocorrectionDisabled()
+                            .accessibilityLabel("Username")
                     }
 
                     VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                         Text("Password")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textSecondary)
+                            .accessibilityHidden(true)
 
                         SecureField("", text: $connectionState.loginPassword)
                             .textFieldStyle(SeeleTextFieldStyle())
                             .textContentType(.password)
+                            .accessibilityLabel("Password")
                     }
 
                     Toggle("Remember me", isOn: $connectionState.rememberCredentials)
@@ -70,6 +75,8 @@ struct LoginView: View {
                         .background(SeeleColors.error.opacity(0.15))
                         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                         .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Error: \(error)")
                     }
 
                     PrimaryButton(

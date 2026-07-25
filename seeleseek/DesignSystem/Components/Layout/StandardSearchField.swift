@@ -28,6 +28,10 @@ struct StandardSearchField: View {
                 .onSubmit {
                     onSubmit?()
                 }
+                // A placeholder is not a label. Without a label,
+                // VoiceOver reads the field as unnamed after the user
+                // types text.
+                .accessibilityLabel(placeholder.trimmingCharacters(in: CharacterSet(charactersIn: ".… ")))
 
             if !text.isEmpty {
                 Button {
@@ -38,6 +42,7 @@ struct StandardSearchField: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear search text")
             }
         }
         .padding(.horizontal, SeeleSpacing.md)

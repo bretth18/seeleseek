@@ -82,6 +82,7 @@ struct ChatRoomContentView: View {
                     .foregroundStyle(chatState.showUserListPanel ? SeeleColors.accent : SeeleColors.textSecondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(chatState.showUserListPanel ? "Hide user list" : "Show user list")
 
             if room.isPrivate && (chatState.isOwner(of: room.name) || chatState.isOperator(of: room.name)) {
                 Button {

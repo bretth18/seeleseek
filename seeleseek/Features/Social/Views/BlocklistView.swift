@@ -55,9 +55,11 @@ struct BlocklistView: View {
                 TextField("Username", text: $newUsername)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 200)
+                    .accessibilityLabel("Username to block")
 
                 TextField("Reason (optional)", text: $newReason)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Reason for blocking, optional")
 
                 Button("Block") {
                     guard !newUsername.isEmpty else { return }
@@ -92,6 +94,7 @@ struct BlocklistView: View {
                     TextField("Search...", text: Bindable(socialState).blockSearchQuery)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 150)
+                        .accessibilityLabel("Search blocked users")
                 }
             }
 
@@ -145,6 +148,7 @@ struct BlocklistView: View {
                         .font(.system(size: SeeleSpacing.iconSizeSmall))
                         .foregroundStyle(SeeleColors.error)
                 }
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                 Text(blocked.username)
@@ -173,6 +177,7 @@ struct BlocklistView: View {
             }
             .buttonStyle(.bordered)
             .foregroundStyle(SeeleColors.error)
+            .accessibilityLabel("Unblock \(blocked.username)")
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surface)

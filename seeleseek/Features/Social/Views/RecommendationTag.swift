@@ -26,6 +26,7 @@ struct RecommendationTag: View {
         }
         .buttonStyle(.plain)
         .help("Add '\(item)' to your likes")
+        .accessibilityLabel("Add \(item) to your likes")
     }
 }
 

@@ -37,6 +37,7 @@ struct UpdateSettingsSection: View {
                         if updateState.isChecking {
                             ProgressView()
                                 .controlSize(.small)
+                                .accessibilityLabel("Checking for updates")
                         } else {
                             Button("Check Now") {
                                 Task { await updateState.checkForUpdate() }
@@ -66,6 +67,10 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
+                        // The time and the word "ago" are separate
+                        // texts. One element speaks them together.
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isStaticText)
                     }
                 }
             }
@@ -76,6 +81,7 @@ struct UpdateSettingsSection: View {
                         HStack(spacing: SeeleSpacing.sm) {
                             Image(systemName: "exclamationmark.triangle")
                                 .foregroundStyle(SeeleColors.error)
+                                .accessibilityHidden(true)
                             Text(error)
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.error)
@@ -92,6 +98,7 @@ struct UpdateSettingsSection: View {
                         HStack(spacing: SeeleSpacing.sm) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(SeeleColors.success)
+                                .accessibilityHidden(true)
                             Text("You're running the latest version")
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.textSecondary)
@@ -142,6 +149,11 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
+                        // The bar and the percent text describe one
+                        // download. One element speaks them together.
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Downloading update")
+                        .accessibilityValue("\(Int((updateState.downloadProgress ?? 0) * 100)) percent")
                     } else {
                         HStack {
                             Button("Download & Install") {

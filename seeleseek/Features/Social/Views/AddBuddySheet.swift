@@ -28,6 +28,7 @@ struct AddBuddySheet: View {
 
                 TextField("Enter username", text: $username)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Username")
                     .onSubmit {
                         addBuddy()
                     }

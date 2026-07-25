@@ -104,13 +104,17 @@ struct MetadataEditorSheet: View {
 
     private func editableField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+            // The text field carries the label for VoiceOver. Hide the
+            // caption so VoiceOver does not speak the label two times.
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityHidden(true)
 
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
                 .font(SeeleTypography.body)
+                .accessibilityLabel(label)
         }
     }
 
@@ -123,6 +127,7 @@ struct MetadataEditorSheet: View {
                 HStack(spacing: SeeleSpacing.xs) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(SeeleColors.textTertiary)
+                        .accessibilityHidden(true)
                     Text("Will apply: \(state.editTitle.isEmpty ? "(no title)" : state.editTitle) by \(state.editArtist.isEmpty ? "(no artist)" : state.editArtist)")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
@@ -140,6 +145,7 @@ struct MetadataEditorSheet: View {
                 ProgressView()
                     .controlSize(.small)
                     .padding(.trailing, SeeleSpacing.sm)
+                    .accessibilityLabel("Applying metadata")
             }
 
             Button("Apply Metadata") {

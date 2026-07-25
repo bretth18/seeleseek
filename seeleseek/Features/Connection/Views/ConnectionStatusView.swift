@@ -53,6 +53,21 @@ struct ConnectionStatusView: View {
             }
         }
         .cardStyle()
+        // Only the color and the icon of the badge show the state.
+        // Read the full card as one clear status sentence.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(statusAccessibilityLabel)
+    }
+
+    private var statusAccessibilityLabel: String {
+        var label = "Connection status: \(appState.connection.connectionStatus.label)"
+        if let username = appState.connection.username {
+            label += " as \(username)"
+        }
+        if let error = appState.connection.errorMessage {
+            label += ", error: \(error)"
+        }
+        return label
     }
 
     @ViewBuilder
@@ -72,6 +87,7 @@ struct ConnectionStatusView: View {
                     Text(ip)
                         .seeleMono()
                 }
+                .accessibilityElement(children: .combine)
             }
 
             HStack {
@@ -81,6 +97,7 @@ struct ConnectionStatusView: View {
                 Text("server.slsknet.org:2242")
                     .seeleMono()
             }
+            .accessibilityElement(children: .combine)
 
             if let greeting = appState.connection.serverGreeting {
                 Divider()
@@ -125,6 +142,18 @@ struct CompactConnectionStatus: View {
                     .foregroundStyle(SeeleColors.textSecondary)
             }
         }
+        // The badge has no text. Read the status and the username as
+        // one element.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        var label = "Connection status: \(appState.connection.connectionStatus.label)"
+        if let username = appState.connection.username {
+            label += " as \(username)"
+        }
+        return label
     }
 }
 

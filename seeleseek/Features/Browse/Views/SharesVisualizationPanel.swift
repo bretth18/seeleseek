@@ -194,5 +194,11 @@ struct StatCard: View {
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surfaceSecondary)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        // The icon is decoration. Read the card as one element, for
+        // example "Total Size: 12.4 GB". A collapsed element has no AX
+        // role on macOS, thus the role is declared explicitly.
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityLabel("\(title): \(value)")
     }
 }

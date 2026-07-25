@@ -167,6 +167,8 @@ final class ActivityLog: ActivityLogging {
 
     func logDownloadCompleted(filename: String) {
         log(.downloadCompleted, title: "Download completed", detail: filename)
+        let displayName = (filename as NSString).lastPathComponent
+        VoiceOverAnnouncer.shared.announce("Download complete: \(displayName)")
     }
 
     func logUploadStarted(filename: String, to user: String) {
@@ -182,6 +184,7 @@ final class ActivityLog: ActivityLogging {
             log(.chatMessage, title: "Message from \(user)", detail: "in \(room)", username: user)
         } else {
             log(.chatMessage, title: "Private message from \(user)", username: user)
+            VoiceOverAnnouncer.shared.announce("Private message from \(user)")
         }
     }
 
@@ -197,18 +200,22 @@ final class ActivityLog: ActivityLogging {
 
     func logConnectionSuccess(username: String, server: String) {
         log(.info, title: "Connected as \(username)", detail: server)
+        VoiceOverAnnouncer.shared.announce("Connected to Soulseek as \(username)")
     }
 
     func logConnectionFailed(reason: String) {
         log(.error, title: "Login failed", detail: reason)
+        VoiceOverAnnouncer.shared.announce("Login failed: \(reason)")
     }
 
     func logDisconnected(reason: String? = nil) {
         log(.info, title: "Disconnected", detail: reason)
+        VoiceOverAnnouncer.shared.announce("Disconnected from the Soulseek server")
     }
 
     func logRelogged() {
         log(.error, title: "Kicked: another client logged in")
+        VoiceOverAnnouncer.shared.announce("Disconnected: another client logged in with your account")
     }
 
     func logRoomJoined(room: String, userCount: Int) {

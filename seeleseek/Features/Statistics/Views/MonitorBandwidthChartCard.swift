@@ -84,6 +84,12 @@ struct MonitorBandwidthChartCard: View {
                     }
                 }
                 .frame(height: 150)
+                // Swift Charts shows each mark as an element with a role
+                // that macOS VoiceOver does not know ("Unknown role" in
+                // the accessibility audit). Collapse the chart to one
+                // labeled element. The header shows the numbers as text.
+                .accessibilityElement(children: .ignore)
+                .accessibilityAddTraits(.isImage)
                 .accessibilityLabel("Bandwidth chart, last 2 minutes of download and upload speed")
 
                 HStack(spacing: SeeleSpacing.lg) {

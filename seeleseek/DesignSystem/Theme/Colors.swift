@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SeeleseekCore
 
@@ -14,7 +15,23 @@ enum SeeleColors {
     // MARK: - Text
     static let textPrimary = Color(hex: 0xF5F5F5)
     static let textSecondary = Color(hex: 0x9A9A9A)
-    static let textTertiary = Color(hex: 0x5C5C5C)
+    /// Dim gray for metadata text. The standard value is below the
+    /// WCAG 4.5:1 contrast minimum. This is intentional. When
+    /// "Increase contrast" is on in System Settings, AppKit resolves
+    /// the high-contrast appearance and a brighter gray applies. That
+    /// value has a contrast of more than 4.5:1 on all app surfaces.
+    static let textTertiary = Color(nsColor: NSColor(name: nil) { appearance in
+        let match = appearance.bestMatch(from: [
+            .darkAqua, .accessibilityHighContrastDarkAqua
+        ])
+        let hex: UInt = match == .accessibilityHighContrastDarkAqua ? 0x909090 : 0x5C5C5C
+        return NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255.0,
+            green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(hex & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+    })
     static let textOnAccent = Color.white
 
     // MARK: - Status (Harmonized with accent)

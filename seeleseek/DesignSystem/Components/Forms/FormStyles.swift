@@ -51,6 +51,14 @@ struct SeeleToggleStyle: ToggleStyle {
                 }
             }
         }
+        // The control is drawn with custom shapes. Supply a real switch
+        // to assistive technology. VoiceOver then gets the trait, the
+        // value, and the action.
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) {
+                configuration.label
+            }
+        }
     }
 }
 
