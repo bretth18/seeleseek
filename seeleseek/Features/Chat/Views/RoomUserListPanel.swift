@@ -31,8 +31,6 @@ struct RoomUserListPanel: View {
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
-            // A combined element has no AX role on macOS.
-            // Declare the role explicitly.
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Users: \(room.userCount)")
             .accessibilityAddTraits(.isStaticText)
@@ -207,12 +205,8 @@ private struct RoomUserRow: View {
                 }
             }
         }
-        // VoiceOver cannot see the context menu. Show the row as one
-        // element with explicit actions.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        // A combined element has no AX role on macOS.
-        // Declare the role explicitly.
         .accessibilityAddTraits(.isStaticText)
         .accessibilityActions {
             UserAccessibilityActions(username: username, showAddBuddy: true)

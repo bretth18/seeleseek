@@ -186,7 +186,6 @@ struct SearchEventRow: View {
                 .foregroundStyle(SeeleColors.textTertiary)
         }
         .padding(.vertical, SeeleSpacing.xs)
-        // The direction is icon-color-only. Speak it in the label.
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(event.direction == .outgoing ? "Outgoing" : "Incoming") search: \(event.query)")
         .accessibilityValue(accessibilityValue)

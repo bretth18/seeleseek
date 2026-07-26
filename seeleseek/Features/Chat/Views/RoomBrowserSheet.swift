@@ -149,8 +149,6 @@ struct RoomBrowserSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                // Only the tint shows which tab is active. Thus the
-                // selected trait speaks the state.
                 .accessibilityAddTraits(chatState.roomListTab == tab ? [.isSelected] : [])
             }
             Spacer()
@@ -217,9 +215,6 @@ struct RoomBrowserSheet: View {
         let isOwned = chatState.ownedPrivateRooms.contains { $0.name == room.name }
 
         return HStack {
-            // The info portion reads as one stop. The computed label
-            // speaks the owned, private, and joined states that only
-            // the icon and the trailing text show.
             HStack {
                 if isOwned {
                     Image(systemName: "crown.fill")

@@ -53,8 +53,6 @@ struct ConnectionStatusView: View {
             }
         }
         .cardStyle()
-        // Only the color and the icon of the badge show the state.
-        // Read the full card as one clear status sentence.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(statusAccessibilityLabel)
     }
@@ -143,8 +141,6 @@ struct CompactConnectionStatus: View {
                     .foregroundStyle(SeeleColors.textSecondary)
             }
         }
-        // The badge has no text. Read the status and the username as
-        // one element.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
     }

@@ -8,8 +8,6 @@ func settingsHeader(_ title: String) -> some View {
     Text(title)
         .font(SeeleTypography.title)
         .foregroundStyle(SeeleColors.textPrimary)
-        // Headers join the VoiceOver headings rotor so users can
-        // jump between settings sections.
         .accessibilityAddTraits(.isHeader)
 }
 

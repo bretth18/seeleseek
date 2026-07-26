@@ -219,7 +219,6 @@ struct DetailRow: View {
                 .foregroundStyle(SeeleColors.textSecondary)
                 .textSelection(.enabled)
         }
-        // Read the name and the value as one element.
         .accessibilityElement(children: .combine)
     }
 }

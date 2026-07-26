@@ -65,9 +65,8 @@ struct RoomActivityPane: View {
         .onTapGesture {
             isExpanded.toggle()
         }
-        // One button element for the whole header. The tap gesture
-        // does not become an AXPress action when the row is combined,
-        // so supply the default action explicitly.
+        // The tap gesture does not become an AXPress action on
+        // the combined element.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(headerAccessibilityLabel)
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")
@@ -106,8 +105,6 @@ struct RoomActivityPane: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(event.username) \(label(for: event.kind)) at \(event.formattedTime)")
-                    // A combined element has no AX role on macOS.
-                    // Declare the role explicitly.
                     .accessibilityAddTraits(.isStaticText)
                 }
             }

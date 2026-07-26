@@ -45,8 +45,6 @@ struct TransferHistoryRow: View {
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)
         .background(SeeleColors.surfaceSecondary.opacity(0.5))
-        // The direction is icon-color-only. Speak it in the label so a
-        // VoiceOver user can tell downloads from uploads.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue("\(entry.size.formattedBytes), \(entry.averageSpeed.formattedSpeed), \(formatTime(entry.timestamp))")

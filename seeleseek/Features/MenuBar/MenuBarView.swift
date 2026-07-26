@@ -57,8 +57,6 @@ struct MenuBarView: View {
         }
         .padding(.horizontal, SeeleSpacing.sm)
         .padding(.vertical, SeeleSpacing.xs)
-        // The icon color is the only visual cue for the state. Read
-        // the header as one clear status sentence.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(headerAccessibilityLabel)
 

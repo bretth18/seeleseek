@@ -106,8 +106,6 @@ struct MetadataEditorSheet: View {
 
     private func editableField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-            // The text field carries the label for VoiceOver. Hide the
-            // caption so VoiceOver does not speak the label two times.
             Text(label)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)

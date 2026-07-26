@@ -33,8 +33,6 @@ struct StandardStatBadge: View {
                     .foregroundStyle(color)
             }
         }
-        // One element keeps the name and the number together and
-        // out of the icon's symbol description.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label): \(value)")
         .accessibilityAddTraits(.isStaticText)

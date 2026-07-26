@@ -82,8 +82,6 @@ struct SeeleFormSection<Content: View>: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .textCase(.uppercase)
                 .tracking(SeeleSpacing.trackingWide)
-                // Section titles join the VoiceOver headings rotor
-                // so users can jump between form sections.
                 .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: 0) {

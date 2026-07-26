@@ -24,8 +24,6 @@ struct UpdateSettingsSection: View {
                             .font(SeeleTypography.mono)
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
-                    // The caption and the version are separate texts.
-                    // One element speaks them together.
                     .accessibilityElement(children: .combine)
                     .accessibilityAddTraits(.isStaticText)
                 }
@@ -71,8 +69,6 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
-                        // The time and the word "ago" are separate
-                        // texts. One element speaks them together.
                         .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isStaticText)
                     }
@@ -177,8 +173,6 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
-                        // The bar and the percent text describe one
-                        // download. One element speaks them together.
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Downloading update")
                         .accessibilityValue("\(Int((updateState.downloadProgress ?? 0) * 100)) percent")

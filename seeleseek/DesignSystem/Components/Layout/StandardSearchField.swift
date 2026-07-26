@@ -17,7 +17,6 @@ struct StandardSearchField: View {
                     .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
                     .accessibilityLabel("Searching")
             } else {
-                // Decorative. The text field carries the label.
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.textTertiary)

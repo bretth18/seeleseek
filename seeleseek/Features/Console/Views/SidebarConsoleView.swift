@@ -147,8 +147,6 @@ struct SidebarConsoleView: View {
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.bottom, SeeleSpacing.sm)
         .opacity(0.7)
-        // The icon color is the only visual cue for the event type.
-        // The label speaks the type.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(rowAccessibilityLabel(event))
         .accessibilityAddTraits(.isStaticText)

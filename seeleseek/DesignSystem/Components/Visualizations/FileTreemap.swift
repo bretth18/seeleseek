@@ -33,10 +33,7 @@ struct FileTreemap: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(cellAccessibilityLabel(for: file))
 
-                    // A collapsed element has no AX role on macOS, so the
-                    // role is declared explicitly. The tap gesture does not
-                    // become an AXPress action, so the default action is
-                    // supplied explicitly when a selection callback exists.
+                    // The tap gesture does not become an AXPress action.
                     if let onFileSelected {
                         cell
                             .accessibilityAddTraits(.isButton)

@@ -106,7 +106,6 @@ struct PeerRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayName), \(peer.state.accessibilityLabel)")
         .accessibilityValue(accessibilityValue)
-        // Combined elements on macOS get no AX role without a trait.
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             showingDetail = true

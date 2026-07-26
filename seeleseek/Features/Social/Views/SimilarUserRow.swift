@@ -76,12 +76,8 @@ struct SimilarUserRow: View {
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-        // Show the row as one element with explicit actions, the same
-        // pattern as BuddyRowView.
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(username), similarity rating \(rating)")
-        // A combined element has no AX role on macOS. Declare the
-        // role explicitly.
         .accessibilityAddTraits(.isStaticText)
         .accessibilityActions {
             Button("View profile") { viewProfile() }

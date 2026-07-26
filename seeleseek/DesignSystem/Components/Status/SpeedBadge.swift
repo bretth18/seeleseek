@@ -36,8 +36,6 @@ struct SpeedBadge: View {
         .padding(.vertical, SeeleSpacing.xxs)
         .background(direction.color.opacity(0.15))
         .clipShape(Capsule())
-        // The direction lives only in the arrow icon and its
-        // color. Speak it as part of one element.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "\(direction == .download ? "Download" : "Upload") speed: \(bytesPerSecond.formattedSpeed)"

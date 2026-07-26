@@ -94,7 +94,6 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
-                // One stop that speaks the label and the value.
                 .accessibilityElement(children: .combine)
             }
 
@@ -190,8 +189,6 @@ struct RoomManagementSheet: View {
                             .lineLimit(1)
                         Spacer()
                     }
-                    // A combined element has no AX role on macOS.
-                    // Declare the role explicitly.
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Ticker from \(username): \(ticker)")
                     .accessibilityAddTraits(.isStaticText)

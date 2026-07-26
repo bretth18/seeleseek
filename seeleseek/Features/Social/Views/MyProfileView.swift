@@ -191,9 +191,6 @@ struct MyProfileView: View {
                 } else {
                     VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
                         if !socialState.myLikes.isEmpty {
-                            // Only the heart icon shows the difference
-                            // between likes and dislikes. Thus the
-                            // combined label speaks it.
                             HStack(spacing: SeeleSpacing.xs) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: SeeleSpacing.iconSizeXS))

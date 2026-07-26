@@ -124,8 +124,6 @@ struct ChatRoomContentView: View {
                         .font(SeeleTypography.caption2)
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
-                // A combined element has no AX role on macOS.
-                // Declare the role explicitly.
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Tickers, \(room.tickers.count)")
                 .accessibilityAddTraits(.isStaticText)
@@ -160,8 +158,6 @@ struct ChatRoomContentView: View {
                                     .foregroundStyle(SeeleColors.textTertiary)
                                     .lineLimit(1)
                             }
-                            // A combined element has no AX role on macOS.
-                            // Declare the role explicitly.
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel("Ticker from \(username): \(ticker)")
                             .accessibilityAddTraits(.isStaticText)

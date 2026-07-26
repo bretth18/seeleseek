@@ -301,7 +301,6 @@ struct DiagnosticsSection: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .padding(.leading, SeeleSpacing.md)
         }
-        // One element per tip. The label omits the visual bullet.
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title). \(description)")
         .accessibilityAddTraits(.isStaticText)

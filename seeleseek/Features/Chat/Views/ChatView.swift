@@ -165,8 +165,6 @@ struct ChatView: View {
                 Label("Leave Room", systemImage: "arrow.right.square")
             }
         }
-        // VoiceOver cannot see the context menu, and only the icon
-        // shows the room role. The label speaks both.
         .accessibilityLabel(roomRowAccessibilityLabel(room))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .accessibilityActions {

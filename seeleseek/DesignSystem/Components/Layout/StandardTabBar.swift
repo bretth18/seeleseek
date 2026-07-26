@@ -75,8 +75,6 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
             )
         }
         .buttonStyle(.plain)
-        // The explicit label keeps the badge number out of the
-        // spoken name. The value gives the count a unit.
         .accessibilityLabel(tab.rawValue)
         .accessibilityValue(badgeCount > 0 ? "\(badgeCount) \(badgeUnit)" : "")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])

@@ -19,7 +19,6 @@ struct PrivateChatContentView: View {
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
-                // One stop that speaks the name and the status.
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("\(chat.username), \(chat.isOnline ? "online" : "offline")")
                 .accessibilityAddTraits(.isHeader)
@@ -151,11 +150,7 @@ struct MessageBubble: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(messageBubbleAccessibilityLabel)
-            // A combined element has no AX role on macOS.
-            // Declare the role explicitly.
             .accessibilityAddTraits(.isStaticText)
-            // VoiceOver cannot see the context menu or activate the
-            // inline links. Mirror them as rotor actions.
             .accessibilityActions {
                 if !message.isSystem {
                     Button("Copy Message") {

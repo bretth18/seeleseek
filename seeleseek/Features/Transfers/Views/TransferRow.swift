@@ -197,7 +197,6 @@ struct TransferRow: View {
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        // Combined elements on macOS get no AX role without a trait.
         .accessibilityAddTraits(.isStaticText)
         .modifier(TransferRowAccessibilityActions(
             transfer: transfer,

@@ -33,8 +33,6 @@ struct StandardEmptyState: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .scaleEffect(appeared ? 1.0 : 0.8)
                 .opacity(appeared ? 1.0 : 0.0)
-                // The icon is decorative. Without this, VoiceOver
-                // speaks the raw symbol name before the title.
                 .accessibilityHidden(true)
 
             VStack(spacing: SeeleSpacing.sm) {
