@@ -112,6 +112,7 @@ struct SharesVisualizationPanel: View {
             Text("Overview")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
@@ -130,6 +131,7 @@ struct SharesVisualizationPanel: View {
             Text("File Types")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             FileTypeDistribution(files: allFiles)
         }
     }
@@ -139,6 +141,7 @@ struct SharesVisualizationPanel: View {
             Text("Audio Quality")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             BitrateDistribution(files: audioFiles)
         }
     }
@@ -148,6 +151,7 @@ struct SharesVisualizationPanel: View {
             Text("Largest Files")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             SizeComparisonBars(items: cachedTopFiles ?? [])
         }
     }
@@ -157,6 +161,7 @@ struct SharesVisualizationPanel: View {
             Text("Size Distribution")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             FileTreemap(files: Array(allFiles.prefix(50)))
                 .frame(height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

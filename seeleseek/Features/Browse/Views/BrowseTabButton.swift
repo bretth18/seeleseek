@@ -64,6 +64,9 @@ struct BrowseTabButton: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityHint("Shows this browse")
+        // The tap gesture does not become an AXPress action on the
+        // combined element. Supply the default action explicitly.
+        .accessibilityAction { onSelect() }
         .accessibilityAction(named: "Close browse") { onClose() }
     }
 

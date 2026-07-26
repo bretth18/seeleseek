@@ -94,13 +94,26 @@ struct SearchResultRow: View {
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isQueued ? [] : .isButton)
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(accessibilityTraits)
+        // The double tap gesture does not become an AXPress action on
+        // the combined element. Supply the default action explicitly.
+        .accessibilityAction { download() }
         .accessibilityActions {
+            if isSelectionMode {
+                Button(isSelected ? "Deselect" : "Select") { onToggleSelection?() }
+            }
             if !isQueued, !isIgnored {
                 Button("Download", action: download)
             }
+            if !isIgnored {
+                Button("Download entire folder", action: downloadContainingFolder)
+            }
             Button("Browse folder", action: browseFolder)
             Button("Browse \(result.username)", action: browseUser)
+            Button("Copy filename", action: copyFilename)
+            Button("Copy full path", action: copyPath)
+            UserAccessibilityActions(username: result.username)
         }
         .onAppear {
             refreshCountryFlag()
@@ -121,8 +134,9 @@ struct SearchResultRow: View {
             .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
             .contentShape(Rectangle())
             .onTapGesture { onToggleSelection?() }
-            .accessibilityLabel(isSelected ? "Deselect" : "Select")
-            .accessibilityAddTraits(.isButton)
+            // The combined row exposes the selected state and a rotor
+            // action. Hide the checkbox so the row label stays short.
+            .accessibilityHidden(true)
     }
 
     // MARK: - Selection highlight
@@ -186,7 +200,6 @@ struct SearchResultRow: View {
                 .strikethrough(isIgnored, color: SeeleColors.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .accessibilityAddTraits(.isHeader)
 
             contextLine
         }
@@ -488,6 +501,28 @@ struct SearchResultRow: View {
         if isIgnored { parts.append("ignored user") }
         if result.isPrivate { parts.append("private file") }
         return parts.joined(separator: ", ")
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        if isSelectionMode {
+            parts.append(isSelected ? "selected" : "not selected")
+        }
+        if downloadStatus != nil {
+            parts.append(actionHelp)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private var accessibilityTraits: AccessibilityTraits {
+        var traits: AccessibilityTraits = []
+        if !isQueued {
+            traits.insert(.isButton)
+        }
+        if isSelectionMode && isSelected {
+            traits.insert(.isSelected)
+        }
+        return traits
     }
 
     // MARK: - Context menu

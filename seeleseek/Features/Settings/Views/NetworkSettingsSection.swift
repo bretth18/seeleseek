@@ -65,6 +65,13 @@ struct NetworkSettingsSection: View {
                 settingsNumberField("Download Limit (KB/s)", value: $settings.downloadSpeedLimit, range: 0...100000, placeholder: "0 = Unlimited")
             }
         }
+        // The apply row appears without focus movement. Announce it so
+        // VoiceOver users know a reconnect is required.
+        .onChange(of: portChangeIsLive) { _, isLive in
+            if isLive {
+                VoiceOverAnnouncer.shared.announce("Port change needs a reconnect")
+            }
+        }
     }
 
     /// Inlined version of `settingsNumberField` that exposes
@@ -76,6 +83,7 @@ struct NetworkSettingsSection: View {
                 Text("Listen Port")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityHidden(true)
                 Spacer()
                 TextField("", value: $settings.listenPort, format: .number)
                     .textFieldStyle(SeeleTextFieldStyle())
@@ -83,6 +91,7 @@ struct NetworkSettingsSection: View {
                     .multilineTextAlignment(.trailing)
                     .focused($listenPortFocused)
                     .onSubmit { listenPortFocused = false }
+                    .accessibilityLabel("Listen Port")
             }
         }
     }
@@ -193,7 +202,9 @@ struct NetworkSettingsSection: View {
         if appState.connection.connectionStatus != .connected {
             await appState.networkClient.disconnectAsync()
             settings.listenPort = originalPort
-            portApplyError = "Couldn't bind port \(targetPort). Reverted to \(originalPort)."
+            let errorMessage = "Couldn't bind port \(targetPort). Reverted to \(originalPort)."
+            portApplyError = errorMessage
+            VoiceOverAnnouncer.shared.announce(errorMessage)
             if originalPort > 0 {
                 await appState.networkClient.connect(
                     server: ServerConnection.defaultHost,

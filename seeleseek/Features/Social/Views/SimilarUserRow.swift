@@ -40,7 +40,7 @@ struct SimilarUserRow: View {
 
             HStack(spacing: SeeleSpacing.sm) {
                 Button {
-                    Task { await appState.socialState.loadProfile(for: username) }
+                    viewProfile()
                 } label: {
                     Image(systemName: "person.crop.circle")
                 }
@@ -48,7 +48,7 @@ struct SimilarUserRow: View {
                 .accessibilityLabel("View \(username)'s profile")
 
                 Button {
-                    Task { await appState.socialState.addBuddy(username) }
+                    addBuddy()
                 } label: {
                     Image(systemName: "person.badge.plus")
                 }
@@ -56,8 +56,7 @@ struct SimilarUserRow: View {
                 .accessibilityLabel("Add \(username) as buddy")
 
                 Button {
-                    appState.browseState.browseUser(username)
-                    appState.sidebarSelection = .browse
+                    browseFiles()
                 } label: {
                     Image(systemName: "folder")
                 }
@@ -65,8 +64,7 @@ struct SimilarUserRow: View {
                 .accessibilityLabel("Browse \(username)'s files")
 
                 Button {
-                    appState.chatState.selectPrivateChat(username)
-                    appState.sidebarSelection = .chat
+                    startChat()
                 } label: {
                     Image(systemName: "bubble.left")
                 }
@@ -78,6 +76,37 @@ struct SimilarUserRow: View {
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        // Show the row as one element with explicit actions, the same
+        // pattern as BuddyRowView.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(username), similarity rating \(rating)")
+        // A combined element has no AX role on macOS. Declare the
+        // role explicitly.
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityActions {
+            Button("View profile") { viewProfile() }
+            Button("Add buddy") { addBuddy() }
+            Button("Browse files") { browseFiles() }
+            Button("Send message") { startChat() }
+        }
+    }
+
+    private func viewProfile() {
+        Task { await appState.socialState.loadProfile(for: username) }
+    }
+
+    private func addBuddy() {
+        Task { await appState.socialState.addBuddy(username) }
+    }
+
+    private func browseFiles() {
+        appState.browseState.browseUser(username)
+        appState.sidebarSelection = .browse
+    }
+
+    private func startChat() {
+        appState.chatState.selectPrivateChat(username)
+        appState.sidebarSelection = .chat
     }
 }
 

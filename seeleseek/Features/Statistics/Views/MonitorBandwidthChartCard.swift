@@ -15,6 +15,7 @@ struct MonitorBandwidthChartCard: View {
                 Text("Bandwidth")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Chart {
                     ForEach(speedHistory) { sample in
@@ -87,10 +88,11 @@ struct MonitorBandwidthChartCard: View {
                 // Swift Charts shows each mark as an element with a role
                 // that macOS VoiceOver does not know ("Unknown role" in
                 // the accessibility audit). Collapse the chart to one
-                // labeled element. The header shows the numbers as text.
-                .accessibilityElement(children: .ignore)
-                .accessibilityAddTraits(.isImage)
-                .accessibilityLabel("Bandwidth chart, last 2 minutes of download and upload speed")
+                // labeled element that speaks the headline numbers.
+                .accessibleChart(
+                    label: "Bandwidth chart, last 2 minutes",
+                    value: bandwidthSummary
+                )
 
                 HStack(spacing: SeeleSpacing.lg) {
                     legendItem(color: SeeleColors.success, label: "Download")
@@ -98,6 +100,14 @@ struct MonitorBandwidthChartCard: View {
                 }
             }
         }
+    }
+
+    private var bandwidthSummary: String {
+        guard let last = speedHistory.last else { return "No data" }
+        let peakDownload = speedHistory.map(\.downloadSpeed).max() ?? 0
+        let peakUpload = speedHistory.map(\.uploadSpeed).max() ?? 0
+        return "Download \(last.downloadSpeed.formattedSpeed), upload \(last.uploadSpeed.formattedSpeed), "
+            + "peak download \(peakDownload.formattedSpeed), peak upload \(peakUpload.formattedSpeed)"
     }
 
     private func legendItem(color: Color, label: String) -> some View {

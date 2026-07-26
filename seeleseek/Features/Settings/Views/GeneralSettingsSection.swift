@@ -54,9 +54,11 @@ struct GeneralSettingsSection: View {
                             Text("Template")
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textSecondary)
+                                .accessibilityHidden(true)
 
                             TextField("{username}/{folders}/{filename}", text: $settings.downloadFolderTemplate)
                                 .textFieldStyle(SeeleTextFieldStyle())
+                                .accessibilityLabel("Download folder template")
 
                             Text("Tokens: {username}, {folders}, {artist}, {album}, {filename}")
                                 .font(SeeleTypography.caption2)
@@ -70,6 +72,7 @@ struct GeneralSettingsSection: View {
                         Image(systemName: "eye")
                             .font(.system(size: SeeleSpacing.iconSizeXS))
                             .foregroundStyle(SeeleColors.textTertiary)
+                            .accessibilityHidden(true)
                         Text("Preview: ")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
@@ -79,6 +82,8 @@ struct GeneralSettingsSection: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isStaticText)
                 }
             }
 

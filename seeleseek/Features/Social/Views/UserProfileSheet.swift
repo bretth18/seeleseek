@@ -126,6 +126,7 @@ struct UserProfileSheet: View {
             Text("About")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             Text(profile.description)
                 .font(SeeleTypography.body)
@@ -139,6 +140,7 @@ struct UserProfileSheet: View {
             Text("Stats")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
@@ -175,6 +177,7 @@ struct UserProfileSheet: View {
             Text("Interests")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             if !profile.likedInterests.isEmpty {
                 VStack(alignment: .leading, spacing: SeeleSpacing.xs) {

@@ -105,6 +105,7 @@ struct ChatView: View {
             Text("\(title) (\(count))")
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
         }
         .padding(.horizontal, SeeleSpacing.md)
@@ -264,12 +265,8 @@ struct ChatView: View {
         .accessibilityLabel(dmRowAccessibilityLabel(chat))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .accessibilityActions {
-            Button("View profile") {
-                Task { await appState.socialState.loadProfile(for: chat.username) }
-            }
-            Button("Browse files") {
-                appState.browseState.browseUser(chat.username)
-            }
+            UserAccessibilityActions(username: chat.username)
+
             Button("Delete history") {
                 pendingHistoryDeletion = chat.username
             }

@@ -76,9 +76,16 @@ final class UpdateState {
             logger.info("Update check: current=\(currentFull) skipped=\(self.skippedVersion ?? "<none>")")
             let result = try await updateClient.fetchLatestRelease(currentVersion: currentFull)
 
+            let wasAvailable = updateAvailable
             updateAvailable = result.isNewer
             latestVersion = result.release.tagName
             releaseNotes = result.release.body
+
+            // Announce only the transition to available. Repeat checks
+            // with the same result stay silent.
+            if result.isNewer, !wasAvailable {
+                VoiceOverAnnouncer.shared.announce("Update available: version \(result.release.tagName)")
+            }
 
             if let htmlUrl = URL(string: result.release.htmlUrl) {
                 latestReleaseURL = htmlUrl

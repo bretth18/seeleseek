@@ -14,6 +14,7 @@ struct MyProfileView: View {
 
     @State private var editingDescription: String = ""
     @State private var hasChanges = false
+    @State private var pictureError: String?
 
     var body: some View {
         @Bindable var state = appState
@@ -25,6 +26,7 @@ struct MyProfileView: View {
                 Text("My Profile")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -46,6 +48,7 @@ struct MyProfileView: View {
                 Text("Profile Picture")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
                 HStack(spacing: SeeleSpacing.md) {
                     if let pictureData = socialState.myPicture,
@@ -79,11 +82,18 @@ struct MyProfileView: View {
                                 hasChanges = true
                             }
                             .foregroundStyle(SeeleColors.error)
+                            .accessibilityLabel("Remove profile picture")
                         }
 
                         Text("JPEG or PNG, max 256 KB")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
+
+                        if let pictureError {
+                            Text(pictureError)
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.error)
+                        }
                     }
                 }
             }
@@ -95,6 +105,7 @@ struct MyProfileView: View {
                 Text("Description")
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
                 TextEditor(text: $editingDescription)
                     .font(SeeleTypography.body)
@@ -120,6 +131,7 @@ struct MyProfileView: View {
                     Text("Privileges")
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 
@@ -128,6 +140,7 @@ struct MyProfileView: View {
                     }
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityLabel("Check privilege status")
                 }
 
                 HStack(spacing: SeeleSpacing.sm) {
@@ -159,6 +172,7 @@ struct MyProfileView: View {
                     Text("My Interests")
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 
@@ -259,6 +273,8 @@ struct MyProfileView: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        pictureError = nil
+
         do {
             var data = try Data(contentsOf: url)
 
@@ -280,14 +296,19 @@ struct MyProfileView: View {
                 }
 
                 if data.count > maxSize {
-                    return // Still too large, give up
+                    // Still too large after compression. A silent
+                    // return leaves a VoiceOver user with no feedback.
+                    pictureError = "Image is too large"
+                    VoiceOverAnnouncer.shared.announce("Image is too large")
+                    return
                 }
             }
 
             socialState.myPicture = data
             hasChanges = true
         } catch {
-            // Failed to read file
+            pictureError = "Can not read the image file"
+            VoiceOverAnnouncer.shared.announce("Can not read the image file")
         }
     }
 }

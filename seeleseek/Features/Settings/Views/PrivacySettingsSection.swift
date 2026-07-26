@@ -52,6 +52,7 @@ struct PrivacySettingsSection: View {
                 Text("Pattern Blocks")
                     .font(SeeleTypography.title)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -104,6 +105,7 @@ struct PrivacySettingsSection: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.warning)
+                    .accessibilityHidden(true)
 
                 Text(pattern)
                     .font(SeeleTypography.mono)
@@ -116,6 +118,7 @@ struct PrivacySettingsSection: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundStyle(SeeleColors.error)
+                .accessibilityLabel("Remove pattern \(pattern)")
             }
         }
     }
@@ -143,6 +146,7 @@ struct PrivacySettingsSection: View {
                 Text("Blocklist")
                     .font(SeeleTypography.title)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -204,6 +208,7 @@ struct PrivacySettingsSection: View {
                             .font(.system(size: SeeleSpacing.iconSizeSmall))
                             .foregroundStyle(SeeleColors.error)
                     }
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(blocked.username)
@@ -222,6 +227,8 @@ struct PrivacySettingsSection: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isStaticText)
 
                 Spacer()
 
@@ -232,6 +239,7 @@ struct PrivacySettingsSection: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundStyle(SeeleColors.error)
+                .accessibilityLabel("Unblock \(blocked.username)")
             }
         }
     }
@@ -255,6 +263,7 @@ struct PrivacySettingsSection: View {
                 Text("Leech Detection")
                     .font(SeeleTypography.title)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -272,6 +281,7 @@ struct PrivacySettingsSection: View {
                             Text("Enable Leech Detection")
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.textPrimary)
+                                .accessibilityHidden(true)
 
                             Text("Detect users who download without sharing files")
                                 .font(SeeleTypography.caption)
@@ -283,6 +293,7 @@ struct PrivacySettingsSection: View {
                         Toggle("", isOn: Bindable(socialState).leechSettings.enabled)
                             .toggleStyle(SeeleToggleStyle())
                             .labelsHidden()
+                            .accessibilityLabel("Enable Leech Detection")
                             .onChange(of: socialState.leechSettings.enabled) { _, _ in
                                 Task { await socialState.saveLeechSettings() }
                             }
@@ -296,6 +307,7 @@ struct PrivacySettingsSection: View {
                         Text("Minimum shared files")
                             .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.textPrimary)
+                            .accessibilityHidden(true)
 
                         Spacer()
 
@@ -303,6 +315,7 @@ struct PrivacySettingsSection: View {
                             .textFieldStyle(SeeleTextFieldStyle())
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Minimum shared files")
                             .onChange(of: socialState.leechSettings.minSharedFiles) { _, _ in
                                 Task { await socialState.saveLeechSettings() }
                             }
@@ -313,6 +326,7 @@ struct PrivacySettingsSection: View {
                         Text("Minimum shared folders")
                             .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.textPrimary)
+                            .accessibilityHidden(true)
 
                         Spacer()
 
@@ -320,6 +334,7 @@ struct PrivacySettingsSection: View {
                             .textFieldStyle(SeeleTextFieldStyle())
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
+                            .accessibilityLabel("Minimum shared folders")
                             .onChange(of: socialState.leechSettings.minSharedFolders) { _, _ in
                                 Task { await socialState.saveLeechSettings() }
                             }
@@ -346,6 +361,7 @@ struct PrivacySettingsSection: View {
                 settingsRow {
                     VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                         TextEditor(text: Bindable(socialState).leechSettings.customMessage)
+                            .accessibilityLabel("Custom leech message")
                             .font(SeeleTypography.body)
                             .foregroundStyle(SeeleColors.textPrimary)
                             .scrollContentBackground(.hidden)
@@ -375,6 +391,7 @@ struct PrivacySettingsSection: View {
                                         .background(SeeleColors.accent.opacity(0.1), in: Capsule())
                                 }
                                 .buttonStyle(.plain)
+                                .accessibilityHint("Replaces the custom message with this template")
                             }
                         }
                     }
@@ -422,6 +439,7 @@ struct PrivacySettingsSection: View {
                 HStack(spacing: SeeleSpacing.md) {
                     Image(systemName: socialState.leechSettings.action == action ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(socialState.leechSettings.action == action ? SeeleColors.accent : SeeleColors.textTertiary)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                         Text(action.displayName)
@@ -446,6 +464,8 @@ struct PrivacySettingsSection: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(action.displayName)
+        .accessibilityAddTraits(socialState.leechSettings.action == action ? [.isSelected] : [])
     }
 
     private func leechRow(_ username: String) -> some View {
@@ -453,6 +473,7 @@ struct PrivacySettingsSection: View {
             HStack(spacing: SeeleSpacing.md) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(SeeleColors.warning)
+                    .accessibilityHidden(true)
 
                 Text(username)
                     .font(SeeleTypography.body)
@@ -477,6 +498,7 @@ struct PrivacySettingsSection: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundStyle(SeeleColors.error)
+                .accessibilityLabel("Block \(username)")
             }
         }
     }

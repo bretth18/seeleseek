@@ -55,6 +55,7 @@ struct ChatRoomContentView: View {
                     Text(room.name)
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
 
                     if room.isPrivate {
                         Text("Private")
@@ -93,6 +94,7 @@ struct ChatRoomContentView: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Room settings")
             }
 
             Button {
@@ -111,15 +113,22 @@ struct ChatRoomContentView: View {
     private var tickerStrip: some View {
         VStack(spacing: 0) {
             HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "quote.bubble")
-                    .font(.system(size: 9))
-                    .foregroundStyle(SeeleColors.textTertiary)
-                Text("Tickers")
-                    .font(SeeleTypography.caption2)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                Text("\(room.tickers.count)")
-                    .font(SeeleTypography.caption2)
-                    .foregroundStyle(SeeleColors.textTertiary)
+                HStack(spacing: SeeleSpacing.xs) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 9))
+                        .foregroundStyle(SeeleColors.textTertiary)
+                    Text("Tickers")
+                        .font(SeeleTypography.caption2)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                    Text("\(room.tickers.count)")
+                        .font(SeeleTypography.caption2)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+                // A combined element has no AX role on macOS.
+                // Declare the role explicitly.
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Tickers, \(room.tickers.count)")
+                .accessibilityAddTraits(.isStaticText)
 
                 Spacer()
 
@@ -131,6 +140,7 @@ struct ChatRoomContentView: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(chatState.tickersCollapsed ? "Expand tickers" : "Collapse tickers")
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.xxs)
@@ -150,6 +160,11 @@ struct ChatRoomContentView: View {
                                     .foregroundStyle(SeeleColors.textTertiary)
                                     .lineLimit(1)
                             }
+                            // A combined element has no AX role on macOS.
+                            // Declare the role explicitly.
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Ticker from \(username): \(ticker)")
+                            .accessibilityAddTraits(.isStaticText)
                         }
                     }
                     .padding(.horizontal, SeeleSpacing.md)

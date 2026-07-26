@@ -25,9 +25,11 @@ struct MetadataSettingsSection: View {
                         Text("Pattern")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textSecondary)
+                            .accessibilityHidden(true)
 
                         TextField("", text: $settings.organizationPattern)
                             .textFieldStyle(SeeleTextFieldStyle())
+                            .accessibilityLabel("Organization pattern")
 
                         Text("Available: {artist}, {album}, {track}, {title}, {year}")
                             .font(SeeleTypography.caption2)

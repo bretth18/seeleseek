@@ -10,14 +10,19 @@ struct RecordingSearchResults: View {
             Text("Search MusicBrainz")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             // Search fields
             HStack(spacing: SeeleSpacing.sm) {
+                // The labels disambiguate these fields from the
+                // edit-pane Artist and Title fields.
                 TextField("Artist", text: $state.detectedArtist)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search artist")
 
                 TextField("Title", text: $state.detectedTitle)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search title")
 
                 Button {
                     Task { await state.search() }
@@ -56,6 +61,12 @@ struct RecordingSearchResults: View {
                         }
                     }
                 }
+            }
+        }
+        // The inline error text is easy to miss without sight.
+        .onChange(of: state.searchError) { _, error in
+            if let error {
+                VoiceOverAnnouncer.shared.announce(error)
             }
         }
     }

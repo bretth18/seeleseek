@@ -44,6 +44,7 @@ struct MetadataEditorSheet: View {
                 Text("Edit Metadata")
                     .font(SeeleTypography.title)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(state.currentFilename)
                     .font(SeeleTypography.caption)
@@ -69,6 +70,7 @@ struct MetadataEditorSheet: View {
             Text("Metadata")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             // Cover art with edit options
             CoverArtEditView(state: state)

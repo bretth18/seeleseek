@@ -137,6 +137,9 @@ struct TransfersView: View {
                     .foregroundStyle(SeeleColors.textPrimary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Upload slots: \(appState.uploadManager.slotsSummary), queue: \(appState.uploadManager.queueDepth)")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func speedStat(icon: String, label: String, speed: Int64, color: Color) -> some View {
@@ -154,6 +157,9 @@ struct TransfersView: View {
                     .foregroundStyle(SeeleColors.textPrimary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label) speed: \(speed.formattedSpeed)")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func tabButton(_ tab: TransferTab) -> some View {
@@ -200,6 +206,9 @@ struct TransfersView: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(tab.rawValue)
+        .accessibilityValue(count > 0 ? "\(count) items" : "")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     @ViewBuilder
@@ -296,6 +305,9 @@ struct TransfersView: View {
                     .foregroundStyle(SeeleColors.textPrimary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func transferList(

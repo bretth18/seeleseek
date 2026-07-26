@@ -53,10 +53,12 @@ struct PeerUsernameLabel: View {
                 .truncationMode(.tail)
 
             if let countryFlag, !countryFlag.isEmpty {
+                // Not hidden: the flag emoji has a native spoken
+                // description ("flag: Germany"), so the country
+                // stays available when a row combines its children.
                 Text(countryFlag)
                     .font(SeeleTypography.caption2)
                     .layoutPriority(1)
-                    .accessibilityHidden(true)
             }
         }
         .frame(width: width, alignment: .leading)

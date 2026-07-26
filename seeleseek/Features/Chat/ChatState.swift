@@ -494,7 +494,19 @@ final class ChatState {
             if selectedRoom != roomName {
                 joinedRooms[index].unreadCount += 1
             }
+            announceMentionIfNeeded(message, in: roomName)
         }
+    }
+
+    /// A VoiceOver user cannot scan the transcript for a highlight.
+    /// Speak a short notice when another user writes the local
+    /// username in a room message.
+    private func announceMentionIfNeeded(_ message: ChatMessage, in roomName: String) {
+        guard !message.isOwn, !message.isSystem else { return }
+        guard let localUsername = networkClient?.username, !localUsername.isEmpty else { return }
+        guard message.username.caseInsensitiveCompare(localUsername) != .orderedSame else { return }
+        guard message.content.range(of: localUsername, options: .caseInsensitive) != nil else { return }
+        VoiceOverAnnouncer.shared.announce("Mentioned by \(message.username) in \(roomName)")
     }
 
     func updateRoomUsers(_ roomName: String, users: [String]) {

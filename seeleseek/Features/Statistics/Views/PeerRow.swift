@@ -105,7 +105,34 @@ struct PeerRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayName), \(peer.state.accessibilityLabel)")
-        .accessibilityValue("Received \(peer.bytesReceived.formattedBytes), sent \(peer.bytesSent.formattedBytes)")
+        .accessibilityValue(accessibilityValue)
+        // Combined elements on macOS get no AX role without a trait.
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            showingDetail = true
+        }
+        .accessibilityHint("Shows peer details")
+        .accessibilityActions {
+            if !peer.username.isEmpty && peer.username != "unknown" {
+                Button("Copy username") {
+                    copyToPasteboard(peer.username)
+                }
+            }
+            Button("Copy IP address") {
+                copyToPasteboard("\(peer.ip):\(peer.port)")
+            }
+        }
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = [
+            "Received \(peer.bytesReceived.formattedBytes), sent \(peer.bytesSent.formattedBytes)",
+            peer.connectionType.rawValue
+        ]
+        if peer.connectedAt != nil {
+            parts.append("connected \(connectionDuration(now: Date()))")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var statusIndicator: some View {

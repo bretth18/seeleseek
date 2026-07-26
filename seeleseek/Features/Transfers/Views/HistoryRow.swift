@@ -80,6 +80,8 @@ struct HistoryRow: View {
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        // Combined elements on macOS get no AX role without a trait.
+        .accessibilityAddTraits(.isStaticText)
         .accessibilityActions {
             if item.isAudioFile, fileExists {
                 Button(isPlayingPreview ? "Stop preview" : "Play preview", action: toggleAudioPreview)
@@ -88,6 +90,7 @@ struct HistoryRow: View {
             if fileExists {
                 Button("Reveal in Finder", action: revealInFinder)
             }
+            UserAccessibilityActions(username: item.username)
         }
         .onAppear {
             refreshCountryFlag()
@@ -119,7 +122,6 @@ struct HistoryRow: View {
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .accessibilityAddTraits(.isHeader)
 
             peerLine
         }
@@ -225,7 +227,7 @@ struct HistoryRow: View {
             if item.isAudioFile, fileExists {
                 RowIconButton(
                     systemName: isPlayingPreview ? "pause.fill" : "play.fill",
-                    help: isPlayingPreview ? "Pause preview" : "Play preview",
+                    help: isPlayingPreview ? "Stop preview" : "Play preview",
                     action: toggleAudioPreview
                 )
 

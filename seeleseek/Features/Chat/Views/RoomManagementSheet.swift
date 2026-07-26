@@ -94,6 +94,8 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
+                // One stop that speaks the label and the value.
+                .accessibilityElement(children: .combine)
             }
 
             SeeleFormRow(showDivider: true) {
@@ -110,6 +112,7 @@ struct RoomManagementSheet: View {
                         .background(room.isPrivate ? SeeleColors.accent.opacity(0.8) : SeeleColors.success.opacity(0.8))
                         .clipShape(Capsule())
                 }
+                .accessibilityElement(children: .combine)
             }
 
             if let owner = room.owner {
@@ -130,6 +133,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.textPrimary)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
 
@@ -143,6 +147,7 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }

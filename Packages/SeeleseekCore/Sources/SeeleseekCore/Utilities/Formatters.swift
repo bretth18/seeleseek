@@ -69,6 +69,14 @@ public extension Int {
 // MARK: - Country flags
 
 public enum CountryFormatter {
+    /// Two-letter country code → localized country name.
+    /// VoiceOver labels use the name because a computed row label
+    /// replaces the flag emoji and its native description.
+    public static func name(for countryCode: String) -> String {
+        guard countryCode.count == 2 else { return "" }
+        return Locale.current.localizedString(forRegionCode: countryCode.uppercased()) ?? ""
+    }
+
     /// Two-letter country code → flag emoji.
     public static func flag(for countryCode: String) -> String {
         guard countryCode.count == 2 else { return "" }

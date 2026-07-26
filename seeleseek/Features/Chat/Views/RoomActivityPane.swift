@@ -65,6 +65,24 @@ struct RoomActivityPane: View {
         .onTapGesture {
             isExpanded.toggle()
         }
+        // One button element for the whole header. The tap gesture
+        // does not become an AXPress action when the row is combined,
+        // so supply the default action explicitly.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(headerAccessibilityLabel)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            isExpanded.toggle()
+        }
+    }
+
+    private var headerAccessibilityLabel: String {
+        var parts = ["Room activity", "\(events.count) events"]
+        if !isExpanded, let latest = events.last {
+            parts.append("latest: \(latest.username) \(label(for: latest.kind)) at \(latest.formattedTime)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var eventList: some View {
@@ -88,6 +106,9 @@ struct RoomActivityPane: View {
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(event.username) \(label(for: event.kind)) at \(event.formattedTime)")
+                    // A combined element has no AX role on macOS.
+                    // Declare the role explicitly.
+                    .accessibilityAddTraits(.isStaticText)
                 }
             }
             .padding(.horizontal, SeeleSpacing.md)
@@ -122,6 +143,9 @@ struct RoomActivityPane: View {
                     NSCursor.pop()
                 }
             }
+            // The resize is cosmetic. A VoiceOver user reads the full
+            // list by scrolling.
+            .accessibilityHidden(true)
     }
 
     private func label(for kind: RoomEvent.Kind) -> String {

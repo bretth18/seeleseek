@@ -6,10 +6,19 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
     @Binding var selection: Tab
     let tabs: [Tab]
     var badge: ((Tab) -> Int)?
+    /// Spoken unit for the badge count, for example "unread".
+    /// Without a unit, VoiceOver reads the badge as a bare number.
+    var badgeUnit: String
 
-    init(selection: Binding<Tab>, tabs: [Tab] = Array(Tab.allCases), badge: ((Tab) -> Int)? = nil) {
+    init(
+        selection: Binding<Tab>,
+        tabs: [Tab] = Array(Tab.allCases),
+        badgeUnit: String = "items",
+        badge: ((Tab) -> Int)? = nil
+    ) {
         self._selection = selection
         self.tabs = tabs
+        self.badgeUnit = badgeUnit
         self.badge = badge
     }
 
@@ -66,6 +75,11 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
             )
         }
         .buttonStyle(.plain)
+        // The explicit label keeps the badge number out of the
+        // spoken name. The value gives the count a unit.
+        .accessibilityLabel(tab.rawValue)
+        .accessibilityValue(badgeCount > 0 ? "\(badgeCount) \(badgeUnit)" : "")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 

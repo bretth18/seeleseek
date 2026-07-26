@@ -92,13 +92,13 @@ private struct PeerActivityHeatmapCard: View {
                 Text("Peer Activity")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 PeerActivityHeatmap(
                     downloadHistory: appState.statisticsState.downloadHistory,
                     uploadHistory: appState.statisticsState.uploadHistory
                 )
                 .frame(height: 100)
-                .accessibilityLabel("Peer activity heatmap, transfers grouped by hour of day")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -123,6 +123,7 @@ private struct RecentTransfersCard: View {
                 Text("Recent Transfers")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 if history.isEmpty {
                     StandardEmptyState(

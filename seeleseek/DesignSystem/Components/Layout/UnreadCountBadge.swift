@@ -16,6 +16,9 @@ struct UnreadCountBadge: View {
                 .background(SeeleColors.accent)
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+                // Rows merge this badge into their spoken label.
+                // A bare number is ambiguous there.
+                .accessibilityLabel("\(count) unread")
         }
     }
 }

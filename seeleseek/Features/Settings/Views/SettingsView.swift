@@ -113,6 +113,7 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, SeeleSpacing.xs)
+        .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
     }
 }
 

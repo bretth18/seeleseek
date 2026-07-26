@@ -130,6 +130,17 @@ nonisolated final class AccessibilityAuditTests: XCTestCase {
                 return true
             }
 
+            // macOS injects an "emoji & symbols" pop-up above the
+            // window content when a text field has focus. It sits
+            // outside the content area (negative Y, empty id). App
+            // code cannot label it.
+            if elementType == .popUpButton, let el = issue.element,
+               el.identifier.isEmpty,
+               el.label.lowercased().contains("emoji") || el.frame.minY < 0 {
+                print("♿️ AUDIT ignored (system text-input control): \(issue.compactDescription)")
+                return true
+            }
+
             // SwiftUI makes unlabeled "Other" elements around scroll
             // and content regions. Ignore an "Other" that is a
             // container (it has children). An unlabeled leaf "Other"

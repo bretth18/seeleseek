@@ -58,6 +58,24 @@ final class ActivityLog: ActivityLogging {
             }
         }
 
+        /// Spoken name for VoiceOver row labels. The icon and its
+        /// color are the only visual cues for the event type.
+        var spokenName: String {
+            switch self {
+            case .peerConnected: "Peer connected"
+            case .peerDisconnected: "Peer disconnected"
+            case .searchStarted: "Search started"
+            case .searchResult: "Search result"
+            case .downloadStarted: "Download started"
+            case .downloadCompleted: "Download completed"
+            case .uploadStarted: "Upload started"
+            case .uploadCompleted: "Upload completed"
+            case .chatMessage: "Chat message"
+            case .error: "Error"
+            case .info: "Info"
+            }
+        }
+
         var color: Color {
             switch self {
             case .peerConnected, .downloadCompleted, .uploadCompleted:

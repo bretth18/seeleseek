@@ -24,6 +24,12 @@ struct StandardProgressBar: View {
             }
         }
         .frame(height: SeeleSpacing.progressBarHeight)
+        // Plain shapes create no accessibility elements. The
+        // representation exposes the bar as a standard progress
+        // indicator with a spoken percentage.
+        .accessibilityRepresentation {
+            ProgressView(value: min(max(progress, 0), 1))
+        }
     }
 }
 

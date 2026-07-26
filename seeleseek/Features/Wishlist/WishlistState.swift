@@ -216,6 +216,9 @@ final class WishlistState {
 
         // Accumulate results, capped per item (mirrors SearchState's limit)
         var existing = self.results[itemId] ?? []
+        // searchNow resets the item's results to [] when a run starts.
+        // An empty list here means this is the first batch of the run.
+        let isFirstBatchOfRun = existing.isEmpty
         let remaining = Self.maxResultsPerItem - existing.count
         guard remaining > 0 else { return }
         let accepted = results.prefix(remaining)
@@ -223,6 +226,12 @@ final class WishlistState {
         self.results[itemId] = existing
 
         unviewedResultCount += accepted.count
+
+        // Announce once per item per run, not once per packet.
+        if isFirstBatchOfRun, !accepted.isEmpty,
+           let item = items.first(where: { $0.id == itemId }) {
+            VoiceOverAnnouncer.shared.announce("Wishlist: \(accepted.count) new results for \(item.query)")
+        }
         logger.info("Wishlist results: +\(accepted.count) for item \(itemId) (total: \(existing.count))")
 
         // Update result count on the item

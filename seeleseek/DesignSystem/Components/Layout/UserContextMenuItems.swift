@@ -73,3 +73,61 @@ struct UserContextMenuItems: View {
         }
     }
 }
+
+/// Rotor actions that mirror `UserContextMenuItems`. Context menus
+/// are not visible to VoiceOver. A row that shows the menu items in
+/// a context menu must also place this view inside its
+/// `.accessibilityActions {}` block so the same commands stay
+/// available to VoiceOver users.
+struct UserAccessibilityActions: View {
+    @Environment(\.appState) private var appState
+    let username: String
+    var showAddBuddy: Bool = false
+    var showBlock: Bool = false
+    var navigateOnBrowse: Bool = false
+    var navigateOnMessage: Bool = false
+
+    var body: some View {
+        Button("View Profile") {
+            Task { await appState.socialState.loadProfile(for: username) }
+        }
+
+        Button("Browse Files") {
+            appState.browseState.browseUser(username)
+            if navigateOnBrowse { appState.sidebarSelection = .browse }
+        }
+
+        Button("Send Message") {
+            appState.chatState.selectPrivateChat(username)
+            if navigateOnMessage { appState.sidebarSelection = .chat }
+        }
+
+        if showAddBuddy {
+            Button("Add Buddy") {
+                Task { await appState.socialState.addBuddy(username) }
+            }
+        }
+
+        if appState.socialState.isIgnored(username) {
+            Button("Unignore User") {
+                Task { await appState.socialState.unignoreUser(username) }
+            }
+        } else {
+            Button("Ignore User") {
+                Task { await appState.socialState.ignoreUser(username) }
+            }
+        }
+
+        if showBlock {
+            if appState.socialState.isBlocked(username) {
+                Button("Unblock User") {
+                    Task { await appState.socialState.unblockUser(username) }
+                }
+            } else {
+                Button("Block from Connecting") {
+                    Task { await appState.socialState.blockUser(username) }
+                }
+            }
+        }
+    }
+}

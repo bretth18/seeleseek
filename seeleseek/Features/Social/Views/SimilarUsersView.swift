@@ -80,6 +80,7 @@ struct SimilarUsersView: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(socialState.isLoadingSimilar ? "Similar Users, loading" : "Similar Users")
+            .accessibilityAddTraits(.isHeader)
 
             Text("Users with similar interests based on your likes and dislikes.")
                 .font(SeeleTypography.caption)
@@ -117,6 +118,7 @@ struct SimilarUsersView: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(socialState.isLoadingRecommendations ? "Recommended Interests, loading" : "Recommended Interests")
+            .accessibilityAddTraits(.isHeader)
 
             Text("Interests you might like based on similar users.")
                 .font(SeeleTypography.caption)
@@ -149,6 +151,8 @@ struct SimilarUsersView: View {
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
 
             Text("Add some interests to find similar users. Here are popular interests across the network:")
                 .font(SeeleTypography.caption)
@@ -190,6 +194,13 @@ struct SimilarUsersView: View {
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Error: \(socialState.discoveryError ?? "")")
+        // The combine can drop the inner Retry button on macOS. An
+        // explicit named action keeps it reachable.
+        .accessibilityAction(named: "Retry") {
+            refresh()
+        }
     }
 
     private func noResultsView(_ message: String) -> some View {

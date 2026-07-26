@@ -40,6 +40,8 @@ struct FileTypeDistribution: View {
             }
             .frame(height: 20)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            // The legend below carries the same data in spoken form.
+            .accessibilityHidden(true)
 
             // Legend
             FlowLayout(spacing: SeeleSpacing.sm) {
@@ -61,6 +63,9 @@ struct FileTypeDistribution: View {
                     .padding(.vertical, SeeleSpacing.xxs)
                     .background(SeeleColors.surfaceSecondary)
                     .clipShape(Capsule())
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isStaticText)
+                    .accessibilityLabel("\(item.type.uppercased()): \(item.count) files, \(item.size.formattedBytes)")
                 }
             }
         }

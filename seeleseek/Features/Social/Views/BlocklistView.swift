@@ -50,6 +50,7 @@ struct BlocklistView: View {
             Text("Block a User")
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textSecondary)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: SeeleSpacing.sm) {
                 TextField("Username", text: $newUsername)
@@ -87,6 +88,7 @@ struct BlocklistView: View {
                 Text("Blocked Users")
                     .font(SeeleTypography.subheadline)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -167,6 +169,9 @@ struct BlocklistView: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(blockedRowLabel(blocked))
+            .accessibilityAddTraits(.isStaticText)
 
             Spacer()
 
@@ -183,6 +188,15 @@ struct BlocklistView: View {
         .background(SeeleColors.surface)
     }
 
+    private func blockedRowLabel(_ blocked: BlockedUser) -> String {
+        var parts: [String] = [blocked.username]
+        if let reason = blocked.reason {
+            parts.append(reason)
+        }
+        parts.append("blocked \(spokenDate(blocked.dateBlocked))")
+        return parts.joined(separator: ", ")
+    }
+
     /// Cached — allocating a formatter per row render is expensive.
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -190,8 +204,20 @@ struct BlocklistView: View {
         return formatter
     }()
 
+    /// Full-style formatter for spoken labels. The abbreviated visual
+    /// form is unclear when VoiceOver reads it.
+    private static let spokenRelativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     private func formatDate(_ date: Date) -> String {
         Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func spokenDate(_ date: Date) -> String {
+        Self.spokenRelativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

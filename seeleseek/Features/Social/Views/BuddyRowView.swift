@@ -147,6 +147,13 @@ struct BuddyRowView: View {
     private var accessibilityLabel: String {
         var parts: [String] = [buddy.username, buddy.status.description.lowercased()]
         if buddy.isPrivileged { parts.append("privileged") }
+        // The flag emoji is not part of the combined label. Speak the
+        // country name from the same sources that resolve the flag.
+        let countryCode = appState.networkClient.userInfoCache.countryCode(for: buddy.username) ?? buddy.countryCode
+        if let countryCode {
+            let countryName = CountryFormatter.name(for: countryCode)
+            if !countryName.isEmpty { parts.append(countryName) }
+        }
         if appState.socialState.isIgnored(buddy.username) { parts.append("ignored") }
         if buddy.fileCount > 0 { parts.append("\(formatNumber(buddy.fileCount)) files") }
         if buddy.averageSpeed > 0 { parts.append(formatSpeed(buddy.averageSpeed)) }

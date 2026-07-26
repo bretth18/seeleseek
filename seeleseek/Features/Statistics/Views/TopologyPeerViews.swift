@@ -39,6 +39,9 @@ struct PeerNode: View {
                 Text(connectionTypeIcon)
                     .font(.system(size: nodeSize * 0.4))
                     .foregroundStyle(SeeleColors.textOnAccent)
+                    // A bare "P"/"F"/"D" is meaningless when spoken.
+                    // The caller supplies the spoken value instead.
+                    .accessibilityHidden(true)
             }
 
             Text(info.username.isEmpty || info.username == "unknown" ? info.ip : info.username)
@@ -49,6 +52,7 @@ struct PeerNode: View {
         }
         .scaleEffect(isSelected ? 1.1 : 1.0)
         .animation(.spring(response: 0.3), value: isSelected)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private var connectionTypeIcon: String {

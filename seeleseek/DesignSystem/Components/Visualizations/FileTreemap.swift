@@ -22,13 +22,27 @@ struct FileTreemap: View {
                 ForEach(Array(rects.enumerated()), id: \.offset) { index, rect in
                     let file = files[index]
 
-                    TreemapCell(
+                    let cell = TreemapCell(
                         file: file,
                         rect: rect,
                         color: colorForFileType(file.fileExtension)
                     )
                     .onTapGesture {
                         onFileSelected?(file)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(cellAccessibilityLabel(for: file))
+
+                    // A collapsed element has no AX role on macOS, so the
+                    // role is declared explicitly. The tap gesture does not
+                    // become an AXPress action, so the default action is
+                    // supplied explicitly when a selection callback exists.
+                    if let onFileSelected {
+                        cell
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { onFileSelected(file) }
+                    } else {
+                        cell.accessibilityAddTraits(.isStaticText)
                     }
                 }
             }
@@ -93,6 +107,14 @@ struct FileTreemap: View {
         }
 
         return rects
+    }
+
+    private func cellAccessibilityLabel(for file: SharedFile) -> String {
+        var parts = [file.displayFilename, file.formattedSize]
+        if !file.fileExtension.isEmpty {
+            parts.append(file.fileExtension.uppercased())
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func colorForFileType(_ ext: String) -> Color {

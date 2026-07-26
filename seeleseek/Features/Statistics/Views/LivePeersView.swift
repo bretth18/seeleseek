@@ -21,6 +21,7 @@ struct LivePeersView: View {
                     Text("Connected Peers")
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 

@@ -32,6 +32,10 @@ struct DownloadStatusIcon: View {
         }
         .contentTransition(.symbolEffect(.replace))
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: status)
+        // The status lives only in the symbol and its color.
+        // The label makes the component self-describing wherever
+        // a row does not supply its own combined label.
+        .accessibilityLabel(helpText)
     }
 
     /// Returns appropriate help text for the current status

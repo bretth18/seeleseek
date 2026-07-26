@@ -75,6 +75,7 @@ struct ConnectionStatusView: View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Text("Server Information")
                 .seeleHeadline()
+                .accessibilityAddTraits(.isHeader)
 
             Divider()
                 .background(SeeleColors.surfaceSecondary)

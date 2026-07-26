@@ -31,6 +31,20 @@ enum ChatMessageFormatter {
         return result
     }
 
+    /// URLs found in the message content. Rotor "Open link" actions
+    /// use this list because VoiceOver cannot activate inline links
+    /// inside a combined bubble element.
+    static func links(in message: ChatMessage) -> [URL] {
+        let content = message.content
+        guard content.contains("://") || content.contains("www."),
+              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        else {
+            return []
+        }
+        let fullRange = NSRange(content.startIndex..., in: content)
+        return detector.matches(in: content, options: [], range: fullRange).compactMap(\.url)
+    }
+
     private static func linkified(_ content: String) -> AttributedString {
         var attributed = AttributedString(content)
         guard content.contains("://") || content.contains("www."),

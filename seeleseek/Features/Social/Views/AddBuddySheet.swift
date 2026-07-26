@@ -14,6 +14,7 @@ struct AddBuddySheet: View {
             Text("Add Buddy")
                 .font(SeeleTypography.title2)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             Text("Enter the username of the person you want to add to your buddy list.")
                 .font(SeeleTypography.body)
