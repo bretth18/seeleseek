@@ -94,6 +94,7 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
+                .accessibilityElement(children: .combine)
             }
 
             SeeleFormRow(showDivider: true) {
@@ -110,6 +111,7 @@ struct RoomManagementSheet: View {
                         .background(room.isPrivate ? SeeleColors.accent.opacity(0.8) : SeeleColors.success.opacity(0.8))
                         .clipShape(Capsule())
                 }
+                .accessibilityElement(children: .combine)
             }
 
             if let owner = room.owner {
@@ -130,6 +132,7 @@ struct RoomManagementSheet: View {
                                 .foregroundStyle(SeeleColors.textPrimary)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
 
@@ -143,6 +146,7 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.mono)
                         .foregroundStyle(SeeleColors.textPrimary)
                 }
+                .accessibilityElement(children: .combine)
             }
         }
     }
@@ -185,8 +189,6 @@ struct RoomManagementSheet: View {
                             .lineLimit(1)
                         Spacer()
                     }
-                    // A combined element has no AX role on macOS.
-                    // Declare the role explicitly.
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Ticker from \(username): \(ticker)")
                     .accessibilityAddTraits(.isStaticText)

@@ -13,22 +13,36 @@ struct FileTreemap: View {
 
     var body: some View {
         GeometryReader { geometry in
+            // The rects come back in size-sorted order. Iterate the
+            // same sorted list so each cell pairs with its own rect.
+            let sortedFiles = files.sorted { $0.size > $1.size }
             let rects = calculateTreemap(
-                files: files,
+                files: sortedFiles,
                 in: CGRect(origin: .zero, size: geometry.size)
             )
 
             ZStack(alignment: .topLeading) {
                 ForEach(Array(rects.enumerated()), id: \.offset) { index, rect in
-                    let file = files[index]
+                    let file = sortedFiles[index]
 
-                    TreemapCell(
+                    let cell = TreemapCell(
                         file: file,
                         rect: rect,
                         color: colorForFileType(file.fileExtension)
                     )
                     .onTapGesture {
                         onFileSelected?(file)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(cellAccessibilityLabel(for: file))
+
+                    // The tap gesture does not become an AXPress action.
+                    if let onFileSelected {
+                        cell
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { onFileSelected(file) }
+                    } else {
+                        cell.accessibilityAddTraits(.isStaticText)
                     }
                 }
             }
@@ -93,6 +107,14 @@ struct FileTreemap: View {
         }
 
         return rects
+    }
+
+    private func cellAccessibilityLabel(for file: SharedFile) -> String {
+        var parts = [file.displayFilename, file.formattedSize]
+        if !file.fileExtension.isEmpty {
+            parts.append(file.fileExtension.uppercased())
+        }
+        return parts.joined(separator: ", ")
     }
 
     private func colorForFileType(_ ext: String) -> Color {

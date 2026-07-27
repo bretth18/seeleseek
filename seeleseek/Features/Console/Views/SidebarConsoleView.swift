@@ -60,51 +60,71 @@ struct SidebarConsoleView: View {
 
     // MARK: - Header
 
+    // The clear button is a sibling of the toggle button. A button
+    // nested inside another button's label is not reachable with
+    // VoiceOver.
     private var header: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
-            }
-        } label: {
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 9))
-                    .foregroundStyle(SeeleColors.textTertiary)
-
-                Text("Console")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-
-                if !activityLog.events.isEmpty {
-                    Text("\(activityLog.events.count)")
-                        .font(SeeleTypography.monoXSmall)
+        HStack(spacing: SeeleSpacing.xs) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: SeeleSpacing.xs) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 9))
                         .foregroundStyle(SeeleColors.textTertiary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(SeeleColors.surfaceElevated, in: Capsule())
-                }
+                        .accessibilityHidden(true)
 
-                Spacer()
+                    Text("Console")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
 
-                if isExpanded {
-                    Button {
-                        activityLog.clear()
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 9))
+                    if !activityLog.events.isEmpty {
+                        Text("\(activityLog.events.count)")
+                            .font(SeeleTypography.monoXSmall)
                             .foregroundStyle(SeeleColors.textTertiary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(SeeleColors.surfaceElevated, in: Capsule())
                     }
-                    .buttonStyle(.plain)
-                }
 
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 8))
-                    .foregroundStyle(SeeleColors.textTertiary)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Console, \(activityLog.events.count) events")
+            .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+
+            if isExpanded {
+                Button {
+                    activityLog.clear()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 9))
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear console")
+            }
+
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
+                .font(.system(size: 8))
+                .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityHidden(true)
+                // The chevron sits outside the toggle button. Keep
+                // the old click-to-toggle behavior for mouse users.
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
     }
 
     // MARK: - Rows
@@ -129,6 +149,9 @@ struct SidebarConsoleView: View {
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.bottom, SeeleSpacing.sm)
         .opacity(0.7)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(rowAccessibilityLabel(event))
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func consoleRow(_ event: ActivityLog.ActivityEvent) -> some View {
@@ -150,6 +173,13 @@ struct SidebarConsoleView: View {
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(rowAccessibilityLabel(event))
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private func rowAccessibilityLabel(_ event: ActivityLog.ActivityEvent) -> String {
+        "\(event.type.spokenName), \(formatTime(event.timestamp)), \(event.title)"
     }
 
     private func formatTime(_ date: Date) -> String {

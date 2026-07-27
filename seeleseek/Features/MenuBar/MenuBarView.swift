@@ -50,10 +50,15 @@ struct MenuBarView: View {
                     .font(SeeleTypography.caption)
                     .foregroundStyle(status.color)
                     .opacity(status == .connected && username != nil ? 1 : 0)
+                    // Opacity does not remove the text from the
+                    // accessibility tree. Hide it when it is invisible.
+                    .accessibilityHidden(!(status == .connected && username != nil))
             }
         }
         .padding(.horizontal, SeeleSpacing.sm)
         .padding(.vertical, SeeleSpacing.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(headerAccessibilityLabel)
 
         if status == .connected {
             HStack(spacing: SeeleSpacing.sm) {
@@ -78,6 +83,7 @@ struct MenuBarView: View {
                     Image(systemName: "arrow.down.circle.fill")
                         .foregroundStyle(SeeleColors.info)
                         .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .accessibilityHidden(true)
                     Text("\(activeDown) download\(activeDown == 1 ? "" : "s")")
                         .font(SeeleTypography.body)
                     Spacer()
@@ -89,6 +95,7 @@ struct MenuBarView: View {
                 }
                 .padding(.horizontal, SeeleSpacing.sm)
                 .padding(.vertical, SeeleSpacing.xxs)
+                .accessibilityElement(children: .combine)
             }
 
             if activeUp > 0 {
@@ -96,6 +103,7 @@ struct MenuBarView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .foregroundStyle(SeeleColors.success)
                         .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .accessibilityHidden(true)
                     Text("\(activeUp) upload\(activeUp == 1 ? "" : "s")")
                         .font(SeeleTypography.body)
                     Spacer()
@@ -107,6 +115,7 @@ struct MenuBarView: View {
                 }
                 .padding(.horizontal, SeeleSpacing.sm)
                 .padding(.vertical, SeeleSpacing.xxs)
+                .accessibilityElement(children: .combine)
             }
         }
 
@@ -115,12 +124,14 @@ struct MenuBarView: View {
                 Image(systemName: "clock.fill")
                     .foregroundStyle(SeeleColors.warning)
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .accessibilityHidden(true)
                 Text("\(queuedCount) queued")
                     .font(SeeleTypography.body)
                 Spacer()
             }
             .padding(.horizontal, SeeleSpacing.sm)
             .padding(.vertical, SeeleSpacing.xxs)
+            .accessibilityElement(children: .combine)
         }
 
         Divider()
@@ -140,6 +151,14 @@ struct MenuBarView: View {
             Label("Quit SeeleSeek", systemImage: "power")
         }
         .keyboardShortcut("q")
+    }
+
+    private var headerAccessibilityLabel: String {
+        var label = "Connection status: \(status.label)"
+        if status == .connected, let username {
+            label += " as \(username)"
+        }
+        return label
     }
 }
 

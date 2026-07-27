@@ -100,6 +100,7 @@ struct InterestsView: View {
                 Text("Things I Like")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -138,6 +139,7 @@ struct InterestsView: View {
                 Text("Things I Dislike")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 

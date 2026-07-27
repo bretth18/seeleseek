@@ -132,6 +132,7 @@ final class WishlistState {
         items.removeAll { $0.id == id }
         let phantomCount = results[id]?.count ?? 0
         results.removeValue(forKey: id)
+        announcedResultKeys.removeValue(forKey: id)
         unviewedResultCount = max(0, unviewedResultCount - phantomCount)
 
         Task {
@@ -207,6 +208,11 @@ final class WishlistState {
 
     // MARK: - Result Handling
 
+    /// Files already announced per item this session. Scheduled runs
+    /// reset `results`, so the same files return every cycle. Without
+    /// this set the announcer repeats them as new forever.
+    private var announcedResultKeys: [UUID: Set<String>] = [:]
+
     func handleSearchResults(token: UInt32, results: [SearchResult]) {
         logger.info("handleSearchResults: token=\(String(format: "0x%08X", token)) results=\(results.count) knownTokens=\(self.tokenToWishlistId.keys.map { String(format: "0x%08X", $0) })")
         guard let itemId = tokenToWishlistId[token] else {
@@ -223,6 +229,14 @@ final class WishlistState {
         self.results[itemId] = existing
 
         unviewedResultCount += accepted.count
+
+        var announced = announcedResultKeys[itemId] ?? []
+        let newKeys = accepted.map { "\($0.username)|\($0.filename)" }.filter { !announced.contains($0) }
+        if !newKeys.isEmpty, let item = items.first(where: { $0.id == itemId }) {
+            VoiceOverAnnouncer.shared.announce("Wishlist: \(newKeys.count) new results for \(item.query)")
+            announced.formUnion(newKeys)
+            announcedResultKeys[itemId] = announced
+        }
         logger.info("Wishlist results: +\(accepted.count) for item \(itemId) (total: \(existing.count))")
 
         // Update result count on the item

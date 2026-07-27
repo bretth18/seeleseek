@@ -34,6 +34,7 @@ struct IgnoredUsersView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityLabel("Ignore a user")
+                .accessibilityValue(socialState.showIgnoreInput ? "expanded" : "collapsed")
             }
             .padding(SeeleSpacing.lg)
             .background(SeeleColors.surface)
@@ -113,6 +114,9 @@ struct IgnoredUsersView: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(ignoredRowLabel(ignored))
+            .accessibilityAddTraits(.isStaticText)
 
             Spacer()
 
@@ -127,6 +131,15 @@ struct IgnoredUsersView: View {
         .background(SeeleColors.surface)
     }
 
+    private func ignoredRowLabel(_ ignored: IgnoredUser) -> String {
+        var parts: [String] = [ignored.username]
+        if let reason = ignored.reason {
+            parts.append(reason)
+        }
+        parts.append("ignored \(spokenDate(ignored.dateIgnored))")
+        return parts.joined(separator: ", ")
+    }
+
     /// Cached — allocating a formatter per row render is expensive.
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -134,8 +147,20 @@ struct IgnoredUsersView: View {
         return formatter
     }()
 
+    /// Full-style formatter for spoken labels. The abbreviated visual
+    /// form is unclear when VoiceOver reads it.
+    private static let spokenRelativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     private func formatDate(_ date: Date) -> String {
         Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func spokenDate(_ date: Date) -> String {
+        Self.spokenRelativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 

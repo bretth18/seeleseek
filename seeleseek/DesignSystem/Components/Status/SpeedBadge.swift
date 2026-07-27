@@ -36,6 +36,11 @@ struct SpeedBadge: View {
         .padding(.vertical, SeeleSpacing.xxs)
         .background(direction.color.opacity(0.15))
         .clipShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(direction == .download ? "Download" : "Upload") speed: \(bytesPerSecond.formattedSpeed)"
+        )
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 

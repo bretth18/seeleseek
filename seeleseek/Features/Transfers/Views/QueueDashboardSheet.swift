@@ -101,6 +101,7 @@ struct QueueDashboardSheet: View {
                 Text("Queue dashboard")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
                 Text("Live view of every transfer that hasn't completed or been cancelled")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
@@ -118,6 +119,7 @@ struct QueueDashboardSheet: View {
             }
             .buttonStyle(.plain)
             .help("Close")
+            .accessibilityLabel("Close")
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)
@@ -167,6 +169,9 @@ struct QueueDashboardSheet: View {
                     .monospacedDigit()
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(count.map { "\($0)" } ?? secondary ?? "")")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     // MARK: - Pipeline strip
@@ -203,6 +208,8 @@ struct QueueDashboardSheet: View {
                         }
                         .frame(width: width)
                         .help("\(entry.bucket.label): \(entry.count) · \(entry.bytes.formattedBytes)")
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(entry.bucket.label): \(entry.count) transfers, \(entry.bytes.formattedBytes)")
                     }
                 }
             }
@@ -305,6 +312,27 @@ private struct PeerLane: View {
         }
     }
 
+    /// Spoken summary of the lane. Names the peer, the totals, and a
+    /// count for each status bucket that is present.
+    private var accessibilitySummary: String {
+        var counts: [QueueBucket: Int] = [:]
+        for transfer in transfers {
+            let bucket = QueueBucket.from(transfer) ?? .queued
+            counts[bucket, default: 0] += 1
+        }
+        var parts: [String] = [
+            peer,
+            "\(transfers.count) file\(transfers.count == 1 ? "" : "s")",
+            totalBytes.formattedBytes
+        ]
+        for bucket in QueueBucket.allCases {
+            if let count = counts[bucket], count > 0 {
+                parts.append("\(count) \(bucket.label.lowercased())")
+            }
+        }
+        return parts.joined(separator: ", ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
             HStack(spacing: SeeleSpacing.xs) {
@@ -319,6 +347,9 @@ private struct PeerLane: View {
                     .font(SeeleTypography.monoSmall)
                     .foregroundStyle(SeeleColors.textTertiary)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityAddTraits(.isStaticText)
 
             GeometryReader { geo in
                 HStack(spacing: 1) {
@@ -336,6 +367,9 @@ private struct PeerLane: View {
             }
             .frame(height: 14)
             .clipShape(RoundedRectangle(cornerRadius: 3))
+            // The segment bar is decorative. The lane header carries
+            // the per-status summary for VoiceOver.
+            .accessibilityHidden(true)
         }
         .padding(SeeleSpacing.sm)
         .background(SeeleColors.surface)

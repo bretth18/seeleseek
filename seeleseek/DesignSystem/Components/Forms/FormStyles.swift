@@ -82,6 +82,7 @@ struct SeeleFormSection<Content: View>: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .textCase(.uppercase)
                 .tracking(SeeleSpacing.trackingWide)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: 0) {
                 content

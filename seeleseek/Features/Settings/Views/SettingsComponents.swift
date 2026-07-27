@@ -8,6 +8,7 @@ func settingsHeader(_ title: String) -> some View {
     Text(title)
         .font(SeeleTypography.title)
         .foregroundStyle(SeeleColors.textPrimary)
+        .accessibilityAddTraits(.isHeader)
 }
 
 /// Grouped settings section with title and bordered container
@@ -16,6 +17,7 @@ func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> C
         Text(title)
             .font(SeeleTypography.caption)
             .foregroundStyle(SeeleColors.textTertiary)
+            .accessibilityAddTraits(.isHeader)
 
         VStack(spacing: 0) {
             content()

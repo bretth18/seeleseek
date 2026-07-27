@@ -16,6 +16,7 @@ struct UnreadCountBadge: View {
                 .background(SeeleColors.accent)
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+                .accessibilityLabel("\(count) unread")
         }
     }
 }

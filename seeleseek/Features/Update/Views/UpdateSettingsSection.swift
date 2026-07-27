@@ -24,6 +24,8 @@ struct UpdateSettingsSection: View {
                             .font(SeeleTypography.mono)
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isStaticText)
                 }
 
                 settingsRow {
@@ -67,8 +69,6 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
-                        // The time and the word "ago" are separate
-                        // texts. One element speaks them together.
                         .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isStaticText)
                     }
@@ -109,6 +109,27 @@ struct UpdateSettingsSection: View {
         }
     }
 
+    /// Removes leading markdown markers per line so VoiceOver does not
+    /// speak "#" and "-" characters.
+    static func spokenReleaseNotes(_ notes: String) -> String {
+        notes
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                var trimmed = line
+                while let first = trimmed.first, first == " " {
+                    trimmed = trimmed.dropFirst()
+                }
+                while let first = trimmed.first, first == "#" || first == "-" || first == "*" {
+                    trimmed = trimmed.dropFirst()
+                }
+                while let first = trimmed.first, first == " " {
+                    trimmed = trimmed.dropFirst()
+                }
+                return String(trimmed)
+            }
+            .joined(separator: "\n")
+    }
+
     @ViewBuilder
     private var updateAvailableCard: some View {
         settingsGroup("Update Available") {
@@ -136,6 +157,9 @@ struct UpdateSettingsSection: View {
                             .foregroundStyle(SeeleColors.textSecondary)
                             .textSelection(.enabled)
                             .frame(maxHeight: 150)
+                            // VoiceOver must not speak raw markdown
+                            // markers. The visual text is unchanged.
+                            .accessibilityLabel(Self.spokenReleaseNotes(notes))
                     }
 
                     Divider()
@@ -149,8 +173,6 @@ struct UpdateSettingsSection: View {
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
-                        // The bar and the percent text describe one
-                        // download. One element speaks them together.
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Downloading update")
                         .accessibilityValue("\(Int((updateState.downloadProgress ?? 0) * 100)) percent")
@@ -159,6 +181,7 @@ struct UpdateSettingsSection: View {
                             Button("Download & Install") {
                                 Task {
                                     guard let pkgURL = await updateState.downloadPkg() else {
+                                        VoiceOverAnnouncer.shared.announce("Update download failed")
                                         return
                                     }
                                     #if os(macOS)

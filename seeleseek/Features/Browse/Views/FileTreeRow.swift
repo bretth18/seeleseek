@@ -240,6 +240,7 @@ struct FileTreeRow: View {
                 Button("Copy filename") { copyFilename() }
             }
             Button("Copy full path") { copyPath() }
+            UserAccessibilityActions(username: username)
         }
     }
 

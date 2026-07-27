@@ -221,6 +221,9 @@ struct SearchView: View {
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .buttonStyle(.plain)
+            // VoiceOver closes the search through the rotor action on
+            // the combined tab element.
+            .accessibilityHidden(true)
         }
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.xs)
@@ -234,6 +237,27 @@ struct SearchView: View {
         .onTapGesture {
             searchState.selectSearch(at: index)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(searchTabAccessibilityLabel(for: search))
+        .accessibilityTab(isSelected: isSelected)
+        // The tap gesture does not become an AXPress action on the
+        // combined element. Supply the default action explicitly.
+        .accessibilityAction {
+            searchState.selectSearch(at: index)
+        }
+        .accessibilityActions {
+            Button("Close search") {
+                searchState.closeSearch(at: index)
+            }
+        }
+    }
+
+    private func searchTabAccessibilityLabel(for search: SearchQuery) -> String {
+        var label = "Search for \(search.query), \(search.results.count) results"
+        if search.isSearching {
+            label += ", searching"
+        }
+        return label
     }
 
     @ViewBuilder
@@ -350,6 +374,8 @@ struct SearchView: View {
                                 .foregroundStyle(searchState.isSelectionMode ? SeeleColors.accent : SeeleColors.textSecondary)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Select results")
+                            .accessibilityValue(searchState.isSelectionMode ? "on" : "off")
 
                             Menu {
                                 ForEach(SearchState.SortOrder.allCases, id: \.self) { order in

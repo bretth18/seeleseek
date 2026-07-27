@@ -237,6 +237,7 @@ struct BrowseView: View {
                     Text("\(shares.username)'s files")
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Text("(\(shares.totalFiles) files, \(shares.totalSize.formattedBytes))")
                         .font(SeeleTypography.caption)

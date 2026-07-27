@@ -31,6 +31,10 @@ struct ProgressIndicator: View {
                     .frame(width: 36, alignment: .trailing)
             }
         }
+        // Plain shapes create no accessibility elements.
+        .accessibilityRepresentation {
+            ProgressView(value: min(max(progress, 0), 1))
+        }
     }
 }
 

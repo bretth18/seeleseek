@@ -112,6 +112,7 @@ struct SharesVisualizationPanel: View {
             Text("Overview")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(columns: [
                 GridItem(.flexible()),
@@ -130,6 +131,7 @@ struct SharesVisualizationPanel: View {
             Text("File Types")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             FileTypeDistribution(files: allFiles)
         }
     }
@@ -139,6 +141,7 @@ struct SharesVisualizationPanel: View {
             Text("Audio Quality")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             BitrateDistribution(files: audioFiles)
         }
     }
@@ -148,6 +151,7 @@ struct SharesVisualizationPanel: View {
             Text("Largest Files")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             SizeComparisonBars(items: cachedTopFiles ?? [])
         }
     }
@@ -157,6 +161,7 @@ struct SharesVisualizationPanel: View {
             Text("Size Distribution")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             FileTreemap(files: Array(allFiles.prefix(50)))
                 .frame(height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
@@ -194,9 +199,6 @@ struct StatCard: View {
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surfaceSecondary)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-        // The icon is decoration. Read the card as one element, for
-        // example "Total Size: 12.4 GB". A collapsed element has no AX
-        // role on macOS, thus the role is declared explicitly.
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isStaticText)
         .accessibilityLabel("\(title): \(value)")

@@ -15,6 +15,7 @@ struct SearchActivityView: View {
                     Text("Search Activity")
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 
@@ -38,6 +39,7 @@ struct SearchActivityView: View {
                     Text("Recent Queries")
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
 
                     if searchActivity.recentEvents.isEmpty {
                         Text("No search activity yet")
@@ -60,6 +62,7 @@ struct SearchActivityView: View {
                             Text("Incoming Search Requests")
                                 .font(SeeleTypography.subheadline)
                                 .foregroundStyle(SeeleColors.textSecondary)
+                                .accessibilityAddTraits(.isHeader)
 
                             Spacer()
 
@@ -125,6 +128,20 @@ struct SearchTimelineView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
+        .accessibleChart(
+            label: "Search activity, last 30 minutes",
+            value: accessibilitySummary
+        )
+    }
+
+    private var accessibilitySummary: String {
+        // Each access of `groupedByMinute` recomputes the grouping.
+        let grouped = groupedByMinute
+        let counts = grouped.keys.sorted().suffix(30).map { grouped[$0] ?? 0 }
+        let total = counts.reduce(0, +)
+        guard total > 0 else { return "No searches" }
+        let peak = counts.max() ?? 0
+        return "\(total) searches, peak \(peak) per minute"
     }
 }
 
@@ -171,6 +188,19 @@ struct SearchEventRow: View {
                 .foregroundStyle(SeeleColors.textTertiary)
         }
         .padding(.vertical, SeeleSpacing.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(event.direction == .outgoing ? "Outgoing" : "Incoming") search: \(event.query)")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = []
+        if let resultsCount = event.resultsCount {
+            parts.append("\(resultsCount) results")
+        }
+        parts.append(formatTime(event.timestamp))
+        return parts.joined(separator: ", ")
     }
 
     private func formatTime(_ date: Date) -> String {
@@ -218,6 +248,10 @@ struct IncomingSearchRow: View {
             }
         }
         .padding(.vertical, SeeleSpacing.xs)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(search.username) searched for \(search.query)")
+        .accessibilityValue("\(search.matchCount) matches, \(formatTime(search.timestamp))")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func formatTime(_ date: Date) -> String {

@@ -61,10 +61,26 @@ struct NetworkTopologyView: View {
                             }
                         }
                         .accessibilityLabel(conn.username.isEmpty || conn.username == "unknown" ? conn.ip : conn.username)
+                        .accessibilityValue(nodeAccessibilityValue(for: conn))
                         .accessibilityHint("Show peer details")
+                        .accessibilityActions {
+                            if !conn.username.isEmpty && conn.username != "unknown" {
+                                UserAccessibilityActions(
+                                    username: conn.username,
+                                    showAddBuddy: true,
+                                    navigateOnBrowse: true,
+                                    navigateOnMessage: true
+                                )
+                            }
+                        }
                     }
                 }
             }
+            // `.contain` keeps the node buttons navigable while the
+            // container speaks a graph-level summary.
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Network topology")
+            .accessibilityValue(topologySummary)
             .onAppear {
                 calculateNodePositions(in: geometry.size)
             }
@@ -74,6 +90,41 @@ struct NetworkTopologyView: View {
                 }
             }
         }
+    }
+
+    private var topologySummary: String {
+        var connected = 0
+        var connecting = 0
+        var failed = 0
+        for conn in connections {
+            switch conn.state {
+            case .connected: connected += 1
+            case .connecting, .handshaking: connecting += 1
+            case .failed: failed += 1
+            case .disconnected: break
+            }
+        }
+        return "\(connections.count) peers: \(connected) connected, \(connecting) connecting, \(failed) failed"
+    }
+
+    /// Spoken state for a node. The node circle shows state by color
+    /// and connection type by a bare letter, so both must be audible.
+    private func nodeAccessibilityValue(for conn: PeerConnectionPool.PeerConnectionInfo) -> String {
+        let state: String
+        switch conn.state {
+        case .connected: state = "Connected"
+        case .connecting: state = "Connecting"
+        case .handshaking: state = "Handshaking"
+        case .disconnected: state = "Disconnected"
+        case .failed: state = "Failed"
+        }
+        let type: String
+        switch conn.connectionType {
+        case .peer: type = "peer"
+        case .file: type = "file transfer"
+        case .distributed: type = "distributed"
+        }
+        return "\(state), \(type), received \(conn.bytesReceived.formattedBytes), sent \(conn.bytesSent.formattedBytes)"
     }
 
     private func calculateNodePositions(in size: CGSize) {

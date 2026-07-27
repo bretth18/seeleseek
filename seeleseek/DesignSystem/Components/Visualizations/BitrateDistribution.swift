@@ -50,6 +50,9 @@ struct BitrateDistribution: View {
                             .foregroundStyle(SeeleColors.textSecondary)
                     }
                     .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isStaticText)
+                    .accessibilityLabel("\(bucket.range) kilobits per second: \(bucket.count) files")
                 }
             }
             .frame(height: 100)

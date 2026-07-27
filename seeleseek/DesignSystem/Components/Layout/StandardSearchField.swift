@@ -15,10 +15,12 @@ struct StandardSearchField: View {
                     .progressViewStyle(.circular)
                     .scaleEffect(0.6)
                     .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
+                    .accessibilityLabel("Searching")
             } else {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .accessibilityHidden(true)
             }
 
             TextField(placeholder, text: $text)

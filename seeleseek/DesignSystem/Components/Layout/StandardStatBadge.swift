@@ -33,6 +33,9 @@ struct StandardStatBadge: View {
                     .foregroundStyle(color)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(label): \(value)")
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 

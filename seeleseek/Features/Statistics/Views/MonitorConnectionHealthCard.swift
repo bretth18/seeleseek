@@ -30,6 +30,7 @@ struct MonitorConnectionHealthCard: View {
                 Text("Connection Health")
                     .font(SeeleTypography.headline)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 HStack(spacing: SeeleSpacing.xl) {
                     healthGauge
@@ -76,12 +77,22 @@ struct MonitorConnectionHealthCard: View {
                 .foregroundStyle(SeeleColors.textPrimary)
                 .contentTransition(.numericText())
         }
-        .accessibilityElement(children: .ignore)
-        // A collapsed element has no AX role on macOS ("Unknown role"
-        // in the audit). Declare the role explicitly.
-        .accessibilityAddTraits(.isImage)
-        .accessibilityLabel("Connection health")
-        .accessibilityValue("\(Int(healthScore)) percent — \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active")
+        .accessibleChart(
+            label: "Connection health",
+            value: "\(Int(healthScore)) percent, \(healthTier), \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active"
+        )
+    }
+
+    /// Spoken tier that matches the gauge color thresholds. The color
+    /// is the only visual cue for quality, so speak an equivalent.
+    private var healthTier: String {
+        if healthScore >= 70 {
+            return "healthy"
+        } else if healthScore >= 40 {
+            return "degraded"
+        } else {
+            return "poor"
+        }
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

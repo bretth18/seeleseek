@@ -7,6 +7,8 @@ import SeeleseekCore
 @MainActor
 enum ChatMessageFormatter {
     private static var cache: [UUID: AttributedString] = [:]
+    private static var linkCache: [UUID: [URL]] = [:]
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
     static func isAction(_ message: ChatMessage) -> Bool {
         message.content.hasPrefix("/me ")
@@ -31,10 +33,30 @@ enum ChatMessageFormatter {
         return result
     }
 
+    /// URLs found in the message content. Rotor "Open link" actions
+    /// use this list because VoiceOver cannot activate inline links
+    /// inside a combined bubble element.
+    static func links(in message: ChatMessage) -> [URL] {
+        if let cached = linkCache[message.id] {
+            return cached
+        }
+        let content = message.content
+        var found: [URL] = []
+        if content.contains("://") || content.contains("www."), let detector = linkDetector {
+            let fullRange = NSRange(content.startIndex..., in: content)
+            found = detector.matches(in: content, options: [], range: fullRange).compactMap(\.url)
+        }
+        if linkCache.count > 2000 {
+            linkCache.removeAll(keepingCapacity: true)
+        }
+        linkCache[message.id] = found
+        return found
+    }
+
     private static func linkified(_ content: String) -> AttributedString {
         var attributed = AttributedString(content)
         guard content.contains("://") || content.contains("www."),
-              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+              let detector = linkDetector
         else {
             return attributed
         }

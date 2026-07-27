@@ -21,17 +21,24 @@ struct StandardSectionHeader: View {
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
-            Text(title)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .textCase(.uppercase)
-                .tracking(0.5)
-
-            if let count {
-                Text("(\(count))")
+            // The trailing view stays outside the header element
+            // so its controls remain pressable.
+            HStack(spacing: SeeleSpacing.sm) {
+                Text(title)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+
+                if let count {
+                    Text("(\(count))")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(count.map { "\(title), \($0)" } ?? title)
+            .accessibilityAddTraits(.isHeader)
 
             Spacer()
 

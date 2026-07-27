@@ -54,6 +54,7 @@ struct Sidebar: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
                 .padding(.horizontal, SeeleSpacing.lg)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(spacing: SeeleSpacing.xxs) {
                 content()
@@ -73,6 +74,7 @@ struct Sidebar: View {
                     .scaledToFit()
                     .frame(width: 24, height: 24)
                     .foregroundStyle(SeeleColors.accent)
+                    .accessibilityHidden(true)
                 Text("seeleseek")
                     .font(SeeleTypography.logo)
                     .foregroundStyle(SeeleColors.textPrimary)
@@ -129,6 +131,18 @@ struct SidebarRow: View {
         }
     }
 
+    /// Spoken unit for the badge count. The visual badge shows a bare
+    /// number, which is unclear when VoiceOver reads it.
+    private var badgeUnit: String {
+        switch item {
+        case .chat: "unread"
+        case .social: "online"
+        case .wishlists: "new results"
+        case .transfers: "active"
+        default: "items"
+        }
+    }
+
     var body: some View {
         Button {
             if item == .wishlists {
@@ -181,7 +195,8 @@ struct SidebarRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(badgeCount > 0 ? "\(item.title), \(badgeCount)" : item.title)
+        .accessibilityLabel(badgeCount > 0 ? "\(item.title), \(badgeCount) \(badgeUnit)" : item.title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isSelected)
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: badgeCount)
     }

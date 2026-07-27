@@ -59,7 +59,9 @@ struct UpdatePromptSheet: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(SeeleSpacing.md)
-                    .accessibilityLabel("Release notes: \(notes)")
+                    // VoiceOver must not speak raw markdown markers.
+                    // The visual text is unchanged.
+                    .accessibilityLabel("Release notes: \(UpdateSettingsSection.spokenReleaseNotes(notes))")
             }
             .background(SeeleColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
@@ -101,6 +103,7 @@ struct UpdatePromptSheet: View {
                     // re-open it.
                     Task {
                         guard let pkgURL = await updateState.downloadPkg() else {
+                            VoiceOverAnnouncer.shared.announce("Update download failed")
                             return
                         }
                         close()

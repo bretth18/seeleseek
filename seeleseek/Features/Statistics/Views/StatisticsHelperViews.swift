@@ -45,6 +45,21 @@ struct TransferHistoryRow: View {
         .padding(.horizontal, SeeleSpacing.md)
         .padding(.vertical, SeeleSpacing.sm)
         .background(SeeleColors.surfaceSecondary.opacity(0.5))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue("\(entry.size.formattedBytes), \(entry.averageSpeed.formattedSpeed), \(formatTime(entry.timestamp))")
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var displayFilename: String {
+        entry.filename.split(separator: "\\").last.map(String.init) ?? entry.filename
+    }
+
+    private var accessibilityLabel: String {
+        if entry.isDownload {
+            return "Downloaded \(displayFilename) from \(entry.username)"
+        }
+        return "Uploaded \(displayFilename) to \(entry.username)"
     }
 
     private func formatTime(_ date: Date) -> String {

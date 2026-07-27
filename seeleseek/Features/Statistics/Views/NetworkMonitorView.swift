@@ -120,6 +120,7 @@ private struct MonitorTopologyCard: View {
                     Text("Network Topology")
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                     Text("\(peerPool.activeConnections) active")
                         .font(SeeleTypography.caption)

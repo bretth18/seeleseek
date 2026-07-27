@@ -12,6 +12,7 @@ struct RoomBrowserSheet: View {
                 Text("Rooms")
                     .font(SeeleTypography.title2)
                     .foregroundStyle(SeeleColors.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -142,8 +143,6 @@ struct RoomBrowserSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                // Only the tint shows which tab is active. Thus the
-                // selected trait speaks the state.
                 .accessibilityAddTraits(chatState.roomListTab == tab ? [.isSelected] : [])
             }
             Spacer()
@@ -210,32 +209,32 @@ struct RoomBrowserSheet: View {
         let isOwned = chatState.ownedPrivateRooms.contains { $0.name == room.name }
 
         return HStack {
-            // Room icon. Only the icon shows the owned or private
-            // state. Thus the icon gets a label and stays visible to
-            // VoiceOver.
-            if isOwned {
-                Image(systemName: "crown.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
-                    .foregroundStyle(SeeleColors.warning)
-                    .frame(width: SeeleSpacing.xl)
-                    .accessibilityLabel("Owned room")
-            } else if room.isPrivate {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .frame(width: SeeleSpacing.xl)
-                    .accessibilityLabel("Private room")
-            }
+            HStack {
+                if isOwned {
+                    Image(systemName: "crown.fill")
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .foregroundStyle(SeeleColors.warning)
+                        .frame(width: SeeleSpacing.xl)
+                } else if room.isPrivate {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: SeeleSpacing.iconSizeSmall))
+                        .foregroundStyle(SeeleColors.textTertiary)
+                        .frame(width: SeeleSpacing.xl)
+                }
 
-            VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                Text(room.name)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
+                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
+                    Text(room.name)
+                        .font(SeeleTypography.body)
+                        .foregroundStyle(SeeleColors.textPrimary)
 
-                Text("\(room.userCount) users")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
+                    Text("\(room.userCount) users")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(roomRowAccessibilityLabel(room, isJoined: isJoined, isOwned: isOwned))
+            .accessibilityAddTraits(.isStaticText)
 
             Spacer()
 
@@ -243,6 +242,8 @@ struct RoomBrowserSheet: View {
                 Text("Joined")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.success)
+                    // The combined info label already speaks "joined".
+                    .accessibilityHidden(true)
             } else if isOwned {
                 Button("Manage") {
                     chatState.joinRoom(room.name, isPrivate: true)
@@ -266,5 +267,19 @@ struct RoomBrowserSheet: View {
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)
         .background(SeeleColors.surface)
+    }
+
+    private func roomRowAccessibilityLabel(_ room: ChatRoom, isJoined: Bool, isOwned: Bool) -> String {
+        var parts: [String] = [room.name]
+        if isOwned {
+            parts.append("owned room")
+        } else if room.isPrivate {
+            parts.append("private room")
+        }
+        parts.append("\(room.userCount) users")
+        if isJoined {
+            parts.append("joined")
+        }
+        return parts.joined(separator: ", ")
     }
 }

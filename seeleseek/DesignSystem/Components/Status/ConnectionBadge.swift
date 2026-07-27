@@ -25,6 +25,7 @@ struct ConnectionBadge: View {
         .clipShape(Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Connection: \(status.label)")
+        .accessibilityAddTraits(.isStaticText)
         .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: status)
     }
 

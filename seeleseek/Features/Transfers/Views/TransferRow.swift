@@ -197,6 +197,7 @@ struct TransferRow: View {
         .contextMenu { contextMenu }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isStaticText)
         .modifier(TransferRowAccessibilityActions(
             transfer: transfer,
             isPlaying: isPlayingPreview,
@@ -205,7 +206,9 @@ struct TransferRow: View {
             onRemove: onRemove,
             onReveal: revealInFinder,
             onTogglePreview: toggleAudioPreview,
-            onEditMetadata: openMetadataEditor
+            onEditMetadata: openMetadataEditor,
+            onMoveToTop: onMoveToTop,
+            onMoveToBottom: onMoveToBottom
         ))
         .onAppear {
             refreshCountryFlag()
@@ -328,6 +331,8 @@ private struct TransferRowAccessibilityActions: ViewModifier {
     let onReveal: () -> Void
     let onTogglePreview: () -> Void
     let onEditMetadata: () -> Void
+    let onMoveToTop: (() -> Void)?
+    let onMoveToBottom: (() -> Void)?
 
     private var isCompletedAudio: Bool {
         transfer.status == .completed && transfer.isAudioFile && transfer.localPath != nil
@@ -338,6 +343,9 @@ private struct TransferRowAccessibilityActions: ViewModifier {
     private var canRemove: Bool {
         !transfer.isActive && transfer.status != .completed
     }
+    private var canReorder: Bool {
+        transfer.status == .queued || transfer.status == .waiting
+    }
 
     func body(content: Content) -> some View {
         content.accessibilityActions {
@@ -346,6 +354,10 @@ private struct TransferRowAccessibilityActions: ViewModifier {
             }
             if transfer.canRetry {
                 Button("Retry", action: onRetry)
+            }
+            if canReorder, let onMoveToTop, let onMoveToBottom {
+                Button("Move to top", action: onMoveToTop)
+                Button("Move to bottom", action: onMoveToBottom)
             }
             if isCompletedAudio {
                 Button(isPlaying ? "Stop preview" : "Play preview", action: onTogglePreview)
@@ -357,6 +369,7 @@ private struct TransferRowAccessibilityActions: ViewModifier {
             if canRemove {
                 Button("Remove from list", action: onRemove)
             }
+            UserAccessibilityActions(username: transfer.username)
         }
     }
 }
@@ -389,7 +402,6 @@ private struct TransferInfoColumn: View {
                 .foregroundStyle(SeeleColors.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .accessibilityAddTraits(.isHeader)
 
             contextLine
         }
@@ -765,7 +777,7 @@ private struct TransferActionCluster: View {
                transfer.localPath != nil {
                 RowIconButton(
                     systemName: isPlaying ? "pause.fill" : "play.fill",
-                    help: isPlaying ? "Pause preview" : "Play preview",
+                    help: isPlaying ? "Stop preview" : "Play preview",
                     action: onTogglePreview
                 )
 

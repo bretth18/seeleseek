@@ -26,6 +26,8 @@ struct SearchFilterBar: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Filters")
+            .accessibilityValue(filterToggleAccessibilityValue)
 
             // Quick preset chips
             filterChip("MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
@@ -56,11 +58,20 @@ struct SearchFilterBar: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear filters")
             }
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.xs)
         .background(SeeleColors.surface.opacity(0.3))
+    }
+
+    private var filterToggleAccessibilityValue: String {
+        var parts: [String] = [searchState.showFilters ? "expanded" : "collapsed"]
+        if searchState.hasActiveFilters {
+            parts.append("\(searchState.activeFilterCount) active")
+        }
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - Components
@@ -77,6 +88,7 @@ struct SearchFilterBar: View {
                 .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 }
 
@@ -91,7 +103,7 @@ struct SearchFilterPanel: View {
             filterRow("Format") {
                 let formats = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "ape"]
                 ForEach(formats, id: \.self) { ext in
-                    filterChip(ext.uppercased(), isActive: searchState.filterExtensions.contains(ext)) {
+                    filterChip(ext.uppercased(), dimension: "Format", isActive: searchState.filterExtensions.contains(ext)) {
                         searchState.toggleExtension(ext)
                     }
                 }
@@ -103,7 +115,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("128+", 128), ("192+", 192), ("256+", 256), ("320+", 320)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, isActive: searchState.filterMinBitrate == value) {
+                    filterChip(label, dimension: "Bitrate", isActive: searchState.filterMinBitrate == value) {
                         searchState.filterMinBitrate = value
                     }
                 }
@@ -115,7 +127,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("44.1k+", 44100), ("48k+", 48000), ("96k+", 96000)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, isActive: searchState.filterMinSampleRate == value) {
+                    filterChip(label, dimension: "Sample rate", isActive: searchState.filterMinSampleRate == value) {
                         searchState.filterMinSampleRate = value
                     }
                 }
@@ -127,7 +139,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("16+", 16), ("24+", 24), ("32+", 32)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, isActive: searchState.filterMinBitDepth == value) {
+                    filterChip(label, dimension: "Bit depth", isActive: searchState.filterMinBitDepth == value) {
                         searchState.filterMinBitDepth = value
                     }
                 }
@@ -139,9 +151,14 @@ struct SearchFilterPanel: View {
                     Text("Free slots only")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityHidden(true)
+                    // SeeleToggleStyle draws the toggle title itself, so a
+                    // real title here would show the text twice. Give the
+                    // name to assistive technology only.
                     Toggle("", isOn: $searchState.filterFreeSlotOnly)
                         .toggleStyle(SeeleToggleStyle())
                         .labelsHidden()
+                        .accessibilityLabel("Free slots only")
                 }
 
                 Spacer()
@@ -179,7 +196,7 @@ struct SearchFilterPanel: View {
 
     // MARK: - Components
 
-    private func filterChip(_ label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+    private func filterChip(_ label: String, dimension: String? = nil, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
                 .font(SeeleTypography.caption)
@@ -191,6 +208,19 @@ struct SearchFilterPanel: View {
                 .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(chipAccessibilityLabel(label, dimension: dimension))
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+    }
+
+    /// Spoken chip name. A short chip text such as "16+" or "Any" is
+    /// ambiguous without its row title, so the dimension is prefixed.
+    private func chipAccessibilityLabel(_ label: String, dimension: String?) -> String {
+        var spoken = label
+        if spoken.hasSuffix("+") {
+            spoken = String(spoken.dropLast()) + " or more"
+        }
+        guard let dimension else { return spoken }
+        return "\(dimension): \(spoken)"
     }
 
     private func filterRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

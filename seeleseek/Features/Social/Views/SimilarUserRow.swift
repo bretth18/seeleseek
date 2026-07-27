@@ -35,49 +35,68 @@ struct SimilarUserRow: View {
             .padding(.horizontal, SeeleSpacing.sm)
             .padding(.vertical, SeeleSpacing.xs)
             .background(SeeleColors.surface, in: Capsule())
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Similarity rating \(rating)")
 
             HStack(spacing: SeeleSpacing.sm) {
                 Button {
-                    Task { await appState.socialState.loadProfile(for: username) }
+                    viewProfile()
                 } label: {
                     Image(systemName: "person.crop.circle")
                 }
                 .help("View Profile")
-                .accessibilityLabel("View \(username)'s profile")
 
                 Button {
-                    Task { await appState.socialState.addBuddy(username) }
+                    addBuddy()
                 } label: {
                     Image(systemName: "person.badge.plus")
                 }
                 .help("Add Buddy")
-                .accessibilityLabel("Add \(username) as buddy")
 
                 Button {
-                    appState.browseState.browseUser(username)
-                    appState.sidebarSelection = .browse
+                    browseFiles()
                 } label: {
                     Image(systemName: "folder")
                 }
                 .help("Browse Files")
-                .accessibilityLabel("Browse \(username)'s files")
 
                 Button {
-                    appState.chatState.selectPrivateChat(username)
-                    appState.sidebarSelection = .chat
+                    startChat()
                 } label: {
                     Image(systemName: "bubble.left")
                 }
                 .help("Send Message")
-                .accessibilityLabel("Send message to \(username)")
             }
             .buttonStyle(.plain)
             .foregroundStyle(SeeleColors.accent)
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.surface, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(username), similarity rating \(rating)")
+        .accessibilityAddTraits(.isStaticText)
+        .accessibilityActions {
+            Button("View profile") { viewProfile() }
+            Button("Add buddy") { addBuddy() }
+            Button("Browse files") { browseFiles() }
+            Button("Send message") { startChat() }
+        }
+    }
+
+    private func viewProfile() {
+        Task { await appState.socialState.loadProfile(for: username) }
+    }
+
+    private func addBuddy() {
+        Task { await appState.socialState.addBuddy(username) }
+    }
+
+    private func browseFiles() {
+        appState.browseState.browseUser(username)
+        appState.sidebarSelection = .browse
+    }
+
+    private func startChat() {
+        appState.chatState.selectPrivateChat(username)
+        appState.sidebarSelection = .chat
     }
 }
 

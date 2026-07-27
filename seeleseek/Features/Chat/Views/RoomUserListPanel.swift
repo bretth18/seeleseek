@@ -31,8 +31,6 @@ struct RoomUserListPanel: View {
             }
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
-            // A combined element has no AX role on macOS.
-            // Declare the role explicitly.
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Users: \(room.userCount)")
             .accessibilityAddTraits(.isStaticText)
@@ -98,6 +96,11 @@ private struct RoomUserRow: View {
 
     @State private var countryFlag: String?
 
+    /// Localized country name for the computed row label. The flag
+    /// emoji drops out of the combined label, so the name carries the
+    /// country for VoiceOver.
+    @State private var countryName: String?
+
     /// Captured per-row (same idea as `countryFlag`): reading
     /// `chatState.userStatsCache` in the parent's body meant every stats
     /// reply re-rendered the whole 1000+ row panel. Stats are now
@@ -105,8 +108,15 @@ private struct RoomUserRow: View {
     @State private var stats: (speed: UInt32, files: UInt32)?
 
     private func refreshCountryFlag() {
-        let f = appState.networkClient.userInfoCache.flag(for: username)
+        let cache = appState.networkClient.userInfoCache
+        let f = cache.flag(for: username)
         countryFlag = f.isEmpty ? nil : f
+        if let code = cache.countryCode(for: username) {
+            let name = CountryFormatter.name(for: code)
+            countryName = name.isEmpty ? nil : name
+        } else {
+            countryName = nil
+        }
     }
 
     private func loadStats() async {
@@ -195,26 +205,12 @@ private struct RoomUserRow: View {
                 }
             }
         }
-        // VoiceOver cannot see the context menu. Show the row as one
-        // element with explicit actions.
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        // A combined element has no AX role on macOS.
-        // Declare the role explicitly.
         .accessibilityAddTraits(.isStaticText)
         .accessibilityActions {
-            Button("View profile") {
-                Task { await appState.socialState.loadProfile(for: username) }
-            }
-            Button("Browse files") {
-                appState.browseState.browseUser(username)
-            }
-            Button("Send message") {
-                appState.chatState.selectPrivateChat(username)
-            }
-            Button("Add buddy") {
-                Task { await appState.socialState.addBuddy(username) }
-            }
+            UserAccessibilityActions(username: username, showAddBuddy: true)
+
             if room.isPrivate && chatState.isOwner(of: room.name) {
                 if !isOp {
                     Button("Make operator") {
@@ -245,6 +241,9 @@ private struct RoomUserRow: View {
             parts.append("room owner")
         } else if isOp {
             parts.append("room operator")
+        }
+        if let countryName {
+            parts.append(countryName)
         }
         if let stats {
             parts.append(stats.speed.formattedSpeed)

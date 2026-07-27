@@ -40,6 +40,8 @@ struct AboutSettingsSection: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isStaticText)
             }
 
             Divider()
@@ -51,6 +53,7 @@ struct AboutSettingsSection: View {
                     Text("Legal Notice")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Text("seeleseek is an independent, third-party client and is not affiliated with, endorsed by, or sponsored by Soulseek.")
                         .font(SeeleTypography.caption)
@@ -76,15 +79,21 @@ struct AboutSettingsSection: View {
                     Text("Acknowledgments")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityAddTraits(.isHeader)
 
                     // Required by the GeoLite2 EULA whenever we ship the DB.
+                    // A combined element can lose the link action on
+                    // macOS. The link keeps its role and speaks the
+                    // full sentence. The prefix text is redundant.
                     HStack(spacing: SeeleSpacing.xxs) {
                         Text("IP geolocation by")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
+                            .accessibilityHidden(true)
                         Link("MaxMind", destination: URL(string: "https://www.maxmind.com")!)
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.accent)
+                            .accessibilityLabel("IP geolocation by MaxMind")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

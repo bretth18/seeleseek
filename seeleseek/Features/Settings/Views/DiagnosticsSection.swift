@@ -51,6 +51,7 @@ struct DiagnosticsSection: View {
                                 Text("\(mapping.proto) \(mapping.internalPort) → \(mapping.externalPort)")
                                     .font(SeeleTypography.mono)
                                     .foregroundStyle(SeeleColors.textSecondary)
+                                    .accessibilityLabel("\(mapping.proto) port \(mapping.internalPort) mapped to \(mapping.externalPort)")
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -130,6 +131,7 @@ struct DiagnosticsSection: View {
                         if isTestingPort {
                             HStack(spacing: SeeleSpacing.sm) {
                                 ProgressView().scaleEffect(0.7)
+                                    .accessibilityLabel("Testing")
                                 Text("Testing port reachability...")
                                     .font(SeeleTypography.body)
                                     .foregroundStyle(SeeleColors.textSecondary)
@@ -164,9 +166,11 @@ struct DiagnosticsSection: View {
                         HStack(spacing: SeeleSpacing.sm) {
                             TextField("Username", text: $browseTestUsername)
                                 .textFieldStyle(SeeleTextFieldStyle())
+                                .accessibilityLabel("Username to browse")
 
                             if isTestingBrowse {
                                 ProgressView().scaleEffect(0.7)
+                                    .accessibilityLabel("Testing")
                             } else {
                                 Button("Test Browse") {
                                     testBrowse()
@@ -195,6 +199,7 @@ struct DiagnosticsSection: View {
                         if isTesting {
                             HStack(spacing: SeeleSpacing.sm) {
                                 ProgressView().scaleEffect(0.7)
+                                    .accessibilityLabel("Testing")
                                 Text("Testing...")
                                     .font(SeeleTypography.body)
                                     .foregroundStyle(SeeleColors.textSecondary)
@@ -245,6 +250,8 @@ struct DiagnosticsSection: View {
                     .foregroundStyle(color)
                     .lineLimit(1)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isStaticText)
         }
     }
 
@@ -294,6 +301,9 @@ struct DiagnosticsSection: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .padding(.leading, SeeleSpacing.md)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title). \(description)")
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private func testPortReachability() {
@@ -336,6 +346,7 @@ struct DiagnosticsSection: View {
             await MainActor.run {
                 portTestResult = results.joined(separator: "\n")
                 isTestingPort = false
+                VoiceOverAnnouncer.shared.announce("Port test complete")
             }
         }
     }
@@ -373,6 +384,7 @@ struct DiagnosticsSection: View {
             await MainActor.run {
                 browseTestResult = results.joined(separator: "\n")
                 isTestingBrowse = false
+                VoiceOverAnnouncer.shared.announce("Browse test complete")
             }
         }
     }
@@ -406,6 +418,7 @@ struct DiagnosticsSection: View {
             await MainActor.run {
                 testResult = results.joined(separator: "\n")
                 isTesting = false
+                VoiceOverAnnouncer.shared.announce("Connection test complete")
             }
         }
     }

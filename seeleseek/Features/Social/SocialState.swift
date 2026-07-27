@@ -793,11 +793,13 @@ final class SocialState: PeerWatching {
                 guard let self, !Task.isCancelled, self.isLoadingSimilar else { return }
                 self.isLoadingSimilar = false
                 self.discoveryError = "The server didn't respond."
+                VoiceOverAnnouncer.shared.announce("Discovery error: the server did not respond")
             }
         } catch {
             logger.error("Failed to get similar users: \(error.localizedDescription)")
             isLoadingSimilar = false
             discoveryError = "Couldn't load similar users: \(error.localizedDescription)"
+            VoiceOverAnnouncer.shared.announce("Discovery error: could not load similar users")
         }
     }
 
@@ -815,11 +817,13 @@ final class SocialState: PeerWatching {
                 guard let self, !Task.isCancelled, self.isLoadingRecommendations else { return }
                 self.isLoadingRecommendations = false
                 self.discoveryError = "The server didn't respond."
+                VoiceOverAnnouncer.shared.announce("Discovery error: the server did not respond")
             }
         } catch {
             logger.error("Failed to get recommendations: \(error.localizedDescription)")
             isLoadingRecommendations = false
             discoveryError = "Couldn't load recommendations: \(error.localizedDescription)"
+            VoiceOverAnnouncer.shared.announce("Discovery error: could not load recommendations")
         }
     }
 

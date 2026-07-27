@@ -60,5 +60,22 @@ struct PeerActivityHeatmap: View {
                 }
             }
         }
+        .accessibleChart(
+            label: "Peer activity by hour",
+            value: accessibilitySummary
+        )
+    }
+
+    private var accessibilitySummary: String {
+        let totalDownloads = activityData.values.reduce(0) { $0 + $1.downloads }
+        let totalUploads = activityData.values.reduce(0) { $0 + $1.uploads }
+        guard totalDownloads + totalUploads > 0 else { return "No activity" }
+        var summary = "\(totalDownloads) downloads, \(totalUploads) uploads"
+        if let busiest = activityData.max(by: {
+            ($0.value.downloads + $0.value.uploads) < ($1.value.downloads + $1.value.uploads)
+        }), busiest.value.downloads + busiest.value.uploads > 0 {
+            summary += ", busiest hour \(busiest.key):00"
+        }
+        return summary
     }
 }

@@ -74,6 +74,7 @@ struct PeerInfoPopover: View {
                     .font(SeeleTypography.title2)
                     .foregroundStyle(SeeleColors.textPrimary)
                     .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
 
                 HStack(spacing: SeeleSpacing.xs) {
                     Circle()
@@ -142,6 +143,7 @@ struct PeerInfoPopover: View {
             Text("Transfer Statistics")
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textSecondary)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: SeeleSpacing.xl) {
                 VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -217,7 +219,6 @@ struct DetailRow: View {
                 .foregroundStyle(SeeleColors.textSecondary)
                 .textSelection(.enabled)
         }
-        // Read the name and the value as one element.
         .accessibilityElement(children: .combine)
     }
 }

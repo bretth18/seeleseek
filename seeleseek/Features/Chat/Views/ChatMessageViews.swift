@@ -12,11 +12,16 @@ struct PrivateChatContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                StandardStatusDot(isOnline: chat.isOnline)
+                HStack {
+                    StandardStatusDot(isOnline: chat.isOnline)
 
-                Text(chat.username)
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textPrimary)
+                    Text(chat.username)
+                        .font(SeeleTypography.headline)
+                        .foregroundStyle(SeeleColors.textPrimary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(chat.username), \(chat.isOnline ? "online" : "offline")")
+                .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -145,6 +150,30 @@ struct MessageBubble: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(messageBubbleAccessibilityLabel)
+            .accessibilityAddTraits(.isStaticText)
+            .accessibilityActions {
+                if !message.isSystem {
+                    Button("Copy Message") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.content, forType: .string)
+                    }
+
+                    if !message.isOwn {
+                        Button("Reply") {
+                            chatState.messageInput = "@\(message.username) "
+                        }
+
+                        UserAccessibilityActions(username: message.username)
+                    }
+
+                    let links = ChatMessageFormatter.links(in: message)
+                    ForEach(Array(links.enumerated()), id: \.offset) { _, url in
+                        Button("Open link: \(url.host() ?? url.absoluteString)") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
 
             if !message.isOwn {
                 Spacer()
@@ -166,6 +195,11 @@ struct MessageBubble: View {
     private var messageBubbleAccessibilityLabel: String {
         if message.isSystem {
             return "System: \(message.content), \(message.formattedTime)"
+        }
+        // A /me message shows as an action line. Speak the display
+        // form, not the raw /me command.
+        if isAction {
+            return "\(message.username) \(message.content.dropFirst(4)), \(message.formattedTime)"
         }
         let sender = message.isOwn ? "You" : message.username
         return "\(sender): \(message.content), \(message.formattedTime)"
@@ -192,6 +226,7 @@ struct MessageInput: View {
                     Text("\(text.count)/\(Self.maxLength)")
                         .font(SeeleTypography.caption2)
                         .foregroundStyle(text.count > 1900 ? SeeleColors.error : SeeleColors.warning)
+                        .accessibilityLabel("\(text.count) of \(Self.maxLength) characters")
                 }
                 .padding(.horizontal, SeeleSpacing.md)
                 .padding(.top, SeeleSpacing.xs)

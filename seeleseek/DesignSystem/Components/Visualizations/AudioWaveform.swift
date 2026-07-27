@@ -36,6 +36,9 @@ struct AudioWaveform: View {
                 }
             }
         }
+        // Decorative only. The playback state must come from the
+        // control that starts and stops the audio.
+        .accessibilityHidden(true)
     }
 }
 

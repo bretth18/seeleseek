@@ -105,7 +105,44 @@ struct PeerRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(displayName), \(peer.state.accessibilityLabel)")
-        .accessibilityValue("Received \(peer.bytesReceived.formattedBytes), sent \(peer.bytesSent.formattedBytes)")
+        .accessibilityValue(accessibilityValue)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            showingDetail = true
+        }
+        .accessibilityHint("Shows peer details")
+        .accessibilityActions {
+            if !peer.username.isEmpty && peer.username != "unknown" {
+                Button("Copy username") {
+                    copyToPasteboard(peer.username)
+                }
+            }
+            Button("Copy IP address") {
+                copyToPasteboard("\(peer.ip):\(peer.port)")
+            }
+        }
+    }
+
+    private var accessibilityValue: String {
+        var parts: [String] = [
+            "Received \(peer.bytesReceived.formattedBytes), sent \(peer.bytesSent.formattedBytes)",
+            spokenConnectionType
+        ]
+        // The row does not re-render each second, so a spoken
+        // elapsed duration goes stale. Speak the connect time.
+        if let connectedAt = peer.connectedAt {
+            parts.append("connected since \(connectedAt.formatted(date: .omitted, time: .shortened))")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// The raw value is a single protocol letter ("P", "F", "D").
+    private var spokenConnectionType: String {
+        switch peer.connectionType {
+        case .peer: "peer"
+        case .file: "file transfer"
+        case .distributed: "distributed"
+        }
     }
 
     private var statusIndicator: some View {

@@ -136,7 +136,7 @@ final class ChatState {
         }
 
         client.onCantCreateRoom = { [weak self] roomName in
-            self?.createRoomError = "Cannot create room '\(roomName)'"
+            self?.setCreateRoomError("Cannot create room '\(roomName)'")
         }
 
         // Private room callbacks
@@ -494,7 +494,26 @@ final class ChatState {
             if selectedRoom != roomName {
                 joinedRooms[index].unreadCount += 1
             }
+            announceMentionIfNeeded(message, in: roomName)
         }
+    }
+
+    /// A VoiceOver user cannot scan the transcript for a highlight.
+    /// Speak a short notice when another user writes the local
+    /// username in a room message.
+    private func announceMentionIfNeeded(_ message: ChatMessage, in roomName: String) {
+        guard !message.isOwn, !message.isSystem else { return }
+        guard let localUsername = networkClient?.username, !localUsername.isEmpty else { return }
+        guard message.username.caseInsensitiveCompare(localUsername) != .orderedSame else { return }
+        guard Self.containsWholeWord(localUsername, in: message.content) else { return }
+        VoiceOverAnnouncer.shared.announce("Mentioned by \(message.username) in \(roomName)")
+    }
+
+    /// True when `word` occurs with non-alphanumeric characters on
+    /// both sides.
+    private static func containsWholeWord(_ word: String, in text: String) -> Bool {
+        let pattern = "(?<![A-Za-z0-9_])" + NSRegularExpression.escapedPattern(for: word) + "(?![A-Za-z0-9_])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     func updateRoomUsers(_ roomName: String, users: [String]) {
@@ -510,15 +529,15 @@ final class ChatState {
         createRoomError = nil
 
         guard !name.isEmpty else {
-            createRoomError = "Room name cannot be empty"
+            setCreateRoomError("Room name cannot be empty")
             return
         }
         guard name.count <= 24 else {
-            createRoomError = "Room name must be 24 characters or less"
+            setCreateRoomError("Room name must be 24 characters or less")
             return
         }
         guard name.allSatisfy({ $0.isASCII && $0 != " " }) else {
-            createRoomError = "Room name must be ASCII with no spaces"
+            setCreateRoomError("Room name must be ASCII with no spaces")
             return
         }
 
@@ -526,6 +545,13 @@ final class ChatState {
         createRoomName = ""
         createRoomIsPrivate = false
         showCreateRoom = false
+    }
+
+    /// Announce here, not in a view `onChange`. The sheet can close
+    /// before the server error arrives.
+    private func setCreateRoomError(_ message: String) {
+        createRoomError = message
+        VoiceOverAnnouncer.shared.announce(message)
     }
 
     func addMember(room: String, username: String) {

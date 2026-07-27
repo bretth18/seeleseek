@@ -33,11 +33,13 @@ struct StandardEmptyState: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .scaleEffect(appeared ? 1.0 : 0.8)
                 .opacity(appeared ? 1.0 : 0.0)
+                .accessibilityHidden(true)
 
             VStack(spacing: SeeleSpacing.sm) {
                 Text(title)
                     .font(SeeleTypography.title2)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(subtitle)
                     .font(SeeleTypography.subheadline)

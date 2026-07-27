@@ -42,6 +42,8 @@ struct SizeComparisonBars: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                         .frame(width: 80, alignment: .trailing)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isStaticText)
             }
         }
     }

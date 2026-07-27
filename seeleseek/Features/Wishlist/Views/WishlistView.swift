@@ -167,6 +167,7 @@ struct WishlistItemRow: View {
             .help(item.enabled ? "Disable" : "Enable")
             .accessibilityLabel("Automatic search for \(item.query)")
             .accessibilityValue(item.enabled ? "Enabled" : "Disabled")
+            .accessibilityHint("Turns automatic searching on or off")
 
             // Query info
             VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -184,6 +185,8 @@ struct WishlistItemRow: View {
                         .accessibilityLabel("Last searched \(wishlistState.relativeTime(from: item.lastSearchedAt))")
                 }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isStaticText)
 
             Spacer()
 

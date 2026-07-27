@@ -12,6 +12,7 @@ struct LiveActivityFeed: View {
                     Text("Activity Feed")
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .accessibilityAddTraits(.isHeader)
 
                     Spacer()
 
@@ -118,6 +119,31 @@ struct ActivityEventRow: View {
                 )
             }
         }
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(event.detail != nil ? "Expands the detail text" : "")
+        .accessibilityActions {
+            if let username = event.username {
+                UserAccessibilityActions(
+                    username: username,
+                    showAddBuddy: true,
+                    showBlock: true,
+                    navigateOnBrowse: true,
+                    navigateOnMessage: true
+                )
+            }
+        }
+    }
+
+    /// Error events show severity by icon color only. Speak an
+    /// explicit "Error" prefix so the severity is audible.
+    private var accessibilityLabel: String {
+        var parts: [String] = []
+        parts.append(event.type == .error ? "Error: \(event.title)" : event.title)
+        if let detail = event.detail {
+            parts.append(detail)
+        }
+        parts.append(event.timestamp.formatted(date: .omitted, time: .shortened))
+        return parts.joined(separator: ", ")
     }
 }
 
