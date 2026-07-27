@@ -111,9 +111,20 @@ struct SearchResultRow: View {
             }
             Button("Browse folder", action: browseFolder)
             Button("Browse \(result.username)", action: browseUser)
+            Button("View profile") {
+                Task { await appState.socialState.loadProfile(for: result.username) }
+            }
+            if isIgnored {
+                Button("Unignore user") {
+                    Task { await appState.socialState.unignoreUser(result.username) }
+                }
+            } else {
+                Button("Ignore user") {
+                    Task { await appState.socialState.ignoreUser(result.username) }
+                }
+            }
             Button("Copy filename", action: copyFilename)
             Button("Copy full path", action: copyPath)
-            UserAccessibilityActions(username: result.username)
         }
         .onAppear {
             refreshCountryFlag()

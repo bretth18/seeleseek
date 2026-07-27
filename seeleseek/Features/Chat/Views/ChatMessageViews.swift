@@ -168,7 +168,7 @@ struct MessageBubble: View {
 
                     let links = ChatMessageFormatter.links(in: message)
                     ForEach(Array(links.enumerated()), id: \.offset) { _, url in
-                        Button("Open link: \(url.absoluteString)") {
+                        Button("Open link: \(url.host() ?? url.absoluteString)") {
                             NSWorkspace.shared.open(url)
                         }
                     }

@@ -119,12 +119,6 @@ struct RoomBrowserSheet: View {
         .onAppear {
             chatState.requestRoomList()
         }
-        // The inline error text is easy to miss without sight.
-        .onChange(of: chatState.createRoomError) { _, error in
-            if let error {
-                VoiceOverAnnouncer.shared.announce(error)
-            }
-        }
     }
 
     // MARK: - Tab Bar

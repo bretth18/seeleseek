@@ -133,9 +133,12 @@ nonisolated final class AccessibilityAuditTests: XCTestCase {
             // macOS injects an "emoji & symbols" pop-up above the
             // window content when a text field has focus. It sits
             // outside the content area (negative Y, empty id). App
-            // code cannot label it.
+            // code cannot label it. The filter is scoped to the
+            // description issue so a real app picker that scrolls
+            // above the viewport keeps its other audit checks.
             if elementType == .popUpButton, let el = issue.element,
                el.identifier.isEmpty,
+               issue.compactDescription.lowercased().contains("no description"),
                el.label.lowercased().contains("emoji") || el.frame.minY < 0 {
                 print("♿️ AUDIT ignored (system text-input control): \(issue.compactDescription)")
                 return true

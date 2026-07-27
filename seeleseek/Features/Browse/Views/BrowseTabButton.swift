@@ -62,7 +62,7 @@ struct BrowseTabButton: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityTab(isSelected: isSelected)
         .accessibilityHint("Shows this browse")
         // The tap gesture does not become an AXPress action on the
         // combined element. Supply the default action explicitly.

@@ -13,14 +13,17 @@ struct FileTreemap: View {
 
     var body: some View {
         GeometryReader { geometry in
+            // The rects come back in size-sorted order. Iterate the
+            // same sorted list so each cell pairs with its own rect.
+            let sortedFiles = files.sorted { $0.size > $1.size }
             let rects = calculateTreemap(
-                files: files,
+                files: sortedFiles,
                 in: CGRect(origin: .zero, size: geometry.size)
             )
 
             ZStack(alignment: .topLeading) {
                 ForEach(Array(rects.enumerated()), id: \.offset) { index, rect in
-                    let file = files[index]
+                    let file = sortedFiles[index]
 
                     let cell = TreemapCell(
                         file: file,

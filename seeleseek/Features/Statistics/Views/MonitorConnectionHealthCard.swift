@@ -77,10 +77,10 @@ struct MonitorConnectionHealthCard: View {
                 .foregroundStyle(SeeleColors.textPrimary)
                 .contentTransition(.numericText())
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isImage)
-        .accessibilityLabel("Connection health")
-        .accessibilityValue("\(Int(healthScore)) percent, \(healthTier) — \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active")
+        .accessibleChart(
+            label: "Connection health",
+            value: "\(Int(healthScore)) percent, \(healthTier), \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active"
+        )
     }
 
     /// Spoken tier that matches the gauge color thresholds. The color

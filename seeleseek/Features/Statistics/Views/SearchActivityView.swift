@@ -135,7 +135,9 @@ struct SearchTimelineView: View {
     }
 
     private var accessibilitySummary: String {
-        let counts = groupedByMinute.keys.sorted().suffix(30).map { groupedByMinute[$0] ?? 0 }
+        // Each access of `groupedByMinute` recomputes the grouping.
+        let grouped = groupedByMinute
+        let counts = grouped.keys.sorted().suffix(30).map { grouped[$0] ?? 0 }
         let total = counts.reduce(0, +)
         guard total > 0 else { return "No searches" }
         let peak = counts.max() ?? 0

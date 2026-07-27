@@ -465,6 +465,7 @@ struct PrivacySettingsSection: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.displayName)
+        .accessibilityHint(action.description)
         .accessibilityAddTraits(socialState.leechSettings.action == action ? [.isSelected] : [])
     }
 

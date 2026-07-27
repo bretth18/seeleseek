@@ -79,6 +79,7 @@ struct MyProfileView: View {
                         if socialState.myPicture != nil {
                             Button("Remove") {
                                 socialState.myPicture = nil
+                                pictureError = nil
                                 hasChanges = true
                             }
                             .foregroundStyle(SeeleColors.error)

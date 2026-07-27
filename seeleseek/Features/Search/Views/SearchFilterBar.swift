@@ -151,6 +151,7 @@ struct SearchFilterPanel: View {
                     Text("Free slots only")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
+                        .accessibilityHidden(true)
                     // SeeleToggleStyle draws the toggle title itself, so a
                     // real title here would show the text twice. Give the
                     // name to assistive technology only.

@@ -63,6 +63,16 @@ struct NetworkTopologyView: View {
                         .accessibilityLabel(conn.username.isEmpty || conn.username == "unknown" ? conn.ip : conn.username)
                         .accessibilityValue(nodeAccessibilityValue(for: conn))
                         .accessibilityHint("Show peer details")
+                        .accessibilityActions {
+                            if !conn.username.isEmpty && conn.username != "unknown" {
+                                UserAccessibilityActions(
+                                    username: conn.username,
+                                    showAddBuddy: true,
+                                    navigateOnBrowse: true,
+                                    navigateOnMessage: true
+                                )
+                            }
+                        }
                     }
                 }
             }

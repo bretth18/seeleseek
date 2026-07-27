@@ -126,12 +126,23 @@ struct PeerRow: View {
     private var accessibilityValue: String {
         var parts: [String] = [
             "Received \(peer.bytesReceived.formattedBytes), sent \(peer.bytesSent.formattedBytes)",
-            peer.connectionType.rawValue
+            spokenConnectionType
         ]
-        if peer.connectedAt != nil {
-            parts.append("connected \(connectionDuration(now: Date()))")
+        // The row does not re-render each second, so a spoken
+        // elapsed duration goes stale. Speak the connect time.
+        if let connectedAt = peer.connectedAt {
+            parts.append("connected since \(connectedAt.formatted(date: .omitted, time: .shortened))")
         }
         return parts.joined(separator: ", ")
+    }
+
+    /// The raw value is a single protocol letter ("P", "F", "D").
+    private var spokenConnectionType: String {
+        switch peer.connectionType {
+        case .peer: "peer"
+        case .file: "file transfer"
+        case .distributed: "distributed"
+        }
     }
 
     private var statusIndicator: some View {

@@ -13,6 +13,9 @@ struct BuddyRowView: View {
     /// resolution. Re-evaluated when `buddy.countryCode` changes so
     /// persisted updates still propagate.
     @State private var resolvedCountryFlag: String?
+    /// Spoken country name, captured with the flag for the same
+    /// reason.
+    @State private var resolvedCountryName: String?
 
     private func refreshCountryFlag() {
         let live = appState.networkClient.userInfoCache.flag(for: buddy.username)
@@ -21,6 +24,8 @@ struct BuddyRowView: View {
         } else {
             resolvedCountryFlag = buddy.countryCode.map { CountryFormatter.flag(for: $0) }
         }
+        let code = appState.networkClient.userInfoCache.countryCode(for: buddy.username) ?? buddy.countryCode
+        resolvedCountryName = code.map { CountryFormatter.name(for: $0) }
     }
 
     var body: some View {
@@ -127,13 +132,15 @@ struct BuddyRowView: View {
         // ("Unknown role" in the audit). Declare the role explicitly.
         .accessibilityAddTraits(.isStaticText)
         .accessibilityActions {
-            Button("View profile") { viewProfile() }
-            Button("Browse files") { browseFiles() }
-            Button("Send message") { startChat() }
-            Button("Refresh status") {
+            UserAccessibilityActions(
+                username: buddy.username,
+                navigateOnBrowse: true,
+                navigateOnMessage: true
+            )
+            Button("Refresh Status") {
                 Task { await appState.socialState.refreshBuddyStatus(buddy.username) }
             }
-            Button("Remove buddy") {
+            Button("Remove Buddy") {
                 Task { await appState.socialState.removeBuddy(buddy.username) }
             }
         }
@@ -147,12 +154,8 @@ struct BuddyRowView: View {
     private var accessibilityLabel: String {
         var parts: [String] = [buddy.username, buddy.status.description.lowercased()]
         if buddy.isPrivileged { parts.append("privileged") }
-        // The flag emoji is not part of the combined label. Speak the
-        // country name from the same sources that resolve the flag.
-        let countryCode = appState.networkClient.userInfoCache.countryCode(for: buddy.username) ?? buddy.countryCode
-        if let countryCode {
-            let countryName = CountryFormatter.name(for: countryCode)
-            if !countryName.isEmpty { parts.append(countryName) }
+        if let countryName = resolvedCountryName, !countryName.isEmpty {
+            parts.append(countryName)
         }
         if appState.socialState.isIgnored(buddy.username) { parts.append("ignored") }
         if buddy.fileCount > 0 { parts.append("\(formatNumber(buddy.fileCount)) files") }

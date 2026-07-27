@@ -115,6 +115,8 @@ struct SidebarConsoleView: View {
                 .accessibilityHidden(true)
                 // The chevron sits outside the toggle button. Keep
                 // the old click-to-toggle behavior for mouse users.
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         isExpanded.toggle()

@@ -81,10 +81,13 @@ final class UpdateState {
             latestVersion = result.release.tagName
             releaseNotes = result.release.body
 
-            // Announce only the transition to available. Repeat checks
-            // with the same result stay silent.
-            if result.isNewer, !wasAvailable {
-                VoiceOverAnnouncer.shared.announce("Update available: version \(result.release.tagName)")
+            // updateAvailable resets at launch, so without the skip
+            // guard every launch announces a skipped version again.
+            if result.isNewer, !wasAvailable, latestVersion != skippedVersion {
+                let version = result.release.tagName.hasPrefix("v")
+                    ? String(result.release.tagName.dropFirst())
+                    : result.release.tagName
+                VoiceOverAnnouncer.shared.announce("Update available: version \(version)")
             }
 
             if let htmlUrl = URL(string: result.release.htmlUrl) {

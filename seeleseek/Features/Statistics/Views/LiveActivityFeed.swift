@@ -120,7 +120,7 @@ struct ActivityEventRow: View {
             }
         }
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Expands the detail text")
+        .accessibilityHint(event.detail != nil ? "Expands the detail text" : "")
         .accessibilityActions {
             if let username = event.username {
                 UserAccessibilityActions(
