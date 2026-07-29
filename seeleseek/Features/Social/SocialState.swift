@@ -130,21 +130,19 @@ final class SocialState: PeerWatching {
     }
 
     /// Begin watching `username` for live status updates. Ref-counted —
-    /// callers must pair each call with `unwatchPeer`. Buddies don't need
-    /// `watchUser` (the server auto-pushes), but we still issue an
-    /// explicit `getUserStatus` to pull a fresh reading into the cache.
+    /// callers must pair each call with `unwatchPeer`. `watchUser` is
+    /// sent for every peer, buddy or not. The server pushes status only
+    /// for users watched in the CURRENT session; there is no automatic
+    /// push for buddies.
     func watchPeer(_ username: String) {
         guard !username.isEmpty else { return }
         let count = (peerWatchRefCounts[username] ?? 0) + 1
         peerWatchRefCounts[username] = count
         guard count == 1 else { return }   // already subscribed
-        let isBuddy = buddies.contains(where: { $0.username == username })
         Task { [weak self] in
             guard let self, let client = self.networkClient else { return }
             do {
-                if !isBuddy {
-                    try await client.watchUser(username)
-                }
+                try await client.watchUser(username)
                 // Pull a status immediately rather than waiting for the
                 // server to push one — ensures rows for failed persisted
                 // transfers reflect offline state as soon as we connect.
@@ -166,11 +164,8 @@ final class SocialState: PeerWatching {
         Task { [weak self] in
             guard let self, let client = self.networkClient else { return }
             for peer in peers {
-                let isBuddy = self.buddies.contains(where: { $0.username == peer })
                 do {
-                    if !isBuddy {
-                        try await client.watchUser(peer)
-                    }
+                    try await client.watchUser(peer)
                     try await client.getUserStatus(peer)
                 } catch {
                     self.logger.error("resubscribeWatchedPeers(\(peer)) failed: \(error.localizedDescription)")
@@ -179,11 +174,23 @@ final class SocialState: PeerWatching {
         }
     }
 
+    /// Restore every server-side subscription that a disconnect wipes:
+    /// buddy watches and interests. Call on each `.connected` event.
+    /// The login race makes a fixed-delay rewatch unreliable, so the
+    /// connection event is the trigger.
+    func resubscribeOnConnect() {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.rewatchAllBuddies()
+            await self.reregisterInterests()
+        }
+    }
+
     /// Release one watch on `username`. When the refcount hits zero the
-    /// server subscription is torn down. For buddies we keep the
-    /// `peerStatuses` entry around (it's seeded from the buddy list and
-    /// kept fresh by the auto-pushed buddy status updates) so the buddy's
-    /// row still shows a status after the last transfer goes away.
+    /// server subscription is torn down. For buddies the subscription
+    /// and the `peerStatuses` entry stay: `rewatchAllBuddies` owns the
+    /// buddy watch, so the buddy's row still shows a live status after
+    /// the last transfer goes away.
     func unwatchPeer(_ username: String) {
         guard !username.isEmpty else { return }
         let count = (peerWatchRefCounts[username] ?? 0) - 1
@@ -372,9 +379,12 @@ final class SocialState: PeerWatching {
                 leechSettings = try JSONDecoder().decode(LeechSettings.self, from: data)
             }
 
-            // Request status updates for all buddies and re-register interests after a short delay
-            Task {
-                try? await Task.sleep(for: .seconds(2))
+            // The `.connected` event triggers the normal rewatch. This
+            // covers the reverse order: the connection came up before
+            // the buddy list finished loading, so that trigger ran with
+            // zero buddies. `watchUser` is idempotent, so an overlap
+            // with the event-driven pass is harmless.
+            if networkClient?.isConnected == true {
                 await rewatchAllBuddies()
                 await reregisterInterests()
             }

@@ -71,6 +71,9 @@ final class AppState {
                 // Re-send peer-status watches (earlier attempts made
                 // during the connecting phase may have been dropped).
                 self.socialState.resubscribeWatchedPeers()
+                // The server wipes buddy watches and interests on every
+                // disconnect. Restore them on each connect
+                self.socialState.resubscribeOnConnect()
             case .disconnected:
                 self.connection.setDisconnected()
             case .connecting:
