@@ -416,19 +416,35 @@ struct SearchResultRow: View {
         // `accessibilityAction` below, VoiceOver rotor) can reach these
         // actions. The invisible focus ring is an accepted tradeoff.
         HStack(spacing: SeeleSpacing.xxs) {
-            RowIconButton(
-                systemName: "folder.badge.questionmark",
-                help: "Browse this folder",
-                action: browseFolder
-            )
+            folderSlot
             RowIconButton(
                 systemName: "person.crop.circle",
                 help: "Browse \(result.username)'s files",
                 action: browseUser
             )
         }
-        .opacity(isHovered ? 1 : 0)
+        // Request state must show without a hover.
+        .opacity(isHovered || folderRequestState != nil ? 1 : 0)
         .frame(width: secondaryActionsWidth, alignment: .trailing)
+    }
+
+    /// Deliberately not on the download button: a request can run for a
+    /// minute, and that button must stay usable for single files.
+    @ViewBuilder
+    private var folderSlot: some View {
+        if let folderRequestState {
+            FolderRequestIndicator(state: folderRequestState, username: result.username)
+        } else {
+            RowIconButton(
+                systemName: "folder.badge.questionmark",
+                help: "Browse this folder",
+                action: browseFolder
+            )
+        }
+    }
+
+    private var folderRequestState: AppState.FolderRequestState? {
+        appState.folderRequestState(for: result)
     }
 
     private var primaryAction: some View {
@@ -761,5 +777,55 @@ enum QualityScale {
     .frame(width: 900, height: 560)
     .background(SeeleColors.background)
     .previewAppState()
+}
+
+#Preview("Folder request states") {
+    let idle = SearchResult(
+        username: "musiclover42",
+        filename: "Music\\FLAC\\Underscores\\01 - Hollywood Forever.flac",
+        size: 45_000_000, bitrate: 1411, duration: 413,
+        freeSlots: true, uploadSpeed: 1_500_000
+    )
+    let fetching = SearchResult(
+        username: "vinylcollector",
+        filename: "Music\\MP3\\Underscores\\02 - Hollywood Forever.mp3",
+        size: 8_500_000, bitrate: 320, duration: 413,
+        freeSlots: true, uploadSpeed: 300_000
+    )
+    let failed = SearchResult(
+        username: "jazzfan",
+        filename: "Audio\\Live\\Underscores\\03 - Hollywood Forever.mp3",
+        size: 4_200_000, bitrate: 128, duration: 413,
+        freeSlots: true, uploadSpeed: 80_000
+    )
+
+    let state = PreviewData.connectedAppState
+    state.previewSeedFolderRequest(.fetching, for: fetching)
+    state.previewSeedFolderRequest(
+        .failed("Could not reach jazzfan after 32 seconds"),
+        for: failed
+    )
+
+    return VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+        previewStateLabel("Idle — folder button appears on hover")
+        SearchResultRow(result: idle)
+
+        previewStateLabel("Fetching — spinner in the folder slot")
+        SearchResultRow(result: fetching)
+
+        previewStateLabel("Failed — reason on hover, clears after 30 s")
+        SearchResultRow(result: failed)
+    }
+    .padding(SeeleSpacing.lg)
+    .frame(width: 900)
+    .background(SeeleColors.background)
+    .previewAppState(state)
+}
+
+@ViewBuilder
+private func previewStateLabel(_ text: String) -> some View {
+    Text(text)
+        .font(SeeleTypography.caption)
+        .foregroundStyle(SeeleColors.textTertiary)
 }
 #endif

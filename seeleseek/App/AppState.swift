@@ -221,11 +221,21 @@ final class AppState {
         // we later send to them comes back `File not shared`.
         client.onFolderContentsResponse = { [weak self] token, folder, files in
             guard let self,
-                  let username = self.pendingFolderDownloads.removeValue(forKey: token) else {
+                  let pending = self.pendingFolderDownloads.removeValue(forKey: token) else {
                 return
             }
+            let username = pending.username
+            self.folderRequestStates.removeValue(forKey: Self.folderKey(username: username, folder: pending.folder))
             let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
+            if !files.isEmpty {
+                ActivityLog.shared.log(.downloadStarted, title: "Queued \(queued) files from \(username)", detail: folder, username: username)
+                VoiceOverAnnouncer.shared.announce("Queued \(queued) files from \(username)")
+            }
             self.logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
+            if files.isEmpty {
+                ActivityLog.shared.log(.error, title: "Folder download from \(username) found no files", detail: folder, username: username)
+                VoiceOverAnnouncer.shared.announce("Folder download from \(username) found no files")
+            }
         }
 
         client.searchResponseFilter = { [weak self] in
@@ -242,58 +252,116 @@ final class AppState {
         // ShareManager construction is side-effect-free; load + rescan
         // are explicit so they happen after the countsChangesStream
         // consumer above is wired.
+        // A preview must not scan the filesystem.
+        guard !SeeleSeekApp.isRunningInPreview else { return }
         client.shareManager.loadPersistedFolders()
         Task { await client.shareManager.rescanAll() }
     }
 
     // MARK: - Folder Download Coordinator
-    // Maps the token returned by `requestFolderContents` to the username we
-    // asked — response events only carry `(token, folder, files)`, so we
-    // need this side-table to know where to queue the downloads.
-    private var pendingFolderDownloads: [UInt32: String] = [:]
+    // Response events carry only `(token, folder, files)`.
+    private struct PendingFolderDownload {
+        let username: String
+        let folder: String
+    }
+    private var pendingFolderDownloads: [UInt32: PendingFolderDownload] = [:]
+
+    enum FolderRequestState: Equatable {
+        case fetching
+        case failed(String)
+    }
+
+    /// Keyed by user and folder. Search rows read this.
+    private(set) var folderRequestStates: [String: FolderRequestState] = [:]
+
+    private static func folderKey(username: String, folder: String) -> String {
+        "\(username)\u{0000}\(folder)"
+    }
+
+    func folderRequestState(for result: SearchResult) -> FolderRequestState? {
+        let folder = Self.containingSoulseekFolder(of: result.filename)
+        guard !folder.isEmpty else { return nil }
+        return folderRequestStates[Self.folderKey(username: result.username, folder: folder)]
+    }
+
+    #if DEBUG
+    /// Previews cannot write `folderRequestStates`: the setter is file private.
+    func previewSeedFolderRequest(_ state: FolderRequestState, for result: SearchResult) {
+        let folder = Self.containingSoulseekFolder(of: result.filename)
+        folderRequestStates[Self.folderKey(username: result.username, folder: folder)] = state
+    }
+    #endif
+
+    private func markFolderRequestFailed(key: String, reason: String) {
+        folderRequestStates[key] = .failed(reason)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, case .failed = self.folderRequestStates[key] else { return }
+            self.folderRequestStates.removeValue(forKey: key)
+        }
+    }
 
     /// Right-click "Download entire folder" entrypoint for a search result.
     /// Derives the containing folder from the Soulseek path (backslash-
     /// separated), asks the peer for its contents, and queues every returned
-    /// file once the response arrives. Pending tokens are auto-cleaned after
-    /// 60 s if the peer never responds, so `pendingFolderDownloads` can't grow
-    /// unbounded. No ActivityLog entries — folder downloads surface through
-    /// the same Transfers-tab path as single-file downloads, matching the
-    /// app's "log on completion, not on intent" convention.
+    /// file once the response arrives.
     func downloadContainingFolder(of result: SearchResult) async {
         let folder = Self.containingSoulseekFolder(of: result.filename)
         guard !folder.isEmpty else {
             logger.warning("Could not derive containing folder from filename: \(result.filename)")
             return
         }
+        let key = Self.folderKey(username: result.username, folder: folder)
+        folderRequestStates[key] = .fetching
+        // Everything below can take a minute inside the peer
+        // connection, so timestamp the click itself.
+        let started = Date()
+        logger.info("Folder download clicked: \(result.username) '\(folder)'")
+        ActivityLog.shared.log(.info, title: "Getting folder contents from \(result.username)", detail: folder, username: result.username)
+        VoiceOverAnnouncer.shared.announce("Getting folder contents from \(result.username)")
         do {
             let token = try await networkClient.requestFolderContents(
                 from: result.username,
                 folder: folder
             )
-            pendingFolderDownloads[token] = result.username
-            logger.info("Requested folder contents '\(folder)' from \(result.username) (token=\(token))")
+            pendingFolderDownloads[token] = PendingFolderDownload(username: result.username, folder: folder)
+            logger.info("Requested folder contents '\(folder)' from \(result.username) (token=\(token)) after \(Int(Date().timeIntervalSince(started) * 1000)) ms")
             scheduleFolderDownloadTimeout(token: token, username: result.username, folder: folder)
         } catch {
-            logger.error("Failed to request folder contents: \(error.localizedDescription)")
+            let elapsed = Int(Date().timeIntervalSince(started))
+            let reason = "Could not reach \(result.username) after \(elapsed) seconds"
+            markFolderRequestFailed(key: key, reason: reason)
+            logger.error("Failed to request folder contents after \(elapsed) s: \(error.localizedDescription)")
+            ActivityLog.shared.log(.error, title: "Folder download from \(result.username) failed", detail: reason, username: result.username)
+            VoiceOverAnnouncer.shared.announce(reason)
         }
     }
 
-    /// Drop the pending entry after 60 s if the peer never replied. No-op
-    /// if the response already arrived and removed it.
+    /// Warn at 60 s but keep the entry for 5 more minutes: firewalled
+    /// peers can need 45 s before the request is even sent, and those
+    /// late replies must still queue.
     private func scheduleFolderDownloadTimeout(token: UInt32, username: String, folder: String) {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(60))
-            guard let self,
-                  self.pendingFolderDownloads.removeValue(forKey: token) != nil else {
-                return
+            guard let self, self.pendingFolderDownloads[token] != nil else { return }
+            self.markFolderRequestFailed(
+                key: Self.folderKey(username: username, folder: folder),
+                reason: "\(username) did not answer within 60 seconds"
+            )
+            self.logger.info("Folder contents request slow: \(username) '\(folder)' (token=\(token))")
+            ActivityLog.shared.log(.error, title: "Folder download from \(username) did not start: no answer after 60 seconds", detail: folder, username: username)
+            VoiceOverAnnouncer.shared.announce("Folder download from \(username) did not start")
+
+            try? await Task.sleep(for: .seconds(300))
+            if self.pendingFolderDownloads.removeValue(forKey: token) != nil {
+                self.logger.info("Folder contents request expired: \(username) '\(folder)' (token=\(token))")
             }
-            self.logger.info("Folder contents request timed out: \(username) '\(folder)' (token=\(token))")
         }
     }
 
-    /// Queue every file from a folder-contents response, skipping files
-    /// already queued for this user. Returns the number actually queued.
+    /// Queue every file from a folder-contents response. Returns the number
+    /// handed to the download manager. Do not pre-filter queued files here:
+    /// `queueDownload` skips active duplicates and re-drives failed rows.
     ///
     /// `folder` is the full Soulseek folder path the peer listed (as it
     /// appeared in `FolderContentsReply`). Some peers embed the full path
@@ -306,7 +374,6 @@ final class AppState {
         var queued = 0
         for file in files {
             let fullPath = Self.fullSoulseekPath(folder: folder, filename: file.filename)
-            if transferState.isFileQueued(filename: fullPath, username: username) { continue }
             let result = SearchResult(
                 username: username,
                 filename: fullPath,

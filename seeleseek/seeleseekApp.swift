@@ -14,7 +14,7 @@ struct SeeleSeekApp: App {
         }
     }
 
-    private static var isRunningInPreview: Bool {
+    static var isRunningInPreview: Bool {
         let env = ProcessInfo.processInfo.environment
         return env["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
             || env["XCODE_RUNNING_FOR_PLAYGROUNDS"] == "1"

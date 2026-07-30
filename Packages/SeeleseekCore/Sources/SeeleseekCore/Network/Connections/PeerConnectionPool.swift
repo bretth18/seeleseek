@@ -99,6 +99,9 @@ public final class PeerConnectionPool {
     // MARK: - Configuration
 
     public let maxConnections = 50
+    /// Reserve for incoming connections, so a search burst that fills
+    /// the pool cannot block PierceFirewall connect-backs.
+    public let incomingHeadroom = 8
     public let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
     public let connectionTimeout: TimeInterval = 60
 
@@ -444,9 +447,8 @@ public final class PeerConnectionPool {
     /// admission limits (per-IP, global, rate-limit).
     public func handleIncomingConnection(_ nwConnection: NWConnection, obfuscated: Bool = false) async {
         // Enforce connection limit to prevent resource exhaustion
-        if activeConnections >= maxConnections {
-            logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
-            logger.warning("Connection limit reached, rejecting: \(String(describing: nwConnection.endpoint))")
+        if activeConnections >= maxConnections + incomingHeadroom {
+            logger.warning("Connection limit reached (\(self.maxConnections + self.incomingHeadroom)), rejecting connection from \(String(describing: nwConnection.endpoint))")
             nwConnection.cancel()
             return
         }
@@ -620,9 +622,12 @@ public final class PeerConnectionPool {
     /// ("incoming-*"), and a prefix-match on the outgoing form could also
     /// incorrectly match a different user whose name shares a dash-prefix
     /// (e.g. "bob" matching "bob-1-42").
+    ///
+    /// Only P-type connections match: an F-type socket has no receive
+    /// loop, so a message written to one gets no reply and no error.
     public func getConnectionForUser(_ username: String) async -> PeerConnection? {
         let matchingKeys = connections.compactMap { (key, info) -> String? in
-            info.username == username ? key : nil
+            info.username == username && info.connectionType == .peer ? key : nil
         }
 
         for key in matchingKeys {

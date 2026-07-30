@@ -2601,38 +2601,48 @@ public final class NetworkClient {
         let useObfuscated = obfuscatedPort > 0
         let dialPort = useObfuscated ? obfuscatedPort : port
 
-        var connection: PeerConnection
-        var isIndirect = false
-        do {
-            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
-                group.addTask {
-                    let conn = try await self.peerConnectionPool.connect(
-                        to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
-                    )
-                    // PeerInit is a one-way direct-connection initializer in
-                    // the Soulseek protocol. `pool.connect` has already sent
-                    // our PeerInit successfully, so the P connection is ready
-                    // for peer messages now. Most clients (including
-                    // SoulseekQt) do not send a reciprocal PeerInit; waiting
-                    // for one here turns a healthy direct connection into an
-                    // artificial handshake timeout.
-                    return conn
+        // Both legs run together: a firewalled peer cannot accept the
+        // direct dial, and its pierce often arrives in under a second.
+        let (connection, isIndirect) = try await withThrowingTaskGroup(of: (PeerConnection, Bool).self) { group in
+            group.addTask {
+                // Cap the direct leg: a raw TCP dial can hang for 60 s.
+                let direct = try await withThrowingTaskGroup(of: PeerConnection.self) { inner in
+                    inner.addTask {
+                        // Most clients send no reciprocal PeerInit, and
+                        // pool.connect already sent ours. Do not wait.
+                        try await self.peerConnectionPool.connect(
+                            to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
+                        )
+                    }
+                    inner.addTask {
+                        try await Task.sleep(for: .seconds(10))
+                        throw NetworkError.timeout
+                    }
+                    let result = try await inner.next()!
+                    inner.cancelAll()
+                    return result
                 }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(10))
-                    throw NetworkError.timeout
-                }
-                let result = try await group.next()!
-                group.cancelAll()
-                return result
+                return (direct, false)
             }
+            group.addTask {
+                (try await self.waitForPendingBrowse(token: token), true)
+            }
+            // nextResult, not next: one leg's failure must not abort
+            // the other.
+            var lastError: Error = NetworkError.timeout
+            while let result = await group.nextResult() {
+                switch result {
+                case .success(let winner):
+                    group.cancelAll()
+                    return winner
+                case .failure(let error):
+                    if !(error is CancellationError) { lastError = error }
+                }
+            }
+            throw lastError
+        }
+        if !isIndirect {
             cancelPendingBrowse(token: token)
-        } catch {
-            // Direct timed out or handshake failed — the direct-dial child
-            // already tore down its own connection; wait for the peer's
-            // indirect PierceFirewall connection instead.
-            connection = try await waitForPendingBrowse(token: token)
-            isIndirect = true
         }
 
         if isIndirect {
