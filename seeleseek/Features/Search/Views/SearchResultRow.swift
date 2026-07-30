@@ -412,18 +412,18 @@ struct SearchResultRow: View {
     }
 
     private var secondaryActions: some View {
+        let folderRequestState = appState.folderRequestState(for: result)
         // Hit-testing stays on even at opacity 0 so Tab focus (and, via
         // `accessibilityAction` below, VoiceOver rotor) can reach these
         // actions. The invisible focus ring is an accepted tradeoff.
-        HStack(spacing: SeeleSpacing.xxs) {
-            folderSlot
+        return HStack(spacing: SeeleSpacing.xxs) {
+            folderSlot(folderRequestState)
             RowIconButton(
                 systemName: "person.crop.circle",
                 help: "Browse \(result.username)'s files",
                 action: browseUser
             )
         }
-        // Request state must show without a hover.
         .opacity(isHovered || folderRequestState != nil ? 1 : 0)
         .frame(width: secondaryActionsWidth, alignment: .trailing)
     }
@@ -431,9 +431,9 @@ struct SearchResultRow: View {
     /// Deliberately not on the download button: a request can run for a
     /// minute, and that button must stay usable for single files.
     @ViewBuilder
-    private var folderSlot: some View {
-        if let folderRequestState {
-            FolderRequestIndicator(state: folderRequestState, username: result.username)
+    private func folderSlot(_ state: AppState.FolderRequestState?) -> some View {
+        if let state {
+            FolderRequestIndicator(state: state, username: result.username)
         } else {
             RowIconButton(
                 systemName: "folder.badge.questionmark",
@@ -441,10 +441,6 @@ struct SearchResultRow: View {
                 action: browseFolder
             )
         }
-    }
-
-    private var folderRequestState: AppState.FolderRequestState? {
-        appState.folderRequestState(for: result)
     }
 
     private var primaryAction: some View {
@@ -537,6 +533,17 @@ struct SearchResultRow: View {
         }
         if downloadStatus != nil {
             parts.append(actionHelp)
+        }
+        // The row is a combined element with an explicit label, which
+        // overrides FolderRequestIndicator's own label — so the request
+        // state has to be surfaced here or VoiceOver never hears it.
+        switch appState.folderRequestState(for: result) {
+        case .fetching:
+            parts.append("getting folder contents")
+        case .failed(let reason):
+            parts.append("folder download failed, \(reason)")
+        case nil:
+            break
         }
         return parts.joined(separator: ", ")
     }

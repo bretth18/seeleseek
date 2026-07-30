@@ -225,17 +225,18 @@ final class AppState {
                 return
             }
             let username = pending.username
-            self.folderRequestStates.removeValue(forKey: Self.folderKey(username: username, folder: pending.folder))
-            let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
-            if !files.isEmpty {
-                ActivityLog.shared.log(.downloadStarted, title: "Queued \(queued) files from \(username)", detail: folder, username: username)
-                VoiceOverAnnouncer.shared.announce("Queued \(queued) files from \(username)")
-            }
-            self.logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
             if files.isEmpty {
-                ActivityLog.shared.log(.error, title: "Folder download from \(username) found no files", detail: folder, username: username)
-                VoiceOverAnnouncer.shared.announce("Folder download from \(username) found no files")
+                self.markFolderRequestFailed(pending, reason: "\(username) shared no files in this folder")
+                ActivityLog.shared.logFolderRequestFailed(
+                    username: username, folder: folder,
+                    reason: "\(username) shared no files in this folder"
+                )
+                return
             }
+            self.clearFolderRequestState(pending)
+            let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
+            self.logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
+            ActivityLog.shared.logFolderQueued(count: queued, username: username, folder: folder)
         }
 
         client.searchResponseFilter = { [weak self] in
@@ -248,56 +249,55 @@ final class AppState {
                 maxResults: settings.maxSearchResponseResults
             )
         }
-
-        // ShareManager construction is side-effect-free; load + rescan
-        // are explicit so they happen after the countsChangesStream
-        // consumer above is wired.
-        // A preview must not scan the filesystem.
-        guard !SeeleSeekApp.isRunningInPreview else { return }
-        client.shareManager.loadPersistedFolders()
-        Task { await client.shareManager.rescanAll() }
     }
 
     // MARK: - Folder Download Coordinator
-    // Response events carry only `(token, folder, files)`.
-    private struct PendingFolderDownload {
+    struct FolderRequest: Hashable {
         let username: String
         let folder: String
     }
-    private var pendingFolderDownloads: [UInt32: PendingFolderDownload] = [:]
+    private var pendingFolderDownloads: [UInt32: FolderRequest] = [:]
 
     enum FolderRequestState: Equatable {
         case fetching
         case failed(String)
     }
 
-    /// Keyed by user and folder. Search rows read this.
-    private(set) var folderRequestStates: [String: FolderRequestState] = [:]
-
-    private static func folderKey(username: String, folder: String) -> String {
-        "\(username)\u{0000}\(folder)"
-    }
+    private(set) var folderRequestStates: [FolderRequest: FolderRequestState] = [:]
+    private var folderFailureClearTasks: [FolderRequest: Task<Void, Never>] = [:]
 
     func folderRequestState(for result: SearchResult) -> FolderRequestState? {
+        // Every visible row calls this on every render — skip the path parse.
+        guard !folderRequestStates.isEmpty else { return nil }
         let folder = Self.containingSoulseekFolder(of: result.filename)
         guard !folder.isEmpty else { return nil }
-        return folderRequestStates[Self.folderKey(username: result.username, folder: folder)]
+        return folderRequestStates[FolderRequest(username: result.username, folder: folder)]
     }
 
     #if DEBUG
-    /// Previews cannot write `folderRequestStates`: the setter is file private.
     func previewSeedFolderRequest(_ state: FolderRequestState, for result: SearchResult) {
         let folder = Self.containingSoulseekFolder(of: result.filename)
-        folderRequestStates[Self.folderKey(username: result.username, folder: folder)] = state
+        folderRequestStates[FolderRequest(username: result.username, folder: folder)] = state
     }
     #endif
 
-    private func markFolderRequestFailed(key: String, reason: String) {
-        folderRequestStates[key] = .failed(reason)
-        Task { [weak self] in
+    private func clearFolderRequestState(_ request: FolderRequest) {
+        folderFailureClearTasks.removeValue(forKey: request)?.cancel()
+        folderRequestStates.removeValue(forKey: request)
+    }
+
+    /// Cancel-and-replace: without it, an older failure's 30 s timer can
+    /// clear a newer failure for the same folder early.
+    private func markFolderRequestFailed(_ request: FolderRequest, reason: String) {
+        folderRequestStates[request] = .failed(reason)
+        folderFailureClearTasks[request]?.cancel()
+        folderFailureClearTasks[request] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(30))
-            guard let self, case .failed = self.folderRequestStates[key] else { return }
-            self.folderRequestStates.removeValue(forKey: key)
+            guard let self, !Task.isCancelled else { return }
+            self.folderFailureClearTasks.removeValue(forKey: request)
+            if case .failed = self.folderRequestStates[request] {
+                self.folderRequestStates.removeValue(forKey: request)
+            }
         }
     }
 
@@ -311,46 +311,47 @@ final class AppState {
             logger.warning("Could not derive containing folder from filename: \(result.filename)")
             return
         }
-        let key = Self.folderKey(username: result.username, folder: folder)
-        folderRequestStates[key] = .fetching
-        // Everything below can take a minute inside the peer
-        // connection, so timestamp the click itself.
+        let request = FolderRequest(username: result.username, folder: folder)
+        guard folderRequestStates[request] != .fetching else { return }
+        folderRequestStates[request] = .fetching
         let started = Date()
         logger.info("Folder download clicked: \(result.username) '\(folder)'")
-        ActivityLog.shared.log(.info, title: "Getting folder contents from \(result.username)", detail: folder, username: result.username)
-        VoiceOverAnnouncer.shared.announce("Getting folder contents from \(result.username)")
+        ActivityLog.shared.logFolderRequestStarted(username: result.username, folder: folder)
         do {
             let token = try await networkClient.requestFolderContents(
                 from: result.username,
                 folder: folder
             )
-            pendingFolderDownloads[token] = PendingFolderDownload(username: result.username, folder: folder)
+            pendingFolderDownloads[token] = request
             logger.info("Requested folder contents '\(folder)' from \(result.username) (token=\(token)) after \(Int(Date().timeIntervalSince(started) * 1000)) ms")
-            scheduleFolderDownloadTimeout(token: token, username: result.username, folder: folder)
+            scheduleFolderDownloadTimeout(token: token, request: request)
         } catch {
             let elapsed = Int(Date().timeIntervalSince(started))
-            let reason = "Could not reach \(result.username) after \(elapsed) seconds"
-            markFolderRequestFailed(key: key, reason: reason)
+            let reason = networkClient.isConnected
+                ? "Could not reach \(result.username) after \(elapsed) seconds"
+                : "Not connected to the Soulseek server"
+            markFolderRequestFailed(request, reason: reason)
             logger.error("Failed to request folder contents after \(elapsed) s: \(error.localizedDescription)")
-            ActivityLog.shared.log(.error, title: "Folder download from \(result.username) failed", detail: reason, username: result.username)
-            VoiceOverAnnouncer.shared.announce(reason)
+            ActivityLog.shared.logFolderRequestFailed(
+                username: result.username, folder: folder, reason: reason
+            )
         }
     }
 
     /// Warn at 60 s but keep the entry for 5 more minutes: firewalled
     /// peers can need 45 s before the request is even sent, and those
     /// late replies must still queue.
-    private func scheduleFolderDownloadTimeout(token: UInt32, username: String, folder: String) {
+    private func scheduleFolderDownloadTimeout(token: UInt32, request: FolderRequest) {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(60))
             guard let self, self.pendingFolderDownloads[token] != nil else { return }
-            self.markFolderRequestFailed(
-                key: Self.folderKey(username: username, folder: folder),
-                reason: "\(username) did not answer within 60 seconds"
-            )
+            let (username, folder) = (request.username, request.folder)
+            let reason = "\(username) did not answer within 60 seconds"
+            self.markFolderRequestFailed(request, reason: reason)
             self.logger.info("Folder contents request slow: \(username) '\(folder)' (token=\(token))")
-            ActivityLog.shared.log(.error, title: "Folder download from \(username) did not start: no answer after 60 seconds", detail: folder, username: username)
-            VoiceOverAnnouncer.shared.announce("Folder download from \(username) did not start")
+            ActivityLog.shared.logFolderRequestFailed(
+                username: username, folder: folder, reason: reason
+            )
 
             try? await Task.sleep(for: .seconds(300))
             if self.pendingFolderDownloads.removeValue(forKey: token) != nil {
@@ -459,6 +460,12 @@ final class AppState {
         // Configure notifications
         NotificationService.shared.settings = settings
         NotificationService.shared.requestAuthorization()
+
+        // Not in wireNetworkClient: previews and the test host skip
+        // configure(), so neither scans the filesystem.
+        let client = networkClient
+        client.shareManager.loadPersistedFolders()
+        Task { await client.shareManager.rescanAll() }
 
         // Initialize database asynchronously
         Task {

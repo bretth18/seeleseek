@@ -99,9 +99,6 @@ public final class PeerConnectionPool {
     // MARK: - Configuration
 
     public let maxConnections = 50
-    /// Reserve for incoming connections, so a search burst that fills
-    /// the pool cannot block PierceFirewall connect-backs.
-    public let incomingHeadroom = 8
     public let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
     public let connectionTimeout: TimeInterval = 60
 
@@ -447,8 +444,8 @@ public final class PeerConnectionPool {
     /// admission limits (per-IP, global, rate-limit).
     public func handleIncomingConnection(_ nwConnection: NWConnection, obfuscated: Bool = false) async {
         // Enforce connection limit to prevent resource exhaustion
-        if activeConnections >= maxConnections + incomingHeadroom {
-            logger.warning("Connection limit reached (\(self.maxConnections + self.incomingHeadroom)), rejecting connection from \(String(describing: nwConnection.endpoint))")
+        if activeConnections >= maxConnections {
+            logger.warning("Connection limit reached (\(self.maxConnections)), rejecting connection from \(String(describing: nwConnection.endpoint))")
             nwConnection.cancel()
             return
         }

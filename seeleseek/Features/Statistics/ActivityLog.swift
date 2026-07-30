@@ -206,6 +206,21 @@ final class ActivityLog: ActivityLogging {
         }
     }
 
+    func logFolderRequestStarted(username: String, folder: String) {
+        log(.info, title: "Getting folder contents from \(username)", detail: folder, username: username)
+        VoiceOverAnnouncer.shared.announce("Getting folder contents from \(username)")
+    }
+
+    func logFolderQueued(count: Int, username: String, folder: String) {
+        log(.downloadStarted, title: "Queued \(count) files from \(username)", detail: folder, username: username)
+        VoiceOverAnnouncer.shared.announce("Queued \(count) files from \(username)")
+    }
+
+    func logFolderRequestFailed(username: String, folder: String, reason: String) {
+        log(.error, title: "Folder download from \(username) failed: \(reason)", detail: folder, username: username)
+        VoiceOverAnnouncer.shared.announce(reason)
+    }
+
     func logError(_ message: String, detail: String? = nil) {
         log(.error, title: message, detail: detail)
     }

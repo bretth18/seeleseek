@@ -2606,21 +2606,12 @@ public final class NetworkClient {
         let (connection, isIndirect) = try await withThrowingTaskGroup(of: (PeerConnection, Bool).self) { group in
             group.addTask {
                 // Cap the direct leg: a raw TCP dial can hang for 60 s.
-                let direct = try await withThrowingTaskGroup(of: PeerConnection.self) { inner in
-                    inner.addTask {
-                        // Most clients send no reciprocal PeerInit, and
-                        // pool.connect already sent ours. Do not wait.
-                        try await self.peerConnectionPool.connect(
-                            to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
-                        )
-                    }
-                    inner.addTask {
-                        try await Task.sleep(for: .seconds(10))
-                        throw NetworkError.timeout
-                    }
-                    let result = try await inner.next()!
-                    inner.cancelAll()
-                    return result
+                // Most clients send no reciprocal PeerInit, and pool.connect
+                // already sent ours. Do not wait.
+                let direct = try await withTimeout(seconds: 10) {
+                    try await self.peerConnectionPool.connect(
+                        to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
+                    )
                 }
                 return (direct, false)
             }
@@ -2628,23 +2619,32 @@ public final class NetworkClient {
                 (try await self.waitForPendingBrowse(token: token), true)
             }
             // nextResult, not next: one leg's failure must not abort
-            // the other.
+            // the other. Drain every child: a pierce that was consumed by
+            // the waiter but lost the race is not in the pool and not in
+            // `pendingBrowseStates`, so nothing else can close it. A losing
+            // direct connection stays pool-tracked and reusable.
+            var winner: (PeerConnection, Bool)?
             var lastError: Error = NetworkError.timeout
             while let result = await group.nextResult() {
                 switch result {
-                case .success(let winner):
-                    group.cancelAll()
-                    return winner
+                case .success(let value):
+                    if winner == nil {
+                        winner = value
+                        group.cancelAll()
+                    } else if value.1 {
+                        await value.0.disconnect()
+                    }
                 case .failure(let error):
                     if !(error is CancellationError) { lastError = error }
                 }
             }
+            if let winner { return winner }
+            // Both legs report CancellationError when the establishment
+            // itself was cancelled (disconnect) — do not dress that up as
+            // a timeout.
+            try Task.checkCancellation()
             throw lastError
         }
-        if !isIndirect {
-            cancelPendingBrowse(token: token)
-        }
-
         if isIndirect {
             // PierceFirewall stops the receive loop assuming file-transfer
             // mode. P connections need it resumed for peer messages.
@@ -2654,6 +2654,8 @@ public final class NetworkClient {
             // connection. Keep this validation scoped to that path; direct
             // connections are initialized by the PeerInit we send.
             try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        } else {
+            cancelPendingBrowse(token: token)
         }
         return connection
     }
