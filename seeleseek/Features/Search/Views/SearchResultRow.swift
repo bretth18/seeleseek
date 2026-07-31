@@ -412,23 +412,35 @@ struct SearchResultRow: View {
     }
 
     private var secondaryActions: some View {
+        let folderRequestState = appState.folderRequestState(for: result)
         // Hit-testing stays on even at opacity 0 so Tab focus (and, via
         // `accessibilityAction` below, VoiceOver rotor) can reach these
         // actions. The invisible focus ring is an accepted tradeoff.
-        HStack(spacing: SeeleSpacing.xxs) {
-            RowIconButton(
-                systemName: "folder.badge.questionmark",
-                help: "Browse this folder",
-                action: browseFolder
-            )
+        return HStack(spacing: SeeleSpacing.xxs) {
+            folderSlot(folderRequestState)
             RowIconButton(
                 systemName: "person.crop.circle",
                 help: "Browse \(result.username)'s files",
                 action: browseUser
             )
         }
-        .opacity(isHovered ? 1 : 0)
+        .opacity(isHovered || folderRequestState != nil ? 1 : 0)
         .frame(width: secondaryActionsWidth, alignment: .trailing)
+    }
+
+    /// Deliberately not on the download button: a request can run for a
+    /// minute, and that button must stay usable for single files.
+    @ViewBuilder
+    private func folderSlot(_ state: AppState.FolderRequestState?) -> some View {
+        if let state {
+            FolderRequestIndicator(state: state, username: result.username)
+        } else {
+            RowIconButton(
+                systemName: "folder.badge.questionmark",
+                help: "Browse this folder",
+                action: browseFolder
+            )
+        }
     }
 
     private var primaryAction: some View {
@@ -521,6 +533,17 @@ struct SearchResultRow: View {
         }
         if downloadStatus != nil {
             parts.append(actionHelp)
+        }
+        // The row is a combined element with an explicit label, which
+        // overrides FolderRequestIndicator's own label — so the request
+        // state has to be surfaced here or VoiceOver never hears it.
+        switch appState.folderRequestState(for: result) {
+        case .fetching:
+            parts.append("getting folder contents")
+        case .failed(let reason):
+            parts.append("folder download failed, \(reason)")
+        case nil:
+            break
         }
         return parts.joined(separator: ", ")
     }
@@ -761,5 +784,55 @@ enum QualityScale {
     .frame(width: 900, height: 560)
     .background(SeeleColors.background)
     .previewAppState()
+}
+
+#Preview("Folder request states") {
+    let idle = SearchResult(
+        username: "musiclover42",
+        filename: "Music\\FLAC\\Underscores\\01 - Hollywood Forever.flac",
+        size: 45_000_000, bitrate: 1411, duration: 413,
+        freeSlots: true, uploadSpeed: 1_500_000
+    )
+    let fetching = SearchResult(
+        username: "vinylcollector",
+        filename: "Music\\MP3\\Underscores\\02 - Hollywood Forever.mp3",
+        size: 8_500_000, bitrate: 320, duration: 413,
+        freeSlots: true, uploadSpeed: 300_000
+    )
+    let failed = SearchResult(
+        username: "jazzfan",
+        filename: "Audio\\Live\\Underscores\\03 - Hollywood Forever.mp3",
+        size: 4_200_000, bitrate: 128, duration: 413,
+        freeSlots: true, uploadSpeed: 80_000
+    )
+
+    let state = PreviewData.connectedAppState
+    state.previewSeedFolderRequest(.fetching, for: fetching)
+    state.previewSeedFolderRequest(
+        .failed("Could not reach jazzfan after 32 seconds"),
+        for: failed
+    )
+
+    return VStack(alignment: .leading, spacing: SeeleSpacing.md) {
+        previewStateLabel("Idle — folder button appears on hover")
+        SearchResultRow(result: idle)
+
+        previewStateLabel("Fetching — spinner in the folder slot")
+        SearchResultRow(result: fetching)
+
+        previewStateLabel("Failed — reason on hover, clears after 30 s")
+        SearchResultRow(result: failed)
+    }
+    .padding(SeeleSpacing.lg)
+    .frame(width: 900)
+    .background(SeeleColors.background)
+    .previewAppState(state)
+}
+
+@ViewBuilder
+private func previewStateLabel(_ text: String) -> some View {
+    Text(text)
+        .font(SeeleTypography.caption)
+        .foregroundStyle(SeeleColors.textTertiary)
 }
 #endif

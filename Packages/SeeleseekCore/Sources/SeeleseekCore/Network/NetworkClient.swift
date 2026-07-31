@@ -2601,40 +2601,50 @@ public final class NetworkClient {
         let useObfuscated = obfuscatedPort > 0
         let dialPort = useObfuscated ? obfuscatedPort : port
 
-        var connection: PeerConnection
-        var isIndirect = false
-        do {
-            connection = try await withThrowingTaskGroup(of: PeerConnection.self) { group in
-                group.addTask {
-                    let conn = try await self.peerConnectionPool.connect(
+        // Both legs run together: a firewalled peer cannot accept the
+        // direct dial, and its pierce often arrives in under a second.
+        let (connection, isIndirect) = try await withThrowingTaskGroup(of: (PeerConnection, Bool).self) { group in
+            group.addTask {
+                // Cap the direct leg: a raw TCP dial can hang for 60 s.
+                // Most clients send no reciprocal PeerInit, and pool.connect
+                // already sent ours. Do not wait.
+                let direct = try await withTimeout(seconds: 10) {
+                    try await self.peerConnectionPool.connect(
                         to: username, ip: ip, port: dialPort, token: token, obfuscated: useObfuscated
                     )
-                    // PeerInit is a one-way direct-connection initializer in
-                    // the Soulseek protocol. `pool.connect` has already sent
-                    // our PeerInit successfully, so the P connection is ready
-                    // for peer messages now. Most clients (including
-                    // SoulseekQt) do not send a reciprocal PeerInit; waiting
-                    // for one here turns a healthy direct connection into an
-                    // artificial handshake timeout.
-                    return conn
                 }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(10))
-                    throw NetworkError.timeout
-                }
-                let result = try await group.next()!
-                group.cancelAll()
-                return result
+                return (direct, false)
             }
-            cancelPendingBrowse(token: token)
-        } catch {
-            // Direct timed out or handshake failed — the direct-dial child
-            // already tore down its own connection; wait for the peer's
-            // indirect PierceFirewall connection instead.
-            connection = try await waitForPendingBrowse(token: token)
-            isIndirect = true
+            group.addTask {
+                (try await self.waitForPendingBrowse(token: token), true)
+            }
+            // nextResult, not next: one leg's failure must not abort
+            // the other. Drain every child: a pierce that was consumed by
+            // the waiter but lost the race is not in the pool and not in
+            // `pendingBrowseStates`, so nothing else can close it. A losing
+            // direct connection stays pool-tracked and reusable.
+            var winner: (PeerConnection, Bool)?
+            var lastError: Error = NetworkError.timeout
+            while let result = await group.nextResult() {
+                switch result {
+                case .success(let value):
+                    if winner == nil {
+                        winner = value
+                        group.cancelAll()
+                    } else if value.1 {
+                        await value.0.disconnect()
+                    }
+                case .failure(let error):
+                    if !(error is CancellationError) { lastError = error }
+                }
+            }
+            if let winner { return winner }
+            // Both legs report CancellationError when the establishment
+            // itself was cancelled (disconnect) — do not dress that up as
+            // a timeout.
+            try Task.checkCancellation()
+            throw lastError
         }
-
         if isIndirect {
             // PierceFirewall stops the receive loop assuming file-transfer
             // mode. P connections need it resumed for peer messages.
@@ -2644,6 +2654,8 @@ public final class NetworkClient {
             // connection. Keep this validation scoped to that path; direct
             // connections are initialized by the PeerInit we send.
             try await connection.waitForPeerHandshake(timeout: .seconds(5))
+        } else {
+            cancelPendingBrowse(token: token)
         }
         return connection
     }

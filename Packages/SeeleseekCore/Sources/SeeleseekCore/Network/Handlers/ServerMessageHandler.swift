@@ -542,35 +542,6 @@ public final class ServerMessageHandler {
         }
     }
 
-    /// Race `operation` against a `seconds` deadline. On timeout the task
-    /// group's cleanup signals cancellation to the operation child; for it
-    /// to actually unwind the operation must respect Task cancellation
-    /// (e.g. cancellable async APIs, or its own state checks). The
-    /// operation child here is `pool.connect`, which uses Network.framework
-    /// state handlers — not natively cancellation-aware — so a wedged peer
-    /// connection may continue dangling in the pool's bookkeeping until
-    /// the pool's own staleness sweep picks it up. The mitigation that
-    /// matters here is upstream: the queue processor no longer awaits this
-    /// call serially, so one stuck child can't block the entire queue.
-    private func withTimeout<T: Sendable>(seconds: TimeInterval, operation: @Sendable @escaping () async throws -> T) async throws -> T {
-        return try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-
-            group.addTask {
-                try await Task.sleep(for: .seconds(seconds))
-                throw NetworkError.timeout
-            }
-
-            guard let result = try await group.next() else {
-                throw NetworkError.timeout
-            }
-            group.cancelAll()
-            return result
-        }
-    }
-
     // MARK: - Distributed Network Handlers
 
     private func handlePossibleParents(_ data: Data) {
