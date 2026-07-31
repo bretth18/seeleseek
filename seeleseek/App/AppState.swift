@@ -461,15 +461,15 @@ final class AppState {
         NotificationService.shared.settings = settings
         NotificationService.shared.requestAuthorization()
 
-        // Not in wireNetworkClient: previews and the test host skip
-        // configure(), so neither scans the filesystem.
-        let client = networkClient
-        client.shareManager.loadPersistedFolders()
-        Task { await client.shareManager.rescanAll() }
-
-        // Initialize database asynchronously
         Task {
             await initializeDatabase()
+            // Wiring is not inert: setupCallbacks loads each feature
+            // state's persisted data, so the database must be ready first.
+            // Previews and the test host skip configure(), so neither
+            // scans the filesystem.
+            let client = networkClient
+            client.shareManager.loadPersistedFolders()
+            await client.shareManager.rescanAll()
         }
     }
 
