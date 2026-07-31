@@ -586,6 +586,8 @@ public final class UploadManager {
                 t.bytesTransferred = 0
                 t.startTime = nil
                 t.speed = 0
+                // Rows persisted by older builds have localPath = nil.
+                t.localPath = URL(fileURLWithPath: upload.localPath)
             }
         } else {
             let transfer = Transfer(
@@ -593,7 +595,8 @@ public final class UploadManager {
                 filename: upload.filename,
                 size: upload.size,
                 direction: .upload,
-                status: .connecting
+                status: .connecting,
+                localPath: URL(fileURLWithPath: upload.localPath)
             )
             transferState?.addUpload(transfer)
             transferId = transfer.id
@@ -1129,6 +1132,7 @@ public final class UploadManager {
             transferState?.updateTransfer(id: transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = bytesSent
+                t.localPath = URL(fileURLWithPath: filePath)
             }
 
             // Record session delta only (matches PF path), not the
@@ -1658,6 +1662,7 @@ public final class UploadManager {
                 t.status = .completed
                 t.bytesTransferred = bytesSent
                 t.error = nil
+                t.localPath = URL(fileURLWithPath: filePath)
             }
 
             uploadTeardowns.removeValue(forKey: transferId)
