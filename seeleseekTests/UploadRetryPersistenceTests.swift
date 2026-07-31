@@ -50,7 +50,7 @@ struct UploadRetryPersistenceTests {
     private func makeSetup(transfers: [Transfer], indexedFiles: [ShareManager.IndexedFile] = []) -> (UploadManager, MockTransferTracking, ShareManager) {
         let manager = UploadManager()
         let tracking = MockTransferTracking()
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         if !indexedFiles.isEmpty {
             shares._seedFileIndexForTest(indexedFiles)
         }

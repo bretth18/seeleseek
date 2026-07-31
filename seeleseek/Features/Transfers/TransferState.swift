@@ -20,6 +20,9 @@ struct TransferHistoryItem: Identifiable, Sendable {
         if let localPath, FileManager.default.fileExists(atPath: localPath.path) {
             return localPath
         }
+        // Only downloads land in the download directory. An upload's source
+        // can be anywhere on disk, so a fabricated path is always wrong.
+        guard isDownload else { return nil }
         // Try default download directory: ~/Downloads/SeeleSeek/{username}/{folders}/{filename}
         return Self.inferDownloadPath(filename: filename, username: username)
     }

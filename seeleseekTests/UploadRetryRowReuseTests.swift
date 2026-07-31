@@ -40,7 +40,7 @@ struct UploadRetryRowReuseTests {
     private func makeSetup(file: ShareManager.IndexedFile?) -> (UploadManager, MockTransferTracking, ShareManager) {
         let manager = UploadManager()
         let tracking = MockTransferTracking()
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         if let file {
             shares._seedFileIndexForTest([file])
         }

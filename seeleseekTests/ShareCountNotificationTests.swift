@@ -76,7 +76,7 @@ struct ShareCountNotificationTests {
 
     @Test("rescanAll fires each subscriber exactly once")
     func rescanAllFiresSubscribers() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
@@ -90,7 +90,7 @@ struct ShareCountNotificationTests {
 
     @Test("removeFolder fires subscribers")
     func removeFolderFiresSubscribers() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
@@ -107,7 +107,7 @@ struct ShareCountNotificationTests {
 
     @Test("Multiple subscribers all receive every yield (fan-out)")
     func multipleSubscribersFanOut() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let a = FireCounter()
         let b = FireCounter()
         let taskA = consume(shares, into: a)
@@ -128,7 +128,7 @@ struct ShareCountNotificationTests {
 
     @Test("Cancelling a consumer Task removes its continuation")
     func cancellingConsumerTearsDownContinuation() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let cancelled = FireCounter()
         let kept = FireCounter()
         let cancelledTask = consume(shares, into: cancelled)
@@ -149,7 +149,7 @@ struct ShareCountNotificationTests {
 
     @Test("Rapid changes coalesce into a single trailing-edge yield (debounce)")
     func rapidChangesDebounce() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
@@ -168,7 +168,7 @@ struct ShareCountNotificationTests {
 
     @Test("loadPersistedFolders does not yield on its own (no implicit rescan)")
     func loadPersistedFoldersIsSilent() async {
-        let shares = ShareManager()
+        let shares = ShareManager(defaults: TestDefaults.isolated())
         let counter = FireCounter()
         let task = consume(shares, into: counter)
         defer { task.cancel() }
