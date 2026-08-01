@@ -137,6 +137,10 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         switch status {
         case .failed, .cancelled:
             return true
+        case .waiting:
+            // The peer may have dropped our queue slot (peer restarts lose
+            // it). Uploads in .waiting are the peer's queue, not ours.
+            return direction == .download
         default:
             return false
         }
