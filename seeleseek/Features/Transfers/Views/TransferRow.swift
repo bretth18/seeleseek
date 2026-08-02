@@ -252,6 +252,13 @@ struct TransferRow: View {
             Divider()
         }
 
+        if transfer.canRetry {
+            Button(action: onRetry) {
+                Label("Retry Now", systemImage: "arrow.clockwise")
+            }
+            Divider()
+        }
+
         if transfer.status == .completed, transfer.isAudioFile, transfer.localPath != nil {
             Button(action: toggleAudioPreview) {
                 Label(

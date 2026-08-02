@@ -2346,17 +2346,7 @@ public final class DownloadManager {
 
         for (username, transfers) in byUser {
             if let connection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
-                for transfer in transfers {
-                    do {
-                        // Re-send QueueDownload to keep our spot in the remote queue
-                        try await connection.queueDownload(filename: transfer.filename)
-                        // Ask for our queue position so the UI shows it
-                        try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
-                        logger.debug("Re-queued + requested position: \(transfer.filename)")
-                    } catch {
-                        logger.debug("Failed to re-queue \(transfer.filename): \(error.localizedDescription)")
-                    }
-                }
+                await refreshQueueSlots(for: transfers, over: connection)
             } else {
                 // No connection exists. Skip peers the server says are
                 // offline — a UserStatus push re-drives them on return.
@@ -2369,9 +2359,13 @@ public final class DownloadManager {
                 // them all on the same tick.
                 logger.info("No connection to \(username), re-initiating downloads")
                 var staggerIndex = 0
+                var pendingToRefresh: [Transfer] = []
                 for transfer in transfers {
                     let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
-                    if alreadyPending { continue }
+                    if alreadyPending {
+                        pendingToRefresh.append(transfer)
+                        continue
+                    }
                     guard dialBudget > 0 else { break }
                     dialBudget -= 1
                     let delay = Double(staggerIndex) * 0.5
@@ -2383,6 +2377,35 @@ public final class DownloadManager {
                     }
                     staggerIndex += 1
                 }
+                // Re-dial once and refresh every pending row's queue slot
+                // (a restarted peer has dropped its queue). Do not touch
+                // the pending entries or tokens — the peer's eventual
+                // TransferRequest must still match them.
+                if !pendingToRefresh.isEmpty, dialBudget > 0 {
+                    dialBudget -= 1
+                    Task { [weak self, pendingToRefresh] in
+                        guard let self, let networkClient = self.networkClient else { return }
+                        guard let connection = try? await networkClient.establishPeerConnection(for: username) else {
+                            self.logger.debug("Re-queue dial to \(username) failed; next tick retries")
+                            return
+                        }
+                        await self.refreshQueueSlots(for: pendingToRefresh, over: connection)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Re-send QueueDownload (keeps our spot in the remote queue) and
+    /// PlaceInQueueRequest (position for the UI) for each transfer.
+    private func refreshQueueSlots(for transfers: [Transfer], over connection: PeerConnection) async {
+        for transfer in transfers {
+            do {
+                try await connection.queueDownload(filename: transfer.filename)
+                try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
+                logger.debug("Re-queued + requested position: \(transfer.filename)")
+            } catch {
+                logger.debug("Failed to re-queue \(transfer.filename): \(error.localizedDescription)")
             }
         }
     }
