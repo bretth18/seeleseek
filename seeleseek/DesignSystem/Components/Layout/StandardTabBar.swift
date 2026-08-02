@@ -1,12 +1,8 @@
 import SwiftUI
 import SeeleseekCore
 
-/// Consistent horizontal tab bar.
-///
-/// The bar is a single Tab stop, like a native segmented control: focus it
-/// with Tab, then Left/Right arrows move the selection (Home/End jump to the
-/// first/last tab). Selection follows the keyboard directly — switching tabs
-/// is cheap and non-destructive, so there is no separate activation step.
+/// Consistent horizontal tab bar. One focus stop: arrow keys move the
+/// selection, Home/End jump to the ends.
 struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View where Tab.RawValue == String {
     @Binding var selection: Tab
     let tabs: [Tab]
@@ -14,10 +10,8 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
     /// Spoken unit for the badge count, for example "unread".
     /// Without a unit, VoiceOver reads the badge as a bare number.
     var badgeUnit: String
-    /// Optional SF Symbol shown before each tab's title.
     var icon: ((Tab) -> String)?
-    /// The bar draws its own surface background unless the host already
-    /// supplies one (for example a header it is embedded in).
+    /// Set false when the host supplies its own background.
     var showsBackground: Bool
 
     @FocusState private var isFocused: Bool
@@ -50,8 +44,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
         .background(showsBackground ? SeeleColors.surface : Color.clear)
         .focusable()
         .focused($isFocused)
-        // The default ring would wrap the full-width bar; a ring on the
-        // selected tab (drawn in tabButton) marks focus instead.
+        // Default ring would wrap the full-width bar; the selected tab draws its own.
         .focusEffectDisabled()
         .onMoveCommand { direction in
             switch direction {

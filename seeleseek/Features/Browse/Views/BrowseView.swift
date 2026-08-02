@@ -71,8 +71,6 @@ struct BrowseView: View {
             .background(SeeleColors.surface.opacity(0.3))
             .focusable()
             .focused($isTabStripFocused)
-            // The default ring would wrap the full-width strip; a ring on
-            // the selected tab (drawn in BrowseTabButton) marks focus instead.
             .focusEffectDisabled()
             .onMoveCommand { direction in
                 switch direction {

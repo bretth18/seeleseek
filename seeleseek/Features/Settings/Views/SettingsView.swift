@@ -38,7 +38,7 @@ struct SettingsView: View {
 
     var body: some View {
         HSplitView {
-            // Tab sidebar: one Tab stop, Up/Down arrows move the selection.
+            // Tab sidebar
             VStack(spacing: 0) {
                 ForEach(SettingsTab.allCases, id: \.self) { tab in
                     settingsTabButton(tab)
@@ -49,8 +49,6 @@ struct SettingsView: View {
             .background(SeeleColors.surface)
             .focusable()
             .focused($isTabListFocused)
-            // The default ring would wrap the whole column; a ring on the
-            // selected row (drawn in settingsTabButton) marks focus instead.
             .focusEffectDisabled()
             .onMoveCommand { direction in
                 switch direction {

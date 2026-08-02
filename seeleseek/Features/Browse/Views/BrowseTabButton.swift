@@ -4,8 +4,7 @@ import SeeleseekCore
 struct BrowseTabButton: View {
     let browse: UserShares
     let isSelected: Bool
-    /// True while the tab strip has keyboard focus; the selected tab
-    /// draws the focus ring on the strip's behalf.
+    /// The strip has keyboard focus; the selected tab draws the ring for it.
     var showsFocusRing = false
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -14,8 +13,6 @@ struct BrowseTabButton: View {
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
-            // A real Button (not a tap gesture) so Full Keyboard Access
-            // can reach and activate the tab.
             Button {
                 onSelect()
             } label: {

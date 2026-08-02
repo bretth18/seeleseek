@@ -1,9 +1,8 @@
 import Testing
 @testable import seeleseek
 
-/// The menu commands (Show Next/Previous Tab) wrap; arrow keys inside a
-/// tab bar clamp. Both must survive empty and out-of-range inputs, which
-/// occur when the last closable tab is removed mid-update.
+/// Empty and out-of-range inputs occur when the last closable tab is
+/// removed mid-update; none may trap or return a negative index.
 @Suite("TabCycler")
 struct TabCyclerTests {
 

@@ -44,9 +44,8 @@ struct ChatView: View {
 
     // MARK: - Room/DM cycling
 
-    /// Rooms and private chats behave as one ordered set of conversation
-    /// tabs for Show Next/Previous Tab. Suppressed while the room browser
-    /// sheet is up so its own tab bar is not shadowed.
+    /// nil while the room browser sheet is up — two views must not publish
+    /// the scene value at once.
     private var chatTabCommands: TabCommands? {
         guard !showRoomBrowser,
               !(chatState.joinedRooms.isEmpty && chatState.privateChats.isEmpty) else { return nil }
@@ -69,7 +68,7 @@ struct ChatView: View {
         } else if let chat = chatState.selectedPrivateChat, let index = chats.firstIndex(of: chat) {
             current = rooms.count + index
         } else {
-            // Nothing selected: next lands on the first entry, previous on the last.
+            // No selection: next lands on the first entry, previous on the last.
             current = forward ? -1 : 0
         }
 

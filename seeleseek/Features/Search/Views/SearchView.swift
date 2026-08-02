@@ -86,7 +86,7 @@ struct SearchView: View {
     private func consumePendingSearchFocus() {
         guard appState.searchFieldFocusPending else { return }
         appState.searchFieldFocusPending = false
-        // A view appearing in this same update cannot take focus yet.
+        // A view appearing in this same update cannot take focus until the next runloop.
         DispatchQueue.main.async {
             isSearchFocused = true
         }
@@ -228,8 +228,6 @@ struct SearchView: View {
             .background(SeeleColors.surface.opacity(0.3))
             .focusable()
             .focused($isTabStripFocused)
-            // The default ring would wrap the full-width strip; a ring on
-            // the selected tab (drawn in searchTab) marks focus instead.
             .focusEffectDisabled()
             .onMoveCommand { direction in
                 switch direction {
@@ -251,13 +249,10 @@ struct SearchView: View {
         let isSelected = index == searchState.selectedSearchIndex
 
         return HStack(spacing: SeeleSpacing.xs) {
-            // A real Button (not a tap gesture) so Full Keyboard Access
-            // can reach and activate the tab.
             Button {
                 searchState.selectSearch(at: index)
             } label: {
                 HStack(spacing: SeeleSpacing.xs) {
-                    // Activity indicator if still searching
                     if search.isSearching {
                         ProgressView()
                             .scaleEffect(0.5)
@@ -276,7 +271,6 @@ struct SearchView: View {
             }
             .buttonStyle(.plain)
 
-            // Close button
             Button {
                 searchState.closeSearch(at: index)
             } label: {

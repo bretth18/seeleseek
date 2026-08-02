@@ -1,8 +1,6 @@
 import SwiftUI
 
-/// Index math for tab traversal. Menu commands wrap around like Safari's
-/// Show Next Tab; arrow keys inside a tab bar clamp at the ends like a
-/// native segmented control.
+/// Index math for tab traversal: menu commands wrap, arrow keys clamp.
 enum TabCycler {
     static func wrappedNext(_ index: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
@@ -25,14 +23,12 @@ enum TabCycler {
     }
 }
 
-/// Tab actions published by whichever view currently owns a tab bar.
-/// The Window menu's Show Next/Previous Tab and the File menu's Close Tab
-/// read this through the focused scene value, so one set of shortcuts
-/// works on every tabbed surface.
+/// Tab actions published through the focused scene value by whichever
+/// view currently owns a tab bar; the menu commands act on them.
 struct TabCommands {
     var selectNext: () -> Void
     var selectPrevious: () -> Void
-    /// nil when the surface's tabs cannot be closed (fixed tab sets).
+    /// nil when the surface's tabs cannot be closed.
     var closeCurrent: (() -> Void)?
 }
 
@@ -60,9 +56,8 @@ extension FocusedValues {
 }
 
 #if os(macOS)
-/// Show Next/Previous Tab in the Window menu (⇧⌘] / ⇧⌘[) and Close Tab in
-/// the File menu (⌘W, with Close Window moving to ⇧⌘W while a closable tab
-/// exists) — the standard macOS tab shortcuts.
+/// While a closable tab exists, ⌘W closes the tab and Close Window moves
+/// to ⇧⌘W (Safari convention).
 struct TabNavigationCommands: Commands {
     @FocusedValue(\.tabCommands) private var tabCommands
 

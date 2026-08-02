@@ -26,8 +26,7 @@ final class AppState {
     // MARK: - Navigation
     var selectedTab: NavigationTab = .search
     var sidebarSelection: SidebarItem? = .search
-    /// Set by the Find menu command (⌘F); consumed by SearchView, which
-    /// focuses the search field once it is on screen.
+    /// Set by ⌘F; SearchView consumes it once the field is on screen.
     var searchFieldFocusPending = false
 
     func requestSearchFieldFocus() {
