@@ -39,6 +39,7 @@ struct TransfersView: View {
             }
         }
         .background(SeeleColors.background)
+        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
         .sheet(isPresented: Bindable(appState.metadataState).isEditorPresented) {
             MetadataEditorSheet(state: appState.metadataState)
         }
@@ -110,13 +111,18 @@ struct TransfersView: View {
             .padding(.horizontal, SeeleSpacing.lg)
             .padding(.top, SeeleSpacing.md)
 
-            HStack(spacing: SeeleSpacing.sm) {
-                ForEach(TransferTab.allCases, id: \.self) { tab in
-                    tabButton(tab)
+            StandardTabBar(
+                selection: $selectedTab,
+                showsBackground: false,
+                icon: { $0.icon },
+                badge: { tab in
+                    switch tab {
+                    case .downloads: transferState.downloads.count
+                    case .uploads: transferState.uploads.count
+                    case .history: transferState.history.count
+                    }
                 }
-                Spacer()
-            }
-            .padding(.horizontal, SeeleSpacing.md)
+            )
         }
         .padding(.bottom, SeeleSpacing.sm)
         .background(SeeleColors.surface.opacity(0.5))
@@ -160,55 +166,6 @@ struct TransfersView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(label) speed: \(speed.formattedSpeed)")
         .accessibilityAddTraits(.isStaticText)
-    }
-
-    private func tabButton(_ tab: TransferTab) -> some View {
-        let isSelected = selectedTab == tab
-        let count: Int
-        switch tab {
-        case .downloads: count = transferState.downloads.count
-        case .uploads: count = transferState.uploads.count
-        case .history: count = transferState.history.count
-        }
-
-        return Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                selectedTab = tab
-            }
-        } label: {
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
-
-                Text(tab.rawValue)
-                    .font(SeeleTypography.body)
-                    .fontWeight(isSelected ? .medium : .regular)
-
-                if count > 0 {
-                    Text("\(count)")
-                        .font(SeeleTypography.badgeText)
-                        .foregroundStyle(isSelected ? SeeleColors.textOnAccent : SeeleColors.textSecondary)
-                        .padding(.horizontal, SeeleSpacing.xs)
-                        .padding(.vertical, SeeleSpacing.xxs)
-                        .background(isSelected ? SeeleColors.accent : SeeleColors.surfaceElevated, in: Capsule())
-                }
-            }
-            .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(
-                isSelected ? SeeleColors.selectionBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(tab.rawValue)
-        .accessibilityValue(count > 0 ? "\(count) items" : "")
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     @ViewBuilder

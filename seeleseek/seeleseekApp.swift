@@ -65,6 +65,13 @@ struct SeeleSeekApp: App {
         .defaultSize(width: 1200, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            TabNavigationCommands()
+            CommandGroup(after: .textEditing) {
+                Button("Find") {
+                    appState.requestSearchFieldFocus()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates...") {
                     Task { await appState.updateState.checkForUpdate() }

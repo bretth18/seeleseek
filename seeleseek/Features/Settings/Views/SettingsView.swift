@@ -4,6 +4,7 @@ import SeeleseekCore
 struct SettingsView: View {
     @Environment(\.appState) private var appState
     @State private var selectedTab: SettingsTab = .general
+    @FocusState private var isTabListFocused: Bool
 
     enum SettingsTab: String, CaseIterable {
         case profile = "Profile"
@@ -46,6 +47,16 @@ struct SettingsView: View {
             }
             .frame(width: 180)
             .background(SeeleColors.surface)
+            .focusable()
+            .focused($isTabListFocused)
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch direction {
+                case .up: moveSelection { TabCycler.clampedPrevious($0, count: $1) }
+                case .down: moveSelection { TabCycler.clampedNext($0, count: $1) }
+                default: break
+                }
+            }
 
             // Content
             ScrollView {
@@ -80,6 +91,13 @@ struct SettingsView: View {
             }
             .background(SeeleColors.background)
         }
+        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
+    }
+
+    private func moveSelection(_ step: (Int, Int) -> Int) {
+        let all = SettingsTab.allCases
+        guard let index = all.firstIndex(of: selectedTab) else { return }
+        selectedTab = all[step(index, all.count)]
     }
 
     private func settingsTabButton(_ tab: SettingsTab) -> some View {
@@ -110,9 +128,16 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(selectedTab == tab ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
+            .overlay {
+                if selectedTab == tab && isTabListFocused {
+                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+                }
+            }
         }
         .buttonStyle(.plain)
         .padding(.horizontal, SeeleSpacing.xs)
+        .accessibilityLabel(tab.rawValue)
         .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
     }
 }

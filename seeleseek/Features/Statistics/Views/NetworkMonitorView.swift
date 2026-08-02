@@ -36,6 +36,7 @@ struct NetworkMonitorView: View {
             }
             .background(SeeleColors.background)
         }
+        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
     }
 }
 

@@ -6,6 +6,7 @@ private let logger = Logger(subsystem: "com.seeleseek", category: "BrowseView")
 
 struct BrowseView: View {
     @Environment(\.appState) private var appState
+    @FocusState private var isTabStripFocused: Bool
 
     private var browseState: BrowseState {
         appState.browseState
@@ -24,30 +25,67 @@ struct BrowseView: View {
             contentArea
         }
         .background(SeeleColors.background)
+        .focusedSceneValue(\.tabCommands, browseTabCommands)
+    }
+
+    private var browseTabCommands: TabCommands? {
+        guard !browseState.browses.isEmpty else { return nil }
+        let state = browseState
+        return TabCommands(
+            selectNext: {
+                state.selectBrowse(at: TabCycler.wrappedNext(state.selectedBrowseIndex, count: state.browses.count))
+            },
+            selectPrevious: {
+                state.selectBrowse(at: TabCycler.wrappedPrevious(state.selectedBrowseIndex, count: state.browses.count))
+            },
+            closeCurrent: {
+                state.closeBrowse(at: state.selectedBrowseIndex)
+            }
+        )
     }
 
     // MARK: - Tab Bar
 
     private var browseTabBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: SeeleSpacing.xxs) {
-                ForEach(Array(browseState.browses.enumerated()), id: \.element.id) { index, browse in
-                    BrowseTabButton(
-                        browse: browse,
-                        isSelected: index == browseState.selectedBrowseIndex,
-                        onSelect: {
-                            browseState.selectBrowse(at: index)
-                        },
-                        onClose: {
-                            browseState.closeBrowse(at: index)
-                        }
-                    )
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: SeeleSpacing.xxs) {
+                    ForEach(Array(browseState.browses.enumerated()), id: \.element.id) { index, browse in
+                        BrowseTabButton(
+                            browse: browse,
+                            isSelected: index == browseState.selectedBrowseIndex,
+                            showsFocusRing: isTabStripFocused,
+                            onSelect: {
+                                browseState.selectBrowse(at: index)
+                            },
+                            onClose: {
+                                browseState.closeBrowse(at: index)
+                            }
+                        )
+                        .id(browse.id)
+                    }
+                }
+                .padding(.horizontal, SeeleSpacing.md)
+                .padding(.vertical, SeeleSpacing.sm)
+            }
+            .background(SeeleColors.surface.opacity(0.3))
+            .focusable()
+            .focused($isTabStripFocused)
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: browseState.selectBrowse(at: browseState.selectedBrowseIndex - 1)
+                case .right: browseState.selectBrowse(at: browseState.selectedBrowseIndex + 1)
+                default: break
                 }
             }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
+            .onChange(of: browseState.selectedBrowseIndex) { _, index in
+                guard browseState.browses.indices.contains(index) else { return }
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(browseState.browses[index].id)
+                }
+            }
         }
-        .background(SeeleColors.surface.opacity(0.3))
     }
 
     private func browseBarView(currentUserBinding: Binding<String>) -> some View {
