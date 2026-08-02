@@ -28,16 +28,7 @@ struct SocialView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab bar
-            HStack(spacing: SeeleSpacing.sm) {
-                ForEach(SocialTab.allCases, id: \.self) { tab in
-                    tabButton(for: tab)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(SeeleColors.surface)
+            StandardTabBar(selection: $selectedTab, icon: { $0.icon })
 
             Divider().background(SeeleColors.surfaceSecondary)
 
@@ -57,39 +48,11 @@ struct SocialView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(SeeleColors.background)
+        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
         .sheet(isPresented: Bindable(socialState).showAddBuddySheet) {
             AddBuddySheet()
         }
         // Profile sheet is now on MainView for global access
-    }
-
-    private func tabButton(for tab: SocialTab) -> some View {
-        let isSelected = selectedTab == tab
-        return Button {
-            selectedTab = tab
-        } label: {
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
-                Text(tab.rawValue)
-                    .fontWeight(isSelected ? .medium : .regular)
-            }
-            .font(SeeleTypography.body)
-            .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(
-                isSelected ? SeeleColors.selectionBackground : Color.clear,
-                in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(tab.rawValue) tab")
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 

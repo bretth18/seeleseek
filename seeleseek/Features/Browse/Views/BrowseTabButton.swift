@@ -4,6 +4,9 @@ import SeeleseekCore
 struct BrowseTabButton: View {
     let browse: UserShares
     let isSelected: Bool
+    /// True while the tab strip has keyboard focus; the selected tab
+    /// draws the focus ring on the strip's behalf.
+    var showsFocusRing = false
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -11,30 +14,40 @@ struct BrowseTabButton: View {
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
-            if browse.isLoading {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
-            } else if browse.error != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.error)
-            } else {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.warning)
-            }
+            // A real Button (not a tap gesture) so Full Keyboard Access
+            // can reach and activate the tab.
+            Button {
+                onSelect()
+            } label: {
+                HStack(spacing: SeeleSpacing.sm) {
+                    if browse.isLoading {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: SeeleSpacing.iconSizeSmall - 2, height: SeeleSpacing.iconSizeSmall - 2)
+                    } else if browse.error != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
+                            .foregroundStyle(SeeleColors.error)
+                    } else {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: SeeleSpacing.iconSizeXS))
+                            .foregroundStyle(SeeleColors.warning)
+                    }
 
-            Text(browse.username)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-                .lineLimit(1)
+                    Text(browse.username)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
+                        .lineLimit(1)
 
-            if !browse.isLoading && browse.error == nil && !browse.folders.isEmpty {
-                Text("\(browse.totalFiles)")
-                    .font(SeeleTypography.monoSmall)
-                    .foregroundStyle(SeeleColors.textTertiary)
+                    if !browse.isLoading && browse.error == nil && !browse.folders.isEmpty {
+                        Text("\(browse.totalFiles)")
+                            .font(SeeleTypography.monoSmall)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
             Button {
                 onClose()
@@ -54,8 +67,11 @@ struct BrowseTabButton: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .stroke(isSelected ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1)
         )
-        .onTapGesture {
-            onSelect()
+        .overlay {
+            if isSelected && showsFocusRing {
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
+                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+            }
         }
         .onHover { hovering in
             isHovered = hovering
@@ -64,8 +80,8 @@ struct BrowseTabButton: View {
         .accessibilityLabel(accessibilityLabel)
         .accessibilityTab(isSelected: isSelected)
         .accessibilityHint("Shows this browse")
-        // The tap gesture does not become an AXPress action on the
-        // combined element. Supply the default action explicitly.
+        // Combining children strips the inner buttons' AXPress action.
+        // Supply the default action explicitly.
         .accessibilityAction { onSelect() }
         .accessibilityAction(named: "Close browse") { onClose() }
     }

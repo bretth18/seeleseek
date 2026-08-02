@@ -7,6 +7,7 @@ struct SearchView: View {
     @State private var highlightedIndex: Int? = nil
     @State private var hoveredIndex: Int? = nil
     @FocusState private var isSearchFocused: Bool
+    @FocusState private var isTabStripFocused: Bool
 
     /// What the dropdown row should render as highlighted. Hover wins only when
     /// the mouse is actually over a row; otherwise keyboard-driven highlight.
@@ -57,6 +58,38 @@ struct SearchView: View {
             isSearchFocused = false
         }
         .background(SeeleColors.background)
+        .focusedSceneValue(\.tabCommands, searchTabCommands)
+        .onAppear {
+            consumePendingSearchFocus()
+        }
+        .onChange(of: appState.searchFieldFocusPending) { _, pending in
+            if pending { consumePendingSearchFocus() }
+        }
+    }
+
+    private var searchTabCommands: TabCommands? {
+        guard !searchState.searches.isEmpty else { return nil }
+        let state = searchState
+        return TabCommands(
+            selectNext: {
+                state.selectSearch(at: TabCycler.wrappedNext(state.selectedSearchIndex, count: state.searches.count))
+            },
+            selectPrevious: {
+                state.selectSearch(at: TabCycler.wrappedPrevious(state.selectedSearchIndex, count: state.searches.count))
+            },
+            closeCurrent: {
+                state.closeSearch(at: state.selectedSearchIndex)
+            }
+        )
+    }
+
+    private func consumePendingSearchFocus() {
+        guard appState.searchFieldFocusPending else { return }
+        appState.searchFieldFocusPending = false
+        // A view appearing in this same update cannot take focus yet.
+        DispatchQueue.main.async {
+            isSearchFocused = true
+        }
     }
 
     private func searchBar(binding: Binding<String>) -> some View {
@@ -181,36 +214,67 @@ struct SearchView: View {
     }
 
     private var searchTabs: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: SeeleSpacing.xs) {
-                ForEach(Array(searchState.searches.enumerated()), id: \.element.id) { index, search in
-                    searchTab(search: search, index: index)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: SeeleSpacing.xs) {
+                    ForEach(Array(searchState.searches.enumerated()), id: \.element.id) { index, search in
+                        searchTab(search: search, index: index)
+                            .id(search.id)
+                    }
+                }
+                .padding(.horizontal, SeeleSpacing.lg)
+                .padding(.vertical, SeeleSpacing.sm)
+            }
+            .background(SeeleColors.surface.opacity(0.3))
+            .focusable()
+            .focused($isTabStripFocused)
+            // The default ring would wrap the full-width strip; a ring on
+            // the selected tab (drawn in searchTab) marks focus instead.
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch direction {
+                case .left: searchState.selectSearch(at: searchState.selectedSearchIndex - 1)
+                case .right: searchState.selectSearch(at: searchState.selectedSearchIndex + 1)
+                default: break
                 }
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.vertical, SeeleSpacing.sm)
+            .onChange(of: searchState.selectedSearchIndex) { _, index in
+                guard searchState.searches.indices.contains(index) else { return }
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(searchState.searches[index].id)
+                }
+            }
         }
-        .background(SeeleColors.surface.opacity(0.3))
     }
 
     private func searchTab(search: SearchQuery, index: Int) -> some View {
         let isSelected = index == searchState.selectedSearchIndex
 
         return HStack(spacing: SeeleSpacing.xs) {
-            // Activity indicator if still searching
-            if search.isSearching {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
+            // A real Button (not a tap gesture) so Full Keyboard Access
+            // can reach and activate the tab.
+            Button {
+                searchState.selectSearch(at: index)
+            } label: {
+                HStack(spacing: SeeleSpacing.xs) {
+                    // Activity indicator if still searching
+                    if search.isSearching {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
+                    }
+
+                    Text(search.query)
+                        .font(SeeleTypography.caption)
+                        .lineLimit(1)
+
+                    Text("(\(search.results.count))")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+                .contentShape(Rectangle())
             }
-
-            Text(search.query)
-                .font(SeeleTypography.caption)
-                .lineLimit(1)
-
-            Text("(\(search.results.count))")
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
+            .buttonStyle(.plain)
 
             // Close button
             Button {
@@ -222,7 +286,7 @@ struct SearchView: View {
             }
             .buttonStyle(.plain)
             // VoiceOver closes the search through the rotor action on
-            // the combined tab element.
+            // the combined tab element; keyboard users close with ⌘W.
             .accessibilityHidden(true)
         }
         .padding(.horizontal, SeeleSpacing.md)
@@ -234,14 +298,17 @@ struct SearchView: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
                 .stroke(isSelected ? SeeleColors.accent : Color.clear, lineWidth: 1)
         )
-        .onTapGesture {
-            searchState.selectSearch(at: index)
+        .overlay {
+            if isSelected && isTabStripFocused {
+                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
+                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(searchTabAccessibilityLabel(for: search))
         .accessibilityTab(isSelected: isSelected)
-        // The tap gesture does not become an AXPress action on the
-        // combined element. Supply the default action explicitly.
+        // Combining children strips the inner buttons' AXPress action.
+        // Supply the default action explicitly.
         .accessibilityAction {
             searchState.selectSearch(at: index)
         }

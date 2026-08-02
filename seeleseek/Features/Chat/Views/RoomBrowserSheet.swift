@@ -124,31 +124,8 @@ struct RoomBrowserSheet: View {
     // MARK: - Tab Bar
 
     private var tabBar: some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            ForEach(RoomListTab.allCases, id: \.self) { tab in
-                Button {
-                    chatState.roomListTab = tab
-                } label: {
-                    Text(tab.rawValue)
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(
-                            chatState.roomListTab == tab ? SeeleColors.accent : SeeleColors.textSecondary
-                        )
-                        .padding(.horizontal, SeeleSpacing.md)
-                        .padding(.vertical, SeeleSpacing.xs)
-                        .background(
-                            chatState.roomListTab == tab ?
-                            SeeleColors.accent.opacity(SeeleColors.alphaLight) : .clear
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(chatState.roomListTab == tab ? [.isSelected] : [])
-            }
-            Spacer()
-        }
-        .padding(.horizontal, SeeleSpacing.lg)
-        .padding(.vertical, SeeleSpacing.sm)
+        StandardTabBar(selection: $chatState.roomListTab, showsBackground: false)
+            .padding(.horizontal, SeeleSpacing.xs)
     }
 
     // MARK: - Create Room

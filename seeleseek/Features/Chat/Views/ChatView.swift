@@ -19,6 +19,7 @@ struct ChatView: View {
             chatContent
         }
         .background(SeeleColors.background)
+        .focusedSceneValue(\.tabCommands, chatTabCommands)
         .confirmationDialog(
             "Delete chat history with \(pendingHistoryDeletion ?? "")?",
             isPresented: Binding(
@@ -38,6 +39,47 @@ struct ChatView: View {
             }
         } message: {
             Text("This permanently deletes the saved message history from the database. This cannot be undone.")
+        }
+    }
+
+    // MARK: - Room/DM cycling
+
+    /// Rooms and private chats behave as one ordered set of conversation
+    /// tabs for Show Next/Previous Tab. Suppressed while the room browser
+    /// sheet is up so its own tab bar is not shadowed.
+    private var chatTabCommands: TabCommands? {
+        guard !showRoomBrowser,
+              !(chatState.joinedRooms.isEmpty && chatState.privateChats.isEmpty) else { return nil }
+        return TabCommands(
+            selectNext: { selectAdjacentConversation(forward: true) },
+            selectPrevious: { selectAdjacentConversation(forward: false) },
+            closeCurrent: nil
+        )
+    }
+
+    private func selectAdjacentConversation(forward: Bool) {
+        let rooms = chatState.joinedRooms.map(\.name)
+        let chats = chatState.privateChats.map(\.username)
+        let count = rooms.count + chats.count
+        guard count > 0 else { return }
+
+        let current: Int
+        if let room = chatState.selectedRoom, let index = rooms.firstIndex(of: room) {
+            current = index
+        } else if let chat = chatState.selectedPrivateChat, let index = chats.firstIndex(of: chat) {
+            current = rooms.count + index
+        } else {
+            // Nothing selected: next lands on the first entry, previous on the last.
+            current = forward ? -1 : 0
+        }
+
+        let target = forward
+            ? TabCycler.wrappedNext(current, count: count)
+            : TabCycler.wrappedPrevious(current, count: count)
+        if target < rooms.count {
+            chatState.selectRoom(rooms[target])
+        } else {
+            chatState.selectPrivateChat(chats[target - rooms.count])
         }
     }
 
