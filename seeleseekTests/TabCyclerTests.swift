@@ -25,6 +25,12 @@ struct TabCyclerTests {
         #expect(TabCycler.wrappedNext(-1, count: 4) == 0)
     }
 
+    @Test("Wrapped traversal from deep negative indices stays in bounds")
+    func wrappedNegativeInputs() {
+        #expect(TabCycler.wrappedNext(-5, count: 3) == 2)
+        #expect(TabCycler.wrappedPrevious(-5, count: 3) == 0)
+    }
+
     @Test("Clamped traversal stops at the ends")
     func clampedStopsAtEnds() {
         #expect(TabCycler.clampedNext(0, count: 3) == 1)
@@ -36,6 +42,7 @@ struct TabCyclerTests {
     @Test("Out-of-range indices clamp into bounds")
     func clampedOutOfRange() {
         #expect(TabCycler.clampedNext(7, count: 3) == 2)
+        #expect(TabCycler.clampedNext(-3, count: 3) == 0)
         #expect(TabCycler.clampedPrevious(7, count: 3) == 1)
         #expect(TabCycler.clampedPrevious(-3, count: 3) == 0)
     }

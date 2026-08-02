@@ -4,7 +4,7 @@ import SwiftUI
 enum TabCycler {
     static func wrappedNext(_ index: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
-        return (index + 1) % count
+        return ((index + 1) % count + count) % count
     }
 
     static func wrappedPrevious(_ index: Int, count: Int) -> Int {
@@ -14,7 +14,7 @@ enum TabCycler {
 
     static func clampedNext(_ index: Int, count: Int) -> Int {
         guard count > 0 else { return 0 }
-        return min(index + 1, count - 1)
+        return max(min(index + 1, count - 1), 0)
     }
 
     static func clampedPrevious(_ index: Int, count: Int) -> Int {
