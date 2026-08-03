@@ -129,6 +129,7 @@ struct BrowseView: View {
                     .padding(.vertical, SeeleSpacing.md)
                     .background(browseState.canBrowse ? SeeleColors.accent : SeeleColors.textTertiary)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!browseState.canBrowse)
@@ -254,6 +255,7 @@ struct BrowseView: View {
                                 Spacer()
                             }
                             .padding(.vertical, SeeleSpacing.xs)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }

@@ -389,6 +389,7 @@ struct PrivacySettingsSection: View {
                                         .padding(.horizontal, SeeleSpacing.sm)
                                         .padding(.vertical, SeeleSpacing.xs)
                                         .background(SeeleColors.accent.opacity(0.1), in: Capsule())
+                                        .contentShape(Capsule())
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityHint("Replaces the custom message with this template")
@@ -461,6 +462,7 @@ struct PrivacySettingsSection: View {
                     RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous)
                         .stroke(socialState.leechSettings.action == action ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
                 )
+                .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
             }
         }
         .buttonStyle(.plain)

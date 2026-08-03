@@ -192,6 +192,7 @@ struct SidebarRow: View {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)

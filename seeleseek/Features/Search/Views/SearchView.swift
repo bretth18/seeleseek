@@ -157,6 +157,7 @@ struct SearchView: View {
                     .padding(.vertical, SeeleSpacing.md)
                     .background(searchState.canSearch ? SeeleColors.accent : SeeleColors.textTertiary)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!searchState.canSearch)
@@ -365,6 +366,7 @@ struct SearchView: View {
                     .padding(.vertical, SeeleSpacing.sm)
                     .background(SeeleColors.accent)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
         }
@@ -535,6 +537,7 @@ struct SearchView: View {
                     .padding(.vertical, SeeleSpacing.sm)
                     .background(searchState.selectedResults.isEmpty ? SeeleColors.textTertiary : SeeleColors.accent)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(searchState.selectedResults.isEmpty)

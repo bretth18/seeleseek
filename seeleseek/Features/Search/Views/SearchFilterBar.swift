@@ -86,6 +86,7 @@ struct SearchFilterBar: View {
                 .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
@@ -206,6 +207,7 @@ struct SearchFilterPanel: View {
                 .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(chipAccessibilityLabel(label, dimension: dimension))

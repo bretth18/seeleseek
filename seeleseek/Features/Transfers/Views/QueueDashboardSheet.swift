@@ -116,6 +116,7 @@ struct QueueDashboardSheet: View {
                     .frame(width: 24, height: 24)
                     .background(SeeleColors.surfaceElevated)
                     .clipShape(Circle())
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Close")

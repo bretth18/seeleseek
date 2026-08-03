@@ -37,6 +37,7 @@ struct SecondaryButton: View {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
             )
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
     }

@@ -78,15 +78,18 @@ struct RoomBrowserSheet: View {
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
                         .multilineTextAlignment(.center)
-                    Button("Retry") {
+                    Button {
                         chatState.requestRoomList()
+                    } label: {
+                        Text("Retry")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textOnAccent)
+                            .padding(.horizontal, SeeleSpacing.md)
+                            .padding(.vertical, SeeleSpacing.sm)
+                            .background(SeeleColors.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     }
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.md)
-                    .padding(.vertical, SeeleSpacing.sm)
-                    .background(SeeleColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     .buttonStyle(.plain)
                 }
                 .padding(SeeleSpacing.lg)
@@ -143,18 +146,21 @@ struct RoomBrowserSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     .accessibilityLabel("Room name")
 
-                Button("Create") {
+                Button {
                     chatState.createRoom()
                     if chatState.createRoomError == nil {
                         isPresented = false
                     }
+                } label: {
+                    Text("Create")
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textOnAccent)
+                        .padding(.horizontal, SeeleSpacing.md)
+                        .padding(.vertical, SeeleSpacing.sm)
+                        .background(SeeleColors.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                 }
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textOnAccent)
-                .padding(.horizontal, SeeleSpacing.md)
-                .padding(.vertical, SeeleSpacing.sm)
-                .background(SeeleColors.accent)
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                 .buttonStyle(.plain)
             }
 

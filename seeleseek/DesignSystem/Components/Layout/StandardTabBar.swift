@@ -127,6 +127,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
                         .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
                 }
             }
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tab.rawValue)

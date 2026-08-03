@@ -23,6 +23,7 @@ struct RecommendationTag: View {
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
             .background(SeeleColors.accent.opacity(0.1), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .help("Add '\(item)' to your likes")
