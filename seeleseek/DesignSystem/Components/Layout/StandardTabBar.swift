@@ -39,9 +39,12 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
             }
             Spacer()
         }
+        // Same outer metrics as StandardActionBar: a view's header slot is
+        // the same height whether it leads with tabs or with controls (#67).
+        .frame(minHeight: SeeleSpacing.controlHeight)
         .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.sm)
-        .background(showsBackground ? SeeleColors.surface : Color.clear)
+        .padding(.vertical, SeeleSpacing.md)
+        .background(showsBackground ? SeeleColors.surface.opacity(0.5) : Color.clear)
         .focusable()
         .focused($isFocused)
         // Default ring would wrap the full-width bar; the selected tab draws its own.
@@ -87,14 +90,16 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
             select(tab)
         } label: {
             HStack(spacing: SeeleSpacing.xs) {
+                // Selection is shown by color/background only. Weight
+                // changes alter glyph width, so every tab to the right
+                // shifts on each selection change.
                 if let iconName = icon?(tab) {
                     Image(systemName: iconName)
-                        .font(.system(size: SeeleSpacing.iconSizeSmall - 1, weight: isSelected ? .semibold : .regular))
+                        .font(.system(size: SeeleSpacing.iconSizeSmall - 1))
                 }
 
                 Text(tab.rawValue)
                     .font(SeeleTypography.body)
-                    .fontWeight(isSelected ? .medium : .regular)
 
                 if badgeCount > 0 {
                     Text("\(badgeCount)")

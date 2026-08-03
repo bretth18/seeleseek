@@ -14,8 +14,7 @@ struct IgnoredUsersView: View {
         @Bindable var state = appState
 
         VStack(spacing: 0) {
-            // Toolbar
-            HStack(spacing: SeeleSpacing.md) {
+            StandardActionBar {
                 StandardSearchField(
                     text: $state.socialState.ignoreSearchQuery,
                     placeholder: "Search ignored users..."
@@ -27,17 +26,12 @@ struct IgnoredUsersView: View {
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
 
-                Button {
+                PrimaryButton("Ignore", icon: "plus", fullWidth: false) {
                     socialState.showIgnoreInput.toggle()
-                } label: {
-                    Label("Ignore", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
                 .accessibilityLabel("Ignore a user")
                 .accessibilityValue(socialState.showIgnoreInput ? "expanded" : "collapsed")
             }
-            .padding(SeeleSpacing.lg)
-            .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
 

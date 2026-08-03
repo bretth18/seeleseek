@@ -5,15 +5,18 @@ import SeeleseekCore
 struct SecondaryButton: View {
     let title: String
     let icon: String?
+    let fullWidth: Bool
     let action: () -> Void
 
     init(
         _ title: String,
         icon: String? = nil,
+        fullWidth: Bool = true,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.icon = icon
+        self.fullWidth = fullWidth
         self.action = action
     }
 
@@ -27,9 +30,8 @@ struct SecondaryButton: View {
                 Text(title)
                     .font(SeeleTypography.headline)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, SeeleSpacing.xl)
-            .padding(.vertical, SeeleSpacing.md)
+            .padding(.horizontal, fullWidth ? SeeleSpacing.xl : SeeleSpacing.lg)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: SeeleSpacing.controlHeight)
             .background(SeeleColors.surfaceSecondary)
             .foregroundStyle(SeeleColors.textPrimary)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

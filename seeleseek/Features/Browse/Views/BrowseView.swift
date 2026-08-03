@@ -16,12 +16,14 @@ struct BrowseView: View {
         @Bindable var browseBinding = appState.browseState
 
         VStack(spacing: 0) {
+            browseBarView(currentUserBinding: $browseBinding.currentUser)
+
+            Divider().background(SeeleColors.surfaceSecondary)
+
             if !browseState.browses.isEmpty {
                 browseTabBar
             }
 
-            browseBarView(currentUserBinding: $browseBinding.currentUser)
-            Divider().background(SeeleColors.surfaceSecondary)
             contentArea
         }
         .background(SeeleColors.background)
@@ -89,53 +91,24 @@ struct BrowseView: View {
     }
 
     private func browseBarView(currentUserBinding: Binding<String>) -> some View {
-        HStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: "person")
-                    .foregroundStyle(SeeleColors.textTertiary)
-
-                TextField("Enter username to browse...", text: currentUserBinding)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .onSubmit {
-                        if browseState.canBrowse {
-                            browseUser()
-                        }
+        StandardActionBar {
+            StandardSearchField(
+                text: currentUserBinding,
+                placeholder: "Enter username to browse...",
+                icon: "person",
+                onSubmit: {
+                    if browseState.canBrowse {
+                        browseUser()
                     }
+                },
+                onClear: { browseState.clear() }
+            )
 
-                if !browseState.currentUser.isEmpty {
-                    Button {
-                        browseState.clear()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear username")
-                }
-            }
-            .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-
-            Button {
+            PrimaryButton("Browse", fullWidth: false) {
                 browseUser()
-            } label: {
-                Text("Browse")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.lg)
-                    .padding(.vertical, SeeleSpacing.md)
-                    .background(browseState.canBrowse ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.plain)
             .disabled(!browseState.canBrowse)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface.opacity(0.5))
     }
 
     @ViewBuilder

@@ -100,6 +100,10 @@ nonisolated enum SeeleSpacing {
     static let inputHeight: CGFloat = 28
     static let buttonHeight: CGFloat = 28
     static let tabBarHeight: CGFloat = 36
+    /// Shared minHeight for bar-level controls (StandardSearchField,
+    /// Primary/SecondaryButton). Inputs and buttons that sit in the same
+    /// row must render at the same height, or the row looks ragged.
+    static let controlHeight: CGFloat = 36
     static let progressBarHeight: CGFloat = 4
 
     // MARK: - Toggle Component

@@ -5,8 +5,12 @@ import SeeleseekCore
 struct StandardSearchField: View {
     @Binding var text: String
     var placeholder: String = "Search..."
+    var icon: String = "magnifyingglass"
     var isLoading: Bool = false
     var onSubmit: (() -> Void)?
+    /// Runs after the built-in clear button empties the text, for hosts
+    /// that must reset more than the query string.
+    var onClear: (() -> Void)?
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
@@ -17,7 +21,7 @@ struct StandardSearchField: View {
                     .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
                     .accessibilityLabel("Searching")
             } else {
-                Image(systemName: "magnifyingglass")
+                Image(systemName: icon)
                     .font(.system(size: SeeleSpacing.iconSizeSmall))
                     .foregroundStyle(SeeleColors.textTertiary)
                     .accessibilityHidden(true)
@@ -38,6 +42,7 @@ struct StandardSearchField: View {
             if !text.isEmpty {
                 Button {
                     text = ""
+                    onClear?()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: SeeleSpacing.iconSizeSmall))
@@ -48,7 +53,7 @@ struct StandardSearchField: View {
             }
         }
         .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.sm)
+        .frame(minHeight: SeeleSpacing.controlHeight)
         .background(SeeleColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
     }

@@ -25,7 +25,7 @@ struct TransfersView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            tabBar
 
             Divider().background(SeeleColors.surfaceSecondary)
 
@@ -37,6 +37,10 @@ struct TransfersView: View {
             case .history:
                 historyView
             }
+
+            Divider().background(SeeleColors.surfaceSecondary)
+
+            statusStrip
         }
         .background(SeeleColors.background)
         .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
@@ -60,71 +64,71 @@ struct TransfersView: View {
         }
     }
 
-    private var header: some View {
-        VStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.xl) {
-                speedStat(
-                    icon: "arrow.down",
-                    label: "Download",
-                    speed: transferState.totalDownloadSpeed,
-                    color: SeeleColors.info
-                )
-
-                speedStat(
-                    icon: "arrow.up",
-                    label: "Upload",
-                    speed: transferState.totalUploadSpeed,
-                    color: SeeleColors.success
-                )
-
-                if selectedTab == .uploads || appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
-                    uploadQueueStat
+    private var tabBar: some View {
+        StandardTabBar(
+            selection: $selectedTab,
+            icon: { $0.icon },
+            badge: { tab in
+                switch tab {
+                case .downloads: transferState.downloads.count
+                case .uploads: transferState.uploads.count
+                case .history: transferState.history.count
                 }
+            }
+        )
+    }
 
-                Spacer()
+    private var statusStrip: some View {
+        HStack(spacing: SeeleSpacing.xl) {
+            speedStat(
+                icon: "arrow.down",
+                label: "Download",
+                speed: transferState.totalDownloadSpeed,
+                color: SeeleColors.info
+            )
 
-                Button {
-                    isDashboardPresented = true
+            speedStat(
+                icon: "arrow.up",
+                label: "Upload",
+                speed: transferState.totalUploadSpeed,
+                color: SeeleColors.success
+            )
+
+            // Gate on upload activity only — a selectedTab condition here
+            // reflows the strip on every tab switch.
+            if appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
+                uploadQueueStat
+            }
+
+            Spacer()
+
+            Button {
+                isDashboardPresented = true
+            } label: {
+                Label("Dashboard", systemImage: "chart.bar.xaxis")
+                    .font(SeeleTypography.subheadline)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("Open queue dashboard")
+
+            if !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty {
+                Menu {
+                    Button("Clear Completed") {
+                        transferState.clearCompleted()
+                    }
+                    Button("Clear Failed") {
+                        transferState.clearFailed()
+                    }
                 } label: {
-                    Label("Dashboard", systemImage: "chart.bar.xaxis")
+                    Label("Clear", systemImage: "trash")
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
-                .buttonStyle(.plain)
-                .help("Open queue dashboard")
-
-                if !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty {
-                    Menu {
-                        Button("Clear Completed") {
-                            transferState.clearCompleted()
-                        }
-                        Button("Clear Failed") {
-                            transferState.clearFailed()
-                        }
-                    } label: {
-                        Label("Clear", systemImage: "trash")
-                            .font(SeeleTypography.subheadline)
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                }
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.top, SeeleSpacing.md)
-
-            StandardTabBar(
-                selection: $selectedTab,
-                showsBackground: false,
-                icon: { $0.icon },
-                badge: { tab in
-                    switch tab {
-                    case .downloads: transferState.downloads.count
-                    case .uploads: transferState.uploads.count
-                    case .history: transferState.history.count
-                    }
-                }
-            )
         }
-        .padding(.bottom, SeeleSpacing.sm)
+        .padding(.horizontal, SeeleSpacing.lg)
+        .padding(.vertical, SeeleSpacing.sm)
         .background(SeeleColors.surface.opacity(0.5))
     }
 

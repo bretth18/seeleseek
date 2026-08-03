@@ -5,17 +5,22 @@ struct PrimaryButton: View {
     let title: String
     let icon: String?
     let isLoading: Bool
+    let fullWidth: Bool
     let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
 
     init(
         _ title: String,
         icon: String? = nil,
         isLoading: Bool = false,
+        fullWidth: Bool = true,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.icon = icon
         self.isLoading = isLoading
+        self.fullWidth = fullWidth
         self.action = action
     }
 
@@ -34,10 +39,11 @@ struct PrimaryButton: View {
                 Text(title)
                     .font(SeeleTypography.headline)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, SeeleSpacing.xl)
-            .padding(.vertical, SeeleSpacing.md)
-            .background(SeeleColors.accent)
+            .padding(.horizontal, fullWidth ? SeeleSpacing.xl : SeeleSpacing.lg)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: SeeleSpacing.controlHeight)
+            // isLoading also disables the button; keep the accent fill
+            // while loading so only a true disable dims it.
+            .background(isEnabled || isLoading ? SeeleColors.accent : SeeleColors.textTertiary)
             .foregroundStyle(SeeleColors.textOnAccent)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

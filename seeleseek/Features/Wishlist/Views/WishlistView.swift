@@ -21,53 +21,19 @@ struct WishlistView: View {
     // MARK: - Add Bar
 
     private func addBar(binding: Binding<String>) -> some View {
-        HStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: "star")
-                    .foregroundStyle(SeeleColors.textTertiary)
-                    .accessibilityHidden(true)
+        StandardActionBar {
+            StandardSearchField(
+                text: binding,
+                placeholder: "Add wishlist search...",
+                icon: "star",
+                onSubmit: { wishlistState.addItem() }
+            )
 
-                TextField("Add wishlist search...", text: binding)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .onSubmit {
-                        wishlistState.addItem()
-                    }
-                    .accessibilityLabel("Add wishlist search")
-
-                if !wishlistState.newQuery.isEmpty {
-                    Button {
-                        wishlistState.newQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search text")
-                }
-            }
-            .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-
-            Button {
+            PrimaryButton("Add", fullWidth: false) {
                 wishlistState.addItem()
-            } label: {
-                Text("Add")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.lg)
-                    .padding(.vertical, SeeleSpacing.md)
-                    .background(!wishlistState.newQuery.trimmingCharacters(in: .whitespaces).isEmpty ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.plain)
             .disabled(wishlistState.newQuery.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface.opacity(0.5))
     }
 
     // MARK: - Items List

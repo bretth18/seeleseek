@@ -35,36 +35,13 @@ struct InterestsView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: interestType == .like ? "heart" : "heart.slash")
-                    .foregroundStyle(interestType == .like ? SeeleColors.success : SeeleColors.error)
-                    .accessibilityHidden(true)
-
-                TextField("Add an interest...", text: $newInterest)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .onSubmit {
-                        addInterest()
-                    }
-                    .accessibilityLabel("New interest")
-
-                if !newInterest.isEmpty {
-                    Button {
-                        newInterest = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear interest text")
-                }
-            }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+        StandardActionBar {
+            StandardSearchField(
+                text: $newInterest,
+                placeholder: "Add an interest...",
+                icon: interestType == .like ? "heart" : "heart.slash",
+                onSubmit: { addInterest() }
+            )
 
             Spacer()
 
@@ -78,17 +55,12 @@ struct InterestsView: View {
             .frame(width: 140)
             .accessibilityLabel("Interest type")
 
-            Button {
+            PrimaryButton("Add", icon: "plus", fullWidth: false) {
                 addInterest()
-            } label: {
-                Label("Add", systemImage: "plus")
             }
-            .buttonStyle(.bordered)
             .accessibilityLabel("Add interest")
             .disabled(newInterest.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface)
     }
 
     private var likesSection: some View {
