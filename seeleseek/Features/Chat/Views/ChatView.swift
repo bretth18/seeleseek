@@ -185,6 +185,7 @@ struct ChatView: View {
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
             .background(isSelected ? SeeleColors.surfaceSecondary : .clear)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -280,6 +281,7 @@ struct ChatView: View {
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
             .background(isSelected ? SeeleColors.surfaceSecondary : .clear)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {

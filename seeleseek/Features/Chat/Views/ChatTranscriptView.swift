@@ -85,6 +85,7 @@ struct ChatTranscriptView: View {
             .padding(.vertical, SeeleSpacing.xs)
             .foregroundStyle(SeeleColors.textOnAccent)
             .background(SeeleColors.accent.opacity(0.9), in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .padding(SeeleSpacing.md)

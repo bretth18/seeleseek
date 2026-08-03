@@ -61,6 +61,7 @@ struct WishlistView: View {
                     .padding(.vertical, SeeleSpacing.md)
                     .background(!wishlistState.newQuery.trimmingCharacters(in: .whitespaces).isEmpty ? SeeleColors.accent : SeeleColors.textTertiary)
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(wishlistState.newQuery.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -211,6 +212,7 @@ struct WishlistItemRow: View {
                     .padding(.horizontal, SeeleSpacing.sm)
                     .padding(.vertical, SeeleSpacing.xxs)
                     .background(SeeleColors.surfaceElevated, in: Capsule())
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .help("Show results")

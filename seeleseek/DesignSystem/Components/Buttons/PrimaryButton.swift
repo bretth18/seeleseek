@@ -40,6 +40,7 @@ struct PrimaryButton: View {
             .background(SeeleColors.accent)
             .foregroundStyle(SeeleColors.textOnAccent)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(isLoading)

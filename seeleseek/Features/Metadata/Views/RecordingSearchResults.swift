@@ -137,6 +137,7 @@ struct RecordingRow: View {
             .padding(SeeleSpacing.sm)
             .background(isSelected ? SeeleColors.accent.opacity(0.1) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(rowAccessibilityLabel)
