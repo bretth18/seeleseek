@@ -81,7 +81,7 @@ struct PrivacySettingsSection: View {
                             .onSubmit(addPattern)
 
                         Button("Add", action: addPattern)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.seelePrimary(.small))
                             .disabled(trimmedNewPattern.isEmpty)
                     }
                 }
@@ -113,11 +113,10 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Remove") {
+                Button("Remove", role: .destructive) {
                     settings.blockedUsernamePatterns.removeAll { $0 == pattern }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Remove pattern \(pattern)")
             }
         }
@@ -176,7 +175,7 @@ struct PrivacySettingsSection: View {
                                     newBlockReason = ""
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.seelePrimary(.small))
                             .disabled(newBlockUsername.isEmpty)
                         }
 
@@ -232,13 +231,12 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Unblock") {
+                Button("Unblock", role: .destructive) {
                     Task {
                         await socialState.unblockUser(blocked.username)
                     }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Unblock \(blocked.username)")
             }
         }
@@ -493,14 +491,13 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Block") {
+                Button("Block", role: .destructive) {
                     Task {
                         await socialState.blockUser(username, reason: "Leech - no shared files")
                         socialState.detectedLeeches.remove(username)
                     }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Block \(username)")
             }
         }

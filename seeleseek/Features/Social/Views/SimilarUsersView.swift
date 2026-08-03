@@ -184,8 +184,7 @@ struct SimilarUsersView: View {
             Button("Retry") {
                 refresh()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.seeleSecondary(.small))
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

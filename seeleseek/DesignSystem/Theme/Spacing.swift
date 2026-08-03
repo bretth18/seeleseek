@@ -39,14 +39,21 @@ nonisolated enum SeeleSpacing {
 
     /// # Button-style hierarchy (SwiftUI `.buttonStyle`)
     ///
-    /// - `.borderedProminent` — **primary** CTA on a surface (download,
-    ///   install, save). At most one per surface.
-    /// - `.bordered` — **secondary** actions that still need chrome
-    ///   (Cancel, Skip, tertiary destinations).
-    /// - `.plain` — icon-only buttons, inline text links, row actions.
-    ///   Default for row-embedded controls.
-    /// - **Do not use `.borderless`.** On macOS it renders nearly
-    ///   identically to `.plain` and creates ambiguity — `.plain` wins.
+    /// One rule: **system styling only where the system owns the surface**
+    /// (`confirmationDialog` / `alert` — those ignore custom styles
+    /// anyway). Everywhere else, including sheets:
+    ///
+    /// - `.seelePrimary` — the primary CTA on a surface. At most one per
+    ///   surface. `.seelePrimary(.small)` for inline/row scale.
+    /// - `.seeleSecondary` — secondary actions that need chrome (Cancel,
+    ///   Remove, Unblock). Same size axis.
+    /// - `.seeleIcon` — icon-only buttons and Menu labels; pair with
+    ///   `.accessibilityLabel` + `.help` (or use the IconButton wrapper).
+    /// - `.plain` — bare text links and row content only. Padded/filled
+    ///   `.plain` buttons must add `.contentShape` (#65); the seele styles
+    ///   do this for you.
+    /// - **Never `.bordered`/`.borderedProminent`/`.borderless`** outside
+    ///   system-owned dialogs.
 
     // MARK: - Icon Sizes
     static let iconSizeXXS: CGFloat = 8      // Overlay glyphs (e.g. private lock on a file icon)

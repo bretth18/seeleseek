@@ -58,8 +58,7 @@ struct StandardEmptyState<Footer: View>: View {
 
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
-                    .buttonStyle(.borderedProminent)
-                    .tint(SeeleColors.accent)
+                    .buttonStyle(.seelePrimary)
             }
 
             footer

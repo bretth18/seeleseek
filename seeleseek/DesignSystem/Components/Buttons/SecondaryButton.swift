@@ -1,7 +1,8 @@
 import SwiftUI
 import SeeleseekCore
 
-
+/// Convenience wrapper over `.seeleSecondary`.
+/// For a plain button, prefer `Button + .buttonStyle(.seeleSecondary)`.
 struct SecondaryButton: View {
     let title: String
     let icon: String?
@@ -28,20 +29,9 @@ struct SecondaryButton: View {
                         .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
                 }
                 Text(title)
-                    .font(SeeleTypography.headline)
             }
-            .padding(.horizontal, fullWidth ? SeeleSpacing.xl : SeeleSpacing.lg)
-            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: SeeleSpacing.controlHeight)
-            .background(SeeleColors.surfaceSecondary)
-            .foregroundStyle(SeeleColors.textPrimary)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(SeeleColors.textTertiary.opacity(0.3), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.seeleSecondary(fullWidth: fullWidth))
     }
 }
 

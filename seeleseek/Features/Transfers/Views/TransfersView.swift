@@ -117,15 +117,8 @@ struct TransfersView: View {
             }
         } label: {
             Image(systemName: "trash")
-                .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
-                .foregroundStyle(hasClearableTransfers ? SeeleColors.textSecondary : SeeleColors.textTertiary)
-                .frame(
-                    width: SeeleSpacing.iconSize + SeeleSpacing.lg,
-                    height: SeeleSpacing.iconSize + SeeleSpacing.lg
-                )
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.seeleIcon)
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(!hasClearableTransfers)

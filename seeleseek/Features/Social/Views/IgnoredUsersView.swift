@@ -57,7 +57,7 @@ struct IgnoredUsersView: View {
                             reasonInput = ""
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.seelePrimary(.small))
                     .disabled(usernameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(SeeleSpacing.lg)
@@ -117,7 +117,7 @@ struct IgnoredUsersView: View {
             Button("Unignore") {
                 Task { await socialState.unignoreUser(ignored.username) }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.seeleSecondary(.small))
             .accessibilityLabel("Unignore \(ignored.username)")
         }
         .padding(.horizontal, SeeleSpacing.lg)

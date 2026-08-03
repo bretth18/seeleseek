@@ -59,11 +59,12 @@ struct NicotineImportSheet: View {
                 Button("Cancel") {
                     isPresented = false
                 }
+                .buttonStyle(.seeleSecondary)
                 Button("Import") {
                     applyImport()
                     isPresented = false
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.seelePrimary)
                 .disabled(config == nil || config?.isEmpty == true || nothingSelected)
             }
         }

@@ -76,18 +76,15 @@ struct CoverArtEditView: View {
                 Button("Choose...") {
                     state.selectCoverArtFile()
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Choose cover art image")
                 #endif
 
                 if state.coverArtData != nil {
-                    Button("Clear") {
+                    Button("Clear", role: .destructive) {
                         state.clearCoverArt()
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .foregroundStyle(SeeleColors.error)
+                    .buttonStyle(.seeleSecondary(.small))
                     .accessibilityLabel("Clear cover art")
                 }
             }

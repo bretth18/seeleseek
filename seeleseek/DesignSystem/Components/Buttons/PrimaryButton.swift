@@ -1,14 +1,14 @@
 import SwiftUI
 import SeeleseekCore
 
+/// Convenience wrapper over `.seelePrimary` that adds a loading spinner.
+/// For a plain button, prefer `Button + .buttonStyle(.seelePrimary)`.
 struct PrimaryButton: View {
     let title: String
     let icon: String?
     let isLoading: Bool
     let fullWidth: Bool
     let action: () -> Void
-
-    @Environment(\.isEnabled) private var isEnabled
 
     init(
         _ title: String,
@@ -37,18 +37,9 @@ struct PrimaryButton: View {
                         .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
                 }
                 Text(title)
-                    .font(SeeleTypography.headline)
             }
-            .padding(.horizontal, fullWidth ? SeeleSpacing.xl : SeeleSpacing.lg)
-            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: SeeleSpacing.controlHeight)
-            // isLoading also disables the button; keep the accent fill
-            // while loading so only a true disable dims it.
-            .background(isEnabled || isLoading ? SeeleColors.accent : SeeleColors.textTertiary)
-            .foregroundStyle(SeeleColors.textOnAccent)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.seelePrimary(fullWidth: fullWidth))
         .disabled(isLoading)
         .opacity(isLoading ? 0.7 : 1.0)
         .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isLoading)

@@ -226,7 +226,7 @@ struct UserProfileSheet: View {
                 } label: {
                     Label("Add Buddy", systemImage: "person.badge.plus")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.seeleSecondary(.small))
                 .disabled(isBuddy)
 
                 Button {
@@ -234,15 +234,14 @@ struct UserProfileSheet: View {
                 } label: {
                     Label("Browse Files", systemImage: "folder")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.seeleSecondary(.small))
 
                 Button {
                     startChat()
                 } label: {
                     Label("Message", systemImage: "bubble.left")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(SeeleColors.accent)
+                .buttonStyle(.seelePrimary(.small))
             }
 
             HStack(spacing: SeeleSpacing.md) {
@@ -251,7 +250,7 @@ struct UserProfileSheet: View {
                 } label: {
                     Label("Give Privileges", systemImage: "star")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.seeleSecondary(.small))
                 .popover(isPresented: $showGivePrivileges) {
                     VStack(spacing: SeeleSpacing.md) {
                         Text("Give Privileges")
@@ -277,8 +276,7 @@ struct UserProfileSheet: View {
                             appState.socialState.givePrivileges(to: profile.username, days: selectedDays)
                             showGivePrivileges = false
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(SeeleColors.warning)
+                        .buttonStyle(.seelePrimary)
                     }
                     .padding(SeeleSpacing.lg)
                     .frame(width: 260)
@@ -290,14 +288,14 @@ struct UserProfileSheet: View {
                     } label: {
                         Label("Unignore", systemImage: "eye")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.seeleSecondary(.small))
                 } else {
                     Button {
                         Task { await appState.socialState.ignoreUser(profile.username) }
                     } label: {
                         Label("Ignore", systemImage: "eye.slash")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.seeleSecondary(.small))
                 }
             }
         }

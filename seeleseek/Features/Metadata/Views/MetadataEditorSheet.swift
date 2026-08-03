@@ -58,7 +58,7 @@ struct MetadataEditorSheet: View {
                 state.closeEditor()
                 dismiss()
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.seeleSecondary(.small))
         }
         .padding(SeeleSpacing.lg)
     }
@@ -156,7 +156,7 @@ struct MetadataEditorSheet: View {
                     }
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.seelePrimary)
             .disabled(state.isApplying || (state.editTitle.isEmpty && state.editArtist.isEmpty))
         }
         .padding(SeeleSpacing.lg)

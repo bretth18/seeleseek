@@ -40,13 +40,12 @@ struct AddBuddySheet: View {
                 Button("Cancel") {
                     dismiss()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.seeleSecondary)
 
                 Button("Add") {
                     addBuddy()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(SeeleColors.accent)
+                .buttonStyle(.seelePrimary)
                 .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty || isAdding)
             }
         }

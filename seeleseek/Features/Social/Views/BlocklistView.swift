@@ -70,7 +70,7 @@ struct BlocklistView: View {
                         newReason = ""
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.seelePrimary(.small))
                 .disabled(newUsername.isEmpty)
             }
 
@@ -175,13 +175,12 @@ struct BlocklistView: View {
 
             Spacer()
 
-            Button("Unblock") {
+            Button("Unblock", role: .destructive) {
                 Task {
                     await socialState.unblockUser(blocked.username)
                 }
             }
-            .buttonStyle(.bordered)
-            .foregroundStyle(SeeleColors.error)
+            .buttonStyle(.seeleSecondary(.small))
             .accessibilityLabel("Unblock \(blocked.username)")
         }
         .padding(SeeleSpacing.md)

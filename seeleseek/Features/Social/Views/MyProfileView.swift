@@ -34,8 +34,7 @@ struct MyProfileView: View {
                     Button("Save") {
                         saveProfile()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SeeleColors.accent)
+                    .buttonStyle(.seelePrimary(.small))
                 }
             }
 
