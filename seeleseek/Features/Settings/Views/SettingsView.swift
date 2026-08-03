@@ -134,6 +134,7 @@ struct SettingsView: View {
                         .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
                 }
             }
+            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)
         .padding(.horizontal, SeeleSpacing.xs)
