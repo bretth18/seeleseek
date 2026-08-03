@@ -76,22 +76,11 @@ struct WishlistView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "star")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-                .accessibilityHidden(true)
-
-            Text("No wishlists")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Add search queries that run automatically at regular intervals")
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        StandardEmptyState(
+            icon: "star",
+            title: "No wishlists",
+            subtitle: "Add search queries that run automatically at regular intervals"
+        )
     }
 }
 

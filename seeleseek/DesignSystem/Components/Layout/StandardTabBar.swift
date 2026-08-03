@@ -3,7 +3,7 @@ import SeeleseekCore
 
 /// Consistent horizontal tab bar. One focus stop: arrow keys move the
 /// selection, Home/End jump to the ends.
-struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View where Tab.RawValue == String {
+struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing: View>: View where Tab.RawValue == String {
     @Binding var selection: Tab
     let tabs: [Tab]
     var badge: ((Tab) -> Int)?
@@ -13,6 +13,9 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
     var icon: ((Tab) -> String)?
     /// Set false when the host supplies its own background.
     var showsBackground: Bool
+    /// Status or actions anchored at the bar's trailing edge. In-layout —
+    /// never an `.overlay`, which sits on top of the tabs at narrow widths.
+    let trailing: Trailing
 
     @FocusState private var isFocused: Bool
 
@@ -22,7 +25,8 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
         badgeUnit: String = "items",
         showsBackground: Bool = true,
         icon: ((Tab) -> String)? = nil,
-        badge: ((Tab) -> Int)? = nil
+        badge: ((Tab) -> Int)? = nil,
+        @ViewBuilder trailing: () -> Trailing
     ) {
         self._selection = selection
         self.tabs = tabs
@@ -30,6 +34,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
         self.showsBackground = showsBackground
         self.icon = icon
         self.badge = badge
+        self.trailing = trailing()
     }
 
     var body: some View {
@@ -38,6 +43,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
                 tabButton(for: tab)
             }
             Spacer()
+            trailing
         }
         // Same outer metrics as StandardActionBar: a view's header slot is
         // the same height whether it leads with tabs or with controls (#67).
@@ -138,6 +144,27 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable>: View whe
         .accessibilityLabel(tab.rawValue)
         .accessibilityValue(badgeCount > 0 ? "\(badgeCount) \(badgeUnit)" : "")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+extension StandardTabBar where Trailing == EmptyView {
+    init(
+        selection: Binding<Tab>,
+        tabs: [Tab] = Array(Tab.allCases),
+        badgeUnit: String = "items",
+        showsBackground: Bool = true,
+        icon: ((Tab) -> String)? = nil,
+        badge: ((Tab) -> Int)? = nil
+    ) {
+        self.init(
+            selection: selection,
+            tabs: tabs,
+            badgeUnit: badgeUnit,
+            showsBackground: showsBackground,
+            icon: icon,
+            badge: badge,
+            trailing: { EmptyView() }
+        )
     }
 }
 

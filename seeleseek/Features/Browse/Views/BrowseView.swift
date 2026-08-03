@@ -195,19 +195,11 @@ struct BrowseView: View {
     }
 
     private var emptyStateView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "folder.badge.person.crop")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("Browse User Files")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Enter a username above to see their shared files")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-
+        StandardEmptyState(
+            icon: "folder.badge.person.crop",
+            title: "Browse User Files",
+            subtitle: "Enter a username above to see their shared files"
+        ) {
             if !browseState.browseHistory.isEmpty {
                 VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                     Text("Recent")
@@ -233,10 +225,11 @@ struct BrowseView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, SeeleSpacing.xxl)
+                // Match the subtitle's column so the rows read as part of
+                // the centered block, not a full-width list.
+                .frame(maxWidth: 300, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @State private var showVisualizations = true
