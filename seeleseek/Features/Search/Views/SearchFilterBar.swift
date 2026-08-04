@@ -3,12 +3,13 @@ import SeeleseekCore
 
 struct SearchFilterBar: View {
     @Bindable var searchState: SearchState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: SeeleSpacing.sm) {
             // Filter toggle
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86)) {
                     searchState.showFilters.toggle()
                 }
             } label: {

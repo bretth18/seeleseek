@@ -28,10 +28,12 @@ struct FlowLayout: Layout {
         var lineHeight: CGFloat = 0
         var maxWidth: CGFloat = 0
 
+        let available = proposal.width ?? .infinity
+
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
 
-            if currentX + size.width > (proposal.width ?? .infinity) {
+            if currentX > 0, currentX + size.width > available {
                 currentX = 0
                 currentY += lineHeight + spacing
                 lineHeight = 0
@@ -39,9 +41,9 @@ struct FlowLayout: Layout {
 
             positions.append(CGPoint(x: currentX, y: currentY))
 
+            maxWidth = max(maxWidth, currentX + size.width)
             currentX += size.width + spacing
             lineHeight = max(lineHeight, size.height)
-            maxWidth = max(maxWidth, currentX)
         }
 
         return (positions, CGSize(width: maxWidth, height: currentY + lineHeight))

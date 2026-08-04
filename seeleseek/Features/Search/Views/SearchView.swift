@@ -3,6 +3,7 @@ import SeeleseekCore
 
 struct SearchView: View {
     @Environment(\.appState) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHistory = false
     @State private var highlightedIndex: Int? = nil
     @State private var hoveredIndex: Int? = nil
@@ -43,16 +44,14 @@ struct SearchView: View {
 
             SearchFilterBar(searchState: searchState)
 
-            // ZStack so filter panel overlays results instead of pushing layout
-            ZStack(alignment: .top) {
-                resultsArea
-
-                if searchState.showFilters {
-                    SearchFilterPanel(searchState: searchState)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(1)
+            resultsArea
+                .overlay(alignment: .top) {
+                    if searchState.showFilters {
+                        SearchFilterPanel(searchState: searchState)
+                            .transition(reduceMotion ? .opacity : .move(edge: .top))
+                    }
                 }
-            }
+                .clipped()
         }
         .onTapGesture {
             isSearchFocused = false
