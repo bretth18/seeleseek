@@ -114,6 +114,7 @@ struct NetworkSettingsSection: View {
                 Button(isApplyingPort ? "Applying…" : "Apply") {
                     Task { await applyPortChange() }
                 }
+                .buttonStyle(.seelePrimary(.small))
                 .disabled(!hasReconnectCredentials || isApplyingPort)
                 .help(
                     hasReconnectCredentials

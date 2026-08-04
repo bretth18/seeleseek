@@ -1,21 +1,26 @@
 import SwiftUI
 import SeeleseekCore
 
+/// Convenience wrapper over `.seelePrimary` that adds a loading spinner.
+/// For a plain button, prefer `Button + .buttonStyle(.seelePrimary)`.
 struct PrimaryButton: View {
     let title: String
     let icon: String?
     let isLoading: Bool
+    let fullWidth: Bool
     let action: () -> Void
 
     init(
         _ title: String,
         icon: String? = nil,
         isLoading: Bool = false,
+        fullWidth: Bool = true,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.icon = icon
         self.isLoading = isLoading
+        self.fullWidth = fullWidth
         self.action = action
     }
 
@@ -26,26 +31,16 @@ struct PrimaryButton: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(0.8)
-                        .tint(.white)
+                        .tint(SeeleColors.textOnAccent)
                 } else if let icon {
                     Image(systemName: icon)
                         .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
                 }
                 Text(title)
-                    .font(SeeleTypography.headline)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, SeeleSpacing.xl)
-            .padding(.vertical, SeeleSpacing.md)
-            .background(SeeleColors.accent)
-            .foregroundStyle(SeeleColors.textOnAccent)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.seelePrimary(fullWidth: fullWidth))
         .disabled(isLoading)
-        .opacity(isLoading ? 0.7 : 1.0)
-        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isLoading)
     }
 }
 

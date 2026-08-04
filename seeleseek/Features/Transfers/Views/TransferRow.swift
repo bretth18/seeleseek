@@ -853,19 +853,14 @@ private struct TransferActionCluster: View {
         tint: Color,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: SeeleSpacing.iconSizeMedium, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(
-                    width: SeeleSpacing.iconSizeXL,
-                    height: SeeleSpacing.iconSizeXL
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        RowIconButton(
+            systemName: icon,
+            help: help,
+            tint: tint,
+            weight: .semibold,
+            isProminent: true,
+            action: action
+        )
     }
 }
 

@@ -13,11 +13,9 @@ struct NetworkMonitorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StandardTabBar(selection: $selectedTab)
-                .overlay(alignment: .trailing) {
-                    MonitorLiveStatsBadge()
-                        .padding(.trailing, SeeleSpacing.md)
-                }
+            StandardTabBar(selection: $selectedTab) {
+                MonitorLiveStatsBadge()
+            }
 
             Divider()
                 .background(SeeleColors.surfaceSecondary)
@@ -50,45 +48,25 @@ struct MonitorLiveStatsBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: SeeleSpacing.lg) {
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "arrow.down")
-                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.success)
-                Text(peerPool.currentDownloadSpeed.formattedSpeed)
-                    .font(SeeleTypography.mono)
-                    .foregroundStyle(SeeleColors.success)
-                    .contentTransition(.numericText())
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Download speed \(peerPool.currentDownloadSpeed.formattedSpeed)")
-
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.accent)
-                Text(peerPool.currentUploadSpeed.formattedSpeed)
-                    .font(SeeleTypography.mono)
-                    .foregroundStyle(SeeleColors.accent)
-                    .contentTransition(.numericText())
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Upload speed \(peerPool.currentUploadSpeed.formattedSpeed)")
-
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.info)
-                Text("\(peerPool.activeConnections)")
-                    .font(SeeleTypography.mono)
-                    .foregroundStyle(SeeleColors.info)
-                    .contentTransition(.numericText())
-            }
+        StandardStatCluster {
+            StandardLiveStat(
+                icon: "arrow.down",
+                value: Int64(peerPool.currentDownloadSpeed).formattedSpeed,
+                iconColor: SeeleColors.info,
+                accessibilityLabel: "Download speed \(peerPool.currentDownloadSpeed.formattedSpeed)"
+            )
+            StandardLiveStat(
+                icon: "arrow.up",
+                value: Int64(peerPool.currentUploadSpeed).formattedSpeed,
+                iconColor: SeeleColors.success,
+                accessibilityLabel: "Upload speed \(peerPool.currentUploadSpeed.formattedSpeed)"
+            )
+            StandardLiveStat(
+                icon: "person.2.fill",
+                value: "\(peerPool.activeConnections)",
+                accessibilityLabel: "\(peerPool.activeConnections) active peers"
+            )
         }
-        .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.xs)
-        .background(SeeleColors.surfaceSecondary)
-        .clipShape(Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Live network stats")
         .accessibilityValue("Download \(peerPool.currentDownloadSpeed.formattedSpeed), upload \(peerPool.currentUploadSpeed.formattedSpeed), \(peerPool.activeConnections) active peers")

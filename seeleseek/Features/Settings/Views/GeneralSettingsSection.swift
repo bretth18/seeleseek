@@ -118,6 +118,7 @@ struct GeneralSettingsSection: View {
                         Button("Import from Nicotine+…") {
                             showNicotineImport = true
                         }
+                        .buttonStyle(.seeleSecondary(.small))
                     }
                 }
             }

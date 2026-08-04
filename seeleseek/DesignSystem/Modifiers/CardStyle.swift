@@ -55,7 +55,7 @@ extension View {
             Text("Card Title")
                 .seeleHeadline()
             Text("Some secondary content goes here")
-                .seeleSecondary()
+                .seeleSubheadline()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()

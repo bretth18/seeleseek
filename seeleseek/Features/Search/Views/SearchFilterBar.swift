@@ -30,16 +30,16 @@ struct SearchFilterBar: View {
             .accessibilityValue(filterToggleAccessibilityValue)
 
             // Quick preset chips
-            filterChip("MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
+            FilterChip(label: "MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
                 searchState.applyPreset(.mp3_320)
             }
-            filterChip("FLAC", isActive: searchState.isPresetActive(.flac)) {
+            FilterChip(label: "FLAC", isActive: searchState.isPresetActive(.flac)) {
                 searchState.applyPreset(.flac)
             }
-            filterChip("Lossless", isActive: searchState.isPresetActive(.lossless)) {
+            FilterChip(label: "Lossless", isActive: searchState.isPresetActive(.lossless)) {
                 searchState.applyPreset(.lossless)
             }
-            filterChip("Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
+            FilterChip(label: "Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
                 searchState.applyPreset(.hiRes)
             }
 
@@ -74,23 +74,6 @@ struct SearchFilterBar: View {
         return parts.joined(separator: ", ")
     }
 
-    // MARK: - Components
-
-    func filterChip(_ label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(SeeleTypography.caption)
-                .padding(.horizontal, SeeleSpacing.sm)
-                .padding(.vertical, SeeleSpacing.xs)
-                .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
-                .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
-    }
 }
 
 // MARK: - Expanded Filter Panel (overlays results area)
@@ -104,7 +87,7 @@ struct SearchFilterPanel: View {
             filterRow("Format") {
                 let formats = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "ape"]
                 ForEach(formats, id: \.self) { ext in
-                    filterChip(ext.uppercased(), dimension: "Format", isActive: searchState.filterExtensions.contains(ext)) {
+                    FilterChip(label: ext.uppercased(), dimension: "Format", isActive: searchState.filterExtensions.contains(ext)) {
                         searchState.toggleExtension(ext)
                     }
                 }
@@ -116,7 +99,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("128+", 128), ("192+", 192), ("256+", 256), ("320+", 320)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, dimension: "Bitrate", isActive: searchState.filterMinBitrate == value) {
+                    FilterChip(label: label, dimension: "Bitrate", isActive: searchState.filterMinBitrate == value) {
                         searchState.filterMinBitrate = value
                     }
                 }
@@ -128,7 +111,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("44.1k+", 44100), ("48k+", 48000), ("96k+", 96000)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, dimension: "Sample rate", isActive: searchState.filterMinSampleRate == value) {
+                    FilterChip(label: label, dimension: "Sample rate", isActive: searchState.filterMinSampleRate == value) {
                         searchState.filterMinSampleRate = value
                     }
                 }
@@ -140,7 +123,7 @@ struct SearchFilterPanel: View {
                     ("Any", nil), ("16+", 16), ("24+", 24), ("32+", 32)
                 ]
                 ForEach(presets, id: \.0) { label, value in
-                    filterChip(label, dimension: "Bit depth", isActive: searchState.filterMinBitDepth == value) {
+                    FilterChip(label: label, dimension: "Bit depth", isActive: searchState.filterMinBitDepth == value) {
                         searchState.filterMinBitDepth = value
                     }
                 }
@@ -187,6 +170,8 @@ struct SearchFilterPanel: View {
                     }
                     .foregroundStyle(SeeleColors.textSecondary)
                 }
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
             }
         }
         .padding(.horizontal, SeeleSpacing.lg)
@@ -196,34 +181,6 @@ struct SearchFilterPanel: View {
     }
 
     // MARK: - Components
-
-    private func filterChip(_ label: String, dimension: String? = nil, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(SeeleTypography.caption)
-                .padding(.horizontal, SeeleSpacing.sm)
-                .padding(.vertical, SeeleSpacing.xs)
-                .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
-                .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(chipAccessibilityLabel(label, dimension: dimension))
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
-    }
-
-    /// Spoken chip name. A short chip text such as "16+" or "Any" is
-    /// ambiguous without its row title, so the dimension is prefixed.
-    private func chipAccessibilityLabel(_ label: String, dimension: String?) -> String {
-        var spoken = label
-        if spoken.hasSuffix("+") {
-            spoken = String(spoken.dropLast()) + " or more"
-        }
-        guard let dimension else { return spoken }
-        return "\(dimension): \(spoken)"
-    }
 
     private func filterRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: SeeleSpacing.sm) {
@@ -236,5 +193,43 @@ struct SearchFilterPanel: View {
                 content()
             }
         }
+    }
+}
+
+// MARK: - Filter Chip
+
+/// Capsule filter toggle shared by the preset bar and the expanded panel.
+private struct FilterChip: View {
+    let label: String
+    var dimension: String? = nil
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(SeeleTypography.caption)
+                .padding(.horizontal, SeeleSpacing.sm)
+                .padding(.vertical, SeeleSpacing.xs)
+                .background(isActive ? SeeleColors.accent.opacity(0.2) : SeeleColors.surfaceElevated)
+                .foregroundStyle(isActive ? SeeleColors.accent : SeeleColors.textSecondary)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(isActive ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(spokenLabel)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+    }
+
+    /// Spoken chip name. A short chip text such as "16+" or "Any" is
+    /// ambiguous without its row title, so the dimension is prefixed.
+    private var spokenLabel: String {
+        var spoken = label
+        if spoken.hasSuffix("+") {
+            spoken = String(spoken.dropLast()) + " or more"
+        }
+        guard let dimension else { return spoken }
+        return "\(dimension): \(spoken)"
     }
 }

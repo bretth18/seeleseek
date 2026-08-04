@@ -44,23 +44,18 @@ struct SimilarUsersView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: SeeleSpacing.md) {
+        StandardActionBar {
             Text("Discovery")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
 
             Spacer()
 
-            Button {
+            SecondaryButton("Refresh", icon: "arrow.clockwise", fullWidth: false) {
                 refresh()
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.bordered)
             .disabled(socialState.isLoadingSimilar || socialState.isLoadingRecommendations)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface)
     }
 
     private var similarUsersHeader: some View {
@@ -189,8 +184,7 @@ struct SimilarUsersView: View {
             Button("Retry") {
                 refresh()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.seeleSecondary(.small))
         }
         .padding(SeeleSpacing.md)
         .background(SeeleColors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

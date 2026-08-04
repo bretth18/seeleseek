@@ -34,7 +34,7 @@ struct RecordingSearchResults: View {
                         Image(systemName: "magnifyingglass")
                     }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.seeleIcon)
                 .disabled(state.isSearching)
                 .accessibilityLabel(state.isSearching ? "Searching MusicBrainz" : "Search MusicBrainz")
             }

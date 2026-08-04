@@ -1,7 +1,7 @@
 import SwiftUI
 import SeeleseekCore
 
-
+/// Convenience wrapper over `.seeleIcon` that enforces a spoken label.
 struct IconButton: View {
     let icon: String
     /// Spoken name for the button. An icon-only button has no
@@ -25,12 +25,8 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: size, weight: .medium))
-                .foregroundStyle(SeeleColors.textSecondary)
-                .frame(width: size + SeeleSpacing.lg, height: size + SeeleSpacing.lg)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.seeleIcon(iconSize: size))
         .accessibilityLabel(label)
         .help(label)
     }

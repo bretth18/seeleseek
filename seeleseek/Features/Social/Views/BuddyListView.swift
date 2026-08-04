@@ -12,9 +12,7 @@ struct BuddyListView: View {
         @Bindable var state = appState
 
         VStack(spacing: 0) {
-            // Toolbar
-            HStack(spacing: SeeleSpacing.md) {
-                // Search field
+            StandardActionBar {
                 StandardSearchField(
                     text: $state.socialState.buddySearchQuery,
                     placeholder: "Search buddies..."
@@ -22,24 +20,17 @@ struct BuddyListView: View {
 
                 Spacer()
 
-                // Stats
                 if !socialState.buddies.isEmpty {
                     Text("\(socialState.onlineBuddies.count) online / \(socialState.buddies.count) total")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
 
-                // Add button
-                Button {
+                PrimaryButton("Add", icon: "plus", fullWidth: false) {
                     socialState.showAddBuddySheet = true
-                } label: {
-                    Label("Add", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
                 .accessibilityLabel("Add buddy")
             }
-            .padding(SeeleSpacing.lg)
-            .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
 

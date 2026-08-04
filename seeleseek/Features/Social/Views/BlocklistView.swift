@@ -62,7 +62,7 @@ struct BlocklistView: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityLabel("Reason for blocking, optional")
 
-                Button("Block") {
+                Button("Block", role: .destructive) {
                     guard !newUsername.isEmpty else { return }
                     Task {
                         await socialState.blockUser(newUsername, reason: newReason.isEmpty ? nil : newReason)
@@ -70,7 +70,7 @@ struct BlocklistView: View {
                         newReason = ""
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.seeleSecondary(.small))
                 .disabled(newUsername.isEmpty)
             }
 
@@ -180,8 +180,7 @@ struct BlocklistView: View {
                     await socialState.unblockUser(blocked.username)
                 }
             }
-            .buttonStyle(.bordered)
-            .foregroundStyle(SeeleColors.error)
+            .buttonStyle(.seeleSecondary(.small))
             .accessibilityLabel("Unblock \(blocked.username)")
         }
         .padding(SeeleSpacing.md)

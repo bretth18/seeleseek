@@ -14,8 +14,7 @@ struct IgnoredUsersView: View {
         @Bindable var state = appState
 
         VStack(spacing: 0) {
-            // Toolbar
-            HStack(spacing: SeeleSpacing.md) {
+            StandardActionBar {
                 StandardSearchField(
                     text: $state.socialState.ignoreSearchQuery,
                     placeholder: "Search ignored users..."
@@ -27,17 +26,12 @@ struct IgnoredUsersView: View {
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
 
-                Button {
+                PrimaryButton("Ignore", icon: "plus", fullWidth: false) {
                     socialState.showIgnoreInput.toggle()
-                } label: {
-                    Label("Ignore", systemImage: "plus")
                 }
-                .buttonStyle(.bordered)
                 .accessibilityLabel("Ignore a user")
                 .accessibilityValue(socialState.showIgnoreInput ? "expanded" : "collapsed")
             }
-            .padding(SeeleSpacing.lg)
-            .background(SeeleColors.surface)
 
             Divider().background(SeeleColors.surfaceSecondary)
 
@@ -52,7 +46,7 @@ struct IgnoredUsersView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("Reason for ignoring, optional")
 
-                    Button("Ignore") {
+                    Button("Ignore", role: .destructive) {
                         let reason = reasonInput.trimmingCharacters(in: .whitespacesAndNewlines)
                         Task {
                             await socialState.ignoreUser(
@@ -63,7 +57,7 @@ struct IgnoredUsersView: View {
                             reasonInput = ""
                         }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.seeleSecondary(.small))
                     .disabled(usernameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(SeeleSpacing.lg)
@@ -123,7 +117,7 @@ struct IgnoredUsersView: View {
             Button("Unignore") {
                 Task { await socialState.unignoreUser(ignored.username) }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.seeleSecondary(.small))
             .accessibilityLabel("Unignore \(ignored.username)")
         }
         .padding(.horizontal, SeeleSpacing.lg)

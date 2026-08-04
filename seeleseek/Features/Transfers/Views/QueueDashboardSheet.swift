@@ -110,15 +110,12 @@ struct QueueDashboardSheet: View {
             Button {
                 dismiss()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: SeeleSpacing.iconSizeMedium))
                     .foregroundStyle(SeeleColors.textSecondary)
-                    .frame(width: 24, height: 24)
-                    .background(SeeleColors.surfaceElevated)
-                    .clipShape(Circle())
-                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
             .help("Close")
             .accessibilityLabel("Close")
         }

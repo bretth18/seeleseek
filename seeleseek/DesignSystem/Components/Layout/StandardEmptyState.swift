@@ -3,25 +3,31 @@ import SeeleseekCore
 
 /// Apple HIG-aligned empty state view
 /// Use for empty lists, no results, and placeholder content
-struct StandardEmptyState: View {
+struct StandardEmptyState<Footer: View>: View {
     let icon: String
     let title: String
     let subtitle: String
     var action: (() -> Void)?
     var actionTitle: String?
+    /// Extra content below the text/action, for example a recent-items
+    /// list. Rendered inside the centered column so hosts don't hand-roll
+    /// the whole empty state just to append rows.
+    let footer: Footer
 
     init(
         icon: String,
         title: String,
         subtitle: String,
         actionTitle: String? = nil,
-        action: (() -> Void)? = nil
+        action: (() -> Void)? = nil,
+        @ViewBuilder footer: () -> Footer
     ) {
         self.icon = icon
         self.title = title
         self.subtitle = subtitle
         self.actionTitle = actionTitle
         self.action = action
+        self.footer = footer()
     }
 
     @State private var appeared = false
@@ -52,9 +58,11 @@ struct StandardEmptyState: View {
 
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
-                    .buttonStyle(.borderedProminent)
-                    .tint(SeeleColors.accent)
+                    .buttonStyle(.seelePrimary)
             }
+
+            footer
+                .opacity(appeared ? 1.0 : 0.0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
@@ -62,6 +70,25 @@ struct StandardEmptyState: View {
                 appeared = true
             }
         }
+    }
+}
+
+extension StandardEmptyState where Footer == EmptyView {
+    init(
+        icon: String,
+        title: String,
+        subtitle: String,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        self.init(
+            icon: icon,
+            title: title,
+            subtitle: subtitle,
+            actionTitle: actionTitle,
+            action: action,
+            footer: { EmptyView() }
+        )
     }
 }
 

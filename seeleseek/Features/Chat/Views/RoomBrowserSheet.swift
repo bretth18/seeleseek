@@ -34,6 +34,7 @@ struct RoomBrowserSheet: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close")
             }
             .padding(SeeleSpacing.lg)
@@ -78,19 +79,10 @@ struct RoomBrowserSheet: View {
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
                         .multilineTextAlignment(.center)
-                    Button {
+                    Button("Retry") {
                         chatState.requestRoomList()
-                    } label: {
-                        Text("Retry")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textOnAccent)
-                            .padding(.horizontal, SeeleSpacing.md)
-                            .padding(.vertical, SeeleSpacing.sm)
-                            .background(SeeleColors.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.seelePrimary(.small))
                 }
                 .padding(SeeleSpacing.lg)
                 Spacer()
@@ -146,22 +138,13 @@ struct RoomBrowserSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                     .accessibilityLabel("Room name")
 
-                Button {
+                Button("Create") {
                     chatState.createRoom()
                     if chatState.createRoomError == nil {
                         isPresented = false
                     }
-                } label: {
-                    Text("Create")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textOnAccent)
-                        .padding(.horizontal, SeeleSpacing.md)
-                        .padding(.vertical, SeeleSpacing.sm)
-                        .background(SeeleColors.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.seelePrimary(.small))
             }
 
             HStack {

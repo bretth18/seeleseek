@@ -148,6 +148,7 @@ struct UpdateSettingsSection: View {
                                     .font(SeeleTypography.caption)
                                     .foregroundStyle(SeeleColors.accent)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
 

@@ -16,12 +16,14 @@ struct BrowseView: View {
         @Bindable var browseBinding = appState.browseState
 
         VStack(spacing: 0) {
+            browseBarView(currentUserBinding: $browseBinding.currentUser)
+
+            Divider().background(SeeleColors.surfaceSecondary)
+
             if !browseState.browses.isEmpty {
                 browseTabBar
             }
 
-            browseBarView(currentUserBinding: $browseBinding.currentUser)
-            Divider().background(SeeleColors.surfaceSecondary)
             contentArea
         }
         .background(SeeleColors.background)
@@ -89,53 +91,25 @@ struct BrowseView: View {
     }
 
     private func browseBarView(currentUserBinding: Binding<String>) -> some View {
-        HStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: "person")
-                    .foregroundStyle(SeeleColors.textTertiary)
-
-                TextField("Enter username to browse...", text: currentUserBinding)
-                    .textFieldStyle(.plain)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .onSubmit {
-                        if browseState.canBrowse {
-                            browseUser()
-                        }
+        StandardActionBar {
+            StandardSearchField(
+                text: currentUserBinding,
+                placeholder: "Enter username to browse...",
+                icon: "person",
+                clearLabel: "Clear username",
+                onSubmit: {
+                    if browseState.canBrowse {
+                        browseUser()
                     }
+                },
+                onClear: { browseState.clear() }
+            )
 
-                if !browseState.currentUser.isEmpty {
-                    Button {
-                        browseState.clear()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(SeeleColors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear username")
-                }
-            }
-            .padding(SeeleSpacing.md)
-            .background(SeeleColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-
-            Button {
+            PrimaryButton("Browse", fullWidth: false) {
                 browseUser()
-            } label: {
-                Text("Browse")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.lg)
-                    .padding(.vertical, SeeleSpacing.md)
-                    .background(browseState.canBrowse ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.plain)
             .disabled(!browseState.canBrowse)
         }
-        .padding(SeeleSpacing.lg)
-        .background(SeeleColors.surface.opacity(0.5))
     }
 
     @ViewBuilder
@@ -191,10 +165,9 @@ struct BrowseView: View {
                     .padding(.horizontal)
             }
 
-            SecondaryButton("Try Again", icon: "arrow.clockwise") {
+            SecondaryButton("Try Again", icon: "arrow.clockwise", fullWidth: false) {
                 browseState.retryCurrentBrowse()
             }
-            .frame(width: 150)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -213,28 +186,19 @@ struct BrowseView: View {
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textTertiary)
 
-            SecondaryButton("Refresh", icon: "arrow.clockwise") {
+            SecondaryButton("Refresh", icon: "arrow.clockwise", fullWidth: false) {
                 browseState.refreshCurrentBrowse()
             }
-            .frame(width: 150)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateView: some View {
-        VStack(spacing: SeeleSpacing.lg) {
-            Image(systemName: "folder.badge.person.crop")
-                .font(.system(size: SeeleSpacing.iconSizeHero, weight: .light))
-                .foregroundStyle(SeeleColors.textTertiary)
-
-            Text("Browse User Files")
-                .font(SeeleTypography.title2)
-                .foregroundStyle(SeeleColors.textSecondary)
-
-            Text("Enter a username above to see their shared files")
-                .font(SeeleTypography.subheadline)
-                .foregroundStyle(SeeleColors.textTertiary)
-
+        StandardEmptyState(
+            icon: "folder.badge.person.crop",
+            title: "Browse User Files",
+            subtitle: "Enter a username above to see their shared files"
+        ) {
             if !browseState.browseHistory.isEmpty {
                 VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                     Text("Recent")
@@ -260,10 +224,11 @@ struct BrowseView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, SeeleSpacing.xxl)
+                // Match the subtitle's column so the rows read as part of
+                // the centered block, not a full-width list.
+                .frame(maxWidth: 300, alignment: .leading)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @State private var showVisualizations = true

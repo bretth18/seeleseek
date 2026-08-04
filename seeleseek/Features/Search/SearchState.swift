@@ -316,7 +316,7 @@ final class SearchState {
     /// never re-run the filter pass.
     private(set) var filteredResults: [SearchResult] = []
 
-    private func recomputeFilteredResults() {
+    func recomputeFilteredResults() {
         guard let search = currentSearch else {
             filteredResults = []
             return

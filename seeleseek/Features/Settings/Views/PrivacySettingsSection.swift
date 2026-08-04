@@ -81,7 +81,7 @@ struct PrivacySettingsSection: View {
                             .onSubmit(addPattern)
 
                         Button("Add", action: addPattern)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.seelePrimary(.small))
                             .disabled(trimmedNewPattern.isEmpty)
                     }
                 }
@@ -113,11 +113,10 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Remove") {
+                Button("Remove", role: .destructive) {
                     settings.blockedUsernamePatterns.removeAll { $0 == pattern }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Remove pattern \(pattern)")
             }
         }
@@ -168,7 +167,7 @@ struct PrivacySettingsSection: View {
                             TextField("Reason (optional)", text: $newBlockReason)
                                 .textFieldStyle(SeeleTextFieldStyle())
 
-                            Button("Block") {
+                            Button("Block", role: .destructive) {
                                 guard !newBlockUsername.isEmpty else { return }
                                 Task {
                                     await socialState.blockUser(newBlockUsername, reason: newBlockReason.isEmpty ? nil : newBlockReason)
@@ -176,7 +175,7 @@ struct PrivacySettingsSection: View {
                                     newBlockReason = ""
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.seeleSecondary(.small))
                             .disabled(newBlockUsername.isEmpty)
                         }
 
@@ -237,8 +236,7 @@ struct PrivacySettingsSection: View {
                         await socialState.unblockUser(blocked.username)
                     }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Unblock \(blocked.username)")
             }
         }
@@ -418,6 +416,7 @@ struct PrivacySettingsSection: View {
                                     socialState.detectedLeeches.removeAll()
                                     socialState.warnedLeeches.removeAll()
                                 }
+                                .buttonStyle(.plain)
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.accent)
                             }
@@ -493,14 +492,13 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Block") {
+                Button("Block", role: .destructive) {
                     Task {
                         await socialState.blockUser(username, reason: "Leech - no shared files")
                         socialState.detectedLeeches.remove(username)
                     }
                 }
-                .buttonStyle(.bordered)
-                .foregroundStyle(SeeleColors.error)
+                .buttonStyle(.seeleSecondary(.small))
                 .accessibilityLabel("Block \(username)")
             }
         }

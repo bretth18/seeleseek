@@ -34,8 +34,7 @@ struct MyProfileView: View {
                     Button("Save") {
                         saveProfile()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SeeleColors.accent)
+                    .buttonStyle(.seelePrimary(.small))
                 }
             }
 
@@ -75,13 +74,16 @@ struct MyProfileView: View {
                         Button("Choose Image...") {
                             choosePicture()
                         }
+                        .buttonStyle(.seeleSecondary(.small))
 
                         if socialState.myPicture != nil {
-                            Button("Remove") {
+                            Button("Remove", role: .destructive) {
                                 socialState.myPicture = nil
                                 pictureError = nil
                                 hasChanges = true
                             }
+                            .buttonStyle(.plain)
+                            .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.error)
                             .accessibilityLabel("Remove profile picture")
                         }
@@ -139,6 +141,7 @@ struct MyProfileView: View {
                     Button("Check Status") {
                         socialState.checkPrivileges()
                     }
+                    .buttonStyle(.plain)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.accent)
                     .accessibilityLabel("Check privilege status")
@@ -161,7 +164,8 @@ struct MyProfileView: View {
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
-                    
+                    .buttonStyle(.plain)
+
                 }
             }
 
@@ -180,6 +184,7 @@ struct MyProfileView: View {
                     Button("Edit") {
                         appState.sidebarSelection = .social
                     }
+                    .buttonStyle(.plain)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.accent)
                     .accessibilityLabel("Edit interests")

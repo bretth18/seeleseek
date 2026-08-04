@@ -25,7 +25,7 @@ struct TransfersView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            tabBar
 
             Divider().background(SeeleColors.surfaceSecondary)
 
@@ -60,112 +60,78 @@ struct TransfersView: View {
         }
     }
 
-    private var header: some View {
-        VStack(spacing: SeeleSpacing.md) {
-            HStack(spacing: SeeleSpacing.xl) {
-                speedStat(
-                    icon: "arrow.down",
-                    label: "Download",
-                    speed: transferState.totalDownloadSpeed,
-                    color: SeeleColors.info
-                )
-
-                speedStat(
-                    icon: "arrow.up",
-                    label: "Upload",
-                    speed: transferState.totalUploadSpeed,
-                    color: SeeleColors.success
-                )
-
-                if selectedTab == .uploads || appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
+    private var tabBar: some View {
+        StandardTabBar(
+            selection: $selectedTab,
+            icon: { $0.icon },
+            badge: { tab in
+                switch tab {
+                case .downloads: transferState.downloads.count
+                case .uploads: transferState.uploads.count
+                case .history: transferState.history.count
+                }
+            }
+        ) {
+            StandardStatCluster {
+                // Gate on upload activity only — a selectedTab condition
+                // here reflows the cluster on every tab switch.
+                if appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
                     uploadQueueStat
                 }
 
-                Spacer()
-
-                Button {
-                    isDashboardPresented = true
-                } label: {
-                    Label("Dashboard", systemImage: "chart.bar.xaxis")
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .help("Open queue dashboard")
-
-                if !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty {
-                    Menu {
-                        Button("Clear Completed") {
-                            transferState.clearCompleted()
-                        }
-                        Button("Clear Failed") {
-                            transferState.clearFailed()
-                        }
-                    } label: {
-                        Label("Clear", systemImage: "trash")
-                            .font(SeeleTypography.subheadline)
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-                }
+                StandardLiveStat(
+                    icon: "arrow.down",
+                    value: transferState.totalDownloadSpeed.formattedSpeed,
+                    iconColor: SeeleColors.info,
+                    accessibilityLabel: "Download speed \(transferState.totalDownloadSpeed.formattedSpeed)"
+                )
+                StandardLiveStat(
+                    icon: "arrow.up",
+                    value: transferState.totalUploadSpeed.formattedSpeed,
+                    iconColor: SeeleColors.success,
+                    accessibilityLabel: "Upload speed \(transferState.totalUploadSpeed.formattedSpeed)"
+                )
             }
-            .padding(.horizontal, SeeleSpacing.lg)
-            .padding(.top, SeeleSpacing.md)
 
-            StandardTabBar(
-                selection: $selectedTab,
-                showsBackground: false,
-                icon: { $0.icon },
-                badge: { tab in
-                    switch tab {
-                    case .downloads: transferState.downloads.count
-                    case .uploads: transferState.uploads.count
-                    case .history: transferState.history.count
-                    }
-                }
-            )
+            IconButton(icon: "chart.bar.xaxis", label: "Open queue dashboard") {
+                isDashboardPresented = true
+            }
+
+            clearMenu
         }
-        .padding(.bottom, SeeleSpacing.sm)
-        .background(SeeleColors.surface.opacity(0.5))
+    }
+
+    private var hasClearableTransfers: Bool {
+        !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty
+    }
+
+    /// Always present so the trailing cluster never reflows; disabled
+    /// (not hidden) when there is nothing to clear.
+    private var clearMenu: some View {
+        Menu {
+            Button("Clear Completed") {
+                transferState.clearCompleted()
+            }
+            Button("Clear Failed") {
+                transferState.clearFailed()
+            }
+        } label: {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.seeleIcon)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!hasClearableTransfers)
+        .help("Clear finished transfers")
+        .accessibilityLabel("Clear finished transfers")
     }
 
     private var uploadQueueStat: some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            Image(systemName: "person.2.fill")
-                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .bold))
-                .foregroundStyle(SeeleColors.success)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Slots")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                Text("\(appState.uploadManager.slotsSummary) · Queue: \(appState.uploadManager.queueDepth)")
-                    .font(SeeleTypography.mono)
-                    .foregroundStyle(SeeleColors.textPrimary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Upload slots: \(appState.uploadManager.slotsSummary), queue: \(appState.uploadManager.queueDepth)")
-        .accessibilityAddTraits(.isStaticText)
-    }
-
-    private func speedStat(icon: String, label: String, speed: Int64, color: Color) -> some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            Image(systemName: icon)
-                .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .bold))
-                .foregroundStyle(color)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text(label)
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textTertiary)
-                Text(speed.formattedSpeed)
-                    .font(SeeleTypography.mono)
-                    .foregroundStyle(SeeleColors.textPrimary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(label) speed: \(speed.formattedSpeed)")
-        .accessibilityAddTraits(.isStaticText)
+        StandardLiveStat(
+            icon: "person.2.fill",
+            value: "\(appState.uploadManager.slotsSummary) · \(appState.uploadManager.queueDepth) queued",
+            accessibilityLabel: "Upload slots: \(appState.uploadManager.slotsSummary), queue: \(appState.uploadManager.queueDepth)"
+        )
     }
 
     @ViewBuilder
@@ -213,13 +179,13 @@ struct TransfersView: View {
                         icon: "arrow.down",
                         label: "Downloaded",
                         value: transferState.totalDownloaded.formattedBytes,
-                        color: SeeleColors.info
+                        iconColor: SeeleColors.info
                     )
                     statItem(
                         icon: "arrow.up",
                         label: "Uploaded",
                         value: transferState.totalUploaded.formattedBytes,
-                        color: SeeleColors.success
+                        iconColor: SeeleColors.success
                     )
                     Spacer()
                     Button {
@@ -248,11 +214,11 @@ struct TransfersView: View {
         }
     }
 
-    private func statItem(icon: String, label: String, value: String, color: Color) -> some View {
+    private func statItem(icon: String, label: String, value: String, iconColor: Color) -> some View {
         HStack(spacing: SeeleSpacing.sm) {
             Image(systemName: icon)
                 .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
-                .foregroundStyle(color)
+                .foregroundStyle(iconColor)
             VStack(alignment: .leading, spacing: 0) {
                 Text(label)
                     .font(SeeleTypography.caption)
