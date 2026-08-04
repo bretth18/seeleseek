@@ -40,6 +40,7 @@ struct InterestsView: View {
                 text: $newInterest,
                 placeholder: "Add an interest...",
                 icon: interestType == .like ? "heart" : "heart.slash",
+                clearLabel: "Clear interest text",
                 onSubmit: { addInterest() }
             )
 

@@ -96,6 +96,7 @@ struct BrowseView: View {
                 text: currentUserBinding,
                 placeholder: "Enter username to browse...",
                 icon: "person",
+                clearLabel: "Clear username",
                 onSubmit: {
                     if browseState.canBrowse {
                         browseUser()

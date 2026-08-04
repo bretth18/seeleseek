@@ -7,6 +7,9 @@ struct StandardSearchField: View {
     var placeholder: String = "Search..."
     var icon: String = "magnifyingglass"
     var isLoading: Bool = false
+    /// Spoken name for the built-in clear button. Override when the field
+    /// holds something other than a search query ("Clear username").
+    var clearLabel: String = "Clear search text"
     var onSubmit: (() -> Void)?
     /// Runs after the built-in clear button empties the text, for hosts
     /// that must reset more than the query string.
@@ -49,7 +52,7 @@ struct StandardSearchField: View {
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Clear search text")
+                .accessibilityLabel(clearLabel)
             }
         }
         .padding(.horizontal, SeeleSpacing.md)
