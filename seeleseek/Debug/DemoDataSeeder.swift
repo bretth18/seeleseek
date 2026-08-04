@@ -1,6 +1,9 @@
 #if DEBUG
 import Foundation
 import SeeleseekCore
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Seeds realistic demo data into AppState for marketing screenshots.
 /// Activated by launching the app with `--screenshots` argument
@@ -26,7 +29,18 @@ enum DemoDataSeeder {
         seedBrowse(appState.browseState)
         seedSocial(appState.socialState)
         seedWishlist(appState.wishlistState)
+
+        #if canImport(AppKit)
+        // macOS gives initial key focus to the window's first text field,
+        // which renders the seeded search query selection-highlighted in
+        // captures. Drop focus once the window is up.
+        Task {
+            try? await Task.sleep(for: .milliseconds(900))
+            NSApp.keyWindow?.makeFirstResponder(nil)
+        }
+        #endif
     }
+
 
     // MARK: - Search
 
@@ -59,6 +73,7 @@ enum DemoDataSeeder {
             isSearching: true
         )
         state.searches.append(second)
+        state.recomputeFilteredResults()
     }
 
     private static func computerDataResults() -> [SearchResult] {
