@@ -578,6 +578,13 @@ final class ChatState {
         Task { try? await networkClient?.setRoomTicker(room: room, ticker: "") }
     }
 
+    /// This user's Soulseek username, or "" when not connected. Views that
+    /// already hold a `ChatRoom` use this to index into it rather than
+    /// re-scanning `joinedRooms` for a room they were handed.
+    var myUsername: String {
+        networkClient?.username ?? ""
+    }
+
     func giveUpOwnership(room: String) {
         Task { try? await networkClient?.giveUpPrivateRoomOwnership(room) }
     }
@@ -681,6 +688,18 @@ final class ChatState {
                 return
             case .clear:
                 clearTranscript()
+                return
+            case .ticker(let text):
+                // Tickers are per-room; there is nowhere to put one in a
+                // private chat.
+                guard let room = selectedRoom else {
+                    appendLocalSystemMessage("Tickers only work in a room")
+                    return
+                }
+                // Empty text is the protocol's removal signal, so one call
+                // covers both set and clear.
+                setTicker(room: room, text: text)
+                appendLocalSystemMessage(text.isEmpty ? "Ticker cleared" : "Ticker set")
                 return
             case .unknown(let name):
                 appendLocalSystemMessage("Unknown command: \(name)")

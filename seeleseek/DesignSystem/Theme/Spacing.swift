@@ -29,9 +29,9 @@ nonisolated enum SeeleSpacing {
     /// - **Settings + list rows** → use `rowVertical` (6pt). This is the
     ///   standard for `SettingsComponents.settingsRow`, `StandardListRow`,
     ///   and `SharedFolderRow`.
-    /// - **Form rows with inline inputs** → use `listRowPadding` (8pt).
+    /// - **Form rows with inline inputs** → use `listRowPadding` (12pt).
     ///   Slightly roomier to accommodate TextField / stepper controls.
-    /// - **Primary cards / hero containers** → use `cardPadding` (12pt)
+    /// - **Primary cards / hero containers** → use `cardPadding` (16pt)
     ///   as their inner content padding, not as row padding.
     ///
     /// If you find yourself wanting a different value, promote it to a
@@ -111,7 +111,6 @@ nonisolated enum SeeleSpacing {
     /// Primary/SecondaryButton). Inputs and buttons that sit in the same
     /// row must render at the same height, or the row looks ragged.
     static let controlHeight: CGFloat = 36
-    static let progressBarHeight: CGFloat = 4
 
     // MARK: - Toggle Component
     static let toggleWidth: CGFloat = 46

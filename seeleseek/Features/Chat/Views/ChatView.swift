@@ -190,14 +190,11 @@ struct ChatView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button {
-                if room.isPrivate {
-                    chatState.selectRoom(room.name)
-                    chatState.showRoomManagement = true
-                }
+                chatState.selectRoom(room.name)
+                chatState.showRoomManagement = true
             } label: {
                 Label("Room Info", systemImage: "info.circle")
             }
-            .disabled(!room.isPrivate)
 
             Divider()
 
@@ -210,11 +207,9 @@ struct ChatView: View {
         .accessibilityLabel(roomRowAccessibilityLabel(room))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .accessibilityActions {
-            if room.isPrivate {
-                Button("Room info") {
-                    chatState.selectRoom(room.name)
-                    chatState.showRoomManagement = true
-                }
+            Button("Room info") {
+                chatState.selectRoom(room.name)
+                chatState.showRoomManagement = true
             }
             Button("Leave room") {
                 chatState.leaveRoom(room.name)

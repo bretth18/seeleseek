@@ -389,12 +389,10 @@ struct FileTreeRow: View {
     }
 
     private func copyFilename() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(file.displayName, forType: .string)
+        file.displayName.copyToPasteboard()
     }
 
     private func copyPath() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(file.filename, forType: .string)
+        file.filename.copyToPasteboard()
     }
 }

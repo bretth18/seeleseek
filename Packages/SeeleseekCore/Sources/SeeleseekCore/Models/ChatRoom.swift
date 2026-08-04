@@ -45,6 +45,12 @@ public struct ChatRoom: Identifiable, Hashable, Sendable {
     public var members: [String]
     public var tickers: [String: String]
 
+    /// `tickers` is a Dictionary, so an unsorted iteration reshuffles rows on
+    /// every render. Every ticker list renders through this.
+    public var sortedTickers: [(key: String, value: String)] {
+        tickers.sorted { $0.key < $1.key }
+    }
+
     public init(
         name: String,
         users: [String] = [],

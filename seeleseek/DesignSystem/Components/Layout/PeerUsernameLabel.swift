@@ -13,15 +13,26 @@ import SeeleseekCore
 /// sub-cell still holds the full username width — important for
 /// cross-row alignment.
 ///
-/// When `countryFlag` is non-nil the emoji renders at the end of the
-/// cell at caption2 size. It carries `layoutPriority(1)` so it stays
-/// visible even when a long username has to truncate.
+/// The flag is captured on appear (and on username change) rather than
+/// read live in `body`: `UserInfoCache.countries` mutates on every GeoIP
+/// resolution, and reading it during body would invalidate every visible
+/// row on every unrelated peer's country arriving — with a 500-row search
+/// list that dominated the macOS 15 re-render storm. The cost is minor
+/// staleness if this peer's country resolves after the row is on screen.
 struct PeerUsernameLabel: View {
+    @Environment(\.appState) private var appState
+
     let iconName: String
     let username: String
     let width: CGFloat
     var peerStatus: BuddyStatus? = nil
-    var countryFlag: String? = nil
+
+    @State private var countryFlag: String?
+
+    private func refreshCountryFlag() {
+        let flag = appState.networkClient.userInfoCache.flag(for: username)
+        countryFlag = flag.isEmpty ? nil : flag
+    }
 
     var body: some View {
         HStack(spacing: SeeleSpacing.xs) {
@@ -52,7 +63,7 @@ struct PeerUsernameLabel: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            if let countryFlag, !countryFlag.isEmpty {
+            if let countryFlag {
                 // Not hidden: the flag emoji has a native spoken
                 // description ("flag: Germany"), so the country
                 // stays available when a row combines its children.
@@ -62,6 +73,8 @@ struct PeerUsernameLabel: View {
             }
         }
         .frame(width: width, alignment: .leading)
+        .onAppear { refreshCountryFlag() }
+        .onChange(of: username) { _, _ in refreshCountryFlag() }
     }
 
     private func statusColor(for status: BuddyStatus) -> Color {

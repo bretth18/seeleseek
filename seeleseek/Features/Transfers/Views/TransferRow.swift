@@ -78,15 +78,11 @@ extension Transfer {
 
 // MARK: - Layout anchors
 
-/// Fixed widths so the same field lands at the same X coordinate on every
-/// transfer row. Peer sub-cell sizing matches SearchResultRow so rows
-/// across the app belong to the same visual family.
+/// Transfer-only columns. Peer and speed anchors live in `RowLayout`,
+/// shared with the search and history rows.
 enum TransferRowLayout {
-    static let peerUsernameWidth: CGFloat = 96     // tail-truncates longer names
-    static let peerCellWidth: CGFloat = 168        // username sub-cell + slack
     static let sparklineWidth: CGFloat = 64        // snug next to the speed value
     static let sparklineHeight: CGFloat = 16       // matches a caption's line box
-    static let speedColumnWidth: CGFloat = 82      // "245.2 KB/s"
     static let secondaryColumnWidth: CGFloat = 150 // "18.6 MB / 120.4 MB"
 }
 
@@ -151,15 +147,6 @@ struct TransferRow: View {
         return appState.audioPreview.isPlaying(url: path)
     }
 
-    /// Country flag emoji for the peer. Captured at row appear rather than
-    /// live-read; see SearchResultRow / HistoryRow for the same pattern.
-    @State private var countryFlag: String?
-
-    private func refreshCountryFlag() {
-        let f = appState.networkClient.userInfoCache.flag(for: transfer.username)
-        countryFlag = f.isEmpty ? nil : f
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             StandardListRow(onHoverChanged: { isHovered = $0 }) {
@@ -168,8 +155,7 @@ struct TransferRow: View {
 
                     TransferInfoColumn(
                         transfer: transfer,
-                        peerStatus: peerStatus,
-                        countryFlag: countryFlag
+                        peerStatus: peerStatus
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -210,14 +196,8 @@ struct TransferRow: View {
             onMoveToTop: onMoveToTop,
             onMoveToBottom: onMoveToBottom
         ))
-        .onAppear {
-            refreshCountryFlag()
-            refreshPeerStatus()
-        }
-        .onChange(of: transfer.username) { _, _ in
-            refreshCountryFlag()
-            refreshPeerStatus()
-        }
+        .onAppear { refreshPeerStatus() }
+        .onChange(of: transfer.username) { _, _ in refreshPeerStatus() }
         .onChange(of: transfer.status) { _, _ in
             refreshPeerStatus()
         }
@@ -400,7 +380,6 @@ private struct TransferDirectionGlyph: View {
 private struct TransferInfoColumn: View {
     let transfer: Transfer
     let peerStatus: BuddyStatus?
-    let countryFlag: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -462,8 +441,8 @@ private struct TransferInfoColumn: View {
         } else if let folder = transfer.folderPath, !folder.isEmpty {
             HStack(spacing: 0) {
                 peerCluster
-                    .frame(width: TransferRowLayout.peerCellWidth, alignment: .leading)
-                folderCell(folder)
+                    .frame(width: RowLayout.peerCellWidth, alignment: .leading)
+                FolderPathLabel(folder)
                 Spacer(minLength: 0)
             }
         } else if transfer.retryCount > 0 {
@@ -482,9 +461,8 @@ private struct TransferInfoColumn: View {
             PeerUsernameLabel(
                 iconName: transfer.direction == .download ? "arrow.down" : "arrow.up",
                 username: transfer.username,
-                width: TransferRowLayout.peerUsernameWidth,
-                peerStatus: peerStatus,
-                countryFlag: countryFlag
+                width: RowLayout.peerUsernameWidth,
+                peerStatus: peerStatus
             )
 
             if transfer.retryCount > 0, transfer.error != nil {
@@ -507,22 +485,6 @@ private struct TransferInfoColumn: View {
                 .font(SeeleTypography.monoSmall)
                 .foregroundStyle(SeeleColors.error)
                 .lineLimit(1)
-        }
-    }
-
-    private func folderCell(_ folder: String) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "folder")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.textTertiary)
-                .accessibilityHidden(true)
-
-            Text(folder)
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(folder)
         }
     }
 
@@ -589,7 +551,7 @@ private struct TransferMetadataColumn: View {
     private var line1Width: CGFloat {
         TransferRowLayout.sparklineWidth
             + SeeleSpacing.xs
-            + TransferRowLayout.speedColumnWidth
+            + RowLayout.speedColumnWidth
     }
 
     var body: some View {
@@ -606,7 +568,7 @@ private struct TransferMetadataColumn: View {
         HStack(spacing: SeeleSpacing.xs) {
             sparklineSlot
             primaryStat
-                .frame(width: TransferRowLayout.speedColumnWidth, alignment: .trailing)
+                .frame(width: RowLayout.speedColumnWidth, alignment: .trailing)
         }
     }
 

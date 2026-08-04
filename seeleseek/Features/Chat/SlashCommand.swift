@@ -8,6 +8,10 @@ enum SlashCommand: Equatable {
     case join(String)
     case leave
     case clear
+    /// Sets your ticker in the current room. An empty argument clears it —
+    /// that is the protocol's own removal signal (RoomTickerSet, code 116:
+    /// "sending an empty ticker string removes any existing ticker").
+    case ticker(String)
     case unknown(String)
 
     /// Returns nil if the input does not start with `/`.
@@ -28,6 +32,8 @@ enum SlashCommand: Equatable {
             return .leave
         case "/clear":
             return .clear
+        case "/ticker":
+            return .ticker(argument)
         default:
             return .unknown(name)
         }

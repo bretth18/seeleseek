@@ -70,6 +70,7 @@ struct RoomManagementSheet: View {
         }
         .frame(width: 400, height: 500)
         .background(SeeleColors.background)
+        .onChange(of: myTicker, initial: true) { _, new in tickerText = new }
         .alert("Give Up Ownership", isPresented: $showGiveUpConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Give Up", role: .destructive) {
@@ -154,6 +155,16 @@ struct RoomManagementSheet: View {
 
     // MARK: - Ticker Section
 
+    private var myTicker: String {
+        room.tickers[chatState.myUsername] ?? ""
+    }
+
+    /// The committed form of the field. Compared trimmed, or trailing
+    /// whitespace alone surfaces a "Set" button that commits nothing.
+    private var draftTicker: String {
+        tickerText.trimmingCharacters(in: .whitespaces)
+    }
+
     private var tickerSection: some View {
         SeeleFormSection("TICKER") {
             SeeleFormRow(showDivider: !room.tickers.isEmpty) {
@@ -163,22 +174,33 @@ struct RoomManagementSheet: View {
                         .font(SeeleTypography.body)
                         .foregroundStyle(SeeleColors.textPrimary)
                         .accessibilityLabel("Set your ticker")
+                        .onSubmit(commitTicker)
 
-                    if !tickerText.isEmpty {
-                        Button {
-                            chatState.setTicker(room: room.name, text: tickerText)
-                            tickerText = ""
-                        } label: {
+                    if draftTicker != myTicker {
+                        Button(action: commitTicker) {
                             Text("Set")
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.accent)
                         }
                         .buttonStyle(.plain)
                     }
+
+                    // Shown only once a ticker exists on the server.
+                    if !myTicker.isEmpty {
+                        Button {
+                            tickerText = ""
+                            commitTicker()
+                        } label: {
+                            Text("Clear")
+                                .font(SeeleTypography.caption)
+                                .foregroundStyle(SeeleColors.error)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
 
-            ForEach(Array(room.tickers), id: \.key) { username, ticker in
+            ForEach(room.sortedTickers, id: \.key) { username, ticker in
                 SeeleFormRow {
                     HStack {
                         Text(username)
@@ -196,6 +218,13 @@ struct RoomManagementSheet: View {
                 }
             }
         }
+    }
+
+    private func commitTicker() {
+        guard draftTicker != myTicker else { return }
+        // An empty ticker is the protocol's removal signal, so set and clear
+        // are the same call.
+        chatState.setTicker(room: room.name, text: draftTicker)
     }
 
     // MARK: - Members Section

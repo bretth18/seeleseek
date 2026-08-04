@@ -3,13 +3,9 @@ import SeeleseekCore
 
 // MARK: - Layout anchors
 
-/// Fixed widths so the same field lands at the same X coordinate on every
-/// history row. Peer sub-cell sizing matches `SearchResultRow` and
-/// `TransferRow` so rows across the app feel like one family.
+/// History-only columns. Peer and speed anchors live in `RowLayout`,
+/// shared with the search and transfer rows.
 enum HistoryRowLayout {
-    static let peerUsernameWidth: CGFloat = 96
-    static let peerCellWidth: CGFloat = 168
-    static let speedColumnWidth: CGFloat = 84   // "999.9 KB/s"
     static let durationColumnWidth: CGFloat = 64 // "1h 23m"
     static let timestampStackWidth: CGFloat = 110 // size + "4/18/26, 7:42 PM"
 }
@@ -29,14 +25,6 @@ struct HistoryRow: View {
 
     @State private var isHovered = false
 
-    /// Captured at row appear and on username change (the @State avoids
-    /// subscribing the whole row body to `UserInfoCache.countries`, which
-    /// mutates on every GeoIP resolution and would otherwise invalidate
-    /// every visible row on every peer's country arriving). Accepts minor
-    /// staleness if this user's country resolves after the row is already
-    /// on screen — fine for historical entries.
-    @State private var countryFlag: String?
-
     /// Resolved once per row appear (and on item change) instead of per
     /// body eval — `TransferHistoryItem.resolvedLocalPath` does multiple
     /// synchronous `FileManager` stats, and with 200 history rows that
@@ -52,11 +40,6 @@ struct HistoryRow: View {
     private var isPlayingPreview: Bool {
         guard let path = resolvedPath else { return false }
         return appState.audioPreview.isPlaying(url: path)
-    }
-
-    private func refreshCountryFlag() {
-        let f = appState.networkClient.userInfoCache.flag(for: item.username)
-        countryFlag = f.isEmpty ? nil : f
     }
 
     private func refreshResolvedPath() {
@@ -91,11 +74,7 @@ struct HistoryRow: View {
             }
             UserAccessibilityActions(username: item.username)
         }
-        .onAppear {
-            refreshCountryFlag()
-            refreshResolvedPath()
-        }
-        .onChange(of: item.username) { _, _ in refreshCountryFlag() }
+        .onAppear { refreshResolvedPath() }
         .onChange(of: item.id) { _, _ in refreshResolvedPath() }
     }
 
@@ -131,8 +110,7 @@ struct HistoryRow: View {
             PeerUsernameLabel(
                 iconName: item.isDownload ? "arrow.down" : "arrow.up",
                 username: item.username,
-                width: HistoryRowLayout.peerUsernameWidth,
-                countryFlag: countryFlag
+                width: RowLayout.peerUsernameWidth
             )
 
             if !fileExists {
@@ -157,7 +135,7 @@ struct HistoryRow: View {
                 value: item.formattedSpeed,
                 label: "avg",
                 tint: SeeleColors.info,
-                width: HistoryRowLayout.speedColumnWidth
+                width: RowLayout.speedColumnWidth
             )
 
             labelledStat(

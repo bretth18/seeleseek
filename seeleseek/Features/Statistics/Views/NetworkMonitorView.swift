@@ -9,11 +9,20 @@ struct NetworkMonitorView: View {
         case peers = "Peers"
         case search = "Search"
         case history = "History"
+
+        var icon: String {
+            switch self {
+            case .overview: "waveform.path.ecg"
+            case .peers: "person.line.dotted.person"
+            case .search: "magnifyingglass"
+            case .history: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+            }
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            StandardTabBar(selection: $selectedTab) {
+            StandardTabBar(selection: $selectedTab, icon: { $0.icon }) {
                 MonitorLiveStatsBadge()
             }
 
@@ -32,8 +41,8 @@ struct NetworkMonitorView: View {
                     MonitorHistoryTab()
                 }
             }
-            .background(SeeleColors.background)
         }
+        .background(SeeleColors.background)
         .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
     }
 }

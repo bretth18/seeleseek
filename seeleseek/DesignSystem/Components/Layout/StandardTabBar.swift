@@ -132,12 +132,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(isSelected ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
-            .overlay {
-                if isSelected && isFocused {
-                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
-                }
-            }
+            .seeleTabFocusRing(isSelected && isFocused)
             .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)

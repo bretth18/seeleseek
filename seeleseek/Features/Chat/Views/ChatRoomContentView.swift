@@ -85,17 +85,19 @@ struct ChatRoomContentView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(chatState.showUserListPanel ? "Hide user list" : "Show user list")
 
-            if room.isPrivate && (chatState.isOwner(of: room.name) || chatState.isOperator(of: room.name)) {
-                Button {
-                    chatState.showRoomManagement = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: SeeleSpacing.iconSizeSmall))
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Room settings")
+            // Shown for every joined room, not just private ones you manage:
+            // the sheet's ticker field is the only way to set your own ticker,
+            // and tickers are per-user in any room (RoomTickerSet, code 116).
+            // The owner-only sections inside the sheet gate themselves.
+            Button {
+                chatState.showRoomManagement = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.textSecondary)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Room settings")
 
             Button {
                 chatState.leaveRoom(room.name)
@@ -146,9 +148,7 @@ struct ChatRoomContentView: View {
             if !chatState.tickersCollapsed {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: SeeleSpacing.lg) {
-                        // Sort by username — a Dictionary's iteration order is
-                        // nondeterministic and would shuffle tickers per render.
-                        ForEach(room.tickers.sorted(by: { $0.key < $1.key }), id: \.key) { username, ticker in
+                        ForEach(room.sortedTickers, id: \.key) { username, ticker in
                             HStack(spacing: SeeleSpacing.xs) {
                                 Text(username)
                                     .font(SeeleTypography.caption2)

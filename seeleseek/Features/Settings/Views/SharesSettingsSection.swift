@@ -13,13 +13,7 @@ struct SharesSettingsSection: View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sectionSpacing) {
             settingsHeader("Shares")
 
-            // Summary stats
-            HStack(spacing: SeeleSpacing.md) {
-                statItem(icon: "folder.fill", value: "\(shareManager.totalFolders)", label: "Folders", color: SeeleColors.warning)
-                statItem(icon: "doc.fill", value: "\(shareManager.totalFiles)", label: "Files", color: SeeleColors.accent)
-                statItem(icon: "externaldrive.fill", value: shareManager.totalSize.formattedBytes, label: "Size", color: SeeleColors.info)
-                Spacer()
-            }
+            SharesSummaryStats()
 
             settingsGroup("Shared Folders") {
                 if shareManager.sharedFolders.isEmpty {
@@ -39,51 +33,8 @@ struct SharesSettingsSection: View {
                     )
                 }
 
-                // Actions row
                 settingsRow {
-                    HStack {
-                        Button {
-                            showFolderPicker()
-                        } label: {
-                            HStack(spacing: SeeleSpacing.xs) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: SeeleSpacing.iconSizeSmall))
-                                Text("Add Folder")
-                            }
-                            .font(SeeleTypography.body)
-                            .foregroundStyle(SeeleColors.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Pick one or more folders on disk to share with peers.")
-
-                        Spacer()
-
-                        if shareManager.isScanning {
-                            HStack(spacing: SeeleSpacing.xs) {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                Text("Scanning \(Int(shareManager.scanProgress * 100))%")
-                                    .font(SeeleTypography.caption)
-                                    .foregroundStyle(SeeleColors.textTertiary)
-                            }
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("Scanning shared folders, \(Int(shareManager.scanProgress * 100)) percent")
-                        } else {
-                            Button {
-                                Task { await shareManager.rescanAll() }
-                            } label: {
-                                HStack(spacing: SeeleSpacing.xs) {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: SeeleSpacing.iconSizeXS))
-                                    Text("Rescan")
-                                }
-                                .font(SeeleTypography.caption)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Re-read all shared folders and refresh the file index.")
-                        }
-                    }
+                    SharesScanControl()
                 }
             }
 
@@ -92,39 +43,6 @@ struct SharesSettingsSection: View {
                 settingsToggle("Share hidden files", isOn: $settings.shareHiddenFiles)
             }
         }
-    }
-
-    private func statItem(icon: String, value: String, label: String, color: Color) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: icon)
-                .font(.system(size: SeeleSpacing.iconSizeSmall))
-                .foregroundStyle(color)
-            Text(value)
-                .font(SeeleTypography.headline)
-                .foregroundStyle(SeeleColors.textPrimary)
-            Text(label)
-                .font(SeeleTypography.caption)
-                .foregroundStyle(SeeleColors.textTertiary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(value) \(label)")
-    }
-
-    private func showFolderPicker() {
-        #if os(macOS)
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        panel.message = "Select folders to share"
-        panel.prompt = "Share"
-
-        if panel.runModal() == .OK {
-            for url in panel.urls {
-                shareManager.addFolder(url)
-            }
-        }
-        #endif
     }
 }
 
@@ -206,8 +124,7 @@ struct SharedFolderRow: View {
     /// Native pop-up button (Picker with `.menu` style) — matches the
     /// existing `settingsPicker` idiom in `SettingsComponents.swift` and
     /// is the macOS-native control for "pick one of N" inline per HIG.
-    /// Labels carry SF Symbols so the dropdown is skimmable; the row's
-    /// closed state shows the current label + chevron from AppKit.
+    /// The row's closed state shows the current label + chevron from AppKit.
     private var visibilityPicker: some View {
         Picker(
             "Visibility",
@@ -216,9 +133,9 @@ struct SharedFolderRow: View {
                 set: { onVisibilityChange($0) }
             )
         ) {
-            Label("Public", systemImage: "globe")
+            Text("Public")
                 .tag(ShareManager.Visibility.public)
-            Label("Buddies only", systemImage: "lock.fill")
+            Text("Buddies only")
                 .tag(ShareManager.Visibility.buddies)
         }
         .pickerStyle(.menu)

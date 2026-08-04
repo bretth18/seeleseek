@@ -31,6 +31,18 @@ public final class ShareManager {
         totalSize = fileIndex.reduce(0) { $0 + $1.size }
     }
 
+    /// Edit `fileIndex` through a local copy so observers are notified once,
+    /// not once per element. Writing `fileIndex[i]` in a loop fires the
+    /// `@Observable` accessor on every iteration, and each notification
+    /// invalidates every view reading the array — flipping visibility on a
+    /// 10k-file share meant 10k invalidations. Same rule as
+    /// `applyFolderStats(_:)`: one write per logical change.
+    private func mutateFileIndex(_ body: (inout [IndexedFile]) -> Void) {
+        var updated = fileIndex
+        body(&updated)
+        fileIndex = updated
+    }
+
     /// Share-folder paths whose security-scoped access has already been
     /// started this app run. Access must OUTLIVE any scan — uploads serve
     /// files from these folders at arbitrary later times — so it is never
@@ -128,8 +140,11 @@ public final class ShareManager {
             self.visibility = try c.decodeIfPresent(Visibility.self, forKey: .visibility) ?? .public
         }
 
+        /// `isDirectory` is supplied deliberately: without it,
+        /// `URL(fileURLWithPath:)` stats the path to decide on a trailing
+        /// slash, and this is read several times per row per render.
         public var displayName: String {
-            URL(fileURLWithPath: path).lastPathComponent
+            URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
         }
     }
 
@@ -319,16 +334,20 @@ public final class ShareManager {
         // `fileIndex` up front left a minutes-wide window where every
         // peer lookup missed and got a terminal "File not shared."
         var newIndex: [IndexedFile] = []
+        // Collected, then applied in one write after the loop — see
+        // `mutateFileIndex` for why per-iteration writes are avoided.
+        var pendingStats: [ScanResult] = []
         for (index, folder) in sharedFolders.enumerated() {
             if let result = await scanFolderResult(folder) {
                 newIndex.append(contentsOf: result.indexed)
-                applyFolderStats(result)
+                pendingStats.append(result)
                 logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
             } else {
                 logger.error("Failed to enumerate folder: \(folder.path)")
             }
             scanProgress = Double(index + 1) / Double(sharedFolders.count)
         }
+        applyFolderStats(pendingStats)
 
         // Atomic swap — old index served lookups during the scan. Filter
         // by live folder IDs so a folder removed mid-scan isn't
@@ -380,17 +399,23 @@ public final class ShareManager {
         fileIndex.append(contentsOf: result.indexed)
         appendToWordIndex(startingAt: start)
         recomputeTotalSize()
-        applyFolderStats(result)
+        applyFolderStats([result])
         logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
     }
 
-    /// Update the per-folder counters from a completed scan.
-    private func applyFolderStats(_ result: ScanResult) {
-        if let index = sharedFolders.firstIndex(where: { $0.id == result.folderID }) {
-            sharedFolders[index].fileCount = result.fileCount
-            sharedFolders[index].totalSize = result.totalSize
-            sharedFolders[index].lastScanned = Date()
+    /// Update the per-folder counters from completed scans. Takes an array
+    /// so a full rescan writes `sharedFolders` once; see `mutateFileIndex`.
+    private func applyFolderStats(_ results: [ScanResult]) {
+        guard !results.isEmpty else { return }
+        var updated = sharedFolders
+        let scannedAt = Date()
+        for result in results {
+            guard let index = updated.firstIndex(where: { $0.id == result.folderID }) else { continue }
+            updated[index].fileCount = result.fileCount
+            updated[index].totalSize = result.totalSize
+            updated[index].lastScanned = scannedAt
         }
+        sharedFolders = updated
     }
 
     /// Disambiguate duplicate share-root display names so sharedPaths
@@ -588,18 +613,20 @@ public final class ShareManager {
         guard sharedFolders[idx].visibility != visibility else { return }
         sharedFolders[idx].visibility = visibility
         // Rewrite the subset of fileIndex that came from this folder.
-        // IndexedFile fields are `let`, so we replace entries in place.
-        for i in fileIndex.indices where fileIndex[i].folderID == id {
-            let f = fileIndex[i]
-            fileIndex[i] = IndexedFile(
-                localPath: f.localPath,
-                sharedPath: f.sharedPath,
-                size: f.size,
-                bitrate: f.bitrate,
-                duration: f.duration,
-                visibility: visibility,
-                folderID: f.folderID
-            )
+        // IndexedFile fields are `let`, so entries are replaced wholesale.
+        mutateFileIndex { index in
+            for i in index.indices where index[i].folderID == id {
+                let f = index[i]
+                index[i] = IndexedFile(
+                    localPath: f.localPath,
+                    sharedPath: f.sharedPath,
+                    size: f.size,
+                    bitrate: f.bitrate,
+                    duration: f.duration,
+                    visibility: visibility,
+                    folderID: f.folderID
+                )
+            }
         }
         save()
         // No notify — `SharedFoldersFiles` broadcasts `totalFiles` (all
