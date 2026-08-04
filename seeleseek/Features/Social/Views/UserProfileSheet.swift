@@ -113,10 +113,11 @@ struct UserProfileSheet: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeLarge))
-                    .foregroundStyle(SeeleColors.textTertiary)
+                    .font(.system(size: SeeleSpacing.iconSizeMedium))
+                    .foregroundStyle(SeeleColors.textSecondary)
             }
             .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close profile")
         }
     }
@@ -290,7 +291,7 @@ struct UserProfileSheet: View {
                     }
                     .buttonStyle(.seeleSecondary(.small))
                 } else {
-                    Button {
+                    Button(role: .destructive) {
                         Task { await appState.socialState.ignoreUser(profile.username) }
                     } label: {
                         Label("Ignore", systemImage: "eye.slash")

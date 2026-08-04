@@ -91,6 +91,7 @@ struct AboutSettingsSection: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                             .accessibilityHidden(true)
                         Link("MaxMind", destination: URL(string: "https://www.maxmind.com")!)
+                            .buttonStyle(.plain)
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.accent)
                             .accessibilityLabel("IP geolocation by MaxMind")

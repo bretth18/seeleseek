@@ -164,10 +164,9 @@ struct BrowseView: View {
                     .padding(.horizontal)
             }
 
-            SecondaryButton("Try Again", icon: "arrow.clockwise") {
+            SecondaryButton("Try Again", icon: "arrow.clockwise", fullWidth: false) {
                 browseState.retryCurrentBrowse()
             }
-            .frame(width: 150)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -186,10 +185,9 @@ struct BrowseView: View {
                 .font(SeeleTypography.subheadline)
                 .foregroundStyle(SeeleColors.textTertiary)
 
-            SecondaryButton("Refresh", icon: "arrow.clockwise") {
+            SecondaryButton("Refresh", icon: "arrow.clockwise", fullWidth: false) {
                 browseState.refreshCurrentBrowse()
             }
-            .frame(width: 150)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

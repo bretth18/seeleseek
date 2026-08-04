@@ -31,7 +31,7 @@ struct PrimaryButton: View {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .scaleEffect(0.8)
-                        .tint(.white)
+                        .tint(SeeleColors.textOnAccent)
                 } else if let icon {
                     Image(systemName: icon)
                         .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
@@ -41,8 +41,6 @@ struct PrimaryButton: View {
         }
         .buttonStyle(.seelePrimary(fullWidth: fullWidth))
         .disabled(isLoading)
-        .opacity(isLoading ? 0.7 : 1.0)
-        .animation(.easeInOut(duration: SeeleSpacing.animationFast), value: isLoading)
     }
 }
 

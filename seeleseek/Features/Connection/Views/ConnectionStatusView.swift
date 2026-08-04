@@ -32,7 +32,7 @@ struct ConnectionStatusView: View {
 
                 HStack {
                     Label("Username", systemImage: "person.fill")
-                        .seeleSecondary()
+                        .seeleSubheadline()
                     Spacer()
                     Text(username)
                         .seeleBody()
@@ -81,7 +81,7 @@ struct ConnectionStatusView: View {
             if let ip = appState.connection.serverIP {
                 HStack {
                     Label("Server IP", systemImage: "server.rack")
-                        .seeleSecondary()
+                        .seeleSubheadline()
                     Spacer()
                     Text(ip)
                         .seeleMono()
@@ -91,7 +91,7 @@ struct ConnectionStatusView: View {
 
             HStack {
                 Label("Server", systemImage: "globe")
-                    .seeleSecondary()
+                    .seeleSubheadline()
                 Spacer()
                 Text("server.slsknet.org:2242")
                     .seeleMono()
@@ -113,7 +113,7 @@ struct ConnectionStatusView: View {
 
     private var actionsCard: some View {
         VStack(spacing: SeeleSpacing.md) {
-            SecondaryButton("Disconnect", icon: "xmark.circle") {
+            SecondaryButton("Disconnect", icon: "xmark.circle", role: .destructive) {
                 disconnect()
             }
         }

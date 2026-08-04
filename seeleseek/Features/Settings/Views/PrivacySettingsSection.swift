@@ -167,7 +167,7 @@ struct PrivacySettingsSection: View {
                             TextField("Reason (optional)", text: $newBlockReason)
                                 .textFieldStyle(SeeleTextFieldStyle())
 
-                            Button("Block") {
+                            Button("Block", role: .destructive) {
                                 guard !newBlockUsername.isEmpty else { return }
                                 Task {
                                     await socialState.blockUser(newBlockUsername, reason: newBlockReason.isEmpty ? nil : newBlockReason)
@@ -175,7 +175,7 @@ struct PrivacySettingsSection: View {
                                     newBlockReason = ""
                                 }
                             }
-                            .buttonStyle(.seelePrimary(.small))
+                            .buttonStyle(.seeleSecondary(.small))
                             .disabled(newBlockUsername.isEmpty)
                         }
 
@@ -231,7 +231,7 @@ struct PrivacySettingsSection: View {
 
                 Spacer()
 
-                Button("Unblock", role: .destructive) {
+                Button("Unblock") {
                     Task {
                         await socialState.unblockUser(blocked.username)
                     }
@@ -416,6 +416,7 @@ struct PrivacySettingsSection: View {
                                     socialState.detectedLeeches.removeAll()
                                     socialState.warnedLeeches.removeAll()
                                 }
+                                .buttonStyle(.plain)
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.accent)
                             }

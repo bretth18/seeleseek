@@ -344,19 +344,10 @@ struct SearchView: View {
                 .foregroundStyle(SeeleColors.textSecondary)
                 .multilineTextAlignment(.center)
 
-            Button {
+            Button("Retry") {
                 retryCurrentSearch()
-            } label: {
-                Text("Retry")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.lg)
-                    .padding(.vertical, SeeleSpacing.sm)
-                    .background(SeeleColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.seelePrimary)
         }
         .padding(SeeleSpacing.xl)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -450,6 +441,8 @@ struct SearchView: View {
                                 }
                                 .foregroundStyle(SeeleColors.textSecondary)
                             }
+                            .buttonStyle(.plain)
+                            .menuIndicator(.hidden)
 
                             if search.isSearching {
                                 ProgressView()
@@ -515,19 +508,10 @@ struct SearchView: View {
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)
 
-            Button {
+            Button("Download Selected (\(searchState.selectedResults.count))") {
                 downloadSelected()
-            } label: {
-                Text("Download Selected (\(searchState.selectedResults.count))")
-                    .font(SeeleTypography.headline)
-                    .foregroundStyle(SeeleColors.textOnAccent)
-                    .padding(.horizontal, SeeleSpacing.lg)
-                    .padding(.vertical, SeeleSpacing.sm)
-                    .background(searchState.selectedResults.isEmpty ? SeeleColors.textTertiary : SeeleColors.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.seelePrimary)
             .disabled(searchState.selectedResults.isEmpty)
         }
         .padding(.horizontal, SeeleSpacing.lg)

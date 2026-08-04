@@ -339,7 +339,7 @@ struct ChatView: View {
             Button("Join a Room") {
                 showRoomBrowser = true
             }
-            .buttonStyle(.seelePrimary(.small))
+            .buttonStyle(.seelePrimary)
         }
         .padding(SeeleSpacing.xl)
     }

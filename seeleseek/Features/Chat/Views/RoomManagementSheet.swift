@@ -37,6 +37,7 @@ struct RoomManagementSheet: View {
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("Close")
             }
             .padding(SeeleSpacing.lg)

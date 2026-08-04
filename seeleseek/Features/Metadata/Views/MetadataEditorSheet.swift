@@ -53,12 +53,6 @@ struct MetadataEditorSheet: View {
             }
 
             Spacer()
-
-            Button("Cancel") {
-                state.closeEditor()
-                dismiss()
-            }
-            .buttonStyle(.seeleSecondary(.small))
         }
         .padding(SeeleSpacing.lg)
     }
@@ -148,6 +142,13 @@ struct MetadataEditorSheet: View {
                     .accessibilityLabel("Applying metadata")
             }
 
+            Button("Cancel") {
+                state.closeEditor()
+                dismiss()
+            }
+            .buttonStyle(.seeleSecondary)
+            .keyboardShortcut(.cancelAction)
+
             Button("Apply Metadata") {
                 Task {
                     if await state.applyMetadata() {
@@ -157,6 +158,7 @@ struct MetadataEditorSheet: View {
                 }
             }
             .buttonStyle(.seelePrimary)
+            .keyboardShortcut(.defaultAction)
             .disabled(state.isApplying || (state.editTitle.isEmpty && state.editArtist.isEmpty))
         }
         .padding(SeeleSpacing.lg)

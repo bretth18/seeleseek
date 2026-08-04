@@ -37,15 +37,19 @@ struct AddBuddySheet: View {
 
             // Buttons
             HStack(spacing: SeeleSpacing.md) {
+                Spacer()
+
                 Button("Cancel") {
                     dismiss()
                 }
                 .buttonStyle(.seeleSecondary)
+                .keyboardShortcut(.cancelAction)
 
                 Button("Add") {
                     addBuddy()
                 }
                 .buttonStyle(.seelePrimary)
+                .keyboardShortcut(.defaultAction)
                 .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty || isAdding)
             }
         }

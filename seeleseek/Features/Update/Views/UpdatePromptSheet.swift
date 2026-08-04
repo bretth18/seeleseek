@@ -87,6 +87,7 @@ struct UpdatePromptSheet: View {
                 updateState.remindLater()
                 close()
             }
+            .buttonStyle(.seeleSecondary)
             .keyboardShortcut(.cancelAction)
 
             if updateState.isDownloading {
@@ -112,6 +113,7 @@ struct UpdatePromptSheet: View {
                         #endif
                     }
                 }
+                .buttonStyle(.seelePrimary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(updateState.latestPkgURL == nil)
             }

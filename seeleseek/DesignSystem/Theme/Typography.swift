@@ -51,7 +51,9 @@ extension View {
             .foregroundStyle(SeeleColors.textPrimary)
     }
 
-    func seeleSecondary() -> some View {
+    // Named after its font like the siblings above — "seeleSecondary"
+    // collides with the SeeleSecondaryButtonStyle accessor.
+    func seeleSubheadline() -> some View {
         font(SeeleTypography.subheadline)
             .foregroundStyle(SeeleColors.textSecondary)
     }

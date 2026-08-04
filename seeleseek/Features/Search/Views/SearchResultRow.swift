@@ -444,17 +444,15 @@ struct SearchResultRow: View {
     }
 
     private var primaryAction: some View {
-        Button(action: download) {
-            Image(systemName: actionIcon)
-                .font(.system(size: SeeleSpacing.iconSizeMedium, weight: .semibold))
-                .foregroundStyle(actionColor)
-                .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        RowIconButton(
+            systemName: actionIcon,
+            help: actionHelp,
+            tint: actionColor,
+            weight: .semibold,
+            isProminent: true,
+            action: download
+        )
         .disabled(isQueued || isIgnored)
-        .help(actionHelp)
-        .accessibilityLabel(actionHelp)
     }
 
     private var actionIcon: String {

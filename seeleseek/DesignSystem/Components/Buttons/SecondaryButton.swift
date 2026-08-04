@@ -7,22 +7,25 @@ struct SecondaryButton: View {
     let title: String
     let icon: String?
     let fullWidth: Bool
+    let role: ButtonRole?
     let action: () -> Void
 
     init(
         _ title: String,
         icon: String? = nil,
         fullWidth: Bool = true,
+        role: ButtonRole? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
         self.icon = icon
         self.fullWidth = fullWidth
+        self.role = role
         self.action = action
     }
 
     var body: some View {
-        Button(action: action) {
+        Button(role: role, action: action) {
             HStack(spacing: SeeleSpacing.sm) {
                 if let icon {
                     Image(systemName: icon)

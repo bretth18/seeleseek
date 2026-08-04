@@ -60,11 +60,13 @@ struct NicotineImportSheet: View {
                     isPresented = false
                 }
                 .buttonStyle(.seeleSecondary)
+                .keyboardShortcut(.cancelAction)
                 Button("Import") {
                     applyImport()
                     isPresented = false
                 }
                 .buttonStyle(.seelePrimary)
+                .keyboardShortcut(.defaultAction)
                 .disabled(config == nil || config?.isEmpty == true || nothingSelected)
             }
         }
@@ -96,7 +98,7 @@ struct NicotineImportSheet: View {
             Button("Choose File…") {
                 chooseConfigFile()
             }
-            .font(SeeleTypography.caption)
+            .buttonStyle(.seeleSecondary(.small))
         }
     }
 

@@ -46,7 +46,7 @@ struct IgnoredUsersView: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityLabel("Reason for ignoring, optional")
 
-                    Button("Ignore") {
+                    Button("Ignore", role: .destructive) {
                         let reason = reasonInput.trimmingCharacters(in: .whitespacesAndNewlines)
                         Task {
                             await socialState.ignoreUser(
@@ -57,7 +57,7 @@ struct IgnoredUsersView: View {
                             reasonInput = ""
                         }
                     }
-                    .buttonStyle(.seelePrimary(.small))
+                    .buttonStyle(.seeleSecondary(.small))
                     .disabled(usernameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(SeeleSpacing.lg)
