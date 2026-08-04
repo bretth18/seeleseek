@@ -53,7 +53,7 @@ struct InterestsView: View {
             }
             .labelsHidden()
             .pickerStyle(.segmented)
-            .frame(width: 140)
+            .frame(maxWidth: 140)
             .accessibilityLabel("Interest type")
 
             PrimaryButton("Add", icon: "plus", fullWidth: false) {
