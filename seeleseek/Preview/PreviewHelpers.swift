@@ -161,64 +161,6 @@ enum PreviewData {
     }
 }
 
-// MARK: - Preview Container
-
-@MainActor
-struct PreviewContainer<Content: View>: View {
-    let appState: AppState
-    let content: Content
-
-    init(state: AppState, @ViewBuilder content: () -> Content) {
-        self.appState = state
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .environment(\.appState, appState)
-            .preferredColorScheme(.dark)
-    }
-}
-
-// MARK: - Device Preview
-
-struct DevicePreview<Content: View>: View {
-    let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .preferredColorScheme(.dark)
-    }
-}
-
-// MARK: - Design Variant Preview Chrome
-
-/// Wraps a stack of row variants with a section title and standard card
-/// styling. Used by the V2-row preview files to compare alternatives
-/// side-by-side under a consistent visual frame.
-struct DesignVariantSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-            Text(title)
-                .font(SeeleTypography.caption.weight(.semibold))
-                .foregroundStyle(SeeleColors.textSecondary)
-                .padding(.horizontal, SeeleSpacing.lg)
-
-            VStack(spacing: 0) { content() }
-                .background(SeeleColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD))
-                .padding(.horizontal, SeeleSpacing.lg)
-        }
-    }
-}
-
 // MARK: - Preview App State Modifier
 
 /// Injects a ready-to-use `AppState` into the environment for previews.

@@ -29,9 +29,9 @@ nonisolated enum SeeleSpacing {
     /// - **Settings + list rows** → use `rowVertical` (6pt). This is the
     ///   standard for `SettingsComponents.settingsRow`, `StandardListRow`,
     ///   and `SharedFolderRow`.
-    /// - **Form rows with inline inputs** → use `listRowPadding` (8pt).
+    /// - **Form rows with inline inputs** → use `listRowPadding` (12pt).
     ///   Slightly roomier to accommodate TextField / stepper controls.
-    /// - **Primary cards / hero containers** → use `cardPadding` (12pt)
+    /// - **Primary cards / hero containers** → use `cardPadding` (16pt)
     ///   as their inner content padding, not as row padding.
     ///
     /// If you find yourself wanting a different value, promote it to a

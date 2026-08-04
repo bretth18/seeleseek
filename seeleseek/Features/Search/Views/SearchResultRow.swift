@@ -59,17 +59,6 @@ struct SearchResultRow: View {
         peerStatus = appState.socialState.peerStatus(for: result.username)
     }
 
-    /// Country flag for the peer. Captured at row appear rather than read
-    /// in body — `UserInfoCache.countries` mutates on every GeoIP resolution
-    /// and reading it live would invalidate every visible search row on
-    /// every unrelated peer's country arriving. Accepts minor staleness if
-    /// this user's country resolves after the row is on screen.
-    @State private var countryFlag: String?
-
-    private func refreshCountryFlag() {
-        let f = appState.networkClient.userInfoCache.flag(for: result.username)
-        countryFlag = f.isEmpty ? nil : f
-    }
 
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
@@ -126,14 +115,8 @@ struct SearchResultRow: View {
             Button("Copy filename", action: copyFilename)
             Button("Copy full path", action: copyPath)
         }
-        .onAppear {
-            refreshCountryFlag()
-            refreshPeerStatus()
-        }
-        .onChange(of: result.username) { _, _ in
-            refreshCountryFlag()
-            refreshPeerStatus()
-        }
+        .onAppear { refreshPeerStatus() }
+        .onChange(of: result.username) { _, _ in refreshPeerStatus() }
     }
 
     // MARK: - Selection checkbox
@@ -219,7 +202,7 @@ struct SearchResultRow: View {
     private var contextLine: some View {
         HStack(spacing: 0) {
             peerCell
-                .frame(width: SearchResultRowLayout.peerCellWidth, alignment: .leading)
+                .frame(width: RowLayout.peerCellWidth, alignment: .leading)
 
             if !result.folderPath.isEmpty {
                 folderCell
@@ -236,9 +219,8 @@ struct SearchResultRow: View {
             PeerUsernameLabel(
                 iconName: "arrow.up",
                 username: result.username,
-                width: SearchResultRowLayout.peerUsernameWidth,
-                peerStatus: peerStatus,
-                countryFlag: countryFlag
+                width: RowLayout.peerUsernameWidth,
+                peerStatus: peerStatus
             )
 
             Text(peerSpeedText)
@@ -252,29 +234,10 @@ struct SearchResultRow: View {
     }
 
     private var folderCell: some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "folder")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.textTertiary)
-                .accessibilityHidden(true)
-
-            Text(compactFolderPath)
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(result.folderPath.replacingOccurrences(of: "\\", with: "/"))
-        }
-    }
-
-    /// Keeps up to the last three path components; earlier components collapse to `…`.
-    private var compactFolderPath: String {
-        let parts = result.folderPath.split(separator: "\\").map(String.init)
-        guard !parts.isEmpty else { return "" }
-        if parts.count <= 3 {
-            return parts.joined(separator: "/")
-        }
-        return "…/" + parts.suffix(3).joined(separator: "/")
+        FolderPathLabel(
+            FolderPathLabel.compact(result.folderPath),
+            help: result.folderPath.replacingOccurrences(of: "\\", with: "/")
+        )
     }
 
     // MARK: - Metadata column (right)
@@ -634,17 +597,11 @@ struct SearchResultRow: View {
     }
 
     private func copyFilename() {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(result.displayFilename, forType: .string)
-        #endif
+        result.displayFilename.copyToPasteboard()
     }
 
     private func copyPath() {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(result.filename, forType: .string)
-        #endif
+        result.filename.copyToPasteboard()
     }
 }
 
@@ -653,15 +610,9 @@ struct SearchResultRow: View {
 // Fixed widths so the same field lands at the same X coordinate on every
 // row. Kept as tight as possible — extra width shows up as dead space.
 
+/// Search-only columns. Peer anchors live in `RowLayout`, shared with the
+/// transfer and history rows.
 enum SearchResultRowLayout {
-    /// Fixed sub-cell width for the username so the peer *speed* lands at
-    /// the same X on every row. Anything longer truncates from the tail.
-    static let peerUsernameWidth: CGFloat = 96
-
-    /// Outer peer-cell width (username sub-cell + speed + slack). Fixed so
-    /// the folder icon lands at the same X on every row.
-    static let peerCellWidth: CGFloat = 168
-
     /// Chip slot width — tuned for the longest tier label (`LOSSLESS`).
     static let qualityChipSlotWidth: CGFloat = 62
 }

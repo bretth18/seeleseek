@@ -159,10 +159,7 @@ struct PeerRow: View {
     }
 
     private func copyToPasteboard(_ string: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
-        #endif
+        string.copyToPasteboard()
     }
 }
 

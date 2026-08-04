@@ -126,34 +126,6 @@ struct ConnectionStatusView: View {
     }
 }
 
-// MARK: - Compact Connection Status (for toolbar/header)
-
-struct CompactConnectionStatus: View {
-    @Environment(\.appState) private var appState
-
-    var body: some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            ConnectionBadge(status: appState.connection.connectionStatus, showLabel: false)
-
-            if let username = appState.connection.username {
-                Text(username)
-                    .font(SeeleTypography.subheadline)
-                    .foregroundStyle(SeeleColors.textSecondary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var accessibilityLabel: String {
-        var label = "Connection status: \(appState.connection.connectionStatus.label)"
-        if let username = appState.connection.username {
-            label += " as \(username)"
-        }
-        return label
-    }
-}
-
 #Preview("Connected") {
     let state = AppState()
     state.connection.setConnected(

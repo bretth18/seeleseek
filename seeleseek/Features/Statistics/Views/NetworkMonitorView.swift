@@ -12,7 +12,7 @@ struct NetworkMonitorView: View {
         
         var icon: String {
             switch self {
-            case .overview: "aspectratio"
+            case .overview: "waveform.path.ecg"
             case .peers: "person.line.dotted.person"
             case .search: "magnifyingglass"
             case .history: "clock.arrow.trianglehead.counterclockwise.rotate.90"

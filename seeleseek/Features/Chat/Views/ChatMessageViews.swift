@@ -92,8 +92,7 @@ struct MessageBubble: View {
                     .contextMenu {
                         if !message.isSystem {
                             Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(message.content, forType: .string)
+                                message.content.copyToPasteboard()
                             } label: {
                                 Label("Copy Message", systemImage: "doc.on.doc")
                             }
@@ -154,8 +153,7 @@ struct MessageBubble: View {
             .accessibilityActions {
                 if !message.isSystem {
                     Button("Copy Message") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(message.content, forType: .string)
+                        message.content.copyToPasteboard()
                     }
 
                     if !message.isOwn {
