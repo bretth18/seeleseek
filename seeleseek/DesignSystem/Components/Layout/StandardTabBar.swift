@@ -135,7 +135,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
             .overlay {
                 if isSelected && isFocused {
                     RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

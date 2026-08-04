@@ -131,7 +131,7 @@ struct SettingsView: View {
             .overlay {
                 if selectedTab == tab && isTabListFocused {
                     RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
                 }
             }
             .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

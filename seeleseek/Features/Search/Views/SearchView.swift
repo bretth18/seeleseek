@@ -284,7 +284,7 @@ struct SearchView: View {
         .overlay {
             if isSelected && isTabStripFocused {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
-                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
             }
         }
         .accessibilityElement(children: .combine)

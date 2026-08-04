@@ -578,6 +578,14 @@ final class ChatState {
         Task { try? await networkClient?.setRoomTicker(room: room, ticker: "") }
     }
 
+    /// This user's own ticker in a room, or "" if they have not set one.
+    func myTicker(in room: String) -> String {
+        guard let username = networkClient?.username,
+              let room = joinedRooms.first(where: { $0.name == room })
+        else { return "" }
+        return room.tickers[username] ?? ""
+    }
+
     func giveUpOwnership(room: String) {
         Task { try? await networkClient?.giveUpPrivateRoomOwnership(room) }
     }
@@ -681,6 +689,21 @@ final class ChatState {
                 return
             case .clear:
                 clearTranscript()
+                return
+            case .ticker(let text):
+                // Tickers are per-room; there is nowhere to put one in a
+                // private chat.
+                guard let room = selectedRoom else {
+                    appendLocalSystemMessage("Tickers only work in a room")
+                    return
+                }
+                if text.isEmpty {
+                    clearTicker(room: room)
+                    appendLocalSystemMessage("Ticker cleared")
+                } else {
+                    setTicker(room: room, text: text)
+                    appendLocalSystemMessage("Ticker set")
+                }
                 return
             case .unknown(let name):
                 appendLocalSystemMessage("Unknown command: \(name)")

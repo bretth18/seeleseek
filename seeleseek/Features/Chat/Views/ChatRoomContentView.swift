@@ -85,17 +85,19 @@ struct ChatRoomContentView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(chatState.showUserListPanel ? "Hide user list" : "Show user list")
 
-            if room.isPrivate && (chatState.isOwner(of: room.name) || chatState.isOperator(of: room.name)) {
-                Button {
-                    chatState.showRoomManagement = true
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: SeeleSpacing.iconSizeSmall))
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Room settings")
+            // Shown for every joined room, not just private ones you manage:
+            // the sheet's ticker field is the only way to set your own ticker,
+            // and tickers are per-user in any room (RoomTickerSet, code 116).
+            // The owner-only sections inside the sheet gate themselves.
+            Button {
+                chatState.showRoomManagement = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: SeeleSpacing.iconSizeSmall))
+                    .foregroundStyle(SeeleColors.textSecondary)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Room settings")
 
             Button {
                 chatState.leaveRoom(room.name)

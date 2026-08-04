@@ -42,6 +42,19 @@ struct SlashCommandTests {
     func unknownCommand() {
         #expect(SlashCommand.parse("/frobnicate now") == .unknown("/frobnicate"))
     }
+
+    @Test("/ticker carries its text, keeping internal spacing")
+    func tickerWithText() {
+        #expect(SlashCommand.parse("/ticker now playing") == .ticker("now playing"))
+        #expect(SlashCommand.parse("/TICKER Loud") == .ticker("Loud"))
+        #expect(SlashCommand.parse("/ticker   padded  ") == .ticker("padded"))
+    }
+
+    @Test("/ticker with no argument is the clear signal, not an unknown command")
+    func tickerBareClears() {
+        #expect(SlashCommand.parse("/ticker") == .ticker(""))
+        #expect(SlashCommand.parse("/ticker   ") == .ticker(""))
+    }
 }
 
 @Suite("Username tab-completion")

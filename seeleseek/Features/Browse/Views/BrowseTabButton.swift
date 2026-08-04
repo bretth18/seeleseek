@@ -67,7 +67,7 @@ struct BrowseTabButton: View {
         .overlay {
             if isSelected && showsFocusRing {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 2)
+                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
             }
         }
         .onHover { hovering in

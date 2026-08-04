@@ -41,8 +41,8 @@ struct NetworkMonitorView: View {
                     MonitorHistoryTab()
                 }
             }
-            .background(SeeleColors.background)
         }
+        .background(SeeleColors.background)
         .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
     }
 }
