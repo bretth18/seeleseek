@@ -281,12 +281,7 @@ struct SearchView: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
                 .stroke(isSelected ? SeeleColors.accent : Color.clear, lineWidth: 1)
         )
-        .overlay {
-            if isSelected && isTabStripFocused {
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2)
-                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
-            }
-        }
+        .seeleTabFocusRing(isSelected && isTabStripFocused, cornerRadius: SeeleSpacing.radiusMD / 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(searchTabAccessibilityLabel(for: search))
         .accessibilityTab(isSelected: isSelected)

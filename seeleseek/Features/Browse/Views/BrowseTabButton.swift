@@ -64,12 +64,7 @@ struct BrowseTabButton: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .stroke(isSelected ? SeeleColors.accent.opacity(0.5) : Color.clear, lineWidth: 1)
         )
-        .overlay {
-            if isSelected && showsFocusRing {
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
-            }
-        }
+        .seeleTabFocusRing(isSelected && showsFocusRing)
         .onHover { hovering in
             isHovered = hovering
         }

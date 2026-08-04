@@ -148,9 +148,7 @@ struct ChatRoomContentView: View {
             if !chatState.tickersCollapsed {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: SeeleSpacing.lg) {
-                        // Sort by username — a Dictionary's iteration order is
-                        // nondeterministic and would shuffle tickers per render.
-                        ForEach(room.tickers.sorted(by: { $0.key < $1.key }), id: \.key) { username, ticker in
+                        ForEach(room.sortedTickers, id: \.key) { username, ticker in
                             HStack(spacing: SeeleSpacing.xs) {
                                 Text(username)
                                     .font(SeeleTypography.caption2)

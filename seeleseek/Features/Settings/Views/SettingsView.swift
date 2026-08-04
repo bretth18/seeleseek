@@ -128,12 +128,7 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                     .stroke(selectedTab == tab ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
             )
-            .overlay {
-                if selectedTab == tab && isTabListFocused {
-                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                        .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 1)
-                }
-            }
+            .seeleTabFocusRing(selectedTab == tab && isTabListFocused)
             .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
         .buttonStyle(.plain)

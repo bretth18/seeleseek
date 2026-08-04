@@ -44,8 +44,6 @@ struct SharesSettingsSection: View {
             }
         }
     }
-
-
 }
 
 struct SharedFolderRow: View {

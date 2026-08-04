@@ -111,7 +111,6 @@ nonisolated enum SeeleSpacing {
     /// Primary/SecondaryButton). Inputs and buttons that sit in the same
     /// row must render at the same height, or the row looks ragged.
     static let controlHeight: CGFloat = 36
-    static let progressBarHeight: CGFloat = 4
 
     // MARK: - Toggle Component
     static let toggleWidth: CGFloat = 46

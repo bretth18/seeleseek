@@ -9,7 +9,7 @@ struct NetworkMonitorView: View {
         case peers = "Peers"
         case search = "Search"
         case history = "History"
-        
+
         var icon: String {
             switch self {
             case .overview: "waveform.path.ecg"
@@ -22,7 +22,7 @@ struct NetworkMonitorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StandardTabBar(selection: $selectedTab, icon: { $0.icon } ) {
+            StandardTabBar(selection: $selectedTab, icon: { $0.icon }) {
                 MonitorLiveStatsBadge()
             }
 

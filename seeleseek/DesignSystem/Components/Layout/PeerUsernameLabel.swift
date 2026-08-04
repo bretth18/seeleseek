@@ -13,10 +13,6 @@ import SeeleseekCore
 /// sub-cell still holds the full username width — important for
 /// cross-row alignment.
 ///
-/// The country flag emoji renders at the end of the cell at caption2
-/// size, with `layoutPriority(1)` so it stays visible even when a long
-/// username has to truncate.
-///
 /// The flag is captured on appear (and on username change) rather than
 /// read live in `body`: `UserInfoCache.countries` mutates on every GeoIP
 /// resolution, and reading it during body would invalidate every visible
@@ -67,7 +63,7 @@ struct PeerUsernameLabel: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
 
-            if let countryFlag, !countryFlag.isEmpty {
+            if let countryFlag {
                 // Not hidden: the flag emoji has a native spoken
                 // description ("flag: Germany"), so the country
                 // stays available when a row combines its children.

@@ -59,7 +59,6 @@ struct SearchResultRow: View {
         peerStatus = appState.socialState.peerStatus(for: result.username)
     }
 
-
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
             HStack(alignment: .top, spacing: SeeleSpacing.sm) {
@@ -606,9 +605,6 @@ struct SearchResultRow: View {
 }
 
 // MARK: - Layout anchors
-//
-// Fixed widths so the same field lands at the same X coordinate on every
-// row. Kept as tight as possible — extra width shows up as dead space.
 
 /// Search-only columns. Peer anchors live in `RowLayout`, shared with the
 /// transfer and history rows.
