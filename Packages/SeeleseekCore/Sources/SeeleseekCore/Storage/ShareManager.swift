@@ -319,16 +319,24 @@ public final class ShareManager {
         // `fileIndex` up front left a minutes-wide window where every
         // peer lookup missed and got a terminal "File not shared."
         var newIndex: [IndexedFile] = []
+        // Stats are collected and applied in one mutation after the loop.
+        // Applying them per folder wrote `sharedFolders` N times, and every
+        // write invalidates each view observing the array — the Shares
+        // settings list rebuilt all of its rows (one NSPopUpButton apiece)
+        // on every folder scanned. Measured at 13 folders: 169 row rebuilds
+        // during a single rescan.
+        var pendingStats: [ScanResult] = []
         for (index, folder) in sharedFolders.enumerated() {
             if let result = await scanFolderResult(folder) {
                 newIndex.append(contentsOf: result.indexed)
-                applyFolderStats(result)
+                pendingStats.append(result)
                 logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
             } else {
                 logger.error("Failed to enumerate folder: \(folder.path)")
             }
             scanProgress = Double(index + 1) / Double(sharedFolders.count)
         }
+        applyFolderStats(pendingStats)
 
         // Atomic swap — old index served lookups during the scan. Filter
         // by live folder IDs so a folder removed mid-scan isn't
@@ -386,11 +394,22 @@ public final class ShareManager {
 
     /// Update the per-folder counters from a completed scan.
     private func applyFolderStats(_ result: ScanResult) {
-        if let index = sharedFolders.firstIndex(where: { $0.id == result.folderID }) {
-            sharedFolders[index].fileCount = result.fileCount
-            sharedFolders[index].totalSize = result.totalSize
-            sharedFolders[index].lastScanned = Date()
+        applyFolderStats([result])
+    }
+
+    /// Batch variant — one `sharedFolders` write for any number of results,
+    /// so observers invalidate once instead of once per folder.
+    private func applyFolderStats(_ results: [ScanResult]) {
+        guard !results.isEmpty else { return }
+        var updated = sharedFolders
+        let scannedAt = Date()
+        for result in results {
+            guard let index = updated.firstIndex(where: { $0.id == result.folderID }) else { continue }
+            updated[index].fileCount = result.fileCount
+            updated[index].totalSize = result.totalSize
+            updated[index].lastScanned = scannedAt
         }
+        sharedFolders = updated
     }
 
     /// Disambiguate duplicate share-root display names so sharedPaths
