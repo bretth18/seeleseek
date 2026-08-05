@@ -1394,14 +1394,17 @@ public final class NetworkClient {
 
     /// Acknowledge a private message to the server (code 23)
     public func acknowledgePrivateMessage(messageId: UInt32) async {
-        guard isConnected, let connection = serverConnection else { return }
+        guard let connection = serverConnection else {
+            logger.error("Cannot acknowledge private message \(messageId) — no server connection")
+            return
+        }
 
         let message = MessageBuilder.acknowledgePrivateMessageMessage(messageId: messageId)
         do {
             try await connection.send(message)
             logger.info("Acknowledged private message \(messageId)")
         } catch {
-            logger.error("Failed to acknowledge private message: \(error.localizedDescription)")
+            logger.error("Failed to acknowledge private message \(messageId): \(error.localizedDescription)")
         }
     }
 

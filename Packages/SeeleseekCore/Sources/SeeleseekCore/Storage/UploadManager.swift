@@ -1609,6 +1609,7 @@ public final class UploadManager {
                     try await connection.sendRaw(chunk)
                 }
                 bytesSent += UInt64(chunk.count)
+                networkClient?.peerConnectionPool.recordBytesSent(UInt64(chunk.count))
 
                 // Update progress periodically
                 if Date().timeIntervalSince(lastProgressUpdate) >= 0.5 {
