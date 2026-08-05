@@ -29,6 +29,10 @@ import SeeleseekCore
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
+    /// True when this row sits under a folder header. The header already
+    /// names the peer and the folder, so repeating both on every track is
+    /// noise that makes an expanded group hard to read.
+    var isNestedInGroup: Bool = false
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
@@ -148,25 +152,12 @@ struct SearchResultRow: View {
     // MARK: - File glyph
 
     private var fileGlyph: some View {
-        ZStack {
-            RoundedRectangle.badgeShape
-                .fill(glyphTint.opacity(SeeleColors.alphaMedium))
-                .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
-
-            Image(systemName: glyphIcon)
-                .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
-                .foregroundStyle(glyphTint)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if result.isPrivate {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.warning)
-                    .padding(SeeleSpacing.xxs)
-                    .background(SeeleColors.surface, in: Circle())
-                    .offset(x: SeeleSpacing.xxs, y: SeeleSpacing.xxs)
+        RowGlyph(systemName: glyphIcon, tint: glyphTint)
+            .overlay(alignment: .bottomTrailing) {
+                if result.isPrivate {
+                    RowGlyphOrnament(systemName: "lock.fill", tint: SeeleColors.warning)
+                }
             }
-        }
     }
 
     private var glyphIcon: String {
@@ -194,7 +185,9 @@ struct SearchResultRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            contextLine
+            if !isNestedInGroup {
+                contextLine
+            }
         }
     }
 
@@ -356,13 +349,14 @@ struct SearchResultRow: View {
 
     // MARK: - Trailing cluster (hover-revealed secondary actions + primary action)
 
-    private static let secondaryActionCount: CGFloat = 2
+    // Both anchors live in `SearchResultRowLayout` so the grouped folder
+    // header can line its download button up with these buttons.
     private var secondaryActionsWidth: CGFloat {
-        SeeleSpacing.buttonHeight * Self.secondaryActionCount
-            + SeeleSpacing.xxs * (Self.secondaryActionCount - 1)
+        SeeleSpacing.buttonHeight * SearchResultRowLayout.secondaryActionCount
+            + SeeleSpacing.xxs * (SearchResultRowLayout.secondaryActionCount - 1)
     }
     private var trailingClusterWidth: CGFloat {
-        secondaryActionsWidth + SeeleSpacing.xxs + SeeleSpacing.iconSizeXL
+        SearchResultRowLayout.trailingClusterWidth
     }
 
     private var trailingCluster: some View {
@@ -611,6 +605,19 @@ struct SearchResultRow: View {
 enum SearchResultRowLayout {
     /// Chip slot width — tuned for the longest tier label (`LOSSLESS`).
     static let qualityChipSlotWidth: CGFloat = 62
+
+    /// Leading glyph column. A grouped folder header reuses this so its
+    /// title starts at the same X as a row's filename.
+    static let glyphColumnWidth: CGFloat = SeeleSpacing.iconSizeXL
+
+    /// Trailing action cluster. Shared with the group header so its
+    /// download button lands under the rows' action buttons.
+    static let secondaryActionCount: CGFloat = 2
+    static let trailingClusterWidth: CGFloat =
+        SeeleSpacing.buttonHeight * secondaryActionCount
+        + SeeleSpacing.xxs * (secondaryActionCount - 1)
+        + SeeleSpacing.xxs
+        + SeeleSpacing.iconSizeXL
 }
 
 enum SearchResultStatColumn: CGFloat {

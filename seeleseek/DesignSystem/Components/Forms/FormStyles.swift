@@ -22,13 +22,28 @@ struct SeeleTextFieldStyle: TextFieldStyle {
 
 // MARK: - Toggle Style
 
-/// Standard toggle style matching macOS design with Seele theming
+/// Standard toggle style matching macOS design with Seele theming.
 struct SeeleToggleStyle: ToggleStyle {
+    enum Layout {
+        /// Full-width settings row — label leading, switch pinned trailing.
+        case row
+        /// Label and switch sit together as one unit, for toolbars and
+        /// filter bars where the pair is one item among several.
+        case inline
+    }
+
+    var layout: Layout = .row
+
     func makeBody(configuration: Configuration) -> some View {
-        HStack {
+        HStack(spacing: layout == .inline ? SeeleSpacing.sm : 0) {
             configuration.label
 
-            Spacer()
+            // The spacer is what makes a settings row fill its width. Inline,
+            // it would shove the switch to the far edge of whatever container
+            // it lands in, stranding it from its own label.
+            if layout == .row {
+                Spacer()
+            }
 
             ZStack {
                 RoundedRectangle(cornerRadius: SeeleSpacing.toggleCornerRadius)

@@ -316,6 +316,56 @@ final class SearchState {
     /// never re-run the filter pass.
     private(set) var filteredResults: [SearchResult] = []
 
+    // MARK: - Grouping
+
+    /// Group results by the folder each peer offers them from. Built in the
+    /// same pass as `filteredResults` so the two can never disagree about
+    /// what is visible.
+    var isGrouped: Bool = false {
+        didSet { if isGrouped != oldValue { recomputeFilteredResults() } }
+    }
+
+    private(set) var resultGroups: [SearchResultGroup] = []
+
+    /// Multi-file groups start collapsed — that is the scannability win —
+    /// so this holds the ones the user has opened.
+    var expandedGroups: Set<String> = []
+
+    func isExpanded(_ group: SearchResultGroup) -> Bool {
+        group.isSingleFile || expandedGroups.contains(group.id)
+    }
+
+    func toggleExpansion(_ group: SearchResultGroup) {
+        guard !group.isSingleFile else { return }
+        if expandedGroups.contains(group.id) {
+            expandedGroups.remove(group.id)
+        } else {
+            expandedGroups.insert(group.id)
+        }
+    }
+
+    // MARK: - Group selection
+
+    func selectionState(of group: SearchResultGroup) -> GroupSelection {
+        let selected = group.results.count { selectedResults.contains($0.id) }
+        if selected == 0 { return .none }
+        return selected == group.results.count ? .all : .partial
+    }
+
+    /// Selecting a partially-selected group completes it rather than
+    /// clearing it — the same convention as Finder.
+    func toggleSelection(of group: SearchResultGroup) {
+        if selectionState(of: group) == .all {
+            for result in group.results { selectedResults.remove(result.id) }
+        } else {
+            for result in group.results { selectedResults.insert(result.id) }
+        }
+    }
+
+    enum GroupSelection {
+        case none, partial, all
+    }
+
     func recomputeFilteredResults() {
         guard let search = currentSearch else {
             filteredResults = []
@@ -362,6 +412,33 @@ final class SearchState {
         }
 
         filteredResults = results
+        resultGroups = isGrouped ? Self.group(results) : []
+    }
+
+    /// Groups in encounter order over the already-sorted array, so the
+    /// active sort still decides which group leads — "Speed" means the
+    /// fastest peer's folder first — without needing a second sort control.
+    private static func group(_ results: [SearchResult]) -> [SearchResultGroup] {
+        var order: [String] = []
+        var buckets: [String: (username: String, folder: String, items: [SearchResult])] = [:]
+
+        for result in results {
+            let key = "\(result.username)\\\(result.folderPath)"
+            if buckets[key] == nil {
+                order.append(key)
+                buckets[key] = (result.username, result.folderPath, [])
+            }
+            buckets[key]?.items.append(result)
+        }
+
+        return order.compactMap { key in
+            guard let bucket = buckets[key] else { return nil }
+            return SearchResultGroup(
+                username: bucket.username,
+                folderPath: bucket.folder,
+                results: bucket.items
+            )
+        }
     }
 
     var canSearch: Bool {
