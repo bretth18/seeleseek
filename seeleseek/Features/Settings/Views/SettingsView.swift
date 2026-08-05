@@ -4,7 +4,6 @@ import SeeleseekCore
 struct SettingsView: View {
     @Environment(\.appState) private var appState
     @State private var selectedTab: SettingsTab = .general
-    @FocusState private var isTabListFocused: Bool
 
     enum SettingsTab: String, CaseIterable {
         case profile = "Profile"
@@ -38,25 +37,14 @@ struct SettingsView: View {
 
     var body: some View {
         HSplitView {
-            // Tab sidebar
-            VStack(spacing: 0) {
-                ForEach(SettingsTab.allCases, id: \.self) { tab in
-                    settingsTabButton(tab)
-                }
-                Spacer()
-            }
+            StandardTabBar(
+                selection: $selectedTab,
+                axis: .vertical,
+                showsBackground: false,
+                icon: { $0.icon }
+            )
             .frame(width: 180)
             .background(SeeleColors.surface)
-            .focusable()
-            .focused($isTabListFocused)
-            .focusEffectDisabled()
-            .onMoveCommand { direction in
-                switch direction {
-                case .up: moveSelection { TabCycler.clampedPrevious($0, count: $1) }
-                case .down: moveSelection { TabCycler.clampedNext($0, count: $1) }
-                default: break
-                }
-            }
 
             // Content
             ScrollView {
@@ -94,48 +82,7 @@ struct SettingsView: View {
         .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
     }
 
-    private func moveSelection(_ step: (Int, Int) -> Int) {
-        let all = SettingsTab.allCases
-        guard let index = all.firstIndex(of: selectedTab) else { return }
-        selectedTab = all[step(index, all.count)]
-    }
 
-    private func settingsTabButton(_ tab: SettingsTab) -> some View {
-        Button {
-            selectedTab = tab
-        } label: {
-            HStack(spacing: SeeleSpacing.sm) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: SeeleSpacing.iconSizeSmall, weight: .medium))
-                    .foregroundStyle(selectedTab == tab ? SeeleColors.accent : SeeleColors.textTertiary)
-                    .frame(width: SeeleSpacing.iconSizeMedium)
-
-                Text(tab.rawValue)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(selectedTab == tab ? SeeleColors.textPrimary : SeeleColors.textSecondary)
-
-                Spacer()
-            }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(
-                selectedTab == tab
-                    ? SeeleColors.selectionBackground
-                    : Color.clear
-            )
-            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
-                    .stroke(selectedTab == tab ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
-            )
-            .seeleTabFocusRing(selectedTab == tab && isTabListFocused)
-            .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, SeeleSpacing.xs)
-        .accessibilityLabel(tab.rawValue)
-        .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
-    }
 }
 
 #Preview {

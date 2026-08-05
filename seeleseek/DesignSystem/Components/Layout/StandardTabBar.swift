@@ -1,11 +1,17 @@
 import SwiftUI
 import SeeleseekCore
 
-/// Consistent horizontal tab bar. One focus stop: arrow keys move the
-/// selection, Home/End jump to the ends.
+/// Consistent tab bar. One focus stop: arrow keys move the selection along
+/// the bar's axis, Home/End jump to the ends.
+///
+/// `.horizontal` is a compact chip strip above content. `.vertical` is a
+/// full-width sidebar list — the presentation differences (fixed icon
+/// column, accent-tinted icon, rows filling the width) follow from the axis
+/// rather than being separate knobs.
 struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing: View>: View where Tab.RawValue == String {
     @Binding var selection: Tab
     let tabs: [Tab]
+    var axis: Axis
     var badge: ((Tab) -> Int)?
     /// Spoken unit for the badge count, for example "unread".
     /// Without a unit, VoiceOver reads the badge as a bare number.
@@ -22,6 +28,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
     init(
         selection: Binding<Tab>,
         tabs: [Tab] = Array(Tab.allCases),
+        axis: Axis = .horizontal,
         badgeUnit: String = "items",
         showsBackground: Bool = true,
         icon: ((Tab) -> String)? = nil,
@@ -30,6 +37,7 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
     ) {
         self._selection = selection
         self.tabs = tabs
+        self.axis = axis
         self.badgeUnit = badgeUnit
         self.showsBackground = showsBackground
         self.icon = icon
@@ -38,28 +46,20 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
     }
 
     var body: some View {
-        HStack(spacing: SeeleSpacing.sm) {
-            ForEach(tabs, id: \.self) { tab in
-                tabButton(for: tab)
-            }
-            Spacer()
-            trailing
-        }
-        // Same outer metrics as StandardActionBar: a view's header slot is
-        // the same height whether it leads with tabs or with controls (#67).
-        .frame(minHeight: SeeleSpacing.controlHeight)
-        .padding(.horizontal, SeeleSpacing.md)
-        .padding(.vertical, SeeleSpacing.md)
-        .background(showsBackground ? SeeleColors.surface.opacity(0.5) : Color.clear)
+        stack
+            .background(showsBackground ? SeeleColors.surface.opacity(0.5) : Color.clear)
         .focusable()
         .focused($isFocused)
         // Default ring would wrap the full-width bar; the selected tab draws its own.
         .focusEffectDisabled()
         .onMoveCommand { direction in
-            switch direction {
-            case .left: moveSelection { TabCycler.clampedPrevious($0, count: $1) }
-            case .right: moveSelection { TabCycler.clampedNext($0, count: $1) }
-            default: break
+            switch (axis, direction) {
+            case (.horizontal, .left), (.vertical, .up):
+                moveSelection { TabCycler.clampedPrevious($0, count: $1) }
+            case (.horizontal, .right), (.vertical, .down):
+                moveSelection { TabCycler.clampedNext($0, count: $1) }
+            default:
+                break
             }
         }
         .onKeyPress(.home) {
@@ -74,11 +74,47 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
         }
     }
 
+    @ViewBuilder
+    private var stack: some View {
+        switch axis {
+        case .horizontal:
+            HStack(spacing: SeeleSpacing.sm) {
+                ForEach(tabs, id: \.self) { tabButton(for: $0) }
+                Spacer()
+                trailing
+            }
+            // Same outer metrics as StandardActionBar: a view's header slot
+            // is the same height whether it leads with tabs or controls (#67).
+            .frame(minHeight: SeeleSpacing.controlHeight)
+            .padding(.horizontal, SeeleSpacing.md)
+            .padding(.vertical, SeeleSpacing.md)
+        case .vertical:
+            VStack(spacing: 0) {
+                ForEach(tabs, id: \.self) { tabButton(for: $0) }
+                Spacer()
+                trailing
+            }
+            .padding(.horizontal, SeeleSpacing.xs)
+        }
+    }
+
     private func moveSelection(_ step: (Int, Int) -> Int) {
         guard let index = tabs.firstIndex(of: selection) else { return }
         let target = tabs[step(index, tabs.count)]
         if target != selection {
             select(target)
+        }
+    }
+
+    /// The sidebar tints the glyph itself so the icon column reads as the
+    /// selection indicator. The compact bar tints the row uniformly, so this
+    /// returns exactly what the container applies and nothing changes there.
+    private func iconTint(isSelected: Bool) -> Color {
+        switch axis {
+        case .vertical:
+            isSelected ? SeeleColors.accent : SeeleColors.textTertiary
+        case .horizontal:
+            isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary
         }
     }
 
@@ -95,13 +131,20 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
         return Button {
             select(tab)
         } label: {
-            HStack(spacing: SeeleSpacing.xs) {
+            HStack(spacing: axis == .vertical ? SeeleSpacing.sm : SeeleSpacing.xs) {
                 // Selection is shown by color/background only. Weight
                 // changes alter glyph width, so every tab to the right
                 // shifts on each selection change.
                 if let iconName = icon?(tab) {
                     Image(systemName: iconName)
-                        .font(.system(size: SeeleSpacing.iconSizeSmall - 1))
+                        .font(.system(
+                            size: axis == .vertical ? SeeleSpacing.iconSizeSmall : SeeleSpacing.iconSizeSmall - 1,
+                            weight: axis == .vertical ? .medium : .regular
+                        ))
+                        // Fixed column so labels align down the sidebar
+                        // regardless of glyph width.
+                        .frame(width: axis == .vertical ? SeeleSpacing.iconSizeMedium : nil)
+                        .foregroundStyle(iconTint(isSelected: isSelected))
                 }
 
                 Text(tab.rawValue)
@@ -120,10 +163,14 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
                         )
                         .transition(.scale.combined(with: .opacity))
                 }
+
+
+                if axis == .vertical { Spacer(minLength: 0) }
             }
             .foregroundStyle(isSelected ? SeeleColors.textPrimary : SeeleColors.textSecondary)
             .padding(.horizontal, SeeleSpacing.md)
             .padding(.vertical, SeeleSpacing.sm)
+            .frame(maxWidth: axis == .vertical ? .infinity : nil, alignment: .leading)
             .background(
                 isSelected ? SeeleColors.selectionBackground : Color.clear,
                 in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
@@ -146,6 +193,7 @@ extension StandardTabBar where Trailing == EmptyView {
     init(
         selection: Binding<Tab>,
         tabs: [Tab] = Array(Tab.allCases),
+        axis: Axis = .horizontal,
         badgeUnit: String = "items",
         showsBackground: Bool = true,
         icon: ((Tab) -> String)? = nil,
@@ -154,6 +202,7 @@ extension StandardTabBar where Trailing == EmptyView {
         self.init(
             selection: selection,
             tabs: tabs,
+            axis: axis,
             badgeUnit: badgeUnit,
             showsBackground: showsBackground,
             icon: icon,
