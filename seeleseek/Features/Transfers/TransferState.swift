@@ -260,12 +260,17 @@ final class TransferState: TransferTracking {
     }
 
     private func startSpeedUpdates() {
-        speedUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
+        // Registered in .common rather than via scheduledTimer, which installs
+        // in .default only. While a menu (or a resize/scroll) tracks, the run
+        // loop switches to .eventTracking and a .default timer stops firing —
+        // speeds froze on screen for as long as the menu-bar menu was open.
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
                 self?.updateSpeeds()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        speedUpdateTimer = timer
     }
 
     // MARK: - Computed Properties

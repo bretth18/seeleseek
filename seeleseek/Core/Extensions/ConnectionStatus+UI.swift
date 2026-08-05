@@ -12,6 +12,20 @@ extension ConnectionStatus {
         }
     }
 
+    /// Appearance-aware variant of `color`, for surfaces that follow the system
+    /// theme instead of the app's pinned dark scheme — the status-bar menu.
+    /// Dynamic, so it resolves against the appearance in effect when it is
+    /// *drawn* rather than one sampled ahead of time; see `SeeleColors.Adaptive`.
+    var adaptiveNSColor: NSColor {
+        switch self {
+        case .disconnected: SeeleColors.Adaptive.textTertiaryNS
+        case .connecting: SeeleColors.Adaptive.warningNS
+        case .connected: SeeleColors.Adaptive.successNS
+        case .reconnecting: SeeleColors.Adaptive.warningNS
+        case .error: SeeleColors.Adaptive.errorNS
+        }
+    }
+
     var label: String {
         switch self {
         case .disconnected: "Disconnected"
