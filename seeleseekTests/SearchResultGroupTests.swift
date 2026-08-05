@@ -154,3 +154,100 @@ struct SearchResultGroupTests {
         #expect(state.selectionState(of: group) == .none)
     }
 }
+
+@Suite("Search list flattening")
+@MainActor
+struct SearchListItemTests {
+
+    private func r(_ user: String, _ path: String) -> SearchResult {
+        SearchResult(username: user, filename: path, size: 1000, freeSlots: true, uploadSpeed: 1)
+    }
+
+    private func state(_ results: [SearchResult]) -> SearchState {
+        let s = SearchState()
+        s.isGrouped = true
+        s.searches = [SearchQuery(query: "q", token: 1)]
+        s.selectedSearchIndex = 0
+        s.searches[0].results = results
+        s.recomputeFilteredResults()
+        return s
+    }
+
+    @Test("Collapsed folders contribute only a header; loose files stay plain rows")
+    func collapsedShape() {
+        let s = state([
+            r("alice", "m\\Album\\01.flac"),
+            r("alice", "m\\Album\\02.flac"),
+            r("bob", "x\\loose.mp3")
+        ])
+        let kinds = s.displayItems.map(\.id)
+        #expect(kinds.count == 2)
+        #expect(kinds[0].hasPrefix("header-"))
+        #expect(kinds[1].hasPrefix("loose-"))
+    }
+
+    @Test("Expanding emits header, every child, then a terminator")
+    func expandedShape() {
+        let s = state([
+            r("alice", "m\\Album\\01.flac"),
+            r("alice", "m\\Album\\02.flac")
+        ])
+        s.toggleExpansion(s.resultGroups[0])
+        let kinds = s.displayItems.map(\.id)
+        #expect(kinds.count == 4)
+        #expect(kinds[0].hasPrefix("header-"))
+        #expect(kinds[1].hasPrefix("child-"))
+        #expect(kinds[2].hasPrefix("child-"))
+        #expect(kinds[3].hasPrefix("end-"))
+    }
+
+    @Test("Every id is unique, so the lazy list can never reuse the wrong row")
+    func idsAreUnique() {
+        let s = state([
+            r("alice", "m\\Album\\01.flac"),
+            r("alice", "m\\Album\\02.flac"),
+            r("bob", "m\\Album\\01.flac"),
+            r("bob", "m\\Album\\02.flac"),
+            r("carol", "x\\loose.mp3")
+        ])
+        for group in s.resultGroups { s.toggleExpansion(group) }
+        let ids = s.displayItems.map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
+
+    @Test("A group flipping single -> multi mid-stream keeps a correct shape")
+    func streamingFlip() {
+        let s = state([r("alice", "m\\Album\\01.flac")])
+        // One file: a plain row, no header.
+        #expect(s.displayItems.count == 1)
+        #expect(s.displayItems[0].id.hasPrefix("loose-"))
+
+        // Second file arrives for the same folder — must become a header,
+        // not a loose row plus a header.
+        s.searches[0].results.append(r("alice", "m\\Album\\02.flac"))
+        s.recomputeFilteredResults()
+        #expect(s.displayItems.count == 1)
+        #expect(s.displayItems[0].id.hasPrefix("header-"))
+
+        // And expansion after the flip yields header + 2 children + end.
+        s.toggleExpansion(s.resultGroups[0])
+        #expect(s.displayItems.count == 4)
+
+        // A third file arriving while expanded must appear as a child.
+        s.searches[0].results.append(r("alice", "m\\Album\\03.flac"))
+        s.recomputeFilteredResults()
+        #expect(s.displayItems.count == 5)
+        #expect(s.displayItems.filter { $0.id.hasPrefix("child-") }.count == 3)
+    }
+
+    @Test("Ungrouping clears the flattened list so stale items cannot render")
+    func ungroupClears() {
+        let s = state([
+            r("alice", "m\\Album\\01.flac"),
+            r("alice", "m\\Album\\02.flac")
+        ])
+        #expect(!s.displayItems.isEmpty)
+        s.isGrouped = false
+        #expect(s.displayItems.isEmpty)
+    }
+}

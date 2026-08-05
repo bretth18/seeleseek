@@ -327,6 +327,11 @@ final class SearchState {
 
     private(set) var resultGroups: [SearchResultGroup] = []
 
+    /// The flattened list the view renders. Derived from `resultGroups` plus
+    /// `expandedGroups`; see `SearchListItem` for why the view must not do
+    /// this flattening itself.
+    private(set) var displayItems: [SearchListItem] = []
+
     /// Multi-file groups start collapsed — that is the scannability win —
     /// so this holds the ones the user has opened.
     var expandedGroups: Set<String> = []
@@ -342,6 +347,29 @@ final class SearchState {
         } else {
             expandedGroups.insert(group.id)
         }
+        rebuildDisplayItems()
+    }
+
+    private func rebuildDisplayItems() {
+        guard isGrouped else {
+            displayItems = []
+            return
+        }
+        var items: [SearchListItem] = []
+        items.reserveCapacity(filteredResults.count + resultGroups.count)
+        for group in resultGroups {
+            if group.isSingleFile, let only = group.results.first {
+                items.append(.loose(only))
+                continue
+            }
+            items.append(.header(group))
+            guard expandedGroups.contains(group.id) else { continue }
+            for result in group.results {
+                items.append(.child(result: result, groupID: group.id))
+            }
+            items.append(.groupEnd(groupID: group.id))
+        }
+        displayItems = items
     }
 
     // MARK: - Group selection
@@ -413,6 +441,7 @@ final class SearchState {
 
         filteredResults = results
         resultGroups = isGrouped ? Self.group(results) : []
+        rebuildDisplayItems()
     }
 
     /// Groups in encounter order over the already-sorted array, so the

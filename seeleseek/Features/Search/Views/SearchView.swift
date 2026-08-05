@@ -453,8 +453,8 @@ struct SearchView: View {
                 ScrollView {
                     LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
                         if searchState.isGrouped {
-                            ForEach(searchState.resultGroups) { group in
-                                SearchResultGroupSection(group: group)
+                            ForEach(searchState.displayItems) { item in
+                                SearchResultListItemView(item: item)
                             }
                         } else {
                             ForEach(searchState.filteredResults) { result in
