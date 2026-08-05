@@ -80,26 +80,71 @@ struct Sidebar: View {
                     .foregroundStyle(SeeleColors.textPrimary)
             }
 
-            HStack(spacing: SeeleSpacing.xs) {
-                Circle()
-                    .fill(appState.connection.connectionStatus.color.opacity(0.8))
-                    .frame(width: 8, height: 8)
-                    .animation(.easeInOut(duration: SeeleSpacing.animationStandard), value: appState.connection.connectionStatus)
-
-                if appState.connection.connectionStatus == .connected,
-                   let username = appState.connection.username {
-                    Text(username)
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textPrimary.opacity(0.8))
-                } else {
+            if appState.connection.connectionStatus == .connected,
+               let username = appState.connection.username {
+                availabilityMenu(username: username)
+            } else {
+                identityRow {
                     Text(appState.connection.connectionStatus.label)
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Connection status: \(appState.connection.connectionStatus.label)")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Connection status: \(appState.connection.connectionStatus.label)")
         }
+    }
+
+    /// Dot + trailing content, shared so the connected and disconnected
+    /// states keep identical metrics and the row never shifts on connect.
+    private func identityRow<Content: View>(
+        dotColor: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: SeeleSpacing.xs) {
+            Circle()
+                .fill((dotColor ?? appState.connection.connectionStatus.color).opacity(0.8))
+                .frame(width: 8, height: 8)
+                .animation(
+                    .easeInOut(duration: SeeleSpacing.animationStandard),
+                    value: appState.connection.connectionStatus
+                )
+            content()
+        }
+    }
+
+    private var availability: UserStatus { appState.connection.onlineStatus }
+
+    private func availabilityMenu(username: String) -> some View {
+        Menu {
+            Picker("Availability", selection: Binding(
+                get: { availability },
+                set: { appState.setOnlineStatus($0) }
+            )) {
+                Text("Online").tag(UserStatus.online)
+                Text("Away").tag(UserStatus.away)
+            }
+            .pickerStyle(.inline)
+        } label: {
+            identityRow(dotColor: availabilityColor) {
+                Text(username)
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textPrimary.opacity(0.8))
+            }
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Set your availability")
+        .accessibilityLabel("Signed in as \(username)")
+        .accessibilityValue(availability.description)
+    }
+
+    /// Away is drawn in the warning colour so the dot distinguishes
+    /// "connected but away" from "connected"; every other state keeps the
+    /// connection colour.
+    private var availabilityColor: Color {
+        availability == .away ? SeeleColors.warning : appState.connection.connectionStatus.color
     }
 }
 

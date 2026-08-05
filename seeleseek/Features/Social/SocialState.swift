@@ -31,6 +31,11 @@ final class SocialState: PeerWatching {
     /// when the last subscriber releases.
     private var peerWatchRefCounts: [String: Int] = [:]
 
+    /// False until the buddy list has come back from the database. Before
+    /// that, `buddies` is empty and cannot be used to decide whether a peer
+    /// is a stranger — see `unwatchPeer`.
+    private var buddiesLoaded = false
+
     // MARK: - Blocklist
     var blockedUsers: [BlockedUser] = []
     var showBlockUserSheet = false
@@ -196,8 +201,12 @@ final class SocialState: PeerWatching {
         let count = (peerWatchRefCounts[username] ?? 0) - 1
         if count <= 0 {
             peerWatchRefCounts.removeValue(forKey: username)
-            let isBuddy = buddies.contains(where: { $0.username == username })
-            if !isBuddy {
+            // Before the buddy list loads, an empty `buddies` makes every
+            // peer look like a stranger — tearing down a real buddy's watch.
+            // Keeping a watch we did not need is harmless; losing one blanks
+            // the buddy's status until the next reconnect.
+            let mayBeBuddy = !buddiesLoaded || buddies.contains { $0.username == username }
+            if !mayBeBuddy {
                 peerStatuses.removeValue(forKey: username)
                 Task { [weak self] in
                     guard let self, let client = self.networkClient else { return }
@@ -331,6 +340,7 @@ final class SocialState: PeerWatching {
         do {
             // Load buddies from database
             buddies = try await SocialRepository.fetchBuddies()
+            buddiesLoaded = true
             // Seed peerStatuses with each buddy's persisted last-known
             // status so `peerStatus(for:)` returns something for buddies
             // before the first live status message arrives.
@@ -379,17 +389,20 @@ final class SocialState: PeerWatching {
                 leechSettings = try JSONDecoder().decode(LeechSettings.self, from: data)
             }
 
-            // The `.connected` event triggers the normal rewatch. This
-            // covers the reverse order: the connection came up before
-            // the buddy list finished loading, so that trigger ran with
-            // zero buddies. `watchUser` is idempotent, so an overlap
-            // with the event-driven pass is harmless.
-            if networkClient?.isConnected == true {
-                await rewatchAllBuddies()
-                await reregisterInterests()
-            }
         } catch {
             logger.error("Failed to load persisted social data: \(error.localizedDescription)")
+        }
+
+        // Outside the do/catch on purpose. This is the fallback for the
+        // reverse startup order — connection up before the buddy list
+        // finished loading, so the `.connected` rewatch ran with zero
+        // buddies. Inside the block, any throw from a later read
+        // (blocked/ignored/interests/profile/leech) skipped it entirely and
+        // silently recreated the stale-buddy-status bug. `watchUser` is
+        // idempotent, so overlapping with the event-driven pass is harmless.
+        if networkClient?.isConnected == true {
+            await rewatchAllBuddies()
+            await reregisterInterests()
         }
     }
 
@@ -450,7 +463,16 @@ final class SocialState: PeerWatching {
             }
         }
 
-        // Unwatch user on server
+        // Unwatch on the server only when nothing else still needs this
+        // peer's status. A transfer row holds a refcounted watch, and an
+        // unconditional unwatch here left that row's status indicator dead
+        // until the next reconnect — the same guard as the cache removal
+        // above, which was already conditional.
+        guard peerWatchRefCounts[username] == nil else {
+            logger.info("Kept server watch on \(username): still held by \(self.peerWatchRefCounts[username] ?? 0) transfer(s)")
+            return
+        }
+
         do {
             try await networkClient?.unwatchUser(username)
             logger.info("Unwatched user \(username)")

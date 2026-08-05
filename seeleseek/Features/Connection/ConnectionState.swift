@@ -20,6 +20,14 @@ final class ConnectionState {
     /// flashing back to the login screen.
     var isReapplyingSettings: Bool = false
 
+    /// Our own availability, as advertised to the server (SetStatus, code 28
+    /// — 1 = away, 2 = online). Peers surface this next to our name, and
+    /// `.away` signals "still sharing, just not at the keyboard" rather than
+    /// offline. Held here rather than derived from the server: the server
+    /// echoes a GetUserStatus when away is *enabled* but not when it is
+    /// cleared, so it is not a reliable mirror.
+    var onlineStatus: UserStatus = .online
+
     // MARK: - Login Form
     var loginUsername: String = ""
     var loginPassword: String = ""

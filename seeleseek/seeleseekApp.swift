@@ -78,6 +78,15 @@ struct SeeleSeekApp: App {
                 }
             }
             CommandMenu("Connection") {
+                Toggle("Away", isOn: Binding(
+                    get: { appState.connection.onlineStatus == .away },
+                    set: { appState.setOnlineStatus($0 ? .away : .online) }
+                ))
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(appState.connection.connectionStatus != .connected)
+
+                Divider()
+
                 Button("Disconnect") {
                     appState.networkClient.disconnect()
                     appState.connection.setDisconnected()
