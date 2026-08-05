@@ -88,11 +88,6 @@ enum DemoDataSeeder {
         ]
     }
 
-    /// Deliberately mixed so the grouped view exercises every case: a
-    /// multi-track album, a second folder from the SAME user, a rival
-    /// transcode from another peer, a folder of mixed formats (no shared
-    /// quality badge), and loose single files that must still render as
-    /// plain rows.
     private static func radioheadResults() -> [SearchResult] {
         let flacFan = "ok_computer_fan"
         let shoegazer = "shoegazer_91"

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// 32pt direction badge used at the leading edge of transfer and history
-/// rows. Fill uses the caller's tint at `alphaMedium`; the glyph is a bold
+/// Direction badge at the leading edge of transfer and history rows. Fill uses the caller's tint at `alphaMedium`; the glyph is a bold
 /// up/down arrow tinted the same hue, or a progress spinner when the row
 /// is mid-connection.
 struct RowDirectionGlyph: View {
@@ -14,10 +13,7 @@ struct RowDirectionGlyph: View {
     @ViewBuilder
     var body: some View {
         if isConnecting {
-            ZStack {
-                RoundedRectangle.badgeShape
-                    .fill(tint.opacity(SeeleColors.alphaMedium))
-                    .frame(width: RowGlyph.size, height: RowGlyph.size)
+            RowGlyphBadge(tint: tint) {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .scaleEffect(SeeleSpacing.scaleSmall)

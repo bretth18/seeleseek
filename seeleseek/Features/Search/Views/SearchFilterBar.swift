@@ -280,14 +280,14 @@ private func previewState(
 }
 
 #Preview("Panel — expanded") {
-    SearchFilterPanel(searchState: previewState(showFilters: true))
+    SearchFilterPanel(searchState: previewState())
         .frame(width: 900)
         .background(SeeleColors.background)
 }
 
 #Preview("Panel — filters applied") {
     SearchFilterPanel(
-        searchState: previewState(showFilters: true, preset: .hiRes, freeSlotsOnly: true, grouped: true)
+        searchState: previewState(preset: .hiRes, freeSlotsOnly: true, grouped: true)
     )
     .frame(width: 900)
     .background(SeeleColors.background)
@@ -295,7 +295,7 @@ private func previewState(
 
 #Preview("Panel — narrow, chips wrap") {
     // FlowLayout's whole job: the format row must wrap rather than clip.
-    SearchFilterPanel(searchState: previewState(showFilters: true))
+    SearchFilterPanel(searchState: previewState())
         .frame(width: 420)
         .background(SeeleColors.background)
 }

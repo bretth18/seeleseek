@@ -3,16 +3,12 @@ import SeeleseekCore
 
 /// Download-whole-folder action for a group header.
 ///
-/// Routes through the same `downloadContainingFolder` path a single row
-/// uses, so the group inherits the existing request tracking — spinner
-/// while fetching, warning triangle on failure, re-entrancy guard — rather
-/// than growing a parallel mechanism.
+/// Routes through `downloadContainingFolder`, so the group inherits the
+/// existing request tracking rather than growing a parallel mechanism.
 ///
-/// Drawn with the same `RowIconButton(isProminent:)` as a row's primary
-/// action so the two line up and read alike. In particular the idle glyph is
-/// the *outlined* `arrow.down.circle` in `textSecondary`: rows reserve the
-/// filled accent variant for a download that is already running, so an
-/// accent-filled header button reads as "in progress" when it is not.
+/// The idle glyph must stay the *outlined* `arrow.down.circle` in
+/// `textSecondary`: rows reserve the filled accent variant for a download
+/// already running, so an accent-filled header button reads as "in progress".
 struct SearchGroupDownloadButton: View {
     @Environment(\.appState) private var appState
 

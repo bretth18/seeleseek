@@ -13,12 +13,11 @@ struct SearchResultGroupHeader: View {
     @Environment(\.appState) private var appState
 
     let group: SearchResultGroup
-    let isExpanded: Bool
-    let onToggleExpansion: () -> Void
 
     @State private var isHovered = false
 
     private var searchState: SearchState { appState.searchState }
+    private var isExpanded: Bool { searchState.isExpanded(group) }
 
     var body: some View {
         StandardListRow(onHoverChanged: { isHovered = $0 }) {
@@ -37,13 +36,13 @@ struct SearchResultGroupHeader: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture(perform: onToggleExpansion)
+        .onTapGesture { searchState.toggleExpansion(group) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")
         .accessibilityHint("Activate to \(isExpanded ? "collapse" : "expand") this folder")
-        .accessibilityAction(named: isExpanded ? "Collapse" : "Expand", onToggleExpansion)
+        .accessibilityAction(named: isExpanded ? "Collapse" : "Expand") { searchState.toggleExpansion(group) }
     }
 
     private var folderGlyph: some View {
@@ -82,7 +81,7 @@ struct SearchResultGroupHeader: View {
                     width: RowLayout.peerUsernameWidth
                 )
 
-                Text("\(group.fileCount) files · \(group.totalSize.formattedBytes)")
+                Text("\(group.fileCount) files · \(group.formattedTotalSize)")
                     .font(SeeleTypography.monoSmall)
                     .foregroundStyle(SeeleColors.textTertiary)
                     .monospacedDigit()
@@ -96,7 +95,7 @@ struct SearchResultGroupHeader: View {
     private var accessibilityLabel: String {
         var parts = ["\(group.displayName), folder from \(group.username)"]
         parts.append("\(group.fileCount) files")
-        parts.append(group.totalSize.formattedBytes)
+        parts.append(group.formattedTotalSize)
         if let quality = group.commonQuality { parts.append(quality) }
         return parts.joined(separator: ", ")
     }

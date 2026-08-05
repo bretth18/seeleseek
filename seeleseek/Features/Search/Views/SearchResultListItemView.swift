@@ -20,11 +20,7 @@ struct SearchResultListItemView: View {
             row(result, nested: false)
 
         case .header(let group):
-            SearchResultGroupHeader(
-                group: group,
-                isExpanded: searchState.isExpanded(group),
-                onToggleExpansion: { searchState.toggleExpansion(group) }
-            )
+            SearchResultGroupHeader(group: group)
 
         case .child(let result, _):
             row(result, nested: true)

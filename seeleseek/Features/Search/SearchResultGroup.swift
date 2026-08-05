@@ -30,27 +30,40 @@ struct SearchResultGroup: Identifiable, Hashable {
     var isSingleFile: Bool { results.count == 1 }
 
     /// Last path component — full Soulseek paths are far too long for a header.
-    var displayName: String {
-        folderPath.split(separator: "\\").last.map(String.init) ?? folderPath
+    let displayName: String
+    /// Precomputed: the header renders this every frame, and `formattedBytes`
+    /// goes through a `FormatStyle` that costs ~19us warm per call.
+    let formattedTotalSize: String
+
+    /// The grouping key. Owned here so `SearchState.group(_:)` cannot derive
+    /// it differently from `id` — if those two ever disagree, expansion state
+    /// silently stops matching its group.
+    static func key(username: String, folderPath: String) -> String {
+        "\(username)\\\(folderPath)"
     }
 
     init(username: String, folderPath: String, results: [SearchResult]) {
-        self.id = "\(username)\\\(folderPath)"
+        self.id = Self.key(username: username, folderPath: folderPath)
+        self.displayName = folderPath.split(separator: "\\").last.map(String.init) ?? folderPath
         self.username = username
         self.folderPath = folderPath
         // Natural ordering, so "02" sorts before "10" rather than after it.
         self.results = results.sorted {
             $0.filename.localizedStandardCompare($1.filename) == .orderedAscending
         }
-        self.totalSize = results.reduce(0) { $0 + $1.size }
+        var total: UInt64 = 0
+        for result in results { total += result.size }
+        self.totalSize = total
+        self.formattedTotalSize = total.formattedBytes
         self.commonQuality = Self.commonQuality(of: results)
     }
 
     private static func commonQuality(of results: [SearchResult]) -> String? {
         guard let first = results.first else { return nil }
 
+        // `fileExtension` re-splits `filename` on every access, so hold it.
         let ext = first.fileExtension
-        guard results.allSatisfy({ $0.fileExtension == ext }), !ext.isEmpty else { return nil }
+        guard !ext.isEmpty, results.allSatisfy({ $0.fileExtension == ext }) else { return nil }
         let format = ext.uppercased()
 
         // Bitrate qualifies a lossy format ("MP3 320" means something). For

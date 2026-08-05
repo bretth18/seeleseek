@@ -351,12 +351,10 @@ final class SearchState {
     }
 
     private func rebuildDisplayItems() {
-        guard isGrouped else {
-            displayItems = []
-            return
-        }
+        // Collapsed is the default, so the common case is one item per group;
+        // over-reserving for every result wasted ~65KB on each recompute.
         var items: [SearchListItem] = []
-        items.reserveCapacity(filteredResults.count + resultGroups.count)
+        items.reserveCapacity(resultGroups.count)
         for group in resultGroups {
             if group.isSingleFile, let only = group.results.first {
                 items.append(.loose(only))
@@ -375,9 +373,15 @@ final class SearchState {
     // MARK: - Group selection
 
     func selectionState(of group: SearchResultGroup) -> GroupSelection {
-        let selected = group.results.count { selectedResults.contains($0.id) }
-        if selected == 0 { return .none }
-        return selected == group.results.count ? .all : .partial
+        // Stops as soon as both a selected and an unselected member are seen,
+        // rather than scanning the whole group — this runs per header render.
+        var sawSelected = false
+        var sawUnselected = false
+        for result in group.results {
+            if selectedResults.contains(result.id) { sawSelected = true } else { sawUnselected = true }
+            if sawSelected && sawUnselected { return .partial }
+        }
+        return sawSelected ? .all : .none
     }
 
     /// Selecting a partially-selected group completes it rather than
@@ -440,32 +444,37 @@ final class SearchState {
         }
 
         filteredResults = results
-        resultGroups = isGrouped ? Self.group(results) : []
-        rebuildDisplayItems()
+        if isGrouped {
+            resultGroups = Self.group(results)
+            rebuildDisplayItems()
+        } else {
+            resultGroups = []
+            displayItems = []
+        }
     }
 
     /// Groups in encounter order over the already-sorted array, so the
     /// active sort still decides which group leads — "Speed" means the
     /// fastest peer's folder first — without needing a second sort control.
     private static func group(_ results: [SearchResult]) -> [SearchResultGroup] {
-        var order: [String] = []
-        var buckets: [String: (username: String, folder: String, items: [SearchResult])] = [:]
+        var indexByKey: [String: Int] = [:]
+        var buckets: [[SearchResult]] = []
 
         for result in results {
-            let key = "\(result.username)\\\(result.folderPath)"
-            if buckets[key] == nil {
-                order.append(key)
-                buckets[key] = (result.username, result.folderPath, [])
+            let key = SearchResultGroup.key(username: result.username, folderPath: result.folderPath)
+            if let index = indexByKey[key] {
+                buckets[index].append(result)
+            } else {
+                indexByKey[key] = buckets.count
+                buckets.append([result])
             }
-            buckets[key]?.items.append(result)
         }
 
-        return order.compactMap { key in
-            guard let bucket = buckets[key] else { return nil }
-            return SearchResultGroup(
-                username: bucket.username,
-                folderPath: bucket.folder,
-                results: bucket.items
+        return buckets.map { bucket in
+            SearchResultGroup(
+                username: bucket[0].username,
+                folderPath: bucket[0].folderPath,
+                results: bucket
             )
         }
     }

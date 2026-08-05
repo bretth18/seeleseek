@@ -82,7 +82,6 @@ struct SettingsView: View {
         .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
     }
 
-
 }
 
 #Preview {

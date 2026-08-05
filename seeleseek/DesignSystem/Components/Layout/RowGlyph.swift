@@ -1,19 +1,18 @@
 import SwiftUI
 
-/// The 32pt leading badge every list row opens with: a `badgeShape` filled
-/// with the caller's tint at `alphaMedium`, holding a same-tint glyph.
+/// The badge chrome every list row's leading column is built from: a
+/// `badgeShape` filled with the caller's tint at `alphaMedium`. Size is
+/// pinned by `RowGlyphTests`.
 ///
-/// This shape was hand-rolled independently in `RowDirectionGlyph`,
-/// `SearchResultRow.fileGlyph` and the grouped-folder header. One definition
-/// keeps the leading column identical across search, transfers, history and
-/// grouped results — which is the whole reason rows line up.
-struct RowGlyph: View {
-    let systemName: String
+/// Split from `RowGlyph` so callers whose content is not a symbol — the
+/// connecting spinner in `RowDirectionGlyph` — compose with it instead of
+/// hand-rolling the fill and frame again. This is the single definition of
+/// the leading column's size and fill, which is what makes rows line up.
+struct RowGlyphBadge<Content: View>: View {
     let tint: Color
-    var glyphSize: CGFloat = SeeleSpacing.iconSize
-    var weight: Font.Weight = .medium
+    @ViewBuilder let content: Content
 
-    static let size: CGFloat = SeeleSpacing.iconSizeXL
+    static var size: CGFloat { SeeleSpacing.iconSizeXL }
 
     var body: some View {
         ZStack {
@@ -21,6 +20,22 @@ struct RowGlyph: View {
                 .fill(tint.opacity(SeeleColors.alphaMedium))
                 .frame(width: Self.size, height: Self.size)
 
+            content
+        }
+    }
+}
+
+/// The common case: one SF Symbol in the badge's tint.
+struct RowGlyph: View {
+    let systemName: String
+    let tint: Color
+    var glyphSize: CGFloat = SeeleSpacing.iconSize
+    var weight: Font.Weight = .medium
+
+    static var size: CGFloat { RowGlyphBadge<EmptyView>.size }
+
+    var body: some View {
+        RowGlyphBadge(tint: tint) {
             Image(systemName: systemName)
                 .font(.system(size: glyphSize, weight: weight))
                 .foregroundStyle(tint)
@@ -28,7 +43,7 @@ struct RowGlyph: View {
     }
 }
 
-/// Corner ornament for a `RowGlyph` — the private-file lock on a search
+/// Corner ornament for a row glyph — the private-file lock on a search
 /// result, the expansion chevron on a folder header. Kept here so the offset
 /// and backing circle stay identical wherever one is used.
 struct RowGlyphOrnament: View {
@@ -54,7 +69,9 @@ struct RowGlyphOrnament: View {
             .overlay(alignment: .bottomTrailing) {
                 RowGlyphOrnament(systemName: "chevron.right", rotation: .degrees(90))
             }
-        RowGlyph(systemName: "arrow.down", tint: SeeleColors.info, weight: .bold)
+        RowGlyphBadge(tint: SeeleColors.info) {
+            ProgressView().progressViewStyle(.circular).scaleEffect(SeeleSpacing.scaleSmall)
+        }
     }
     .padding()
     .background(SeeleColors.background)

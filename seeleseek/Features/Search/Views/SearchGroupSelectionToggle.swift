@@ -9,24 +9,30 @@ struct SearchGroupSelectionToggle: View {
 
     let group: SearchResultGroup
 
-    private var state: SearchState.GroupSelection {
-        appState.searchState.selectionState(of: group)
-    }
-
     var body: some View {
+        // Read once: `selectionState(of:)` scans the group's results against
+        // the selection set, and this was previously evaluated three times
+        // per render (tint, symbol, spoken value).
+        let state = appState.searchState.selectionState(of: group)
+
         Button {
             appState.searchState.toggleSelection(of: group)
         } label: {
-            Image(systemName: symbol)
+            Image(systemName: Self.symbol(for: state))
                 .font(.system(size: SeeleSpacing.iconSize))
                 .foregroundStyle(state == .none ? SeeleColors.textTertiary : SeeleColors.accent)
+                // Same hit target as `SearchResultRow`'s checkbox, or the
+                // header's glyph and title stop lining up with its rows the
+                // moment selection mode is on.
+                .frame(width: RowGlyph.size, height: RowGlyph.size)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Select all in \(group.displayName)")
-        .accessibilityValue(accessibilityValue)
+        .accessibilityValue(Self.spokenValue(for: state))
     }
 
-    private var symbol: String {
+    private static func symbol(for state: SearchState.GroupSelection) -> String {
         switch state {
         case .none: "circle"
         case .partial: "minus.circle.fill"
@@ -34,7 +40,7 @@ struct SearchGroupSelectionToggle: View {
         }
     }
 
-    private var accessibilityValue: String {
+    private static func spokenValue(for state: SearchState.GroupSelection) -> String {
         switch state {
         case .none: "none selected"
         case .partial: "some selected"

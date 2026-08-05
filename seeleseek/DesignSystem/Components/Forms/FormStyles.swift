@@ -35,7 +35,7 @@ struct SeeleToggleStyle: ToggleStyle {
     var layout: Layout = .row
 
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: layout == .inline ? SeeleSpacing.sm : 0) {
+        HStack(spacing: SeeleSpacing.sm) {
             configuration.label
 
             // The spacer is what makes a settings row fill its width. Inline,

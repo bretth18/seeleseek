@@ -349,15 +349,8 @@ struct SearchResultRow: View {
 
     // MARK: - Trailing cluster (hover-revealed secondary actions + primary action)
 
-    // Both anchors live in `SearchResultRowLayout` so the grouped folder
-    // header can line its download button up with these buttons.
-    private var secondaryActionsWidth: CGFloat {
-        SeeleSpacing.buttonHeight * SearchResultRowLayout.secondaryActionCount
-            + SeeleSpacing.xxs * (SearchResultRowLayout.secondaryActionCount - 1)
-    }
-    private var trailingClusterWidth: CGFloat {
-        SearchResultRowLayout.trailingClusterWidth
-    }
+    private var secondaryActionsWidth: CGFloat { RowLayout.secondaryActionsWidth(2) }
+    private var trailingClusterWidth: CGFloat { SearchResultRowLayout.trailingClusterWidth }
 
     private var trailingCluster: some View {
         HStack(spacing: SeeleSpacing.xxs) {
@@ -606,18 +599,10 @@ enum SearchResultRowLayout {
     /// Chip slot width — tuned for the longest tier label (`LOSSLESS`).
     static let qualityChipSlotWidth: CGFloat = 62
 
-    /// Leading glyph column. A grouped folder header reuses this so its
-    /// title starts at the same X as a row's filename.
-    static let glyphColumnWidth: CGFloat = SeeleSpacing.iconSizeXL
-
-    /// Trailing action cluster. Shared with the group header so its
+    /// Trailing action cluster: two hover-revealed secondary actions plus the
+    /// prominent primary action. Shared with the grouped folder header so its
     /// download button lands under the rows' action buttons.
-    static let secondaryActionCount: CGFloat = 2
-    static let trailingClusterWidth: CGFloat =
-        SeeleSpacing.buttonHeight * secondaryActionCount
-        + SeeleSpacing.xxs * (secondaryActionCount - 1)
-        + SeeleSpacing.xxs
-        + SeeleSpacing.iconSizeXL
+    static let trailingClusterWidth = RowLayout.trailingClusterWidth(secondaryActions: 2)
 }
 
 enum SearchResultStatColumn: CGFloat {

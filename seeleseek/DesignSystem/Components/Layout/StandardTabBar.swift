@@ -48,30 +48,30 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
     var body: some View {
         stack
             .background(showsBackground ? SeeleColors.surface.opacity(0.5) : Color.clear)
-        .focusable()
-        .focused($isFocused)
-        // Default ring would wrap the full-width bar; the selected tab draws its own.
-        .focusEffectDisabled()
-        .onMoveCommand { direction in
-            switch (axis, direction) {
-            case (.horizontal, .left), (.vertical, .up):
-                moveSelection { TabCycler.clampedPrevious($0, count: $1) }
-            case (.horizontal, .right), (.vertical, .down):
-                moveSelection { TabCycler.clampedNext($0, count: $1) }
-            default:
-                break
+            .focusable()
+            .focused($isFocused)
+            // Default ring would wrap the full-width bar; the selected tab draws its own.
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch (axis, direction) {
+                case (.horizontal, .left), (.vertical, .up):
+                    moveSelection { TabCycler.clampedPrevious($0, count: $1) }
+                case (.horizontal, .right), (.vertical, .down):
+                    moveSelection { TabCycler.clampedNext($0, count: $1) }
+                default:
+                    break
+                }
             }
-        }
-        .onKeyPress(.home) {
-            guard let first = tabs.first, selection != first else { return .ignored }
-            select(first)
-            return .handled
-        }
-        .onKeyPress(.end) {
-            guard let last = tabs.last, selection != last else { return .ignored }
-            select(last)
-            return .handled
-        }
+            .onKeyPress(.home) {
+                guard let first = tabs.first, selection != first else { return .ignored }
+                select(first)
+                return .handled
+            }
+            .onKeyPress(.end) {
+                guard let last = tabs.last, selection != last else { return .ignored }
+                select(last)
+                return .handled
+            }
     }
 
     @ViewBuilder
@@ -163,7 +163,6 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
                         )
                         .transition(.scale.combined(with: .opacity))
                 }
-
 
                 if axis == .vertical { Spacer(minLength: 0) }
             }
