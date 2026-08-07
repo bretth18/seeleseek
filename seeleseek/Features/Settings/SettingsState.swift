@@ -149,8 +149,15 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onShowInMenuBarChange?(showInMenuBar)
         }
     }
+
+    /// Live push to MenuBarController, which owns the NSStatusItem. Wired by
+    /// the app delegate at startup. SwiftUI's `MenuBarExtra` used to bind this
+    /// directly via `isInserted:`; the status item is AppKit-owned now, so the
+    /// toggle needs an explicit hand-off to keep working.
+    var onShowInMenuBarChange: ((Bool) -> Void)?
 
     // MARK: - Network Settings
     var listenPort: Int = 2234 {
