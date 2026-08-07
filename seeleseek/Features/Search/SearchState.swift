@@ -332,21 +332,28 @@ final class SearchState {
     /// this flattening itself.
     private(set) var displayItems: [SearchListItem] = []
 
-    /// Groups the user has expanded; multi-file groups start collapsed.
-    /// Only `toggleExpansion` may mutate this — `displayItems` is rebuilt
-    /// there, and a direct write would leave it stale.
-    private(set) var expandedGroups: Set<String> = []
+    /// Groups the user has expanded, per search token; multi-file groups
+    /// start collapsed. Scoped per tab — group ids are `username\folder`,
+    /// so a shared set would leak one search's disclosure into another that
+    /// surfaces the same peer folder. Entries die with their search in
+    /// `closeSearch`. Only `toggleExpansion` may mutate this —
+    /// `displayItems` is rebuilt there, and a direct write would leave it
+    /// stale.
+    private var expandedGroupsByToken: [UInt32: Set<String>] = [:]
+
+    private var expandedGroups: Set<String> {
+        guard let token = currentSearch?.token else { return [] }
+        return expandedGroupsByToken[token] ?? []
+    }
 
     func isExpanded(_ group: SearchResultGroup) -> Bool {
         group.isSingleFile || expandedGroups.contains(group.id)
     }
 
     func toggleExpansion(_ group: SearchResultGroup) {
-        guard !group.isSingleFile else { return }
-        if expandedGroups.contains(group.id) {
-            expandedGroups.remove(group.id)
-        } else {
-            expandedGroups.insert(group.id)
+        guard !group.isSingleFile, let token = currentSearch?.token else { return }
+        if !expandedGroupsByToken[token, default: []].insert(group.id).inserted {
+            expandedGroupsByToken[token]?.remove(group.id)
         }
         rebuildDisplayItems()
     }
@@ -356,13 +363,14 @@ final class SearchState {
         // default, so the common case is one item per group.
         var items: [SearchListItem] = []
         items.reserveCapacity(resultGroups.count)
+        let expanded = expandedGroups
         for group in resultGroups {
             if group.isSingleFile, let only = group.results.first {
                 items.append(.loose(only))
                 continue
             }
             items.append(.header(group))
-            guard expandedGroups.contains(group.id) else { continue }
+            guard expanded.contains(group.id) else { continue }
             for result in group.results {
                 items.append(.child(result))
             }
@@ -662,6 +670,7 @@ final class SearchState {
         cancelInactivityTimer(token: search.token)
         searchErrors.removeValue(forKey: search.id)
         tokenToSearchIndex.removeValue(forKey: search.token)
+        expandedGroupsByToken.removeValue(forKey: search.token)
         searches.remove(at: index)
 
         // Update token mappings for remaining searches

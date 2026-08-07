@@ -116,6 +116,10 @@ struct SearchResultGroupTests {
     @Test("Expansion: multi-file groups start collapsed, single-file always open")
     func expansion() {
         let state = SearchState()
+        // Expansion state is stored per search token, so it needs a
+        // current search to attach to.
+        state.searches = [SearchQuery(query: "q", token: 1)]
+        state.selectedSearchIndex = 0
         let multi = SearchResultGroup(username: "a", folderPath: "f", results: [
             result("a", "f\\1.flac"), result("a", "f\\2.flac")
         ])
@@ -238,6 +242,33 @@ struct SearchListItemTests {
         s.recomputeFilteredResults()
         #expect(s.displayItems.count == 5)
         #expect(s.displayItems.filter { $0.id.hasPrefix("child-") }.count == 3)
+    }
+
+    @Test("Expansion is per search tab and dropped when its search closes")
+    func expansionScopedPerSearch() {
+        let album = [r("alice", "m\\Album\\01.flac"), r("alice", "m\\Album\\02.flac")]
+        let s = state(album)
+        s.searches.append(SearchQuery(query: "q2", token: 2))
+        s.searches[1].results = album
+
+        s.toggleExpansion(s.resultGroups[0])
+        #expect(s.displayItems.count == 4)
+
+        // The same peer folder in another tab stays collapsed.
+        s.selectedSearchIndex = 1
+        #expect(s.displayItems.count == 1)
+
+        // Switching back preserves the first tab's expansion.
+        s.selectedSearchIndex = 0
+        #expect(s.displayItems.count == 4)
+
+        // Closing the search drops its state: a new search reusing the
+        // same token starts collapsed again.
+        s.closeSearch(at: 0)
+        s.searches.insert(SearchQuery(query: "q", token: 1), at: 0)
+        s.searches[0].results = album
+        s.recomputeFilteredResults()
+        #expect(s.displayItems.count == 1)
     }
 
     @Test("Ungrouping clears the flattened list so stale items cannot render")
