@@ -76,7 +76,9 @@ final class SearchState {
     weak var networkClient: NetworkClient?
 
     // MARK: - Settings Reference
-    weak var settings: SettingsState?
+    weak var settings: SettingsState? {
+        didSet { isGrouped = settings?.groupSearchResultsByDefault ?? false }
+    }
 
     // MARK: - Shared Activity Tracker
     static let activityTracker = SearchActivityState()
@@ -332,13 +334,10 @@ final class SearchState {
     /// this flattening itself.
     private(set) var displayItems: [SearchListItem] = []
 
-    /// Groups the user has expanded, per search token; multi-file groups
-    /// start collapsed. Scoped per tab — group ids are `username\folder`,
-    /// so a shared set would leak one search's disclosure into another that
-    /// surfaces the same peer folder. Entries die with their search in
-    /// `closeSearch`. Only `toggleExpansion` may mutate this —
-    /// `displayItems` is rebuilt there, and a direct write would leave it
-    /// stale.
+    /// Expanded group ids per search token — group ids are `username\folder`,
+    /// so a shared set would leak one tab's disclosure into another surfacing
+    /// the same peer folder. Pruned in `closeSearch`. Mutate only via
+    /// `toggleExpansion`, which rebuilds `displayItems`.
     private var expandedGroupsByToken: [UInt32: Set<String>] = [:]
 
     private var expandedGroups: Set<String> {

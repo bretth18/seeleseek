@@ -28,9 +28,8 @@ final class ConnectionState {
     /// cleared, so it is not a reliable mirror.
     var onlineStatus: UserStatus = .online
 
-    /// Survives disconnects so `setConnected` can tell a reconnect of the
-    /// same account (away must persist) from a login as a different one
-    /// (away must not leak to the new account).
+    /// Survives disconnects: away persists across reconnects of the same
+    /// account but must not leak to a different login.
     private var lastConnectedUsername: String?
 
     // MARK: - Login Form

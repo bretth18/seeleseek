@@ -116,8 +116,7 @@ struct SearchResultGroupTests {
     @Test("Expansion: multi-file groups start collapsed, single-file always open")
     func expansion() {
         let state = SearchState()
-        // Expansion state is stored per search token, so it needs a
-        // current search to attach to.
+        // Expansion is stored per search token, so a current search must exist.
         state.searches = [SearchQuery(query: "q", token: 1)]
         state.selectedSearchIndex = 0
         let multi = SearchResultGroup(username: "a", folderPath: "f", results: [
@@ -254,11 +253,9 @@ struct SearchListItemTests {
         s.toggleExpansion(s.resultGroups[0])
         #expect(s.displayItems.count == 4)
 
-        // The same peer folder in another tab stays collapsed.
+        // Same peer folder in another tab: collapsed there, still expanded here.
         s.selectedSearchIndex = 1
         #expect(s.displayItems.count == 1)
-
-        // Switching back preserves the first tab's expansion.
         s.selectedSearchIndex = 0
         #expect(s.displayItems.count == 4)
 

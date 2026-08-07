@@ -2,6 +2,7 @@ import SwiftUI
 import SeeleseekCore
 
 struct GeneralSettingsSection: View {
+    @Environment(\.appState) private var appState
     @Bindable var settings: SettingsState
     @State private var showNicotineImport = false
 
@@ -94,6 +95,15 @@ struct GeneralSettingsSection: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
                 }
+                // Write-through so the toggle also applies to the live
+                // search view, not just future launches.
+                settingsToggle("Group results by folder", isOn: Binding(
+                    get: { settings.groupSearchResultsByDefault },
+                    set: {
+                        settings.groupSearchResultsByDefault = $0
+                        appState.searchState.isGrouped = $0
+                    }
+                ))
             }
 
             settingsGroup("Startup") {

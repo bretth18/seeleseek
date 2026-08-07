@@ -106,9 +106,8 @@ struct Sidebar: View {
             Circle()
                 .fill(resolvedColor.opacity(0.8))
                 .frame(width: 8, height: 8)
-                // Keyed on the color, not connectionStatus: the connected
-                // dot also changes with availability (away → warning), and
-                // that transition must ease the same way.
+                // Keyed on the color: the dot also changes with
+                // availability, not just connectionStatus.
                 .animation(
                     .easeInOut(duration: SeeleSpacing.animationStandard),
                     value: resolvedColor
@@ -140,8 +139,8 @@ struct Sidebar: View {
         }
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        // Vertical only: the sidebar column is pinned at 220pt, and a long
-        // username must truncate rather than clip past the column edge.
+        // Vertical only, so a long username truncates instead of clipping
+        // past the pinned 220pt column.
         .fixedSize(horizontal: false, vertical: true)
         .help("Set your availability")
         .accessibilityLabel("Signed in as \(username)")

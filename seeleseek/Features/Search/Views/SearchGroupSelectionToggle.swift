@@ -39,8 +39,7 @@ struct SearchGroupSelectionToggle: View {
         }
     }
 
-    /// Shared with `SearchResultGroupHeader`, whose combined element must
-    /// speak the same selection wording for collapsed groups.
+    /// Also spoken by `SearchResultGroupHeader` for collapsed groups.
     static func spokenValue(for state: SearchState.GroupSelection) -> String {
         switch state {
         case .none: "none selected"

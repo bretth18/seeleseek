@@ -80,6 +80,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let uploadSpeedLimitKey = "settingsUploadSpeedLimit"
     private let downloadSpeedLimitKey = "settingsDownloadSpeedLimit"
     private let maxSearchResultsKey = "settingsMaxSearchResults"
+    private let groupSearchResultsKey = "settingsGroupSearchResults"
     private let downloadLocationKey = "settingsDownloadLocation"
     private let incompleteLocationKey = "settingsIncompleteLocation"
     private let downloadFolderFormatKey = "settingsDownloadFolderFormat"
@@ -205,6 +206,12 @@ final class SettingsState: DownloadSettingsProviding {
     // MARK: - Search Settings
     /// Maximum number of search results to collect (0 = unlimited)
     var maxSearchResults: Int = 500 {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var groupSearchResultsByDefault: Bool = false {
         didSet {
             guard !isLoading else { return }
             save()
@@ -355,6 +362,7 @@ final class SettingsState: DownloadSettingsProviding {
         uploadSpeedLimit = 0
         downloadSpeedLimit = 0
         maxSearchResults = 500
+        groupSearchResultsByDefault = false
         respondToSearches = true
         minSearchQueryLength = 3
         maxSearchResponseResults = 50
@@ -419,6 +427,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
         UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
         UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
+        UserDefaults.standard.set(groupSearchResultsByDefault, forKey: groupSearchResultsKey)
         UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
         UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
@@ -491,6 +500,9 @@ final class SettingsState: DownloadSettingsProviding {
         }
         if UserDefaults.standard.object(forKey: maxSearchResultsKey) != nil {
             maxSearchResults = UserDefaults.standard.integer(forKey: maxSearchResultsKey)
+        }
+        if UserDefaults.standard.object(forKey: groupSearchResultsKey) != nil {
+            groupSearchResultsByDefault = UserDefaults.standard.bool(forKey: groupSearchResultsKey)
         }
         if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
             downloadLocation = URL(fileURLWithPath: downloadPath)
