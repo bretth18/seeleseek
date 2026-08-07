@@ -66,12 +66,7 @@ struct PrivacySettingsSection: View {
             settingsGroup("Auto-block Bot Accounts") {
                 settingsToggle("Reject uploads to matching usernames", isOn: $settings.blockLeechPatternsEnabled)
 
-                settingsRow {
-                    Text("Uploads from usernames matching any of these glob patterns (e.g. `slsk_*`) are silently denied. Matches are case-insensitive.")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                settingsCaption("Uploads from usernames matching any of these glob patterns (e.g. `slsk_*`) are silently denied. Matches are case-insensitive.")
 
                 settingsRow {
                     HStack(spacing: SeeleSpacing.sm) {
@@ -338,11 +333,7 @@ struct PrivacySettingsSection: View {
                             }
                     }
                 }
-                settingsRow {
-                    Text("Users with fewer shares than these thresholds are considered leeches")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
+                settingsCaption("Users with fewer shares than these thresholds are considered leeches")
             }
             .opacity(socialState.leechSettings.enabled ? 1 : 0.5)
             .disabled(!socialState.leechSettings.enabled)

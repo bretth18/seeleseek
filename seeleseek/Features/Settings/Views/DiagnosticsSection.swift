@@ -57,11 +57,7 @@ struct DiagnosticsSection: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                settingsRow {
-                    Text(reachabilityHint(appState.networkClient.reachability))
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
+                settingsCaption("\(reachabilityHint(appState.networkClient.reachability))")
             }
 
             settingsGroup("Peer Connections") {
@@ -89,15 +85,14 @@ struct DiagnosticsSection: View {
                 diagRow("Total Received", value: pool.totalBytesReceived.formattedBytes)
                 diagRow("Total Sent", value: pool.totalBytesSent.formattedBytes)
 
-                settingsRow {
+                settingsCaption {
                     VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                         Text("Direct Inbound is the definitive reachability signal — if it's > 0, your port is open to at least some peers.")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
                         Text("Server-Forwarded counts peers who couldn't reach your port directly and fell back to the server. High values = port problem.")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
                     }
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

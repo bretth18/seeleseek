@@ -68,7 +68,7 @@ struct GeneralSettingsSection: View {
                     }
                 }
 
-                settingsRow {
+                settingsCaption {
                     HStack(spacing: SeeleSpacing.xs) {
                         Image(systemName: "eye")
                             .font(.system(size: SeeleSpacing.iconSizeXS))
@@ -90,19 +90,12 @@ struct GeneralSettingsSection: View {
 
             settingsGroup("Search") {
                 settingsNumberField("Max Results", value: $settings.maxSearchResults, range: 0...10000, placeholder: "0 = Unlimited")
-                settingsRow {
-                    Text("Stop collecting results after this limit. 0 = unlimited.")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-                // Write-through so the toggle also applies to the live
-                // search view, not just future launches.
+                settingsCaption("Stop collecting results after this limit. 0 = unlimited.")
+                // Set via searchState so the live view recomputes; it
+                // writes the setting back.
                 settingsToggle("Group results by folder", isOn: Binding(
-                    get: { settings.groupSearchResultsByDefault },
-                    set: {
-                        settings.groupSearchResultsByDefault = $0
-                        appState.searchState.isGrouped = $0
-                    }
+                    get: { settings.groupSearchResults },
+                    set: { appState.searchState.isGrouped = $0 }
                 ))
             }
 

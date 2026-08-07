@@ -211,9 +211,12 @@ final class SettingsState: DownloadSettingsProviding {
             save()
         }
     }
-    var groupSearchResultsByDefault: Bool = false {
+    /// Mirrors `SearchState.isGrouped`, which writes back here on every
+    /// change so the filter-bar toggle persists too. The oldValue guard
+    /// stops that write-back loop from re-saving.
+    var groupSearchResults: Bool = false {
         didSet {
-            guard !isLoading else { return }
+            guard !isLoading, groupSearchResults != oldValue else { return }
             save()
         }
     }
@@ -362,7 +365,7 @@ final class SettingsState: DownloadSettingsProviding {
         uploadSpeedLimit = 0
         downloadSpeedLimit = 0
         maxSearchResults = 500
-        groupSearchResultsByDefault = false
+        groupSearchResults = false
         respondToSearches = true
         minSearchQueryLength = 3
         maxSearchResponseResults = 50
@@ -427,7 +430,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
         UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
         UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
-        UserDefaults.standard.set(groupSearchResultsByDefault, forKey: groupSearchResultsKey)
+        UserDefaults.standard.set(groupSearchResults, forKey: groupSearchResultsKey)
         UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
         UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
@@ -502,7 +505,7 @@ final class SettingsState: DownloadSettingsProviding {
             maxSearchResults = UserDefaults.standard.integer(forKey: maxSearchResultsKey)
         }
         if UserDefaults.standard.object(forKey: groupSearchResultsKey) != nil {
-            groupSearchResultsByDefault = UserDefaults.standard.bool(forKey: groupSearchResultsKey)
+            groupSearchResults = UserDefaults.standard.bool(forKey: groupSearchResultsKey)
         }
         if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
             downloadLocation = URL(fileURLWithPath: downloadPath)

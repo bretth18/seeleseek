@@ -77,7 +77,7 @@ final class SearchState {
 
     // MARK: - Settings Reference
     weak var settings: SettingsState? {
-        didSet { isGrouped = settings?.groupSearchResultsByDefault ?? false }
+        didSet { isGrouped = settings?.groupSearchResults ?? false }
     }
 
     // MARK: - Shared Activity Tracker
@@ -322,9 +322,14 @@ final class SearchState {
 
     /// Group results by the folder each peer offers them from. Built in the
     /// same pass as `filteredResults` so the two can never disagree about
-    /// what is visible.
+    /// what is visible. Persisted via `settings.groupSearchResults`, so the
+    /// filter-bar toggle and the Settings toggle stay in sync.
     var isGrouped: Bool = false {
-        didSet { if isGrouped != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard isGrouped != oldValue else { return }
+            settings?.groupSearchResults = isGrouped
+            recomputeFilteredResults()
+        }
     }
 
     private(set) var resultGroups: [SearchResultGroup] = []
