@@ -25,11 +25,9 @@ struct SearchResultGroup: Identifiable, Hashable {
 
     var fileCount: Int { results.count }
 
-    /// Single-file groups render as a plain row with no wrapper chrome, so
-    /// a lone loose result looks exactly as it did before grouping existed.
     var isSingleFile: Bool { results.count == 1 }
 
-    /// Last path component — full Soulseek paths are far too long for a header.
+    /// Last path component of `folderPath`.
     let displayName: String
     /// Precomputed: the header renders this every frame, and `formattedBytes`
     /// goes through a `FormatStyle` that costs ~19us warm per call.

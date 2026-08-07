@@ -94,7 +94,7 @@ enum DemoDataSeeder {
         let hoarder = "vinyl_hoarder"
 
         return [
-            // Full FLAC album — uniform format + bitrate.
+            // Uniform format + bitrate — exercises the shared quality badge.
             SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\01 Airbag.flac",
                          size: 28_400_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
             SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\02 Paranoid Android.flac",
@@ -110,7 +110,6 @@ enum DemoDataSeeder {
             SearchResult(username: flacFan, filename: "@@radiohead\\Kid A (2000) [FLAC]\\02 Kid A.flac",
                          size: 27_300_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
 
-            // Rival transcode of the same album from another peer.
             SearchResult(username: shoegazer, filename: "Music\\Radiohead - OK Computer [320]\\01 - Airbag.mp3",
                          size: 11_200_000, bitrate: 320, freeSlots: true, uploadSpeed: 1_900_000, queueLength: 2),
             SearchResult(username: shoegazer, filename: "Music\\Radiohead - OK Computer [320]\\02 - Paranoid Android.mp3",

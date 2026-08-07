@@ -29,9 +29,8 @@ import SeeleseekCore
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
-    /// True when this row sits under a folder header. The header already
-    /// names the peer and the folder, so repeating both on every track is
-    /// noise that makes an expanded group hard to read.
+    /// Rows under a folder header drop the context line — the header
+    /// already names the peer and folder.
     var isNestedInGroup: Bool = false
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
@@ -350,14 +349,13 @@ struct SearchResultRow: View {
     // MARK: - Trailing cluster (hover-revealed secondary actions + primary action)
 
     private var secondaryActionsWidth: CGFloat { RowLayout.secondaryActionsWidth(2) }
-    private var trailingClusterWidth: CGFloat { SearchResultRowLayout.trailingClusterWidth }
 
     private var trailingCluster: some View {
         HStack(spacing: SeeleSpacing.xxs) {
             secondaryActions
             primaryAction
         }
-        .frame(width: trailingClusterWidth, alignment: .trailing)
+        .frame(width: SearchResultRowLayout.trailingClusterWidth, alignment: .trailing)
     }
 
     private var secondaryActions: some View {

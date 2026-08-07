@@ -719,14 +719,8 @@ private struct TransferActionCluster: View {
     /// Reserve width for up to three hover-revealed secondary icons:
     /// play / tag / reveal on completed audio files. Unused slots stay
     /// blank so the row doesn't reflow.
-    private static let secondaryActionCount: CGFloat = 3
-    private var secondaryActionsWidth: CGFloat {
-        SeeleSpacing.buttonHeight * Self.secondaryActionCount
-            + SeeleSpacing.xxs * (Self.secondaryActionCount - 1)
-    }
-    private var clusterWidth: CGFloat {
-        secondaryActionsWidth + SeeleSpacing.xxs + SeeleSpacing.iconSizeXL
-    }
+    private var secondaryActionsWidth: CGFloat { RowLayout.secondaryActionsWidth(3) }
+    private var clusterWidth: CGFloat { RowLayout.trailingClusterWidth(secondaryActions: 3) }
 
     var body: some View {
         HStack(spacing: SeeleSpacing.xxs) {

@@ -1,12 +1,9 @@
 import SwiftUI
 import SeeleseekCore
 
-/// Renders exactly one `SearchListItem`.
-///
-/// "Exactly one" is the point: this sits inside a `ForEach` in a
-/// `LazyVStack`, and emitting a variable number of subviews per element is
-/// what corrupted grouped rendering as results streamed in. Every branch
-/// below produces a single view.
+/// Renders exactly one `SearchListItem`. Every branch must emit a single
+/// view — see `SearchListItem` for why a variable subview count is unsound
+/// inside the results `LazyVStack`.
 struct SearchResultListItemView: View {
     @Environment(\.appState) private var appState
 
@@ -22,7 +19,7 @@ struct SearchResultListItemView: View {
         case .header(let group):
             SearchResultGroupHeader(group: group)
 
-        case .child(let result, _):
+        case .child(let result):
             row(result, nested: true)
                 // Membership rail. An overlay, not leading padding: the row's
                 // column anchors must not move.

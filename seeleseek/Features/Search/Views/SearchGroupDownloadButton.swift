@@ -26,15 +26,18 @@ struct SearchGroupDownloadButton: View {
         if let requestState, let representative {
             FolderRequestIndicator(state: requestState, username: representative.username)
         } else {
+            // "Entire folder", not a file count: `downloadContainingFolder`
+            // queues everything the peer's folder holds, which can be more
+            // than the search-matched, filtered files this group shows.
             RowIconButton(
                 systemName: "arrow.down.circle",
-                help: "Download all \(group.fileCount) files in this folder",
+                help: "Download the entire folder from \(group.username)",
                 tint: isHovered ? SeeleColors.accent : SeeleColors.textSecondary,
                 weight: .semibold,
                 isProminent: true,
                 action: download
             )
-            .accessibilityLabel("Download folder \(group.displayName), \(group.fileCount) files")
+            .accessibilityLabel("Download entire folder \(group.displayName)")
         }
     }
 

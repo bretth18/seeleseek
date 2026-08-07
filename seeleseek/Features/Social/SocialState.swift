@@ -464,10 +464,9 @@ final class SocialState: PeerWatching {
         }
 
         // Unwatch on the server only when nothing else still needs this
-        // peer's status. A transfer row holds a refcounted watch, and an
-        // unconditional unwatch here left that row's status indicator dead
-        // until the next reconnect — the same guard as the cache removal
-        // above, which was already conditional.
+        // peer's status: a transfer row holds a refcounted watch, and
+        // unwatching it here leaves that row's status indicator dead until
+        // the next reconnect.
         guard peerWatchRefCounts[username] == nil else {
             logger.info("Kept server watch on \(username): still held by \(self.peerWatchRefCounts[username] ?? 0) transfer(s)")
             return

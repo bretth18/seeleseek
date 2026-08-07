@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Direction badge at the leading edge of transfer and history rows. Fill uses the caller's tint at `alphaMedium`; the glyph is a bold
-/// up/down arrow tinted the same hue, or a progress spinner when the row
-/// is mid-connection.
+/// Direction badge at the leading edge of transfer and history rows:
+/// a bold up/down arrow, or a progress spinner while the row is
+/// mid-connection.
 struct RowDirectionGlyph: View {
     enum Direction { case download, upload }
 
@@ -10,7 +10,6 @@ struct RowDirectionGlyph: View {
     let tint: Color
     var isConnecting: Bool = false
 
-    @ViewBuilder
     var body: some View {
         if isConnecting {
             RowGlyphBadge(tint: tint) {

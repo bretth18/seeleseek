@@ -4,8 +4,7 @@ import AppKit
 @testable import seeleseek
 
 /// The leading badge is what makes rows line up across Search, Transfers,
-/// History and grouped results. `RowGlyph` was extracted from three
-/// independent hand-rolled copies, so these pin the size it must keep.
+/// History and grouped results; these pin the size it must keep.
 @Suite("Row glyph sizing")
 @MainActor
 struct RowGlyphTests {

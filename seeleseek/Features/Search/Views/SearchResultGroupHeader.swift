@@ -11,6 +11,7 @@ import SeeleseekCore
 /// surface than the list it belongs to.
 struct SearchResultGroupHeader: View {
     @Environment(\.appState) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let group: SearchResultGroup
 
@@ -40,19 +41,26 @@ struct SearchResultGroupHeader: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityValue(accessibilityValue)
         .accessibilityHint("Activate to \(isExpanded ? "collapse" : "expand") this folder")
+        // Tap gestures do not survive `.combine` on macOS: without an
+        // explicit default action, VO-Space does nothing despite the hint.
+        .accessibilityAction { searchState.toggleExpansion(group) }
         .accessibilityAction(named: isExpanded ? "Collapse" : "Expand") { searchState.toggleExpansion(group) }
     }
 
     private var folderGlyph: some View {
         RowGlyph(systemName: "folder.fill", tint: SeeleColors.warning)
             .overlay(alignment: .bottomTrailing) {
-                // Ternary on the value, not a branch, so the chevron keeps one
-                // identity and the rotation animates.
+                // Ternary, not a branch, so the chevron keeps one identity
+                // and the rotation can animate.
                 RowGlyphOrnament(
                     systemName: "chevron.right",
                     rotation: .degrees(isExpanded ? 90 : 0)
+                )
+                .animation(
+                    reduceMotion ? nil : .easeInOut(duration: SeeleSpacing.animationFast),
+                    value: isExpanded
                 )
             }
             .accessibilityHidden(true)
@@ -97,6 +105,17 @@ struct SearchResultGroupHeader: View {
         parts.append("\(group.fileCount) files")
         parts.append(group.formattedTotalSize)
         if let quality = group.commonQuality { parts.append(quality) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// The explicit value replaces everything `.combine` would surface, and
+    /// a collapsed group renders no child rows — so in selection mode the
+    /// tri-state selection must be spoken here or it is inaudible.
+    private var accessibilityValue: String {
+        var parts = [isExpanded ? "expanded" : "collapsed"]
+        if searchState.isSelectionMode {
+            parts.append(SearchGroupSelectionToggle.spokenValue(for: searchState.selectionState(of: group)))
+        }
         return parts.joined(separator: ", ")
     }
 }

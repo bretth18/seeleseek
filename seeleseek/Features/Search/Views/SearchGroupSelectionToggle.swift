@@ -10,9 +10,8 @@ struct SearchGroupSelectionToggle: View {
     let group: SearchResultGroup
 
     var body: some View {
-        // Read once: `selectionState(of:)` scans the group's results against
-        // the selection set, and this was previously evaluated three times
-        // per render (tint, symbol, spoken value).
+        // `selectionState(of:)` scans the group's results, so read it once
+        // per render.
         let state = appState.searchState.selectionState(of: group)
 
         Button {
@@ -40,7 +39,9 @@ struct SearchGroupSelectionToggle: View {
         }
     }
 
-    private static func spokenValue(for state: SearchState.GroupSelection) -> String {
+    /// Shared with `SearchResultGroupHeader`, whose combined element must
+    /// speak the same selection wording for collapsed groups.
+    static func spokenValue(for state: SearchState.GroupSelection) -> String {
         switch state {
         case .none: "none selected"
         case .partial: "some selected"

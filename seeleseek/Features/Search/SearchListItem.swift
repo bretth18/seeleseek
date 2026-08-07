@@ -15,7 +15,7 @@ enum SearchListItem: Identifiable, Hashable {
     /// A folder holding a single file — rendered as a plain row, no chrome.
     case loose(SearchResult)
     case header(SearchResultGroup)
-    case child(result: SearchResult, groupID: String)
+    case child(SearchResult)
     /// Closes an expanded folder so the next one does not read as a
     /// continuation of it.
     case groupEnd(groupID: String)
@@ -26,10 +26,8 @@ enum SearchListItem: Identifiable, Hashable {
             "loose-\(result.id)"
         case .header(let group):
             "header-\(group.id)"
-        case .child(let result, let groupID):
-            // Namespaced by group: the same file can legitimately appear
-            // under two peers' folders.
-            "child-\(groupID)-\(result.id)"
+        case .child(let result):
+            "child-\(result.id)"
         case .groupEnd(let groupID):
             "end-\(groupID)"
         }

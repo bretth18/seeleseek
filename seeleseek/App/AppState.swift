@@ -105,8 +105,6 @@ final class AppState {
                 // The server wipes buddy watches and interests on every
                 // disconnect. Restore them on each connect
                 self.socialState.resubscribeOnConnect()
-                // Login always advertises `.online`, so an away user would
-                // silently come back available after any reconnect.
                 self.reapplyOnlineStatusIfAway()
             case .disconnected:
                 self.connection.setDisconnected()

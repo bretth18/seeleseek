@@ -20,13 +20,11 @@ nonisolated enum RowLayout {
     /// Transfer-rate column. Sized for the longest value, "999.9 KB/s".
     static let speedColumnWidth: CGFloat = 84
 
-    /// Width of `n` hover-revealed secondary action buttons.
     static func secondaryActionsWidth(_ count: CGFloat) -> CGFloat {
         SeeleSpacing.buttonHeight * count + SeeleSpacing.xxs * (count - 1)
     }
 
-    /// Secondary actions plus the prominent primary action. Written once
-    /// here because three row types had hand-rolled the same expression.
+    /// Secondary actions plus the prominent primary action.
     static func trailingClusterWidth(secondaryActions count: CGFloat) -> CGFloat {
         secondaryActionsWidth(count) + SeeleSpacing.xxs + SeeleSpacing.iconSizeXL
     }

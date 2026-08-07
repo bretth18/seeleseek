@@ -101,13 +101,17 @@ struct Sidebar: View {
         dotColor: Color? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
+        let resolvedColor = dotColor ?? appState.connection.connectionStatus.color
+        return HStack(spacing: SeeleSpacing.xs) {
             Circle()
-                .fill((dotColor ?? appState.connection.connectionStatus.color).opacity(0.8))
+                .fill(resolvedColor.opacity(0.8))
                 .frame(width: 8, height: 8)
+                // Keyed on the color, not connectionStatus: the connected
+                // dot also changes with availability (away → warning), and
+                // that transition must ease the same way.
                 .animation(
                     .easeInOut(duration: SeeleSpacing.animationStandard),
-                    value: appState.connection.connectionStatus
+                    value: resolvedColor
                 )
             content()
         }
@@ -130,19 +134,20 @@ struct Sidebar: View {
                 Text(username)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textPrimary.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        // Vertical only: the sidebar column is pinned at 220pt, and a long
+        // username must truncate rather than clip past the column edge.
+        .fixedSize(horizontal: false, vertical: true)
         .help("Set your availability")
         .accessibilityLabel("Signed in as \(username)")
         .accessibilityValue(availability.description)
     }
 
-    /// Away is drawn in the warning colour so the dot distinguishes
-    /// "connected but away" from "connected"; every other state keeps the
-    /// connection colour.
     private var availabilityColor: Color {
         availability == .away ? SeeleColors.warning : appState.connection.connectionStatus.color
     }

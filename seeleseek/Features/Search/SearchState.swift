@@ -332,9 +332,10 @@ final class SearchState {
     /// this flattening itself.
     private(set) var displayItems: [SearchListItem] = []
 
-    /// Multi-file groups start collapsed — that is the scannability win —
-    /// so this holds the ones the user has opened.
-    var expandedGroups: Set<String> = []
+    /// Groups the user has expanded; multi-file groups start collapsed.
+    /// Only `toggleExpansion` may mutate this — `displayItems` is rebuilt
+    /// there, and a direct write would leave it stale.
+    private(set) var expandedGroups: Set<String> = []
 
     func isExpanded(_ group: SearchResultGroup) -> Bool {
         group.isSingleFile || expandedGroups.contains(group.id)
@@ -351,8 +352,8 @@ final class SearchState {
     }
 
     private func rebuildDisplayItems() {
-        // Collapsed is the default, so the common case is one item per group;
-        // over-reserving for every result wasted ~65KB on each recompute.
+        // Capacity is group count, not result count: collapsed is the
+        // default, so the common case is one item per group.
         var items: [SearchListItem] = []
         items.reserveCapacity(resultGroups.count)
         for group in resultGroups {
@@ -363,7 +364,7 @@ final class SearchState {
             items.append(.header(group))
             guard expandedGroups.contains(group.id) else { continue }
             for result in group.results {
-                items.append(.child(result: result, groupID: group.id))
+                items.append(.child(result))
             }
             items.append(.groupEnd(groupID: group.id))
         }
@@ -401,6 +402,8 @@ final class SearchState {
     func recomputeFilteredResults() {
         guard let search = currentSearch else {
             filteredResults = []
+            resultGroups = []
+            displayItems = []
             return
         }
 

@@ -132,8 +132,6 @@ struct SearchFilterPanel: View {
 
             // Options row
             HStack(spacing: SeeleSpacing.lg) {
-                // The style renders the title itself; `.inline` keeps it beside
-                // the switch instead of pinning the switch to the trailing edge.
                 Toggle("Free slots only", isOn: $searchState.filterFreeSlotOnly)
                     .toggleStyle(SeeleToggleStyle(layout: .inline))
                     .font(SeeleTypography.caption)
@@ -301,7 +299,6 @@ private func previewState(
 }
 
 #Preview("Bar + panel together") {
-    // How the two actually stack in SearchView.
     VStack(spacing: 0) {
         let state = previewState(showFilters: true, preset: .flac)
         SearchFilterBar(searchState: state)

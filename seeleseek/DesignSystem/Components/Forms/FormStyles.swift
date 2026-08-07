@@ -38,9 +38,6 @@ struct SeeleToggleStyle: ToggleStyle {
         HStack(spacing: SeeleSpacing.sm) {
             configuration.label
 
-            // The spacer is what makes a settings row fill its width. Inline,
-            // it would shove the switch to the far edge of whatever container
-            // it lands in, stranding it from its own label.
             if layout == .row {
                 Spacer()
             }

@@ -28,6 +28,11 @@ final class ConnectionState {
     /// cleared, so it is not a reliable mirror.
     var onlineStatus: UserStatus = .online
 
+    /// Survives disconnects so `setConnected` can tell a reconnect of the
+    /// same account (away must persist) from a login as a different one
+    /// (away must not leak to the new account).
+    private var lastConnectedUsername: String?
+
     // MARK: - Login Form
     var loginUsername: String = ""
     var loginPassword: String = ""
@@ -50,6 +55,10 @@ final class ConnectionState {
     }
 
     func setConnected(username: String, ip: String, greeting: String?) {
+        if username != lastConnectedUsername {
+            onlineStatus = .online
+            lastConnectedUsername = username
+        }
         self.connectionStatus = .connected
         self.username = username
         self.serverIP = ip

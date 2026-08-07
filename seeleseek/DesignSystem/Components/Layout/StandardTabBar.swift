@@ -107,8 +107,8 @@ struct StandardTabBar<Tab: Hashable & CaseIterable & RawRepresentable, Trailing:
     }
 
     /// The sidebar tints the glyph itself so the icon column reads as the
-    /// selection indicator. The compact bar tints the row uniformly, so this
-    /// returns exactly what the container applies and nothing changes there.
+    /// selection indicator; for the compact bar this deliberately mirrors
+    /// the container's uniform tint.
     private func iconTint(isSelected: Bool) -> Color {
         switch axis {
         case .vertical:
