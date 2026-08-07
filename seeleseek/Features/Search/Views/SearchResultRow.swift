@@ -29,6 +29,9 @@ import SeeleseekCore
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
+    /// Rows under a folder header drop the context line — the header
+    /// already names the peer and folder.
+    var isNestedInGroup: Bool = false
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
@@ -148,25 +151,12 @@ struct SearchResultRow: View {
     // MARK: - File glyph
 
     private var fileGlyph: some View {
-        ZStack {
-            RoundedRectangle.badgeShape
-                .fill(glyphTint.opacity(SeeleColors.alphaMedium))
-                .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
-
-            Image(systemName: glyphIcon)
-                .font(.system(size: SeeleSpacing.iconSize, weight: .medium))
-                .foregroundStyle(glyphTint)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if result.isPrivate {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeXXS, weight: .bold))
-                    .foregroundStyle(SeeleColors.warning)
-                    .padding(SeeleSpacing.xxs)
-                    .background(SeeleColors.surface, in: Circle())
-                    .offset(x: SeeleSpacing.xxs, y: SeeleSpacing.xxs)
+        RowGlyph(systemName: glyphIcon, tint: glyphTint)
+            .overlay(alignment: .bottomTrailing) {
+                if result.isPrivate {
+                    RowGlyphOrnament(systemName: "lock.fill", tint: SeeleColors.warning)
+                }
             }
-        }
     }
 
     private var glyphIcon: String {
@@ -194,7 +184,9 @@ struct SearchResultRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            contextLine
+            if !isNestedInGroup {
+                contextLine
+            }
         }
     }
 
@@ -356,21 +348,14 @@ struct SearchResultRow: View {
 
     // MARK: - Trailing cluster (hover-revealed secondary actions + primary action)
 
-    private static let secondaryActionCount: CGFloat = 2
-    private var secondaryActionsWidth: CGFloat {
-        SeeleSpacing.buttonHeight * Self.secondaryActionCount
-            + SeeleSpacing.xxs * (Self.secondaryActionCount - 1)
-    }
-    private var trailingClusterWidth: CGFloat {
-        secondaryActionsWidth + SeeleSpacing.xxs + SeeleSpacing.iconSizeXL
-    }
+    private var secondaryActionsWidth: CGFloat { RowLayout.secondaryActionsWidth(2) }
 
     private var trailingCluster: some View {
         HStack(spacing: SeeleSpacing.xxs) {
             secondaryActions
             primaryAction
         }
-        .frame(width: trailingClusterWidth, alignment: .trailing)
+        .frame(width: SearchResultRowLayout.trailingClusterWidth, alignment: .trailing)
     }
 
     private var secondaryActions: some View {
@@ -611,6 +596,11 @@ struct SearchResultRow: View {
 enum SearchResultRowLayout {
     /// Chip slot width — tuned for the longest tier label (`LOSSLESS`).
     static let qualityChipSlotWidth: CGFloat = 62
+
+    /// Trailing action cluster: two hover-revealed secondary actions plus the
+    /// prominent primary action. Shared with the grouped folder header so its
+    /// download button lands under the rows' action buttons.
+    static let trailingClusterWidth = RowLayout.trailingClusterWidth(secondaryActions: 2)
 }
 
 enum SearchResultStatColumn: CGFloat {

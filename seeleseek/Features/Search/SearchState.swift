@@ -76,7 +76,9 @@ final class SearchState {
     weak var networkClient: NetworkClient?
 
     // MARK: - Settings Reference
-    weak var settings: SettingsState?
+    weak var settings: SettingsState? {
+        didSet { isGrouped = settings?.groupSearchResults ?? false }
+    }
 
     // MARK: - Shared Activity Tracker
     static let activityTracker = SearchActivityState()
@@ -316,9 +318,104 @@ final class SearchState {
     /// never re-run the filter pass.
     private(set) var filteredResults: [SearchResult] = []
 
+    // MARK: - Grouping
+
+    /// Group results by the folder each peer offers them from. Built in the
+    /// same pass as `filteredResults` so the two can never disagree about
+    /// what is visible. Persisted via `settings.groupSearchResults`, so the
+    /// filter-bar toggle and the Settings toggle stay in sync.
+    var isGrouped: Bool = false {
+        didSet {
+            guard isGrouped != oldValue else { return }
+            settings?.groupSearchResults = isGrouped
+            recomputeFilteredResults()
+        }
+    }
+
+    private(set) var resultGroups: [SearchResultGroup] = []
+
+    /// The flattened list the view renders. Derived from `resultGroups` plus
+    /// `expandedGroups`; see `SearchListItem` for why the view must not do
+    /// this flattening itself.
+    private(set) var displayItems: [SearchListItem] = []
+
+    /// Expanded group ids per search token — group ids are `username\folder`,
+    /// so a shared set would leak one tab's disclosure into another surfacing
+    /// the same peer folder. Pruned in `closeSearch`. Mutate only via
+    /// `toggleExpansion`, which rebuilds `displayItems`.
+    private var expandedGroupsByToken: [UInt32: Set<String>] = [:]
+
+    private var expandedGroups: Set<String> {
+        guard let token = currentSearch?.token else { return [] }
+        return expandedGroupsByToken[token] ?? []
+    }
+
+    func isExpanded(_ group: SearchResultGroup) -> Bool {
+        group.isSingleFile || expandedGroups.contains(group.id)
+    }
+
+    func toggleExpansion(_ group: SearchResultGroup) {
+        guard !group.isSingleFile, let token = currentSearch?.token else { return }
+        if !expandedGroupsByToken[token, default: []].insert(group.id).inserted {
+            expandedGroupsByToken[token]?.remove(group.id)
+        }
+        rebuildDisplayItems()
+    }
+
+    private func rebuildDisplayItems() {
+        // Capacity is group count, not result count: collapsed is the
+        // default, so the common case is one item per group.
+        var items: [SearchListItem] = []
+        items.reserveCapacity(resultGroups.count)
+        let expanded = expandedGroups
+        for group in resultGroups {
+            if group.isSingleFile, let only = group.results.first {
+                items.append(.loose(only))
+                continue
+            }
+            items.append(.header(group))
+            guard expanded.contains(group.id) else { continue }
+            for result in group.results {
+                items.append(.child(result))
+            }
+            items.append(.groupEnd(groupID: group.id))
+        }
+        displayItems = items
+    }
+
+    // MARK: - Group selection
+
+    func selectionState(of group: SearchResultGroup) -> GroupSelection {
+        // Stops as soon as both a selected and an unselected member are seen,
+        // rather than scanning the whole group — this runs per header render.
+        var sawSelected = false
+        var sawUnselected = false
+        for result in group.results {
+            if selectedResults.contains(result.id) { sawSelected = true } else { sawUnselected = true }
+            if sawSelected && sawUnselected { return .partial }
+        }
+        return sawSelected ? .all : .none
+    }
+
+    /// Selecting a partially-selected group completes it rather than
+    /// clearing it — the same convention as Finder.
+    func toggleSelection(of group: SearchResultGroup) {
+        if selectionState(of: group) == .all {
+            for result in group.results { selectedResults.remove(result.id) }
+        } else {
+            for result in group.results { selectedResults.insert(result.id) }
+        }
+    }
+
+    enum GroupSelection {
+        case none, partial, all
+    }
+
     func recomputeFilteredResults() {
         guard let search = currentSearch else {
             filteredResults = []
+            resultGroups = []
+            displayItems = []
             return
         }
 
@@ -362,6 +459,39 @@ final class SearchState {
         }
 
         filteredResults = results
+        if isGrouped {
+            resultGroups = Self.group(results)
+            rebuildDisplayItems()
+        } else {
+            resultGroups = []
+            displayItems = []
+        }
+    }
+
+    /// Groups in encounter order over the already-sorted array, so the
+    /// active sort still decides which group leads — "Speed" means the
+    /// fastest peer's folder first — without needing a second sort control.
+    private static func group(_ results: [SearchResult]) -> [SearchResultGroup] {
+        var indexByKey: [String: Int] = [:]
+        var buckets: [[SearchResult]] = []
+
+        for result in results {
+            let key = SearchResultGroup.key(username: result.username, folderPath: result.folderPath)
+            if let index = indexByKey[key] {
+                buckets[index].append(result)
+            } else {
+                indexByKey[key] = buckets.count
+                buckets.append([result])
+            }
+        }
+
+        return buckets.map { bucket in
+            SearchResultGroup(
+                username: bucket[0].username,
+                folderPath: bucket[0].folderPath,
+                results: bucket
+            )
+        }
     }
 
     var canSearch: Bool {
@@ -544,6 +674,7 @@ final class SearchState {
         cancelInactivityTimer(token: search.token)
         searchErrors.removeValue(forKey: search.id)
         tokenToSearchIndex.removeValue(forKey: search.token)
+        expandedGroupsByToken.removeValue(forKey: search.token)
         searches.remove(at: index)
 
         // Update token mappings for remaining searches

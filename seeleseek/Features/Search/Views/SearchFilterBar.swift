@@ -132,19 +132,17 @@ struct SearchFilterPanel: View {
 
             // Options row
             HStack(spacing: SeeleSpacing.lg) {
-                HStack(spacing: SeeleSpacing.sm) {
-                    Text("Free slots only")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textSecondary)
-                        .accessibilityHidden(true)
-                    // SeeleToggleStyle draws the toggle title itself, so a
-                    // real title here would show the text twice. Give the
-                    // name to assistive technology only.
-                    Toggle("", isOn: $searchState.filterFreeSlotOnly)
-                        .toggleStyle(SeeleToggleStyle())
-                        .labelsHidden()
-                        .accessibilityLabel("Free slots only")
-                }
+                Toggle("Free slots only", isOn: $searchState.filterFreeSlotOnly)
+                    .toggleStyle(SeeleToggleStyle(layout: .inline))
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+                    .fixedSize()
+
+                Toggle("Group by folder", isOn: $searchState.isGrouped)
+                    .toggleStyle(SeeleToggleStyle(layout: .inline))
+                    .font(SeeleTypography.caption)
+                    .foregroundStyle(SeeleColors.textSecondary)
+                    .fixedSize()
 
                 Spacer()
 
@@ -234,3 +232,80 @@ private struct FilterChip: View {
         return "\(dimension): \(spoken)"
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+/// `SearchState` alone is enough for these — nothing in this subtree reads
+/// `@Environment(\.appState)`, so the previews avoid constructing an
+/// `AppState`, whose `@Entry` default spins up timers, UserDefaults reads and
+/// an update client (see `PreviewHelpers`).
+@MainActor
+private func previewState(
+    showFilters: Bool = false,
+    preset: SearchState.FilterPreset? = nil,
+    freeSlotsOnly: Bool = false,
+    grouped: Bool = false
+) -> SearchState {
+    let state = SearchState()
+    state.showFilters = showFilters
+    state.filterFreeSlotOnly = freeSlotsOnly
+    state.isGrouped = grouped
+    if let preset { state.applyPreset(preset) }
+    return state
+}
+
+#Preview("Bar — idle") {
+    SearchFilterBar(searchState: previewState())
+        .frame(width: 900)
+        .background(SeeleColors.background)
+}
+
+#Preview("Bar — preset active") {
+    // Exercises the accent dot on the toggle, the "N active" count and the
+    // clear button, none of which are reachable from the idle state.
+    SearchFilterBar(searchState: previewState(preset: .flac))
+        .frame(width: 900)
+        .background(SeeleColors.background)
+}
+
+#Preview("Bar — narrow") {
+    // The preset chips and the active-filter cluster compete for width; this
+    // is where they start colliding.
+    SearchFilterBar(searchState: previewState(preset: .lossless))
+        .frame(width: 480)
+        .background(SeeleColors.background)
+}
+
+#Preview("Panel — expanded") {
+    SearchFilterPanel(searchState: previewState())
+        .frame(width: 900)
+        .background(SeeleColors.background)
+}
+
+#Preview("Panel — filters applied") {
+    SearchFilterPanel(
+        searchState: previewState(preset: .hiRes, freeSlotsOnly: true, grouped: true)
+    )
+    .frame(width: 900)
+    .background(SeeleColors.background)
+}
+
+#Preview("Panel — narrow, chips wrap") {
+    // FlowLayout's whole job: the format row must wrap rather than clip.
+    SearchFilterPanel(searchState: previewState())
+        .frame(width: 420)
+        .background(SeeleColors.background)
+}
+
+#Preview("Bar + panel together") {
+    VStack(spacing: 0) {
+        let state = previewState(showFilters: true, preset: .flac)
+        SearchFilterBar(searchState: state)
+        SearchFilterPanel(searchState: state)
+        Spacer()
+    }
+    .frame(width: 900, height: 320)
+    .background(SeeleColors.background)
+}
+#endif

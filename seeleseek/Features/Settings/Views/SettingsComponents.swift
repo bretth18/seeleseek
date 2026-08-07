@@ -39,6 +39,27 @@ func settingsRow<Content: View>(@ViewBuilder content: () -> Content) -> some Vie
         .background(SeeleColors.surface)
 }
 
+/// Explanatory caption tucked under the preceding row — no top padding, so
+/// it reads as that row's subtitle. `LocalizedStringKey` so call-site
+/// markdown (`code spans`) keeps rendering.
+func settingsCaption(_ text: LocalizedStringKey) -> some View {
+    settingsCaption {
+        Text(text)
+            .font(SeeleTypography.caption)
+            .foregroundStyle(SeeleColors.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Caption chrome for non-plain-text content (icons, mono previews).
+func settingsCaption<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    content()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, SeeleSpacing.rowHorizontal)
+        .padding(.bottom, SeeleSpacing.rowVertical)
+        .background(SeeleColors.surface)
+}
+
 /// Toggle row with title
 func settingsToggle(_ title: String, isOn: Binding<Bool>) -> some View {
     settingsRow {

@@ -34,6 +34,30 @@ final class AppState {
         searchFieldFocusPending = true
     }
 
+    // MARK: - Availability
+
+    /// Advertise availability to the server. `.offline` is not offered — the
+    /// protocol reserves it for actually leaving, which is what disconnect
+    /// does.
+    func setOnlineStatus(_ status: UserStatus) {
+        guard status != connection.onlineStatus else { return }
+        connection.onlineStatus = status
+        Task { [weak self] in
+            guard let self else { return }
+            try? await self.networkClient.setStatus(status)
+        }
+    }
+
+    /// Re-send `.away` after a reconnect; the login sequence hardcodes
+    /// `.online`, so without this the flag is quietly lost.
+    private func reapplyOnlineStatusIfAway() {
+        guard connection.onlineStatus == .away else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            try? await self.networkClient.setStatus(.away)
+        }
+    }
+
     // MARK: - Database State
     var isDatabaseReady = false
     private let logger = Logger(subsystem: "com.seeleseek", category: "AppState")
@@ -81,6 +105,7 @@ final class AppState {
                 // The server wipes buddy watches and interests on every
                 // disconnect. Restore them on each connect
                 self.socialState.resubscribeOnConnect()
+                self.reapplyOnlineStatusIfAway()
             case .disconnected:
                 self.connection.setDisconnected()
             case .connecting:

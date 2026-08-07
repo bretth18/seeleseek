@@ -89,13 +89,43 @@ enum DemoDataSeeder {
     }
 
     private static func radioheadResults() -> [SearchResult] {
+        let flacFan = "ok_computer_fan"
+        let shoegazer = "shoegazer_91"
+        let hoarder = "vinyl_hoarder"
+
         return [
-            SearchResult(username: "ok_computer_fan", filename: "@@radiohead\\OK Computer (1997) [FLAC]\\01 Airbag.flac",
-                         size: 28_400_000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
-            SearchResult(username: "ok_computer_fan", filename: "@@radiohead\\OK Computer (1997) [FLAC]\\02 Paranoid Android.flac",
-                         size: 42_800_000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
-            SearchResult(username: "shoegazer_91", filename: "Music\\Radiohead - OK Computer [320]\\01 - Airbag.mp3",
-                         size: 11_200_000, bitrate: 320, freeSlots: true, uploadSpeed: 1_900_000, queueLength: 2)
+            // Uniform format + bitrate — exercises the shared quality badge.
+            SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\01 Airbag.flac",
+                         size: 28_400_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+            SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\02 Paranoid Android.flac",
+                         size: 42_800_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+            SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\03 Subterranean Homesick Alien.flac",
+                         size: 33_100_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+            SearchResult(username: flacFan, filename: "@@radiohead\\OK Computer (1997) [FLAC]\\04 Exit Music (For a Film).flac",
+                         size: 30_900_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+
+            // Same peer, a DIFFERENT folder — must group separately.
+            SearchResult(username: flacFan, filename: "@@radiohead\\Kid A (2000) [FLAC]\\01 Everything In Its Right Place.flac",
+                         size: 24_600_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+            SearchResult(username: flacFan, filename: "@@radiohead\\Kid A (2000) [FLAC]\\02 Kid A.flac",
+                         size: 27_300_000, bitrate: 1000, sampleRate: 44100, bitDepth: 16, freeSlots: true, uploadSpeed: 5_100_000, queueLength: 0),
+
+            SearchResult(username: shoegazer, filename: "Music\\Radiohead - OK Computer [320]\\01 - Airbag.mp3",
+                         size: 11_200_000, bitrate: 320, freeSlots: true, uploadSpeed: 1_900_000, queueLength: 2),
+            SearchResult(username: shoegazer, filename: "Music\\Radiohead - OK Computer [320]\\02 - Paranoid Android.mp3",
+                         size: 15_800_000, bitrate: 320, freeSlots: true, uploadSpeed: 1_900_000, queueLength: 2),
+
+            // Mixed formats in one folder — no shared quality badge.
+            SearchResult(username: hoarder, filename: "shares\\radiohead misc\\Airbag (live).flac",
+                         size: 19_400_000, bitrate: 900, sampleRate: 44100, bitDepth: 16, freeSlots: false, uploadSpeed: 640_000, queueLength: 7),
+            SearchResult(username: hoarder, filename: "shares\\radiohead misc\\Lucky (demo).mp3",
+                         size: 6_100_000, bitrate: 192, freeSlots: false, uploadSpeed: 640_000, queueLength: 7),
+
+            // Loose single files — render as plain rows, no header.
+            SearchResult(username: hoarder, filename: "shares\\ok computer bonus.mp3",
+                         size: 7_450_000, bitrate: 256, freeSlots: false, uploadSpeed: 640_000, queueLength: 7),
+            SearchResult(username: shoegazer, filename: "Music\\radiohead - creep.mp3",
+                         size: 9_100_000, bitrate: 320, freeSlots: true, uploadSpeed: 1_900_000, queueLength: 2)
         ]
     }
 

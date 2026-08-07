@@ -2,6 +2,7 @@ import SwiftUI
 import SeeleseekCore
 
 struct GeneralSettingsSection: View {
+    @Environment(\.appState) private var appState
     @Bindable var settings: SettingsState
     @State private var showNicotineImport = false
 
@@ -67,7 +68,7 @@ struct GeneralSettingsSection: View {
                     }
                 }
 
-                settingsRow {
+                settingsCaption {
                     HStack(spacing: SeeleSpacing.xs) {
                         Image(systemName: "eye")
                             .font(.system(size: SeeleSpacing.iconSizeXS))
@@ -89,11 +90,13 @@ struct GeneralSettingsSection: View {
 
             settingsGroup("Search") {
                 settingsNumberField("Max Results", value: $settings.maxSearchResults, range: 0...10000, placeholder: "0 = Unlimited")
-                settingsRow {
-                    Text("Stop collecting results after this limit. 0 = unlimited.")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
+                settingsCaption("Stop collecting results after this limit. 0 = unlimited.")
+                // Set via searchState so the live view recomputes; it
+                // writes the setting back.
+                settingsToggle("Group results by folder", isOn: Binding(
+                    get: { settings.groupSearchResults },
+                    set: { appState.searchState.isGrouped = $0 }
+                ))
             }
 
             settingsGroup("Startup") {

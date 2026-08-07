@@ -452,15 +452,21 @@ struct SearchView: View {
             ZStack(alignment: .bottom) {
                 ScrollView {
                     LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                        ForEach(searchState.filteredResults) { result in
-                            SearchResultRow(
-                                result: result,
-                                isSelectionMode: searchState.isSelectionMode,
-                                isSelected: searchState.selectedResults.contains(result.id),
-                                onToggleSelection: {
-                                    searchState.toggleSelection(result.id)
-                                }
-                            )
+                        if searchState.isGrouped {
+                            ForEach(searchState.displayItems) { item in
+                                SearchResultListItemView(item: item)
+                            }
+                        } else {
+                            ForEach(searchState.filteredResults) { result in
+                                SearchResultRow(
+                                    result: result,
+                                    isSelectionMode: searchState.isSelectionMode,
+                                    isSelected: searchState.selectedResults.contains(result.id),
+                                    onToggleSelection: {
+                                        searchState.toggleSelection(result.id)
+                                    }
+                                )
+                            }
                         }
                     }
                     // Add bottom padding when action bar is visible

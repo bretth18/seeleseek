@@ -190,11 +190,7 @@ struct HistoryRow: View {
     // exists). Width is constant so the stat columns never shift on
     // hover.
 
-    private static let secondaryActionCount: CGFloat = 3
-    private var clusterWidth: CGFloat {
-        SeeleSpacing.buttonHeight * Self.secondaryActionCount
-            + SeeleSpacing.xxs * (Self.secondaryActionCount - 1)
-    }
+    private var clusterWidth: CGFloat { RowLayout.secondaryActionsWidth(3) }
 
     private var actionCluster: some View {
         // Hit-testing stays on even at opacity 0 so Tab focus (and, via

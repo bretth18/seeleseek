@@ -72,26 +72,7 @@ struct TransfersView: View {
                 }
             }
         ) {
-            StandardStatCluster {
-                // Gate on upload activity only — a selectedTab condition
-                // here reflows the cluster on every tab switch.
-                if appState.uploadManager.activeUploadCount > 0 || appState.uploadManager.queueDepth > 0 {
-                    uploadQueueStat
-                }
-
-                StandardLiveStat(
-                    icon: "arrow.down",
-                    value: transferState.totalDownloadSpeed.formattedSpeed,
-                    iconColor: SeeleColors.info,
-                    accessibilityLabel: "Download speed \(transferState.totalDownloadSpeed.formattedSpeed)"
-                )
-                StandardLiveStat(
-                    icon: "arrow.up",
-                    value: transferState.totalUploadSpeed.formattedSpeed,
-                    iconColor: SeeleColors.success,
-                    accessibilityLabel: "Upload speed \(transferState.totalUploadSpeed.formattedSpeed)"
-                )
-            }
+            TransfersLiveStats()
 
             IconButton(icon: "chart.bar.xaxis", label: "Open queue dashboard") {
                 isDashboardPresented = true
@@ -124,14 +105,6 @@ struct TransfersView: View {
         .disabled(!hasClearableTransfers)
         .help("Clear finished transfers")
         .accessibilityLabel("Clear finished transfers")
-    }
-
-    private var uploadQueueStat: some View {
-        StandardLiveStat(
-            icon: "person.2.fill",
-            value: "\(appState.uploadManager.slotsSummary) · \(appState.uploadManager.queueDepth) queued",
-            accessibilityLabel: "Upload slots: \(appState.uploadManager.slotsSummary), queue: \(appState.uploadManager.queueDepth)"
-        )
     }
 
     @ViewBuilder
