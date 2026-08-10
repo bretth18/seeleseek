@@ -41,6 +41,47 @@ enum PreviewData {
         return state
     }
 
+    static var reconnectingAppState: AppState {
+        let state = AppState()
+        // Skip configure() in previews — it triggers database init, filesystem migration,
+        // and notification authorization which timeout in the preview sandbox
+        state.connection.setReconnecting(reason: "Socket closed")
+        return state
+    }
+
+    // MARK: - Sample Transfers
+
+    static var sampleDownloads: [Transfer] {
+        [
+            Transfer(username: "lofihouse_terrorist",
+                     filename: "@@music\\COMPUTER DATA\\2019 - Emotional Shift (FLAC)\\02 - Healing.flac",
+                     size: 32_400_000, direction: .download, status: .transferring,
+                     bytesTransferred: 18_900_000, startTime: Date(timeIntervalSinceNow: -22),
+                     speed: 2_400_000),
+            Transfer(username: "shoegazer_91",
+                     filename: "shared\\My Bloody Valentine - Loveless (1991) [FLAC]\\04 - To Here Knows When.flac",
+                     size: 38_700_000, direction: .download, status: .transferring,
+                     bytesTransferred: 9_200_000, startTime: Date(timeIntervalSinceNow: -8),
+                     speed: 1_950_000),
+            Transfer(username: "ok_computer_fan",
+                     filename: "@@radiohead\\OK Computer (1997) [FLAC]\\02 Paranoid Android.flac",
+                     size: 42_800_000, direction: .download, status: .queued, queuePosition: 4),
+            Transfer(username: "NeckBeard22",
+                     filename: "Music\\Cindy Lee\\Diamond Jubilee [MP3 320]\\03 Baby Blue.mp3",
+                     size: 6_500_000, direction: .download, status: .queued, queuePosition: 14)
+        ]
+    }
+
+    static var sampleUploads: [Transfer] {
+        [
+            Transfer(username: "driftwavecore",
+                     filename: "Music\\Fennesz\\Endless Summer\\01 - Made In Hong Kong.flac",
+                     size: 56_200_000, direction: .upload, status: .transferring,
+                     bytesTransferred: 31_400_000, startTime: Date(timeIntervalSinceNow: -42),
+                     speed: 1_120_000)
+        ]
+    }
+
     static var sampleUsers: [User] {
         [
             User(username: "musiclover42", status: .online, isPrivileged: true, averageSpeed: 1_500_000, fileCount: 15000, folderCount: 500),

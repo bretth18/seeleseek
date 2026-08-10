@@ -8,12 +8,8 @@ struct MenuBarView: View {
         appState.connection.connectionStatus
     }
 
-    private var username: String? {
-        appState.connection.username
-    }
-
-    private var isNamed: Bool {
-        status == .connected && username != nil
+    private var connectedUsername: String? {
+        status == .connected ? appState.connection.username : nil
     }
 
     private var activeDownloads: [Transfer] {
@@ -44,50 +40,49 @@ struct MenuBarView: View {
     }
 
     var body: some View {
-        Text("\(Image(systemName: status.icon)) \(isNamed ? (username ?? "") : status.label)")
+        // Hoisted: activeDownloads/activeUploads/queuedDownloads each re-filter
+        // the full transfer array on every read.
+        let downloads = activeDownloads
+        let uploads = activeUploads
+        let queued = queuedCount
+
+        Text("\(Image(systemName: status.icon)) \(connectedUsername ?? status.label)")
             .foregroundStyle(status.color)
             .accessibilityLabel(headerAccessibilityLabel)
 
-        if isNamed {
+        if connectedUsername != nil {
             Text(status.label)
                 .foregroundStyle(status.color)
                 .accessibilityHidden(true)
         }
 
         if status == .connected {
-            Text(speedLine)
-                .accessibilityLabel(
-                    "Download speed \(downSpeed.formattedSpeed), upload speed \(upSpeed.formattedSpeed)"
-                )
+            let down = downSpeed.formattedSpeed
+            let up = upSpeed.formattedSpeed
+
+            Text(speedLine(down: down, up: up))
+                .accessibilityLabel("Download speed \(down), upload speed \(up)")
 
             // No shortcut: ⌘⇧A is already bound in CommandMenu("Connection").
             Toggle("Away", isOn: awayBinding)
         }
 
-        if !activeDownloads.isEmpty || !activeUploads.isEmpty || queuedCount > 0 {
+        if !downloads.isEmpty || !uploads.isEmpty || queued > 0 {
             Divider()
 
-            if !activeDownloads.isEmpty {
-                transferMenu(
-                    activeDownloads,
-                    noun: "download",
-                    systemImage: "arrow.down.circle.fill"
-                )
+            if !downloads.isEmpty {
+                transferMenu(downloads, noun: "download", systemImage: "arrow.down.circle.fill")
             }
 
-            if !activeUploads.isEmpty {
-                transferMenu(
-                    activeUploads,
-                    noun: "upload",
-                    systemImage: "arrow.up.circle.fill"
-                )
+            if !uploads.isEmpty {
+                transferMenu(uploads, noun: "upload", systemImage: "arrow.up.circle.fill")
             }
 
-            if queuedCount > 0 {
+            if queued > 0 {
                 Button {
                     open(.transfers)
                 } label: {
-                    Label("\(queuedCount) queued", systemImage: "clock.fill")
+                    Label("\(queued) queued", systemImage: "clock.fill")
                 }
             }
         }
@@ -136,12 +131,12 @@ struct MenuBarView: View {
     }
 
     /// Two colors in one row. Adjacent `Text`s would become two rows.
-    private var speedLine: AttributedString {
-        var down = AttributedString("↓ \(downSpeed.formattedSpeed)")
-        down.foregroundColor = SeeleColors.info
-        var up = AttributedString("     ↑ \(upSpeed.formattedSpeed)")
-        up.foregroundColor = SeeleColors.success
-        return down + up
+    private func speedLine(down: String, up: String) -> AttributedString {
+        var downRun = AttributedString("↓ \(down)")
+        downRun.foregroundColor = SeeleColors.info
+        var upRun = AttributedString("     ↑ \(up)")
+        upRun.foregroundColor = SeeleColors.success
+        return downRun + upRun
     }
 
     private func open(_ item: SidebarItem) {
@@ -151,8 +146,8 @@ struct MenuBarView: View {
 
     private var headerAccessibilityLabel: String {
         var label = "Connection status: \(status.label)"
-        if status == .connected, let username {
-            label += " as \(username)"
+        if let connectedUsername {
+            label += " as \(connectedUsername)"
         }
         return label
     }
@@ -162,24 +157,16 @@ struct MenuBarView: View {
 @MainActor
 private func previewState(
     _ status: ConnectionStatus,
-    username: String = "cdtest123",
     downloads: [Transfer] = [],
     uploads: [Transfer] = [],
     away: Bool = false
 ) -> AppState {
-    let state = AppState()
-
-    switch status {
-    case .connected:
-        state.connection.setConnected(username: username, ip: "51.161.9.10", greeting: nil)
-    case .connecting:
-        state.connection.setConnecting()
-    case .reconnecting:
-        state.connection.setReconnecting(reason: "Socket closed")
-    case .error:
-        state.connection.setError("Login failed: invalid password")
-    case .disconnected:
-        state.connection.setDisconnected()
+    let state = switch status {
+    case .connected: PreviewData.connectedAppState
+    case .connecting: PreviewData.connectingAppState
+    case .reconnecting: PreviewData.reconnectingAppState
+    case .error: PreviewData.errorAppState
+    case .disconnected: PreviewData.disconnectedAppState
     }
 
     if away {
@@ -188,42 +175,12 @@ private func previewState(
 
     state.transferState.downloads = downloads
     state.transferState.uploads = uploads
-    // The 1Hz timer recomputes these from the transfers above; seeding them
-    // matches so the first frame is not blank.
-    state.transferState.totalDownloadSpeed = downloads
-        .filter(\.isActive).reduce(0) { $0 + $1.speed }
-    state.transferState.totalUploadSpeed = uploads
-        .filter(\.isActive).reduce(0) { $0 + $1.speed }
+    // Seeds the totals from the transfers above, exactly as the 1Hz timer
+    // would, so the first frame is not blank.
+    state.transferState.updateSpeeds()
 
     return state
 }
-
-private let previewDownloads: [Transfer] = [
-    Transfer(username: "lofihouse_terrorist",
-             filename: "@@music\\COMPUTER DATA\\2019 - Emotional Shift (FLAC)\\02 - Healing.flac",
-             size: 32_400_000, direction: .download, status: .transferring,
-             bytesTransferred: 18_900_000, startTime: Date(timeIntervalSinceNow: -22),
-             speed: 2_400_000),
-    Transfer(username: "shoegazer_91",
-             filename: "shared\\My Bloody Valentine - Loveless (1991) [FLAC]\\04 - To Here Knows When.flac",
-             size: 38_700_000, direction: .download, status: .transferring,
-             bytesTransferred: 9_200_000, startTime: Date(timeIntervalSinceNow: -8),
-             speed: 1_950_000),
-    Transfer(username: "ok_computer_fan",
-             filename: "@@radiohead\\OK Computer (1997) [FLAC]\\02 Paranoid Android.flac",
-             size: 42_800_000, direction: .download, status: .queued, queuePosition: 4),
-    Transfer(username: "NeckBeard22",
-             filename: "Music\\Cindy Lee\\Diamond Jubilee [MP3 320]\\03 Baby Blue.mp3",
-             size: 6_500_000, direction: .download, status: .queued, queuePosition: 14)
-]
-
-private let previewUploads: [Transfer] = [
-    Transfer(username: "driftwavecore",
-             filename: "Music\\Fennesz\\Endless Summer\\01 - Made In Hong Kong.flac",
-             size: 56_200_000, direction: .upload, status: .transferring,
-             bytesTransferred: 31_400_000, startTime: Date(timeIntervalSinceNow: -42),
-             speed: 1_120_000)
-]
 
 /// `MenuBarView` returns menu items, so rendering it bare stacks them as plain
 /// views and hides the exact flattening this file is written around. Every
@@ -235,7 +192,7 @@ private struct MenuBarPreview: View {
     var body: some View {
         Menu {
             MenuBarView()
-                .environment(\.appState, state)
+                .previewAppState(state)
         } label: {
             Label(title, systemImage: "menubar.arrow.up.rectangle")
         }
@@ -254,7 +211,11 @@ private struct MenuBarPreview: View {
         MenuBarPreview(title: "Connected, away", state: previewState(.connected, away: true))
         MenuBarPreview(
             title: "Connected, transferring",
-            state: previewState(.connected, downloads: previewDownloads, uploads: previewUploads)
+            state: previewState(
+                .connected,
+                downloads: PreviewData.sampleDownloads,
+                uploads: PreviewData.sampleUploads
+            )
         )
     }
     .padding()
@@ -264,7 +225,11 @@ private struct MenuBarPreview: View {
 #Preview("Connected, transferring") {
     MenuBarPreview(
         title: "SeeleSeek",
-        state: previewState(.connected, downloads: previewDownloads, uploads: previewUploads)
+        state: previewState(
+            .connected,
+            downloads: PreviewData.sampleDownloads,
+            uploads: PreviewData.sampleUploads
+        )
     )
     .padding()
 }
