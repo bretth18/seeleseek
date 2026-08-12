@@ -23,19 +23,4 @@ public struct ExtendedClientInfo: Sendable, Equatable {
     public func supports(_ code: SeeleSeekExtendedClientInfoCode) -> Bool {
         capabilities[code.wireName] == code.rawValue
     }
-
-    /// Synthesised for SeeleSeek 1.x peers, which predate this handshake and
-    /// send a bare uint8 version at code 10000. They support the same three
-    /// codes implicitly. Remove once 1.x is no longer in the wild.
-    public static func legacySeeleSeek(version: UInt8) -> ExtendedClientInfo {
-        ExtendedClientInfo(
-            revision: 0,
-            clientInfo: "SeeleSeek/\(version).x",
-            capabilities: Dictionary(
-                uniqueKeysWithValues: SeeleSeekExtendedClientInfoCode.allCases.map {
-                    ($0.wireName, $0.rawValue)
-                }
-            )
-        )
-    }
 }

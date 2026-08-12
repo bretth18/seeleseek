@@ -259,19 +259,11 @@ struct ExtendedClientInfoParsingTests {
         #expect(MessageParser.parseExtendedClientInfo(Data()) == nil)
     }
 
-    /// SeeleSeek 1.x sent a bare version byte at code 10000. It cannot parse
-    /// as the current format, which is what the legacy fallback keys on.
-    @Test("Legacy one-byte handshake does not parse as the new format")
-    func legacyPayloadDoesNotParse() {
+    /// SeeleSeek 1.x sent a bare version byte at code 10000. Rejecting it is
+    /// intentional — those peers advertised nothing, so they get nothing.
+    @Test("Legacy one-byte handshake is rejected, not special-cased")
+    func legacyPayloadRejected() {
         #expect(MessageParser.parseExtendedClientInfo(Data([1])) == nil)
-    }
-
-    @Test("Legacy fallback grants the 1.x capability set")
-    func legacyFallbackCapabilities() {
-        let info = ExtendedClientInfo.legacySeeleSeek(version: 1)
-        for code in SeeleSeekExtendedClientInfoCode.allCases {
-            #expect(info.supports(code))
-        }
     }
 }
 

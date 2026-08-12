@@ -1623,8 +1623,14 @@ public actor PeerConnection {
     // MARK: - SeeleSeek Extension Handlers
 
     /// Handle ExtendedClientInfo (code 10000) — record what this peer speaks.
+    ///
+    /// SeeleSeek 1.x sent a bare uint8 version at this code. That does not
+    /// parse and is deliberately not special-cased: the spec treats a peer
+    /// that has not sent a valid advertisement as supporting nothing, and
+    /// inferring capabilities from a version byte is the exact practice this
+    /// handshake replaces.
     private func handleExtendedClientInfo(_ payload: Data) {
-        guard let info = MessageParser.parseExtendedClientInfo(payload) ?? legacyHandshake(payload) else {
+        guard let info = MessageParser.parseExtendedClientInfo(payload) else {
             logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
             return
         }
@@ -1632,16 +1638,6 @@ public actor PeerConnection {
         extendedClientInfo = info
         logger.info("[\(self.peerUsername)] Extensions: \(info.capabilities.keys.sorted().joined(separator: ", "))")
         eventContinuation.yield(.extendedClientInfoDiscovered(info))
-    }
-
-    /// SeeleSeek 1.x sent a bare uint8 version at this code. A one-byte
-    /// payload can only be that, since the current format needs 12 bytes
-    /// minimum. Drop this once 1.x is gone.
-    private func legacyHandshake(_ payload: Data) -> ExtendedClientInfo? {
-        guard payload.count == 1 else { return nil }
-        let version = payload[payload.startIndex]
-        logger.info("[\(self.peerUsername)] Legacy SeeleSeek handshake (version \(version))")
-        return .legacySeeleSeek(version: version)
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
