@@ -57,8 +57,7 @@ struct DownloadPathTests {
         #expect(current == "Daft Punk/Discovery/01 One More Time.mp3")
     }
 
-    /// `{folder}` is a prefix of `{folders}`, so substitution order matters —
-    /// a naive pass would leave a stray "s" behind.
+    /// `{folder}` is a prefix of `{folders}`; a naive pass leaves a stray "s".
     @Test("folder and folders tokens coexist in one template")
     func testFolderTokenPrefixCollision() {
         let result = DownloadManager.resolveDownloadPath(
@@ -69,8 +68,7 @@ struct DownloadPathTests {
         #expect(result == "Daft Punk/Discovery/Discovery/01 One More Time.mp3")
     }
 
-    /// Substitution is a single pass, so a value that happens to look like a
-    /// token is data, not another token to expand.
+    /// A value that looks like a token is data, not another token to expand.
     @Test("Token-shaped metadata values are not re-substituted")
     func testValuesAreNotRecursivelySubstituted() {
         let metadata = AudioFileMetadata(artist: "{album}", album: "Real Album", title: nil)

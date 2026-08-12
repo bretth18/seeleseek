@@ -6,8 +6,7 @@ struct GeneralSettingsSection: View {
     @Bindable var settings: SettingsState
     @State private var showNicotineImport = false
 
-    /// Rendered through the same resolver the download manager uses, so the
-    /// preview can't drift from where files actually land.
+    /// Uses the manager's own resolver so the preview can't drift.
     private var folderStructurePreview: String {
         DownloadManager.resolveDownloadPath(
             soulseekPath: #"@@music\Daft Punk\Discovery\01 Track.mp3"#,

@@ -15,8 +15,7 @@ struct TransferHistoryItem: Identifiable, Sendable {
     let isDownload: Bool
     let localPath: URL?
 
-    /// Resolved local path — the stored path, or where the current download
-    /// settings say the file would have landed.
+    /// The stored path, or where the given settings say the file would be.
     func resolvedLocalPath(downloadDirectory: URL, template: String) -> URL? {
         if let localPath, FileManager.default.fileExists(atPath: localPath.path) {
             return localPath

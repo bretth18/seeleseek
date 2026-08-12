@@ -16,8 +16,7 @@ struct DownloadFolderPlacementTests {
         return root
     }
 
-    /// The placement work runs in detached tasks; poll rather than sleep a
-    /// fixed amount so the suite stays fast when it converges immediately.
+    /// Placement runs in detached tasks, so poll rather than sleep a fixed amount.
     private func waitUntil(_ condition: () -> Bool) async -> Bool {
         for _ in 0..<200 {
             if condition() { return true }
@@ -31,8 +30,7 @@ struct DownloadFolderPlacementTests {
         try Data("x".utf8).write(to: url)
     }
 
-    /// Issue #75: completed files must land under the configured download
-    /// location, not a hardcoded `~/Downloads/SeeleSeek`.
+    /// Issue #75.
     @Test("Destination honors the configured download location")
     func destinationUsesConfiguredLocation() throws {
         let root = try makeTempRoot()
@@ -46,8 +44,7 @@ struct DownloadFolderPlacementTests {
         #expect(dest == root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3"))
     }
 
-    /// Issue #76: a file whose tags are missing must not strand itself in a
-    /// folder-name-derived directory while its tagged siblings go elsewhere.
+    /// Issue #76.
     @Test("Untagged siblings are pulled into the album folder claimed by a tagged file")
     func untaggedFilesFollowTaggedSibling() async throws {
         let root = try makeTempRoot()
@@ -61,7 +58,7 @@ struct DownloadFolderPlacementTests {
         let tracking = MockTransferTracking()
         manager._setTransferStateForTest(tracking)
 
-        // Folder-derived directory: what every file resolves to without tags.
+        // Where every file resolves without tags.
         let fallbackDir = root.appendingPathComponent("Milton - 1988 - Eu Sou O Rio")
         let albumDir = root.appendingPathComponent("Milton Nascimento - Eu Sou O Rio")
 
@@ -87,8 +84,7 @@ struct DownloadFolderPlacementTests {
             )
         }
 
-        // The two untagged files complete first — the ordering that produced
-        // the split in the issue.
+        // Untagged files first — the ordering that produced the split.
         complete(untagged)
         complete(cover)
         #expect(await waitUntil { manager._pendingFolderJoinCount == 2 })
@@ -104,21 +100,18 @@ struct DownloadFolderPlacementTests {
         #expect(await waitUntil { !fm.fileExists(atPath: fallbackDir.path) },
                 "the emptied fallback directory should be pruned")
 
-        // The whole group moves in one batched task; every transfer in it must
-        // still be repointed at its own new location.
+        // The group moves in one batched task; each transfer still repoints.
         for (path, id) in ids {
             #expect(tracking.getTransfer(id: id)?.localPath == albumDir.appendingPathComponent(path.lastPathComponent))
         }
 
-        // A later arrival from the same folder goes straight to the claimed
-        // directory, without another move.
+        // A later arrival skips the fallback directory entirely.
         let laterDest = manager._destinationForTest(soulseekPath: #"\#(folder)\11 track.mp3"#, username: user)
         #expect(laterDest == albumDir.appendingPathComponent("11 track.mp3"))
     }
 
-    /// The prune walk deletes empty directories by depth; it must refuse to
-    /// start when the vacated directory is not inside the download root, which
-    /// happens if the download location changes mid-transfer.
+    /// The prune walk deletes by depth, so it must refuse to start outside
+    /// the download root — reachable by changing the location mid-transfer.
     @Test("Files vacated outside the download root are not pruned")
     func pruneStaysInsideDownloadRoot() async throws {
         let root = try makeTempRoot()
@@ -134,8 +127,7 @@ struct DownloadFolderPlacementTests {
         let reader = MockMetadataReader()
         manager._setMetadataReaderForTest(reader)
 
-        // The file sits under the *old* root, two levels deep, so a depth-only
-        // walk would climb out of it.
+        // Two levels deep under the *old* root, so a depth-only walk escapes.
         let strandedDir = elsewhere.appendingPathComponent("Old Root/Milton - 1988 - Eu Sou O Rio")
         let stranded = strandedDir.appendingPathComponent("01 track.mp3")
         try write(stranded)
@@ -150,8 +142,7 @@ struct DownloadFolderPlacementTests {
                 "directories outside the download root must survive the move")
     }
 
-    /// Tags that don't fill the tokens the template uses must not claim the
-    /// folder — otherwise a title-only file wins over properly tagged tracks.
+    /// A title-only file must not beat the properly tagged tracks.
     @Test("Partial tags do not claim the folder destination")
     func partialTagsDoNotClaim() async throws {
         let root = try makeTempRoot()
@@ -174,8 +165,7 @@ struct DownloadFolderPlacementTests {
         #expect(FileManager.default.fileExists(atPath: file.path), "it stays put until a tagged sibling arrives")
     }
 
-    /// Grouping only exists to reconcile tag-derived paths; path-based
-    /// templates already agree across a folder and must stay untouched.
+    /// Path-based templates already agree across a folder.
     @Test("Path-based templates skip placement entirely")
     func pathTemplatesSkipPlacement() throws {
         let root = try makeTempRoot()
@@ -189,8 +179,7 @@ struct DownloadFolderPlacementTests {
         let file = root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3")
         try write(file)
 
-        // Returns at the `isTagBased` guard without scheduling anything, so
-        // there is nothing to wait for.
+        // Returns at the `isTagBased` guard, so there is nothing to await.
         manager.organizeCompletedDownload(currentPath: file, soulseekFilename: soulseek, username: user, transferId: UUID())
 
         #expect(manager._pendingFolderJoinCount == 0)

@@ -61,18 +61,16 @@ public final class DownloadManager {
     private var metadataReader: (any MetadataReading)?
     /// Directories that already have folder icons applied (avoid redundant work)
     private var iconAppliedDirs: Set<URL> = []
-    /// Destination directory settled on for a remote folder, keyed by
-    /// `sourceFolderKey`. Tag-derived templates ({artist}/{album}) resolve to
-    /// different directories for tagged and untagged files from the *same*
-    /// folder, which used to scatter cover art and untagged tracks away from
-    /// their album. The first file with usable tags claims the directory and
-    /// every sibling — earlier or later — follows it.
+    /// Directory each remote folder settled on, keyed by `sourceFolderKey`.
+    /// Tag-derived templates resolve differently for tagged and untagged files
+    /// of one folder, so the first file with usable tags claims the directory
+    /// and every sibling — earlier or later — follows it.
     private var folderDestinations: [String: URL] = [:]
-    /// Completed files parked at their folder-name-derived path because they
-    /// had no usable tags, awaiting a sibling that claims the real directory.
+    /// Completed files parked at their folder-derived path, waiting for a
+    /// sibling with usable tags to claim the real directory.
     private var pendingFolderJoins: [String: [PlacedFile]] = [:]
-    /// Last download root passed to `createDirectory`, so the syscall runs on
-    /// a settings change rather than on every path computation.
+    /// Last root passed to `createDirectory`, so the syscall runs on a
+    /// settings change rather than on every path computation.
     private var createdDownloadDir: URL?
 
     struct PlacedFile {
@@ -1382,16 +1380,13 @@ public final class DownloadManager {
 
     // MARK: - Helpers
 
-    /// Where downloads land when no settings provider is attached (tests,
-    /// early startup). The user-facing default in `SettingsState` matches.
+    /// Fallback when no settings provider is attached (tests, early startup).
     public nonisolated static let defaultDownloadDirectory: URL =
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SeeleSeek")
 
     private func getDownloadDirectory() -> URL {
         let downloadsDir = settings?.downloadDirectory ?? Self.defaultDownloadDirectory
-        // Called for every path computation; only pay the syscall when the
-        // configured location actually changes.
         if createdDownloadDir == downloadsDir { return downloadsDir }
 
         do {
@@ -1417,14 +1412,11 @@ public final class DownloadManager {
             ?? getDownloadDirectory().appendingPathComponent("Incomplete", isDirectory: true)
     }
 
-    /// Where a completed file belongs: the configured download root plus the
-    /// active template, unless a sibling from the same shared folder already
-    /// settled on a directory.
     private func computeDestPath(for soulseekPath: String, username: String) -> URL {
         let template = activeTemplate
 
-        // A claim only applies while the template that produced it is still
-        // in effect — switching to a path-based one must not keep grouping.
+        // A claim only applies while the template that produced it is in
+        // effect: switching to a path-based one must not keep grouping.
         if Self.isTagBased(template),
            let claimed = folderDestinations[Self.sourceFolderKey(soulseekPath: soulseekPath, username: username)] {
             return claimed.appendingPathComponent(Self.sanitizedLeafName(of: soulseekPath))
@@ -1445,17 +1437,15 @@ public final class DownloadManager {
 
     public static let fallbackTemplate = "{folder}/{filename}"
 
-    /// Tokens whose value comes from the file's tags rather than its path.
-    /// Templates using them are the only ones whose destination varies between
-    /// files of the same folder, so they are the only ones that need grouping.
+    /// Tokens read from tags rather than the path — templates using them are
+    /// the only ones whose destination varies between files of one folder.
     nonisolated static let tagTokens = ["{artist}", "{album}"]
 
     nonisolated static func isTagBased(_ template: String) -> Bool {
         tagTokens.contains { template.contains($0) }
     }
 
-    /// Identity of the remote folder a file came from — everything from one
-    /// `user\...\Album` folder shares a destination directory.
+    /// Everything from one `user\...\Album` folder shares a destination.
     nonisolated static func sourceFolderKey(soulseekPath: String, username: String) -> String {
         let folder = soulseekPath[..<(soulseekPath.lastIndex(of: "\\") ?? soulseekPath.startIndex)]
         return "\(username)\u{0}\(folder)"
@@ -1562,8 +1552,7 @@ public final class DownloadManager {
         return parent.appendingPathComponent(fallbackName)
     }
 
-    /// Shared with the app layer so "reveal in Finder" fallbacks and the
-    /// settings preview can't drift from what the manager actually writes.
+    /// Shared with the app layer so nothing re-implements this and drifts.
     public nonisolated static func destinationURL(
         downloadDirectory: URL,
         soulseekPath: String,
@@ -1644,9 +1633,8 @@ public final class DownloadManager {
         return result
     }
 
-    /// Single pass over the template, so token order carries no meaning and a
-    /// substituted value that happens to look like a token (an album named
-    /// "{artist}") is never re-substituted.
+    /// Single pass: token order carries no meaning, and a substituted value
+    /// that looks like a token (an album named "{artist}") is left alone.
     private nonisolated static func substituteTokens(in template: String, values: [String: String]) -> String {
         var result = ""
         var rest = Substring(template)
@@ -1800,18 +1788,14 @@ public final class DownloadManager {
     }
 
     /// Under a tag-based template the file has not reached its final directory
-    /// yet — `organizeCompletedDownload` may move it, and applies the icon
-    /// there. Skipping here avoids decoding album art onto a directory that is
-    /// about to be emptied and pruned.
+    /// yet; `organizeCompletedDownload` applies the icon after it moves.
     private func applyFolderArtworkAfterCompletion(for filePath: URL) {
         guard !Self.isTagBased(activeTemplate) else { return }
         applyFolderArtworkIfNeeded(for: filePath)
     }
 
     /// Settle a completed download into the directory its shared folder is
-    /// using. Only tag-based templates need this: their destination depends on
-    /// tags the path can't supply, so files from one folder would otherwise
-    /// scatter. Fire-and-forget.
+    /// using. Fire-and-forget.
     func organizeCompletedDownload(
         currentPath: URL,
         soulseekFilename: String,
@@ -1824,15 +1808,13 @@ public final class DownloadManager {
         let key = Self.sourceFolderKey(soulseekPath: soulseekFilename, username: username)
         let file = PlacedFile(transferId: transferId, path: currentPath)
 
-        // A sibling already claimed this folder's directory, so skip the tag
-        // read entirely — it is an AVAsset open per file.
+        // Claimed already — skip the tag read, it is an AVAsset open per file.
         if let claimed = folderDestinations[key] {
             relocate([file], toDirectory: claimed)
             return
         }
 
-        // Cover art, cue sheets and logs can never fill a tag token, so they
-        // go straight to the park queue rather than through AVFoundation.
+        // Non-audio can never fill a tag token.
         guard let metadataReader,
               FileTypes.isAudio(currentPath.pathExtension.lowercased()) else {
             placeInFolder(key: key, candidate: nil, file: file)
@@ -1843,10 +1825,9 @@ public final class DownloadManager {
         Task.detached { [weak self] in
             let metadata = await metadataReader.extractAudioMetadata(from: currentPath)
 
-            // Tags only settle the folder if they fill every tag token the
-            // template uses. A file tagged with a title but no album would
-            // otherwise "claim" the directory using folder-derived fallbacks
-            // and win over the tracks that are properly tagged.
+            // Partial tags must not claim: a file with a title but no album
+            // would resolve via folder-derived fallbacks and beat the tracks
+            // that are properly tagged.
             let tagValues: [String: String?] = ["{artist}": metadata?.artist, "{album}": metadata?.album]
             let satisfiesTemplate = tagValues.allSatisfy { token, value in
                 !template.contains(token) || !(value ?? "").isEmpty
@@ -1866,24 +1847,20 @@ public final class DownloadManager {
         }
     }
 
-    /// Decide where a just-completed file belongs relative to its siblings.
-    /// Runs without suspension so concurrent completions from one folder can't
-    /// both claim a destination.
+    /// Must not suspend: concurrent completions from one folder would
+    /// otherwise both claim a destination.
     private func placeInFolder(key: String, candidate: URL?, file: PlacedFile) {
-        // Bounded like `iconAppliedDirs`: forgetting a mapping only costs a
-        // folder downloaded much later re-deciding its destination. Folders
-        // that never produce a tagged file only ever grow `pendingFolderJoins`,
-        // so both maps count toward the cap.
+        // Both maps count toward the cap: a folder that never produces a
+        // tagged file only ever grows `pendingFolderJoins`. Forgetting a
+        // mapping just means a later folder re-decides its destination.
         if folderDestinations.count + pendingFolderJoins.count > 512 {
             folderDestinations.removeAll(keepingCapacity: true)
             pendingFolderJoins.removeAll(keepingCapacity: true)
         }
 
-        // An existing claim wins over this file's own tags, so one shared
-        // folder can never split across two destinations.
+        // An existing claim wins over this file's own tags.
         guard let destination = folderDestinations[key] ?? candidate else {
-            // No usable tags — leave it at the folder-derived path and wait for
-            // a tagged sibling to pull it across.
+            // Wait for a tagged sibling to pull it across.
             pendingFolderJoins[key, default: []].append(file)
             return
         }
@@ -1893,8 +1870,6 @@ public final class DownloadManager {
         relocate([file] + strays, toDirectory: destination)
     }
 
-    /// Move completed files into `directory`, keeping their filenames, and
-    /// point their transfers at the new locations.
     private func relocate(_ files: [PlacedFile], toDirectory directory: URL) {
         let moves = files.filter { $0.path.deletingLastPathComponent() != directory }
         guard !moves.isEmpty else { return }
@@ -1944,9 +1919,8 @@ public final class DownloadManager {
     }
 
     private nonisolated static func pruneEmptyDirectories(from directory: URL, upTo root: URL) {
-        // Only ever delete inside the download root. Changing the download
-        // location mid-transfer can leave `directory` pointing into an
-        // unrelated tree, and a depth-only check would happily walk up it.
+        // Changing the download location mid-transfer can leave `directory`
+        // in an unrelated tree, which a depth-only check would walk up.
         let rootComponents = root.standardizedFileURL.pathComponents
         var dir = directory.standardizedFileURL
         guard dir.pathComponents.starts(with: rootComponents) else { return }
@@ -3278,8 +3252,7 @@ public final class DownloadManager {
         computeDestPath(for: soulseekPath, username: username)
     }
 
-    /// Also the tests' synchronization point: parking a file is the observable
-    /// end of the detached tag read.
+    /// Tests sequence on this: parking is the observable end of the tag read.
     internal var _pendingFolderJoinCount: Int {
         pendingFolderJoins.values.reduce(0) { $0 + $1.count }
     }

@@ -15,8 +15,8 @@ final class MockDownloadSettings: DownloadSettingsProviding {
     }
 }
 
-/// Returns tags only for paths explicitly registered, so tests can model a
-/// mixed folder: tagged tracks, an untagged track, and cover art.
+/// Returns tags only for registered paths, so a folder can mix tagged and
+/// untagged files.
 final class MockMetadataReader: MetadataReading, @unchecked Sendable {
     var metadata: [URL: AudioFileMetadata] = [:]
 

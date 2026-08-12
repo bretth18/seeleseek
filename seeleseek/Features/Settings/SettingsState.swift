@@ -71,7 +71,6 @@ enum DownloadFolderFormat: String, CaseIterable {
         }
     }
 
-    /// The template actually in effect, given the user's custom text.
     func resolvedTemplate(custom: String) -> String {
         let resolved = self == .custom ? custom : template
         return resolved.isEmpty ? DownloadManager.fallbackTemplate : resolved
@@ -567,22 +566,13 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
 
-    /// Keep an existing library laid out the way its owner already has it.
-    /// Both download defaults changed in this version, and each would silently
-    /// re-lay-out an upgraded install:
-    ///
-    /// - the location was collected but never used — files always went to
-    ///   `~/Downloads/SeeleSeek` — so honoring a stored `~/Downloads` (the old
-    ///   default, which nobody's files landed in) would start dumping
-    ///   downloads loose into the user's Downloads folder;
-    /// - the folder structure default became `.folderOnly`, so anyone who
-    ///   never opened Settings — and therefore has no stored format, since
-    ///   `save()` only runs from a property `didSet` — would have new
-    ///   downloads land beside, not inside, their `{username}/{path}` library.
-    ///
+    /// Both download defaults changed in this version, and each would
+    /// re-lay-out an upgraded install: a stored `~/Downloads` (the old
+    /// default, which was never actually used) would dump files loose into
+    /// Downloads, and the new `.folderOnly` structure would apply to anyone
+    /// who never opened Settings, since `save()` only runs from a `didSet`.
     /// Old versions created `~/Downloads/SeeleSeek` eagerly at launch, so its
-    /// presence is the marker for "this machine ran a pre-1.1.x build".
-    /// A value the user actually chose is always left alone.
+    /// presence marks a pre-1.1.x install. Chosen values are left alone.
     private func migrateDownloadDefaultsIfNeeded() {
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: downloadDefaultsMigratedKey) else { return }
