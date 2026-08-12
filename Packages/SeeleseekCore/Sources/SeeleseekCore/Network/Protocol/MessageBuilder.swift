@@ -858,11 +858,11 @@ public enum MessageBuilder {
 
     /// ExtendedClientInfo (code 10000) — advertise which extension codes we speak.
     ///
-    /// `clientInfo` goes on the wire verbatim and is a durable fingerprint, so
-    /// it defaults to empty. Nothing in our own logic may depend on its value.
+    /// `clientInfo` goes on the wire verbatim. Nothing in our own logic may
+    /// depend on its value: peers choose it freely and can lie.
     public nonisolated static func extendedClientInfoMessage(
         advertising codes: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised,
-        clientInfo: String = ""
+        clientInfo: String = ExtendedClientInfo.localClientInfo
     ) -> Data {
         var payload = Data()
         // 0. send extendedClient code

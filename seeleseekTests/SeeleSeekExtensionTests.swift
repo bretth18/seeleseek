@@ -24,7 +24,10 @@ struct SeeleSeekMessageBuilderTests {
         // Payload begins after the length prefix and the message code.
         let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
         #expect(info?.revision == ExtendedClientInfo.currentRevision)
-        #expect(info?.clientInfo == "")
+        // Sent by default, so the field is not dead on the wire. The exact
+        // string tracks the host bundle version, hence the prefix check.
+        #expect(info?.clientInfo == ExtendedClientInfo.localClientInfo)
+        #expect(info?.clientInfo.hasPrefix("SeeleSeek/") == true)
         for advertised in ExtendedClientInfoCode.advertised {
             #expect(info?.supports(advertised) == true)
         }

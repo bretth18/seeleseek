@@ -10,8 +10,19 @@ public struct ExtendedClientInfo: Sendable, Equatable {
     /// both sides validate against it.
     public static let currentRevision: UInt32 = 1
 
+    /// What we advertise about ourselves. The spec makes this optional, but a
+    /// field every implementer leaves empty is a dead field, and knowing what
+    /// is actually deployed is the point of publishing the handshake. It adds
+    /// nothing to our fingerprint that the capability list does not already
+    /// give away. Version comes from the host bundle so it cannot go stale.
+    public static let localClientInfo: String = {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        return "SeeleSeek/\(version) (https://seeleseek.net)"
+    }()
+
     public let revision: UInt32
-    /// Free-form and optional; peers may send an empty string. Display only.
+    /// Free-form and optional; peers may send an empty string. Display only —
+    /// it is self-reported and trivially spoofed, so never branch on it.
     public let clientInfo: String
 
     /// Wire name → the code this peer binds it to.
