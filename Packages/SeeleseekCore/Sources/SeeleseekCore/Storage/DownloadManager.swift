@@ -61,6 +61,24 @@ public final class DownloadManager {
     private var metadataReader: (any MetadataReading)?
     /// Directories that already have folder icons applied (avoid redundant work)
     private var iconAppliedDirs: Set<URL> = []
+    /// Destination directory settled on for a remote folder, keyed by
+    /// `sourceFolderKey`. Tag-derived templates ({artist}/{album}) resolve to
+    /// different directories for tagged and untagged files from the *same*
+    /// folder, which used to scatter cover art and untagged tracks away from
+    /// their album. The first file with usable tags claims the directory and
+    /// every sibling — earlier or later — follows it.
+    private var folderDestinations: [String: URL] = [:]
+    /// Completed files parked at their folder-name-derived path because they
+    /// had no usable tags, awaiting a sibling that claims the real directory.
+    private var pendingFolderJoins: [String: [PlacedFile]] = [:]
+    /// Last download root passed to `createDirectory`, so the syscall runs on
+    /// a settings change rather than on every path computation.
+    private var createdDownloadDir: URL?
+
+    struct PlacedFile {
+        let transferId: UUID
+        let path: URL
+    }
 
     // MARK: - Retry Configuration
     // Mixed ladder: a quick 10s first retry catches transient blips (TCP
@@ -1009,7 +1027,7 @@ public final class DownloadManager {
 
             logger.info("Download complete (outgoing F): \(filename) -> \(finalPath.path)")
             ActivityLogger.shared?.logDownloadCompleted(filename: filename)
-            applyFolderArtworkIfNeeded(for: finalPath)
+            applyFolderArtworkAfterCompletion(for: finalPath)
             organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
 
             // Record only bytes received THIS session against the session
@@ -1364,14 +1382,21 @@ public final class DownloadManager {
 
     // MARK: - Helpers
 
-    private func getDownloadDirectory() -> URL {
-        if let override = _downloadDirectoryOverride { return override }
-        let paths = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
-        let downloadsDir = paths[0].appendingPathComponent("SeeleSeek")
+    /// Where downloads land when no settings provider is attached (tests,
+    /// early startup). The user-facing default in `SettingsState` matches.
+    public nonisolated static let defaultDownloadDirectory: URL =
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("SeeleSeek")
 
-        // Create directory if it doesn't exist
+    private func getDownloadDirectory() -> URL {
+        let downloadsDir = settings?.downloadDirectory ?? Self.defaultDownloadDirectory
+        // Called for every path computation; only pay the syscall when the
+        // configured location actually changes.
+        if createdDownloadDir == downloadsDir { return downloadsDir }
+
         do {
             try FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
+            createdDownloadDir = downloadsDir
             logger.debug("Download directory: \(downloadsDir.path)")
         } catch {
             logger.error("Failed to create download directory: \(downloadsDir.path) - \(error)")
@@ -1388,37 +1413,61 @@ public final class DownloadManager {
     }
 
     private func getIncompleteDownloadDirectory() -> URL {
-        if let override = _downloadDirectoryOverride {
-            return override.appendingPathComponent("Incomplete", isDirectory: true)
-        }
-        return settings?.incompleteDownloadDirectory
+        settings?.incompleteDownloadDirectory
             ?? getDownloadDirectory().appendingPathComponent("Incomplete", isDirectory: true)
     }
 
-    /// Compute destination path preserving folder structure from SoulSeek path
-    /// e.g., "@@music\Artist\Album\01 Song.mp3" -> "Downloads/SeeleSeek/Artist/Album/01 Song.mp3"
+    /// Where a completed file belongs: the configured download root plus the
+    /// active template, unless a sibling from the same shared folder already
+    /// settled on a directory.
     private func computeDestPath(for soulseekPath: String, username: String) -> URL {
-        let downloadDir = getDownloadDirectory()
-        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
-        let relativePath = DownloadManager.resolveDownloadPath(
+        let template = activeTemplate
+
+        // A claim only applies while the template that produced it is still
+        // in effect — switching to a path-based one must not keep grouping.
+        if Self.isTagBased(template),
+           let claimed = folderDestinations[Self.sourceFolderKey(soulseekPath: soulseekPath, username: username)] {
+            return claimed.appendingPathComponent(Self.sanitizedLeafName(of: soulseekPath))
+        }
+
+        return Self.destinationURL(
+            downloadDirectory: getDownloadDirectory(),
             soulseekPath: soulseekPath,
             username: username,
             template: template
         )
+    }
 
-        // Split into components, sanitize each, and build the URL
-        let resultComponents = relativePath.split(separator: "/").map(String.init)
-        var destURL = downloadDir
-        for component in resultComponents {
-            destURL = destURL.appendingPathComponent(Self.sanitizeFilename(component))
-        }
+    private var activeTemplate: String {
+        let template = settings?.activeDownloadTemplate ?? Self.fallbackTemplate
+        return template.isEmpty ? Self.fallbackTemplate : template
+    }
 
-        return destURL
+    public static let fallbackTemplate = "{folder}/{filename}"
+
+    /// Tokens whose value comes from the file's tags rather than its path.
+    /// Templates using them are the only ones whose destination varies between
+    /// files of the same folder, so they are the only ones that need grouping.
+    nonisolated static let tagTokens = ["{artist}", "{album}"]
+
+    nonisolated static func isTagBased(_ template: String) -> Bool {
+        tagTokens.contains { template.contains($0) }
+    }
+
+    /// Identity of the remote folder a file came from — everything from one
+    /// `user\...\Album` folder shares a destination directory.
+    nonisolated static func sourceFolderKey(soulseekPath: String, username: String) -> String {
+        let folder = soulseekPath[..<(soulseekPath.lastIndex(of: "\\") ?? soulseekPath.startIndex)]
+        return "\(username)\u{0}\(folder)"
+    }
+
+    nonisolated static func sanitizedLeafName(of soulseekPath: String) -> String {
+        sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
     }
 
     private func computeIncompletePath(for soulseekPath: String, username: String) -> URL {
         let incompleteDir = getIncompleteDownloadDirectory()
-        let displayName = Self.sanitizeFilename(soulseekPath.split(separator: "\\").last.map(String.init) ?? "download")
+        let displayName = Self.sanitizedLeafName(of: soulseekPath)
         let digest = SHA256.hash(data: Data("\(username)\u{0}\(soulseekPath)".utf8))
         let hash = digest.map { String(format: "%02x", $0) }.joined()
         // Constant prefix is 75 bytes ("INCOMPLETE" + 64-hex + "_"); macOS
@@ -1513,10 +1562,32 @@ public final class DownloadManager {
         return parent.appendingPathComponent(fallbackName)
     }
 
+    /// Shared with the app layer so "reveal in Finder" fallbacks and the
+    /// settings preview can't drift from what the manager actually writes.
+    public nonisolated static func destinationURL(
+        downloadDirectory: URL,
+        soulseekPath: String,
+        username: String,
+        template: String,
+        metadata: AudioFileMetadata? = nil
+    ) -> URL {
+        let relativePath = resolveDownloadPath(
+            soulseekPath: soulseekPath,
+            username: username,
+            template: template,
+            metadata: metadata
+        )
+        var destURL = downloadDirectory
+        for component in relativePath.split(separator: "/") {
+            destURL = destURL.appendingPathComponent(sanitizeFilename(String(component)))
+        }
+        return destURL
+    }
+
     /// Resolve a SoulSeek path into a relative download path using a template.
     /// Prefers metadata values (artist, album) over folder-derived values when available.
     /// Returns a relative path string (no leading/trailing slashes).
-    nonisolated static func resolveDownloadPath(
+    public nonisolated static func resolveDownloadPath(
         soulseekPath: String,
         username: String,
         template: String,
@@ -1551,13 +1622,17 @@ public final class DownloadManager {
         let artist = metadata?.artist ?? folderArtist
         let album = metadata?.album ?? folderAlbum
 
-        // Substitute tokens
-        var result = template
-            .replacingOccurrences(of: "{username}", with: username)
-            .replacingOccurrences(of: "{folders}", with: folders)
-            .replacingOccurrences(of: "{artist}", with: artist)
-            .replacingOccurrences(of: "{album}", with: album)
-            .replacingOccurrences(of: "{filename}", with: filename)
+        // `{folders}` is the legacy spelling of `{full-path}`, kept for
+        // templates users saved before the rename.
+        var result = substituteTokens(in: template, values: [
+            "username": username,
+            "full-path": folders,
+            "folders": folders,
+            "folder": folderAlbum,
+            "artist": artist,
+            "album": album,
+            "filename": filename,
+        ])
 
         // Clean up double slashes from empty tokens (e.g. empty folders)
         while result.contains("//") {
@@ -1567,6 +1642,26 @@ public final class DownloadManager {
         result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
         return result
+    }
+
+    /// Single pass over the template, so token order carries no meaning and a
+    /// substituted value that happens to look like a token (an album named
+    /// "{artist}") is never re-substituted.
+    private nonisolated static func substituteTokens(in template: String, values: [String: String]) -> String {
+        var result = ""
+        var rest = Substring(template)
+        while let open = rest.firstIndex(of: "{") {
+            guard let close = rest[open...].firstIndex(of: "}") else { break }
+            let name = String(rest[rest.index(after: open)..<close])
+            guard let value = values[name] else {
+                result += rest[..<rest.index(after: open)]
+                rest = rest[rest.index(after: open)...]
+                continue
+            }
+            result += rest[..<open] + value
+            rest = rest[rest.index(after: close)...]
+        }
+        return result + rest
     }
 
     /// Sanitize a filename/folder name for the filesystem
@@ -1704,82 +1799,165 @@ public final class DownloadManager {
         }
     }
 
-    /// Re-organize a completed download using actual audio metadata (artist, album).
-    /// If the active template uses {artist} or {album} tokens, reads metadata from the file
-    /// and moves it to the metadata-derived path if different. Fire-and-forget.
-    private func organizeCompletedDownload(
+    /// Under a tag-based template the file has not reached its final directory
+    /// yet — `organizeCompletedDownload` may move it, and applies the icon
+    /// there. Skipping here avoids decoding album art onto a directory that is
+    /// about to be emptied and pruned.
+    private func applyFolderArtworkAfterCompletion(for filePath: URL) {
+        guard !Self.isTagBased(activeTemplate) else { return }
+        applyFolderArtworkIfNeeded(for: filePath)
+    }
+
+    /// Settle a completed download into the directory its shared folder is
+    /// using. Only tag-based templates need this: their destination depends on
+    /// tags the path can't supply, so files from one folder would otherwise
+    /// scatter. Fire-and-forget.
+    func organizeCompletedDownload(
         currentPath: URL,
         soulseekFilename: String,
         username: String,
         transferId: UUID
     ) {
-        let template = settings?.activeDownloadTemplate ?? "{username}/{folders}/{filename}"
+        let template = activeTemplate
+        guard Self.isTagBased(template) else { return }
 
-        // Only worth doing if the template uses artist or album tokens
-        guard template.contains("{artist}") || template.contains("{album}") else { return }
+        let key = Self.sourceFolderKey(soulseekPath: soulseekFilename, username: username)
+        let file = PlacedFile(transferId: transferId, path: currentPath)
+
+        // A sibling already claimed this folder's directory, so skip the tag
+        // read entirely — it is an AVAsset open per file.
+        if let claimed = folderDestinations[key] {
+            relocate([file], toDirectory: claimed)
+            return
+        }
+
+        // Cover art, cue sheets and logs can never fill a tag token, so they
+        // go straight to the park queue rather than through AVFoundation.
+        guard let metadataReader,
+              FileTypes.isAudio(currentPath.pathExtension.lowercased()) else {
+            placeInFolder(key: key, candidate: nil, file: file)
+            return
+        }
 
         let downloadDir = getDownloadDirectory()
+        Task.detached { [weak self] in
+            let metadata = await metadataReader.extractAudioMetadata(from: currentPath)
 
-        Task.detached { [metadataReader, logger, transferState = self.transferState] in
-            guard let metadataReader,
-                  let metadata = await metadataReader.extractAudioMetadata(from: currentPath) else {
+            // Tags only settle the folder if they fill every tag token the
+            // template uses. A file tagged with a title but no album would
+            // otherwise "claim" the directory using folder-derived fallbacks
+            // and win over the tracks that are properly tagged.
+            let tagValues: [String: String?] = ["{artist}": metadata?.artist, "{album}": metadata?.album]
+            let satisfiesTemplate = tagValues.allSatisfy { token, value in
+                !template.contains(token) || !(value ?? "").isEmpty
+            }
+
+            let candidate: URL? = satisfiesTemplate
+                ? DownloadManager.destinationURL(
+                    downloadDirectory: downloadDir,
+                    soulseekPath: soulseekFilename,
+                    username: username,
+                    template: template,
+                    metadata: metadata
+                ).deletingLastPathComponent()
+                : nil
+
+            await self?.placeInFolder(key: key, candidate: candidate, file: file)
+        }
+    }
+
+    /// Decide where a just-completed file belongs relative to its siblings.
+    /// Runs without suspension so concurrent completions from one folder can't
+    /// both claim a destination.
+    private func placeInFolder(key: String, candidate: URL?, file: PlacedFile) {
+        // Bounded like `iconAppliedDirs`: forgetting a mapping only costs a
+        // folder downloaded much later re-deciding its destination. Folders
+        // that never produce a tagged file only ever grow `pendingFolderJoins`,
+        // so both maps count toward the cap.
+        if folderDestinations.count + pendingFolderJoins.count > 512 {
+            folderDestinations.removeAll(keepingCapacity: true)
+            pendingFolderJoins.removeAll(keepingCapacity: true)
+        }
+
+        // An existing claim wins over this file's own tags, so one shared
+        // folder can never split across two destinations.
+        guard let destination = folderDestinations[key] ?? candidate else {
+            // No usable tags — leave it at the folder-derived path and wait for
+            // a tagged sibling to pull it across.
+            pendingFolderJoins[key, default: []].append(file)
+            return
+        }
+        folderDestinations[key] = destination
+
+        let strays = pendingFolderJoins.removeValue(forKey: key) ?? []
+        relocate([file] + strays, toDirectory: destination)
+    }
+
+    /// Move completed files into `directory`, keeping their filenames, and
+    /// point their transfers at the new locations.
+    private func relocate(_ files: [PlacedFile], toDirectory directory: URL) {
+        let moves = files.filter { $0.path.deletingLastPathComponent() != directory }
+        guard !moves.isEmpty else { return }
+        let downloadDir = getDownloadDirectory()
+
+        Task.detached { [weak self, logger, transferState = self.transferState] in
+            let fm = FileManager.default
+            do {
+                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                logger.warning("Failed to create organized directory: \(error.localizedDescription)")
                 return
             }
 
-            // Re-resolve path with metadata
-            let newRelativePath = DownloadManager.resolveDownloadPath(
-                soulseekPath: soulseekFilename,
-                username: username,
-                template: template,
-                metadata: metadata
-            )
-
-            // Build the new full path with sanitized components
-            let newComponents = newRelativePath.split(separator: "/").map(String.init)
-            var newPath = downloadDir
-            for component in newComponents {
-                newPath = newPath.appendingPathComponent(DownloadManager.sanitizeFilename(component))
-            }
-
-            // If the path didn't change, nothing to do
-            guard newPath != currentPath else { return }
-
-            let fm = FileManager.default
-
-            // Create parent directories
-            let newDir = newPath.deletingLastPathComponent()
-            try? fm.createDirectory(at: newDir, withIntermediateDirectories: true)
-
-            // Move the file
-            do {
-                // If a file already exists at destination, skip (don't overwrite)
+            var moved: [PlacedFile] = []
+            var vacated: Set<URL> = []
+            for file in moves {
+                let newPath = directory.appendingPathComponent(file.path.lastPathComponent)
+                // Never overwrite: a same-named file here is either this very
+                // download (already moved) or a pre-existing copy.
                 guard !fm.fileExists(atPath: newPath.path) else {
-                    logger.debug("Metadata-organized path already exists, skipping move")
-                    return
+                    logger.debug("Organized path already occupied, leaving \(file.path.lastPathComponent) in place")
+                    continue
                 }
-                try fm.moveItem(at: currentPath, to: newPath)
-                logger.info("Reorganized download: \(currentPath.lastPathComponent) → \(newRelativePath)")
-
-                // Update the transfer's localPath on the main actor
-                await MainActor.run {
-                    transferState?.updateTransfer(id: transferId) { t in
-                        t.localPath = newPath
-                    }
+                do {
+                    try fm.moveItem(at: file.path, to: newPath)
+                    moved.append(PlacedFile(transferId: file.transferId, path: newPath))
+                    vacated.insert(file.path.deletingLastPathComponent())
+                } catch {
+                    logger.warning("Failed to reorganize download: \(error.localizedDescription)")
                 }
-
-                // Clean up empty parent directories from the old location
-                var oldDir = currentPath.deletingLastPathComponent()
-                while oldDir != downloadDir {
-                    let contents = (try? fm.contentsOfDirectory(atPath: oldDir.path)) ?? []
-                    // Only remove if truly empty (ignore .DS_Store)
-                    let meaningful = contents.filter { $0 != ".DS_Store" }
-                    guard meaningful.isEmpty else { break }
-                    try? fm.removeItem(at: oldDir)
-                    oldDir = oldDir.deletingLastPathComponent()
-                }
-            } catch {
-                logger.warning("Failed to reorganize download: \(error.localizedDescription)")
             }
+            guard let first = moved.first else { return }
+            logger.info("Reorganized \(moved.count) file(s) into \(directory.lastPathComponent)")
+
+            await MainActor.run {
+                for file in moved {
+                    transferState?.updateTransfer(id: file.transferId) { $0.localPath = file.path }
+                }
+            }
+            await self?.applyFolderArtworkIfNeeded(for: first.path)
+
+            for vacatedDirectory in vacated {
+                DownloadManager.pruneEmptyDirectories(from: vacatedDirectory, upTo: downloadDir)
+            }
+        }
+    }
+
+    private nonisolated static func pruneEmptyDirectories(from directory: URL, upTo root: URL) {
+        // Only ever delete inside the download root. Changing the download
+        // location mid-transfer can leave `directory` pointing into an
+        // unrelated tree, and a depth-only check would happily walk up it.
+        let rootComponents = root.standardizedFileURL.pathComponents
+        var dir = directory.standardizedFileURL
+        guard dir.pathComponents.starts(with: rootComponents) else { return }
+
+        let fm = FileManager.default
+        while dir.pathComponents.count > rootComponents.count {
+            let contents = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            // Only remove if truly empty (ignore .DS_Store)
+            guard contents.filter({ $0 != ".DS_Store" }).isEmpty else { break }
+            try? fm.removeItem(at: dir)
+            dir = dir.deletingLastPathComponent()
         }
     }
 
@@ -1948,7 +2126,7 @@ public final class DownloadManager {
                 t.error = nil
             }
             ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
-            applyFolderArtworkIfNeeded(for: finalPath)
+            applyFolderArtworkAfterCompletion(for: finalPath)
             organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
             // Record only this session's bytes (resumed portion was on disk).
             statisticsState?.recordTransfer(
@@ -3083,6 +3261,29 @@ public final class DownloadManager {
         pendingDownloads[token] = pending
     }
 
+    /// `settings` is `weak` in production; retain the double strongly too, or
+    /// ARC releases a test-local mock before the assertions run.
+    internal func _setSettingsForTest(_ settings: any DownloadSettingsProviding) {
+        self._testStrongSettings = settings
+        self.settings = settings
+    }
+
+    private var _testStrongSettings: (any DownloadSettingsProviding)?
+
+    internal func _setMetadataReaderForTest(_ reader: any MetadataReading) {
+        self.metadataReader = reader
+    }
+
+    internal func _destinationForTest(soulseekPath: String, username: String) -> URL {
+        computeDestPath(for: soulseekPath, username: username)
+    }
+
+    /// Also the tests' synchronization point: parking a file is the observable
+    /// end of the detached tag read.
+    internal var _pendingFolderJoinCount: Int {
+        pendingFolderJoins.values.reduce(0) { $0 + $1.count }
+    }
+
     /// Drive the queue-position handler from tests. Real callers reach
     /// it via the pool's `.placeInQueueReply` event in NetworkClient.
     internal func _handlePlaceInQueueReplyForTest(username: String, filename: String, position: UInt32) {
@@ -3170,16 +3371,7 @@ public final class DownloadManager {
 
     private var _testStrongTransferState: (any TransferTracking)?
 
-    /// Redirect `getDownloadDirectory()` to a test-controlled URL so file
-    /// I/O paths (resume detection, partial-file deletion) can run against
-    /// a temp directory instead of `~/Downloads/SeeleSeek`.
-    internal func _setDownloadDirectoryOverrideForTest(_ url: URL?) {
-        _downloadDirectoryOverride = url
-    }
-
     internal func _incompleteBasenameForTest(soulseekPath: String, username: String) -> String {
         computeIncompletePath(for: soulseekPath, username: username).lastPathComponent
     }
-
-    private var _downloadDirectoryOverride: URL?
 }

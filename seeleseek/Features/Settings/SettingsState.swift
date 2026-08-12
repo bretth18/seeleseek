@@ -42,6 +42,7 @@ enum NotificationSound: String, CaseIterable {
 }
 
 enum DownloadFolderFormat: String, CaseIterable {
+    case folderOnly = "folderOnly"
     case usernameAndPath = "usernameAndPath"
     case pathOnly = "pathOnly"
     case artistAlbum = "artistAlbum"
@@ -50,6 +51,7 @@ enum DownloadFolderFormat: String, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .folderOnly: "Folder"
         case .usernameAndPath: "Username / Full Path"
         case .pathOnly: "Full Path"
         case .artistAlbum: "Artist - Album"
@@ -60,12 +62,19 @@ enum DownloadFolderFormat: String, CaseIterable {
 
     var template: String {
         switch self {
-        case .usernameAndPath: "{username}/{folders}/{filename}"
-        case .pathOnly: "{folders}/{filename}"
+        case .folderOnly: "{folder}/{filename}"
+        case .usernameAndPath: "{username}/{full-path}/{filename}"
+        case .pathOnly: "{full-path}/{filename}"
         case .artistAlbum: "{artist} - {album}/{filename}"
         case .flat: "{filename}"
         case .custom: ""
         }
+    }
+
+    /// The template actually in effect, given the user's custom text.
+    func resolvedTemplate(custom: String) -> String {
+        let resolved = self == .custom ? custom : template
+        return resolved.isEmpty ? DownloadManager.fallbackTemplate : resolved
     }
 }
 
@@ -85,6 +94,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let incompleteLocationKey = "settingsIncompleteLocation"
     private let downloadFolderFormatKey = "settingsDownloadFolderFormat"
     private let downloadFolderTemplateKey = "settingsDownloadFolderTemplate"
+    private let downloadDefaultsMigratedKey = "settingsDownloadDefaultsMigratedV2"
     private let launchAtLoginKey = "settingsLaunchAtLogin"
     private let showInMenuBarKey = "settingsShowInMenuBar"
     private let notifyDownloadsKey = "settingsNotifyDownloads"
@@ -100,31 +110,37 @@ final class SettingsState: DownloadSettingsProviding {
     /// created by "streaming-service" apps that queue uploads en masse without sharing.
     static let defaultBlockedUsernamePatterns: [String] = ["slsk_*"]
 
+    static let defaultDownloadLocation = DownloadManager.defaultDownloadDirectory
+    static let defaultIncompleteLocation = defaultDownloadLocation.appendingPathComponent("Incomplete")
+    static let defaultDownloadFolderFormat = DownloadFolderFormat.folderOnly
+    /// Starting point for a custom template, not the shipped default layout.
+    static let defaultDownloadFolderTemplate = DownloadFolderFormat.usernameAndPath.template
+
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
     // Flag to prevent save during load
     private var isLoading = false
 
     // MARK: - General Settings
-    var downloadLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first! {
+    var downloadLocation: URL = SettingsState.defaultDownloadLocation {
         didSet {
             guard !isLoading else { return }
             save()
         }
     }
-    var incompleteLocation: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!.appendingPathComponent("Incomplete") {
+    var incompleteLocation: URL = SettingsState.defaultIncompleteLocation {
         didSet {
             guard !isLoading else { return }
             save()
         }
     }
-    var downloadFolderFormat: DownloadFolderFormat = .usernameAndPath {
+    var downloadFolderFormat: DownloadFolderFormat = SettingsState.defaultDownloadFolderFormat {
         didSet {
             guard !isLoading else { return }
             save()
         }
     }
-    var downloadFolderTemplate: String = "{username}/{folders}/{filename}" {
+    var downloadFolderTemplate: String = SettingsState.defaultDownloadFolderTemplate {
         didSet {
             guard !isLoading else { return }
             save()
@@ -352,10 +368,10 @@ final class SettingsState: DownloadSettingsProviding {
     }
 
     func resetToDefaults() {
-        downloadLocation = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-        incompleteLocation = downloadLocation.appendingPathComponent("Incomplete")
-        downloadFolderFormat = .usernameAndPath
-        downloadFolderTemplate = "{username}/{folders}/{filename}"
+        downloadLocation = SettingsState.defaultDownloadLocation
+        incompleteLocation = SettingsState.defaultIncompleteLocation
+        downloadFolderFormat = SettingsState.defaultDownloadFolderFormat
+        downloadFolderTemplate = SettingsState.defaultDownloadFolderTemplate
         launchAtLogin = false
         showInMenuBar = true
         listenPort = 2234
@@ -520,6 +536,7 @@ final class SettingsState: DownloadSettingsProviding {
         if let template = UserDefaults.standard.string(forKey: downloadFolderTemplateKey) {
             downloadFolderTemplate = template
         }
+        migrateDownloadDefaultsIfNeeded()
         if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
             showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
         }
@@ -548,6 +565,45 @@ final class SettingsState: DownloadSettingsProviding {
         if UserDefaults.standard.object(forKey: showJoinLeaveMessagesKey) != nil {
             showJoinLeaveMessages = UserDefaults.standard.bool(forKey: showJoinLeaveMessagesKey)
         }
+    }
+
+    /// Keep an existing library laid out the way its owner already has it.
+    /// Both download defaults changed in this version, and each would silently
+    /// re-lay-out an upgraded install:
+    ///
+    /// - the location was collected but never used — files always went to
+    ///   `~/Downloads/SeeleSeek` — so honoring a stored `~/Downloads` (the old
+    ///   default, which nobody's files landed in) would start dumping
+    ///   downloads loose into the user's Downloads folder;
+    /// - the folder structure default became `.folderOnly`, so anyone who
+    ///   never opened Settings — and therefore has no stored format, since
+    ///   `save()` only runs from a property `didSet` — would have new
+    ///   downloads land beside, not inside, their `{username}/{path}` library.
+    ///
+    /// Old versions created `~/Downloads/SeeleSeek` eagerly at launch, so its
+    /// presence is the marker for "this machine ran a pre-1.1.x build".
+    /// A value the user actually chose is always left alone.
+    private func migrateDownloadDefaultsIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: downloadDefaultsMigratedKey) else { return }
+        defaults.set(true, forKey: downloadDefaultsMigratedKey)
+
+        let isUpgrade = FileManager.default.fileExists(atPath: SettingsState.defaultDownloadLocation.path)
+
+        if isUpgrade, defaults.string(forKey: downloadFolderFormatKey) == nil {
+            logger.info("Pinning pre-existing library to the previous folder structure default")
+            downloadFolderFormat = .usernameAndPath
+            // `isLoading` suppresses the `didSet` that would normally persist
+            // this, and the one-shot flag is already burned.
+            defaults.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
+        }
+
+        let legacyDefault = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        guard downloadLocation.standardizedFileURL == legacyDefault.standardizedFileURL else { return }
+
+        logger.info("Migrating download location from \(legacyDefault.path) to \(SettingsState.defaultDownloadLocation.path)")
+        downloadLocation = SettingsState.defaultDownloadLocation
+        defaults.set(downloadLocation.path, forKey: downloadLocationKey)
     }
 
     /// Load settings from database (called after DB initialization)
@@ -585,12 +641,12 @@ final class SettingsState: DownloadSettingsProviding {
 
 // MARK: - Download Folder Template
 extension SettingsState {
-    /// Returns the active template string based on the current format setting
     var activeDownloadTemplate: String {
-        if downloadFolderFormat == .custom {
-            return downloadFolderTemplate
-        }
-        return downloadFolderFormat.template
+        downloadFolderFormat.resolvedTemplate(custom: downloadFolderTemplate)
+    }
+
+    var downloadDirectory: URL {
+        downloadLocation
     }
 
     var incompleteDownloadDirectory: URL {

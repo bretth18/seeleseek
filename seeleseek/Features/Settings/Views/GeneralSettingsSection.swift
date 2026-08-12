@@ -6,19 +6,15 @@ struct GeneralSettingsSection: View {
     @Bindable var settings: SettingsState
     @State private var showNicotineImport = false
 
+    /// Rendered through the same resolver the download manager uses, so the
+    /// preview can't drift from where files actually land.
     private var folderStructurePreview: String {
-        let template = settings.activeDownloadTemplate
-        var result = template
-            .replacingOccurrences(of: "{username}", with: "user123")
-            .replacingOccurrences(of: "{folders}", with: "Daft Punk/Discovery")
-            .replacingOccurrences(of: "{artist}", with: "Daft Punk")
-            .replacingOccurrences(of: "{album}", with: "Discovery")
-            .replacingOccurrences(of: "{filename}", with: "01 Track.mp3")
-        while result.contains("//") {
-            result = result.replacingOccurrences(of: "//", with: "/")
-        }
-        result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return result.isEmpty ? "01 Track.mp3" : result
+        DownloadManager.resolveDownloadPath(
+            soulseekPath: #"@@music\Daft Punk\Discovery\01 Track.mp3"#,
+            username: "user123",
+            template: settings.activeDownloadTemplate,
+            metadata: AudioFileMetadata(artist: "Daft Punk", album: "Discovery")
+        )
     }
 
     var body: some View {
@@ -57,11 +53,11 @@ struct GeneralSettingsSection: View {
                                 .foregroundStyle(SeeleColors.textSecondary)
                                 .accessibilityHidden(true)
 
-                            TextField("{username}/{folders}/{filename}", text: $settings.downloadFolderTemplate)
+                            TextField("{username}/{full-path}/{filename}", text: $settings.downloadFolderTemplate)
                                 .textFieldStyle(SeeleTextFieldStyle())
                                 .accessibilityLabel("Download folder template")
 
-                            Text("Tokens: {username}, {folders}, {artist}, {album}, {filename}")
+                            Text("Tokens: {username}, {folder}, {full-path}, {artist}, {album}, {filename}")
                                 .font(SeeleTypography.caption2)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
