@@ -18,14 +18,14 @@ struct SeeleSeekMessageBuilderTests {
         #expect(Int(length!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue)
+        #expect(code == ExtendedClientInfoCode.extendedClientInfo.rawValue)
         #expect(code == 10000)
 
         // Payload begins after the length prefix and the message code.
         let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
         #expect(info?.revision == ExtendedClientInfo.currentRevision)
         #expect(info?.clientInfo == "")
-        for advertised in SeeleSeekExtendedClientInfoCode.advertised {
+        for advertised in ExtendedClientInfoCode.advertised {
             #expect(info?.supports(advertised) == true)
         }
     }
@@ -58,7 +58,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(Int(msgLength!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue)
+        #expect(code == ExtendedClientInfoCode.artworkRequest.rawValue)
         #expect(code == 10001)
 
         let parsedToken = message.readUInt32(at: 8)
@@ -80,7 +80,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(Int(msgLength!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
+        #expect(code == ExtendedClientInfoCode.artworkReply.rawValue)
         #expect(code == 10002)
 
         let parsedToken = message.readUInt32(at: 8)
@@ -100,7 +100,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(message.count == 4 + 4 + 4) // length + code + token
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
+        #expect(code == ExtendedClientInfoCode.artworkReply.rawValue)
 
         let parsedToken = message.readUInt32(at: 8)
         #expect(parsedToken == token)
@@ -127,20 +127,20 @@ struct SeeleSeekMessageBuilderTests {
 
 // MARK: - Extension Code Enum Tests
 
-@Suite("SeeleSeekExtendedClientInfoCode Enum")
+@Suite("ExtendedClientInfoCode Enum")
 struct SeeleSeekExtendedClientInfoCodeTests {
 
     @Test("Code values are in 10000+ range")
     func codeValues() {
-        #expect(SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue == 10000)
-        #expect(SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue == 10001)
-        #expect(SeeleSeekExtendedClientInfoCode.artworkReply.rawValue == 10002)
+        #expect(ExtendedClientInfoCode.extendedClientInfo.rawValue == 10000)
+        #expect(ExtendedClientInfoCode.artworkRequest.rawValue == 10001)
+        #expect(ExtendedClientInfoCode.artworkReply.rawValue == 10002)
     }
 
     @Test("Codes don't overlap with standard peer codes")
     func noOverlapWithStandardCodes() {
         let standardCodes: [UInt32] = [0, 1, 4, 5, 8, 9, 15, 16, 36, 37, 40, 41, 42, 43, 44, 46, 50, 51, 52]
-        for code in SeeleSeekExtendedClientInfoCode.allCases {
+        for code in ExtendedClientInfoCode.allCases {
             #expect(!standardCodes.contains(code.rawValue),
                     "Extension code \(code.rawValue) overlaps with standard peer code")
         }
@@ -150,23 +150,23 @@ struct SeeleSeekExtendedClientInfoCodeTests {
     /// protocol contract and must not be renamed casually.
     @Test("Wire names match the published spec")
     func wireNames() {
-        #expect(SeeleSeekExtendedClientInfoCode.extendedClientInfo.wireName == "ExtendedClientInfo")
-        #expect(SeeleSeekExtendedClientInfoCode.artworkRequest.wireName == "ArtworkRequest")
-        #expect(SeeleSeekExtendedClientInfoCode.artworkReply.wireName == "ArtworkReply")
+        #expect(ExtendedClientInfoCode.extendedClientInfo.wireName == "ExtendedClientInfo")
+        #expect(ExtendedClientInfoCode.artworkRequest.wireName == "ArtworkRequest")
+        #expect(ExtendedClientInfoCode.artworkReply.wireName == "ArtworkReply")
     }
 
     @Test("Init from raw value round-trips")
     func rawValueRoundTrip() {
-        for code in SeeleSeekExtendedClientInfoCode.allCases {
-            #expect(SeeleSeekExtendedClientInfoCode(rawValue: code.rawValue) == code)
+        for code in ExtendedClientInfoCode.allCases {
+            #expect(ExtendedClientInfoCode(rawValue: code.rawValue) == code)
         }
     }
 
     @Test("Init from unknown raw value returns nil")
     func unknownRawValue() {
-        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 9999) == nil)
-        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 10003) == nil)
-        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 0) == nil)
+        #expect(ExtendedClientInfoCode(rawValue: 9999) == nil)
+        #expect(ExtendedClientInfoCode(rawValue: 10003) == nil)
+        #expect(ExtendedClientInfoCode(rawValue: 0) == nil)
     }
 }
 

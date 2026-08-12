@@ -281,7 +281,7 @@ struct PeerMessageRoundTripTests {
     func testExtendedClientInfo() {
         let msg = MessageBuilder.extendedClientInfoMessage()
         let (code, off) = parsePeerMessage(msg)
-        #expect(code == SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue)
+        #expect(code == ExtendedClientInfoCode.extendedClientInfo.rawValue)
         #expect(msg.readUInt32(at: off) == ExtendedClientInfo.currentRevision)
     }
 
@@ -289,7 +289,7 @@ struct PeerMessageRoundTripTests {
     func testArtworkRequest() {
         let msg = MessageBuilder.artworkRequestMessage(token: 88888, filePath: "Music\\artist\\song.mp3")
         let (code, off) = parsePeerMessage(msg)
-        #expect(code == SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue)
+        #expect(code == ExtendedClientInfoCode.artworkRequest.rawValue)
         var o = off
         #expect(msg.readUInt32(at: o) == 88888); o += 4
         let (path, _) = msg.readString(at: o)!
@@ -301,7 +301,7 @@ struct PeerMessageRoundTripTests {
         let imageData = Data(repeating: 0xAB, count: 256)
         let msg = MessageBuilder.artworkReplyMessage(token: 99999, imageData: imageData)
         let (code, off) = parsePeerMessage(msg)
-        #expect(code == SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
+        #expect(code == ExtendedClientInfoCode.artworkReply.rawValue)
         var o = off
         #expect(msg.readUInt32(at: o) == 99999); o += 4
         // Remaining bytes are image data
