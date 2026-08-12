@@ -856,19 +856,35 @@ public enum MessageBuilder {
 
     // MARK: - SeeleSeek Extension Messages
 
-    /// SeeleSeek handshake (code 10000) — identify ourselves as a SeeleSeek client.
-    /// Sent right after PeerInit. Payload: uint8 version (currently 1).
-    public nonisolated static func seeleseekHandshakeMessage() -> Data {
+    /// ExtendedClientInfo (code 10000) — advertise which extension codes we speak.
+    ///
+    /// `clientInfo` goes on the wire verbatim. Nothing in our own logic may
+    /// depend on its value: peers choose it freely and can lie.
+    public nonisolated static func extendedClientInfoMessage(
+        advertising codes: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised,
+        clientInfo: String = ExtendedClientInfo.localClientInfo
+    ) -> Data {
         var payload = Data()
-        payload.appendUInt32(SeeleSeekPeerCode.handshake.rawValue)
-        payload.appendUInt8(1) // protocol version
+        // 0. send extendedClient code
+        payload.appendUInt32(ExtendedClientInfoCode.extendedClientInfo.rawValue)
+        // 1. send revision identifier (value is always 1)
+        payload.appendUInt32(ExtendedClientInfo.currentRevision)
+        // 2. send string with optional client info (may identify software or any custom signals)
+        payload.appendString(clientInfo)
+        
+        payload.appendUInt32(UInt32(codes.count))
+        for code in codes {
+            payload.appendUInt32(code.rawValue)
+            payload.appendString(code.wireName)
+            payload.appendUInt32(0) // reserved
+        }
         return wrapMessage(payload)
     }
 
     /// Artwork request (code 10001) — ask peer for album art embedded in a file.
     public nonisolated static func artworkRequestMessage(token: UInt32, filePath: String) -> Data {
         var payload = Data()
-        payload.appendUInt32(SeeleSeekPeerCode.artworkRequest.rawValue)
+        payload.appendUInt32(ExtendedClientInfoCode.artworkRequest.rawValue)
         payload.appendUInt32(token)
         payload.appendString(filePath)
         return wrapMessage(payload)
@@ -877,7 +893,7 @@ public enum MessageBuilder {
     /// Artwork reply (code 10002) — respond with image data (or empty if none found).
     public nonisolated static func artworkReplyMessage(token: UInt32, imageData: Data) -> Data {
         var payload = Data()
-        payload.appendUInt32(SeeleSeekPeerCode.artworkReply.rawValue)
+        payload.appendUInt32(ExtendedClientInfoCode.artworkReply.rawValue)
         payload.appendUInt32(token)
         // Write raw image bytes (length is implicit from message frame)
         payload.append(imageData)

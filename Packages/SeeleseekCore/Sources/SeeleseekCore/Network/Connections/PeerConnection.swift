@@ -90,7 +90,14 @@ public actor PeerConnection {
     private let eventContinuation: AsyncStream<PeerConnectionEvent>.Continuation
 
     // SeeleSeek extension state
-    private(set) var isSeeleSeekPeer = false
+    private(set) var extendedClientInfo: ExtendedClientInfo?
+
+    /// Authoritative capability gate. Per-socket and always current, unlike
+    /// the pool's sticky per-username cache, which peers may invalidate at any
+    /// time by re-advertising a different set.
+    public func supports(_ code: ExtendedClientInfoCode) -> Bool {
+        extendedClientInfo?.supports(code) ?? false
+    }
 
     /// Get the discovered peer username (from PeerInit message)
     public func getPeerUsername() -> String {
@@ -443,15 +450,27 @@ public actor PeerConnection {
         logger.debug("PeerInit sent, handshake marked complete")
 
         // Send SeeleSeek handshake so the peer knows we support extensions
-        try? await sendSeeleSeekHandshake()
+        try? await sendExtendedClientInfo()
     }
 
-    /// Send the SeeleSeek capability handshake (code 10000). Non-SeeleSeek
-    /// peers drop it as an unknown code. Only safe on P-type sockets — F-type
+    /// Advertise our extension codes (code 10000). Peers that do not implement
+    /// it drop it as an unknown code. Only safe on P-type sockets — F-type
     /// connections switch to raw file-transfer bytes after init and would
     /// misinterpret this message as file data.
-    public func sendSeeleSeekHandshake() async throws {
-        try await send(MessageBuilder.seeleseekHandshakeMessage())
+    ///
+    /// Deliberately uses plain `send` rather than `send(extension:_:)` — this
+    /// is the bootstrap, sent before either side has advertised anything.
+    public func sendExtendedClientInfo() async throws {
+        try await send(MessageBuilder.extendedClientInfoMessage())
+    }
+
+    /// Send an extension message, refusing if the peer never advertised the
+    /// code. Every extension send must go through here: the spec forbids
+    /// sending a code a peer did not advertise, and expressing that per call
+    /// site is how the first three of four sites came to omit it.
+    public func send(extension code: ExtendedClientInfoCode, _ message: Data) async throws {
+        guard supports(code) else { throw PeerError.capabilityNotAdvertised(code) }
+        try await send(message)
     }
 
     public func sendPierceFirewall() async throws {
@@ -1511,7 +1530,7 @@ public actor PeerConnection {
                     // Reciprocate the SeeleSeek handshake so the initiator learns
                     // we're also a SeeleSeek client. Only on P-type sockets —
                     // F-type is handled above and returns before this point.
-                    try? await sendSeeleSeekHandshake()
+                    try? await sendExtendedClientInfo()
                 }
             }
             handshakeComplete = true
@@ -1579,13 +1598,13 @@ public actor PeerConnection {
             handleUserInfoRequest()
 
         // SeeleSeek extension codes
-        case SeeleSeekPeerCode.handshake.rawValue:
-            handleSeeleSeekHandshake(payload)
+        case ExtendedClientInfoCode.extendedClientInfo.rawValue:
+            handleExtendedClientInfo(payload)
 
-        case SeeleSeekPeerCode.artworkRequest.rawValue:
+        case ExtendedClientInfoCode.artworkRequest.rawValue:
             handleArtworkRequest(payload)
 
-        case SeeleSeekPeerCode.artworkReply.rawValue:
+        case ExtendedClientInfoCode.artworkReply.rawValue:
             handleArtworkReply(payload)
 
         default:
@@ -1610,12 +1629,22 @@ public actor PeerConnection {
 
     // MARK: - SeeleSeek Extension Handlers
 
-    /// Handle SeeleSeek handshake (code 10000) — marks this peer as a SeeleSeek client.
-    private func handleSeeleSeekHandshake(_ payload: Data) {
-        let version = payload.count > 0 ? payload[payload.startIndex] : 0
-        isSeeleSeekPeer = true
-        logger.info("[\(self.peerUsername)] SeeleSeek peer detected (version \(version))")
-        eventContinuation.yield(.seeleSeekVersionDiscovered(version))
+    /// Handle ExtendedClientInfo (code 10000) — record what this peer speaks.
+    ///
+    /// SeeleSeek 1.x sent a bare uint8 version at this code. That does not
+    /// parse and is deliberately not special-cased: the spec treats a peer
+    /// that has not sent a valid advertisement as supporting nothing, and
+    /// inferring capabilities from a version byte is the exact practice this
+    /// handshake replaces.
+    private func handleExtendedClientInfo(_ payload: Data) {
+        guard let info = MessageParser.parseExtendedClientInfo(payload) else {
+            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
+            return
+        }
+
+        extendedClientInfo = info
+        logger.info("[\(self.peerUsername)] Extensions: \(info.capabilities.keys.sorted().joined(separator: ", "))")
+        eventContinuation.yield(.extendedClientInfoDiscovered(info))
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
@@ -2032,6 +2061,7 @@ public enum PeerError: Error, LocalizedError {
     case timeout
     case invalidPort
     case malformedOutboundMessage
+    case capabilityNotAdvertised(ExtendedClientInfoCode)
 
     public var errorDescription: String? {
         switch self {
@@ -2042,6 +2072,7 @@ public enum PeerError: Error, LocalizedError {
         case .timeout: return "Connection timed out"
         case .invalidPort: return "Invalid port number"
         case .malformedOutboundMessage: return "Outbound message is malformed"
+        case .capabilityNotAdvertised(let code): return "Peer has not advertised \(code.wireName)"
         }
     }
 }

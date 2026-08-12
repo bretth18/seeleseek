@@ -217,7 +217,7 @@ struct PeerConnectivityTests {
             username: username,
             connectionType: "P",
             token: 0
-        ) + MessageBuilder.seeleseekHandshakeMessage()
+        ) + MessageBuilder.extendedClientInfoMessage()
           + MessageBuilder.queueDownloadMessage(filename: filename)
 
         let receiver = Task { () throws -> Data in

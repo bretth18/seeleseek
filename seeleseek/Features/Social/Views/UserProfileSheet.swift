@@ -95,8 +95,8 @@ struct UserProfileSheet: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
 
-                    if let version = liveSeeleSeekVersion {
-                        Text("seeleseek v\(version)")
+                    if let info = liveExtendedClientInfo {
+                        Text(info.displayLabel)
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)
@@ -348,13 +348,13 @@ struct UserProfileSheet: View {
         return profile.countryCode.map { CountryFormatter.flag(for: $0) }
     }
 
-    /// SeeleSeek version for this user, looked up in the dedicated
+    /// Advertised extensions for this user, looked up in the dedicated
     /// per-username dict on the pool. Reading the dict invalidates this
-    /// view only when a version is discovered (a rare, sticky event),
+    /// view only when capabilities are discovered (a rare, sticky event),
     /// not on every connection-state or bytes mutation the way observing
     /// `connections` would.
-    private var liveSeeleSeekVersion: UInt8? {
-        appState.networkClient.peerConnectionPool.seeleSeekVersions[profile.username]
+    private var liveExtendedClientInfo: ExtendedClientInfo? {
+        appState.networkClient.peerConnectionPool.extendedClientInfoByUser[profile.username]
     }
 }
 

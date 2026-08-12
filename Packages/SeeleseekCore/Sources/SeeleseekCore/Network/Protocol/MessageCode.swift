@@ -247,29 +247,36 @@ public enum PeerMessageCode: UInt8 {
     }
 }
 
-// MARK: - SeeleSeek Extension Codes (client-specific, UInt32 range 10000+)
-// These codes are only understood by other SeeleSeek clients.
-// Non-SeeleSeek peers will silently ignore them (unknown code path).
-public enum SeeleSeekPeerCode: UInt32, CaseIterable {
-    /// Capability handshake — sent after PeerInit to identify SeeleSeek peers.
-    /// Payload: uint8 version
-    case handshake = 10000
-
+// MARK: - Extension Codes (client-specific, UInt32 range 10000+)
+// These codes are only understood by other clients supporting ExtendedClientInfo.
+// Non-supporting peers will silently ignore them (unknown code path).
+public enum ExtendedClientInfoCode: UInt32, CaseIterable, Sendable {
+    
+    /// Extended client info handshake — sent after PeerInit to identify client extended capabilities peers.
+    case extendedClientInfo = 10000
+    
     /// Request album artwork embedded in a file.
     /// Payload: uint32 token + string filePath
     case artworkRequest = 10001
-
+    
     /// Response with artwork image data (or empty if none found).
     /// Payload: uint32 token + bytes imageData (may be empty)
     case artworkReply = 10002
-
-    nonisolated var description: String {
+    
+    public nonisolated var wireName: String {
         switch self {
-        case .handshake: "SeeleSeekHandshake"
+        case .extendedClientInfo: "ExtendedClientInfo"
         case .artworkRequest: "ArtworkRequest"
         case .artworkReply: "ArtworkReply"
         }
     }
+
+    /// What we actually implement, and therefore promise to peers.
+    /// Deliberately not `allCases` — this enum is the code table, and a case
+    /// may be added to describe or receive a code before we implement it.
+    public nonisolated static let advertised: [ExtendedClientInfoCode] = [
+        .extendedClientInfo, .artworkRequest, .artworkReply
+    ]
 }
 
 // MARK: - Distributed Message Codes

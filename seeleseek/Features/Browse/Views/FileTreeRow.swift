@@ -15,6 +15,13 @@ struct FileTreeRow: View {
     @State private var isLoadingArtwork = false
     @State private var showArtworkPopover = false
 
+    /// Artwork is an extension, so only offer it to peers that advertised it.
+    /// The send path re-checks the live socket; this just avoids showing a
+    /// menu item that could only ever fail.
+    private var peerServesArtwork: Bool {
+        appState.networkClient.peerConnectionPool.hasAdvertised(.artworkRequest, by: username)
+    }
+
     private var isExpanded: Bool {
         // While a filter is active the tree renders matches with their
         // ancestor chain regardless of expansion state, so show every
@@ -179,7 +186,7 @@ struct FileTreeRow: View {
                     Label("Download Containing Folder", systemImage: "arrow.down.circle.fill")
                 }
 
-                if file.isAudioFile {
+                if file.isAudioFile, peerServesArtwork {
                     Button {
                         fetchArtwork()
                     } label: {
@@ -234,7 +241,7 @@ struct FileTreeRow: View {
                     Button("Download file") { downloadFile() }
                 }
                 Button("Download containing folder") { downloadContainingFolder() }
-                if file.isAudioFile {
+                if file.isAudioFile, peerServesArtwork {
                     Button("Show album art") { fetchArtwork() }
                 }
                 Button("Copy filename") { copyFilename() }

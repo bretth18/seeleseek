@@ -2665,8 +2665,18 @@ public final class NetworkClient {
 
     // MARK: - SeeleSeek Artwork Request Handling
 
-    /// Handle artwork request from a SeeleSeek peer — look up the file and send back embedded artwork.
+    /// Handle artwork request from an extension peer — look up the file and send back embedded artwork.
     private func handleArtworkRequest(username: String, token: UInt32, filePath: String, connection: PeerConnection) async {
+        // Gate on the code we are about to *send*, same rule as the outbound
+        // side. Placed before the index scan rather than beside the reply:
+        // servicing this means an O(N) walk of the share index plus a disk
+        // read and image parse, which no peer gets to trigger on demand
+        // without having advertised the exchange.
+        guard await connection.supports(.artworkReply) else {
+            logger.debug("ArtworkRequest from \(username) ignored — peer has not advertised the artwork extension")
+            return
+        }
+
         // Find the file in our share index by SoulSeek path. Snapshot on
         // the main actor, scan off-main — O(N) over a large index per
         // incoming request otherwise hitches the UI.
@@ -2678,7 +2688,7 @@ public final class NetworkClient {
             logger.warning("ArtworkRequest: file not found in shares: \(filePath)")
             // Send empty reply
             let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
-            try? await connection.send(reply)
+            try? await connection.send(extension: .artworkReply, reply)
             return
         }
 
@@ -2691,7 +2701,7 @@ public final class NetworkClient {
             if !isBuddy {
                 logger.info("ArtworkRequest denied (buddy-only file, non-buddy requester): \(filePath)")
                 let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: Data())
-                try? await connection.send(reply)
+                try? await connection.send(extension: .artworkReply, reply)
                 return
             }
         }
@@ -2703,7 +2713,7 @@ public final class NetworkClient {
 
         logger.info("ArtworkRequest: sending \(imageData.count) bytes for \(filePath)")
         let reply = MessageBuilder.artworkReplyMessage(token: token, imageData: imageData)
-        try? await connection.send(reply)
+        try? await connection.send(extension: .artworkReply, reply)
     }
 
     /// Pending artwork request callbacks keyed by token.
@@ -2756,10 +2766,13 @@ public final class NetworkClient {
                 return
             }
 
+            // Throws `capabilityNotAdvertised` for peers that never advertised
+            // it, which lands in the same nil delivery as a send failure.
             let request = MessageBuilder.artworkRequestMessage(token: token, filePath: filePath)
             do {
-                try await connection.send(request)
+                try await connection.send(extension: .artworkRequest, request)
             } catch {
+                logger.debug("Artwork request to \(username) not sent: \(error.localizedDescription)")
                 deliverArtwork(key: key, data: nil)
                 return
             }

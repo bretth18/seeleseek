@@ -1162,4 +1162,40 @@ public enum MessageParser {
 
         return DistributedSearchInfo(unknown: unknown, username: username, token: token, query: query)
     }
+
+    /// Entries are 12 bytes minimum (code + empty-string length prefix +
+    /// reserved), so a count above `remaining / 12` is provably a lie. The
+    /// cap is a second belt: `readUInt32`/`readString` bounds-check every
+    /// field, so an oversized count fails on the first read anyway.
+    private static let maxAdvertisedCapabilities = 64
+
+    public nonisolated static func parseExtendedClientInfo(_ payload: Data) -> ExtendedClientInfo? {
+        var offset = 0
+
+        guard let revision = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+
+        // Fail closed on an unknown revision rather than guessing at the layout.
+        guard revision == ExtendedClientInfo.currentRevision else { return nil }
+
+        guard let (clientInfo, infoBytes) = payload.readString(at: offset) else { return nil }
+        offset += infoBytes
+
+        guard let count = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+        guard count <= maxAdvertisedCapabilities else { return nil }
+
+        var capabilities: [String: UInt32] = [:]
+        for _ in 0..<count {
+            guard let code = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+            guard let (name, nameBytes) = payload.readString(at: offset) else { return nil }
+            offset += nameBytes
+            guard payload.readUInt32(at: offset) != nil else { return nil }  // reserved
+            offset += 4
+            capabilities[name] = code
+        }
+
+        return ExtendedClientInfo(revision: revision, clientInfo: clientInfo, capabilities: capabilities)
+    }
 }
