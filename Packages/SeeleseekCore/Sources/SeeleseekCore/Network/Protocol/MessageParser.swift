@@ -1162,4 +1162,37 @@ public enum MessageParser {
 
         return DistributedSearchInfo(unknown: unknown, username: username, token: token, query: query)
     }
+    
+    
+    private static let maxAdvertisedCapabilities = 64
+    
+    public nonisolated static func parseExtendedClientInfo(_ payload: Data) -> ExtendedClientInfo? {
+        var offset = 0
+        
+        guard let revision = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+        
+        // fail closed on uknown revision
+        guard revision == MessageBuilder.extendedClientInfoRevision else { return nil }
+        
+        guard let (clientInfo, infoBytes) = payload.readString(at: offset) else { return nil }
+        offset += infoBytes
+        
+        guard let count = payload.readUInt32(at: offset) else { return nil }
+        offset += 4
+        guard count <= maxAdvertisedCapabilities else { return nil }
+        
+        var capabilites: [String: UInt32] = [:]
+        for _ in 0..<count {
+            guard let code = payload.readUInt32(at: offset) else { return nil }
+            offset += 4
+            guard let (name, nameBytes) = payload.readString(at: offset) else { return nil }
+            offset += nameBytes
+            guard payload.readUInt32(at: offset) != nil else { return nil }
+            offset += 4
+            capabilites[name] = code
+        }
+        
+        return ExtendedClientInfo(revision: revision, clientInfo: clientInfo, capabilities: capabilites)
+    }
 }

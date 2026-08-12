@@ -23,6 +23,7 @@ public enum PeerConnectionEvent: Sendable {
     case userInfoRequest
     case userInfoReply(MessageParser.UserInfoReplyInfo)
     case seeleSeekVersionDiscovered(UInt8)
+    case extendedClientInfoDiscovered(ExtendedClientInfo)
     case artworkRequest(token: UInt32, filePath: String)
     case artworkReply(token: UInt32, imageData: Data)
 }

@@ -40,6 +40,8 @@ public final class PeerConnectionPool {
     /// connection state/bytes mutation. Written once per SeeleSeek peer
     /// per session; never cleared while the app is running.
     public private(set) var seeleSeekVersions: [String: UInt8] = [:]
+    
+    public private(set) var extendedClientInfoByUser: [String: ExtendedClientInfo] = [:]
 
     // CRITICAL: Store actual PeerConnection objects to keep them alive!
     // Without this, connections get deallocated immediately after creation.
@@ -162,9 +164,11 @@ public final class PeerConnectionPool {
         /// Please note this obviously could break in the future due
         /// to other clients using the extension code.
         public var seeleSeekVersion: UInt8?
+        
+        public var extendedClientInfo: ExtendedClientInfo?
 
-        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil) {
-            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion
+        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil, extendedClientInfo: ExtendedClientInfo? = nil) {
+            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion; self.extendedClientInfo = extendedClientInfo;
         }
     }
 
@@ -1114,6 +1118,14 @@ public final class PeerConnectionPool {
             connections[connectionId]?.seeleSeekVersion = version
             if !peerUsername.isEmpty {
                 seeleSeekVersions[peerUsername] = version
+            }
+            
+        case .extendedClientInfoDiscovered(let info):
+            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            connections[connectionId]?.extendedClientInfo = info
+            // seems inneficient to store twice?
+            if !peerUsername.isEmpty {
+                extendedClientInfoByUser[peerUsername] = info
             }
 
         case .artworkRequest(let token, let filePath):

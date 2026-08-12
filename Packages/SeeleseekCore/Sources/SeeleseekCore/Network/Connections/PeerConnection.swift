@@ -90,7 +90,12 @@ public actor PeerConnection {
     private let eventContinuation: AsyncStream<PeerConnectionEvent>.Continuation
 
     // SeeleSeek extension state
-    private(set) var isSeeleSeekPeer = false
+    private(set) var extendedClientInfo: ExtendedClientInfo?
+    /// TODO: not correct since any client could use extendo, check on string
+    public var isSeeleSeekPeer: Bool { extendedClientInfo != nil }
+    public func supports(_ code: SeeleSeekExtendedClientInfoCode) -> Bool {
+        extendedClientInfo?.supports(code) ?? false
+    }
 
     /// Get the discovered peer username (from PeerInit message)
     public func getPeerUsername() -> String {
@@ -451,7 +456,7 @@ public actor PeerConnection {
     /// connections switch to raw file-transfer bytes after init and would
     /// misinterpret this message as file data.
     public func sendSeeleSeekHandshake() async throws {
-        try await send(MessageBuilder.seeleseekHandshakeMessage())
+        try await send(MessageBuilder.extendedClientInfoMessage( clientInfo: ""))
     }
 
     public func sendPierceFirewall() async throws {
@@ -1579,13 +1584,13 @@ public actor PeerConnection {
             handleUserInfoRequest()
 
         // SeeleSeek extension codes
-        case SeeleSeekPeerCode.handshake.rawValue:
-            handleSeeleSeekHandshake(payload)
+        case SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue:
+            handleExtendedClientInfo(payload)
 
-        case SeeleSeekPeerCode.artworkRequest.rawValue:
+        case SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue:
             handleArtworkRequest(payload)
 
-        case SeeleSeekPeerCode.artworkReply.rawValue:
+        case SeeleSeekExtendedClientInfoCode.artworkReply.rawValue:
             handleArtworkReply(payload)
 
         default:
@@ -1610,12 +1615,15 @@ public actor PeerConnection {
 
     // MARK: - SeeleSeek Extension Handlers
 
-    /// Handle SeeleSeek handshake (code 10000) — marks this peer as a SeeleSeek client.
-    private func handleSeeleSeekHandshake(_ payload: Data) {
-        let version = payload.count > 0 ? payload[payload.startIndex] : 0
-        isSeeleSeekPeer = true
-        logger.info("[\(self.peerUsername)] SeeleSeek peer detected (version \(version))")
-        eventContinuation.yield(.seeleSeekVersionDiscovered(version))
+    
+    private func handleExtendedClientInfo(_ payload: Data) {
+        guard let info = MessageParser.parseExtendedClientInfo(payload) else {
+            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
+            return
+        }
+        
+        extendedClientInfo = info
+        eventContinuation.yield(.extendedClientInfoDiscovered(info))
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
