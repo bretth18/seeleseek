@@ -91,8 +91,15 @@ public actor PeerConnection {
 
     // SeeleSeek extension state
     private(set) var extendedClientInfo: ExtendedClientInfo?
-    /// TODO: not correct since any client could use extendo, check on string
-    public var isSeeleSeekPeer: Bool { extendedClientInfo != nil }
+
+    /// Whether this peer advertised any protocol extensions. Deliberately not
+    /// "is this SeeleSeek" — code 10000 is open to any client, so identity is
+    /// not inferable and nothing should branch on it.
+    public var supportsExtensions: Bool { extendedClientInfo != nil }
+
+    /// Authoritative capability gate. Per-socket and always current, unlike
+    /// the pool's sticky per-username cache, which peers may invalidate at any
+    /// time by re-advertising a different set.
     public func supports(_ code: SeeleSeekExtendedClientInfoCode) -> Bool {
         extendedClientInfo?.supports(code) ?? false
     }
@@ -448,15 +455,15 @@ public actor PeerConnection {
         logger.debug("PeerInit sent, handshake marked complete")
 
         // Send SeeleSeek handshake so the peer knows we support extensions
-        try? await sendSeeleSeekHandshake()
+        try? await sendExtendedClientInfo()
     }
 
-    /// Send the SeeleSeek capability handshake (code 10000). Non-SeeleSeek
-    /// peers drop it as an unknown code. Only safe on P-type sockets — F-type
+    /// Advertise our extension codes (code 10000). Peers that do not implement
+    /// it drop it as an unknown code. Only safe on P-type sockets — F-type
     /// connections switch to raw file-transfer bytes after init and would
     /// misinterpret this message as file data.
-    public func sendSeeleSeekHandshake() async throws {
-        try await send(MessageBuilder.extendedClientInfoMessage( clientInfo: ""))
+    public func sendExtendedClientInfo() async throws {
+        try await send(MessageBuilder.extendedClientInfoMessage())
     }
 
     public func sendPierceFirewall() async throws {
@@ -1516,7 +1523,7 @@ public actor PeerConnection {
                     // Reciprocate the SeeleSeek handshake so the initiator learns
                     // we're also a SeeleSeek client. Only on P-type sockets —
                     // F-type is handled above and returns before this point.
-                    try? await sendSeeleSeekHandshake()
+                    try? await sendExtendedClientInfo()
                 }
             }
             handshakeComplete = true
@@ -1615,15 +1622,26 @@ public actor PeerConnection {
 
     // MARK: - SeeleSeek Extension Handlers
 
-    
+    /// Handle ExtendedClientInfo (code 10000) — record what this peer speaks.
     private func handleExtendedClientInfo(_ payload: Data) {
-        guard let info = MessageParser.parseExtendedClientInfo(payload) else {
+        guard let info = MessageParser.parseExtendedClientInfo(payload) ?? legacyHandshake(payload) else {
             logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
             return
         }
-        
+
         extendedClientInfo = info
+        logger.info("[\(self.peerUsername)] Extensions: \(info.capabilities.keys.sorted().joined(separator: ", "))")
         eventContinuation.yield(.extendedClientInfoDiscovered(info))
+    }
+
+    /// SeeleSeek 1.x sent a bare uint8 version at this code. A one-byte
+    /// payload can only be that, since the current format needs 12 bytes
+    /// minimum. Drop this once 1.x is gone.
+    private func legacyHandshake(_ payload: Data) -> ExtendedClientInfo? {
+        guard payload.count == 1 else { return nil }
+        let version = payload[payload.startIndex]
+        logger.info("[\(self.peerUsername)] Legacy SeeleSeek handshake (version \(version))")
+        return .legacySeeleSeek(version: version)
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.

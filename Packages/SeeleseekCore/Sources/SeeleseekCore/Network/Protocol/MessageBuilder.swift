@@ -856,21 +856,12 @@ public enum MessageBuilder {
 
     // MARK: - SeeleSeek Extension Messages
 
-//    /// SeeleSeek handshake (code 10000) — identify ourselves as a SeeleSeek client.
-//    /// Sent right after PeerInit. Payload: uint8 version (currently 1).
-//    public nonisolated static func seeleseekHandshakeMessage() -> Data {
-//        var payload = Data()
-//        payload.appendUInt32(SeeleSeekPeerCode.handshake.rawValue)
-//        payload.appendUInt8(1) // protocol version
-//        return wrapMessage(payload)
-//    }
-    
-    
-    static let extendedClientInfoRevision: UInt32 = 1
-    
-    /// ExtendedClientInfo (code 10000)
+    public static let extendedClientInfoRevision: UInt32 = 1
+
+    /// ExtendedClientInfo (code 10000) — advertise which extension codes we speak.
     ///
-    /// `clientInfo`
+    /// `clientInfo` goes on the wire verbatim and is a durable fingerprint, so
+    /// it defaults to empty. Nothing in our own logic may depend on its value.
     public nonisolated static func extendedClientInfoMessage(
         advertising codes: [SeeleSeekExtendedClientInfoCode] = SeeleSeekExtendedClientInfoCode.allCases,
         clientInfo: String = ""

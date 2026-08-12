@@ -33,15 +33,23 @@ public final class PeerConnectionPool {
 
     public private(set) var connections: [String: PeerConnectionInfo] = [:]
 
-    /// SeeleSeek client versions discovered via the capability handshake,
-    /// keyed by peer username. Separate from `connections` because the
-    /// version is a sticky, per-user fact — views that care (profile sheet,
-    /// peer info popover) want to observe it without also observing every
-    /// connection state/bytes mutation. Written once per SeeleSeek peer
-    /// per session; never cleared while the app is running.
-    public private(set) var seeleSeekVersions: [String: UInt8] = [:]
-    
+    /// Extension capabilities discovered via ExtendedClientInfo, keyed by peer
+    /// username. Stored here *as well as* on the `PeerConnectionInfo` row
+    /// because the two have different observers: the activity-tab popover
+    /// already binds to a connection row, while views like `UserProfileSheet`
+    /// have only a username. Reading this dict invalidates them on discovery
+    /// alone, not on every connection-state or bytes mutation.
+    ///
+    /// DISPLAY ONLY, and never cleared while the app runs. Peers may change
+    /// what they advertise at any time, so anything gating a *send* must ask
+    /// `PeerConnection.supports(_:)` on the live socket instead.
     public private(set) var extendedClientInfoByUser: [String: ExtendedClientInfo] = [:]
+
+    /// Whether `username` has advertised `code`, for building UI synchronously.
+    /// An affordance only — the send path re-checks the live socket.
+    public func hasAdvertised(_ code: SeeleSeekExtendedClientInfoCode, by username: String) -> Bool {
+        extendedClientInfoByUser[username]?.supports(code) ?? false
+    }
 
     // CRITICAL: Store actual PeerConnection objects to keep them alive!
     // Without this, connections get deallocated immediately after creation.
@@ -157,18 +165,13 @@ public final class PeerConnectionPool {
         public var bytesSent: UInt64 = 0
         public var connectedAt: Date?
         public var currentSpeed: Double = 0
-        /// Non-nil only when the peer is a SeeleSeek client and sent our
-        /// capability handshake (extension code 10000). Standard Soulseek
-        /// peers (Nicotine+, qtoolsoulsync, etc.) never expose client
-        /// version peer-to-peer, so this stays nil for them by design.
-        /// Please note this obviously could break in the future due
-        /// to other clients using the extension code.
-        public var seeleSeekVersion: UInt8?
-        
+        /// Non-nil once the peer advertised extensions (code 10000). Peers
+        /// that do not implement the handshake stay nil, which is most of
+        /// them. Presence says nothing about *which* client this is.
         public var extendedClientInfo: ExtendedClientInfo?
 
-        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, seeleSeekVersion: UInt8? = nil, extendedClientInfo: ExtendedClientInfo? = nil) {
-            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.seeleSeekVersion = seeleSeekVersion; self.extendedClientInfo = extendedClientInfo;
+        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, extendedClientInfo: ExtendedClientInfo? = nil) {
+            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.extendedClientInfo = extendedClientInfo;
         }
     }
 
@@ -1104,26 +1107,12 @@ public final class PeerConnectionPool {
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
             eventContinuation.yield(.userInfoReply(username: peerUsername, info: info))
 
-        case .seeleSeekVersionDiscovered(let version):
-            // Stamp the version onto the live PeerConnectionInfo (for the
-            // activity-tab popover, which is already binding to the
-            // connection row) AND into the per-username `seeleSeekVersions`
-            // dict. The separate dict is what views like UserProfileSheet
-            // read: observing it only invalidates on discovery, not on
-            // every connection-state or bytes update.
-            let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
-            // Stamp onto the exact PeerConnectionInfo for this socket.
-            // Prefix scans on username can hit the wrong row when a user
-            // has multiple concurrent connections.
-            connections[connectionId]?.seeleSeekVersion = version
-            if !peerUsername.isEmpty {
-                seeleSeekVersions[peerUsername] = version
-            }
-            
         case .extendedClientInfoDiscovered(let info):
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
+            // Stamp onto the exact PeerConnectionInfo for this socket. Prefix
+            // scans on username can hit the wrong row when a user has
+            // multiple concurrent connections.
             connections[connectionId]?.extendedClientInfo = info
-            // seems inneficient to store twice?
             if !peerUsername.isEmpty {
                 extendedClientInfoByUser[peerUsername] = info
             }

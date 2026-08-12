@@ -522,7 +522,7 @@ public final class ServerMessageHandler {
             // F-type flips to raw file-transfer bytes after PierceFirewall and
             // would misinterpret an extra 13-byte message as file data.
             if connectionType == "P" {
-                try? await connection.sendSeeleSeekHandshake()
+                try? await connection.sendExtendedClientInfo()
             } else if connectionType == "F" {
                 // This is the downloader side of an indirect F connection.
                 // The uploader will now send the raw 4-byte FileTransferInit

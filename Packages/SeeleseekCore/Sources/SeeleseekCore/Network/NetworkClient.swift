@@ -2756,6 +2756,15 @@ public final class NetworkClient {
                 return
             }
 
+            // Only peers that advertised ArtworkRequest get one. Asked on the
+            // live socket rather than the pool's sticky cache, since peers may
+            // change what they advertise.
+            guard await connection.supports(.artworkRequest) else {
+                logger.debug("\(username) has not advertised ArtworkRequest, skipping")
+                deliverArtwork(key: key, data: nil)
+                return
+            }
+
             let request = MessageBuilder.artworkRequestMessage(token: token, filePath: filePath)
             do {
                 try await connection.send(request)

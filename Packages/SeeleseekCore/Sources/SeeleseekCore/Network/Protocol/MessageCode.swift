@@ -259,8 +259,8 @@ public enum SeeleSeekExtendedClientInfoCode: UInt32, CaseIterable {
     /// Payload: uint32 token + string filePath
     case artworkRequest = 10001
     
-    /// Request album artwork embedded in a file.
-    /// Payload: uint32 token + string filePath
+    /// Response with artwork image data (or empty if none found).
+    /// Payload: uint32 token + bytes imageData (may be empty)
     case artworkReply = 10002
     
     public nonisolated var wireName: String {

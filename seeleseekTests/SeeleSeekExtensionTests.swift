@@ -9,22 +9,41 @@ import AppKit
 @Suite("SeeleSeek Extension Message Builder")
 struct SeeleSeekMessageBuilderTests {
 
-    @Test("Handshake message has correct code and version")
-    func handshakeMessageFormat() {
-        let message = MessageBuilder.seeleseekHandshakeMessage()
-
-        // Format: [length uint32][code uint32][version uint8]
-        #expect(message.count == 4 + 4 + 1) // length(4) + code(4) + version(1)
+    @Test("ExtendedClientInfo message has correct code and parses back")
+    func extendedClientInfoMessageFormat() {
+        let message = MessageBuilder.extendedClientInfoMessage()
 
         let length = message.readUInt32(at: 0)
-        #expect(length == 5) // code(4) + version(1)
+        #expect(length != nil)
+        #expect(Int(length!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekPeerCode.handshake.rawValue)
+        #expect(code == SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue)
         #expect(code == 10000)
 
-        let version = message.readByte(at: 8)
-        #expect(version == 1)
+        // Payload begins after the length prefix and the message code.
+        let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
+        #expect(info?.revision == MessageBuilder.extendedClientInfoRevision)
+        #expect(info?.clientInfo == "")
+        for advertised in SeeleSeekExtendedClientInfoCode.allCases {
+            #expect(info?.supports(advertised) == true)
+        }
+    }
+
+    @Test("Client info string is sent verbatim when provided")
+    func extendedClientInfoCarriesClientString() {
+        let message = MessageBuilder.extendedClientInfoMessage(clientInfo: "SeeleSeek/1.2")
+        let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
+        #expect(info?.clientInfo == "SeeleSeek/1.2")
+    }
+
+    @Test("Advertising a subset omits the rest")
+    func extendedClientInfoSubset() {
+        let message = MessageBuilder.extendedClientInfoMessage(advertising: [.extendedClientInfo])
+        let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
+        #expect(info?.supports(.extendedClientInfo) == true)
+        #expect(info?.supports(.artworkRequest) == false)
+        #expect(info?.supports(.artworkReply) == false)
     }
 
     @Test("Artwork request message has correct structure")
@@ -39,7 +58,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(Int(msgLength!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekPeerCode.artworkRequest.rawValue)
+        #expect(code == SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue)
         #expect(code == 10001)
 
         let parsedToken = message.readUInt32(at: 8)
@@ -61,7 +80,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(Int(msgLength!) + 4 == message.count)
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekPeerCode.artworkReply.rawValue)
+        #expect(code == SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
         #expect(code == 10002)
 
         let parsedToken = message.readUInt32(at: 8)
@@ -81,7 +100,7 @@ struct SeeleSeekMessageBuilderTests {
         #expect(message.count == 4 + 4 + 4) // length + code + token
 
         let code = message.readUInt32(at: 4)
-        #expect(code == SeeleSeekPeerCode.artworkReply.rawValue)
+        #expect(code == SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
 
         let parsedToken = message.readUInt32(at: 8)
         #expect(parsedToken == token)
@@ -106,47 +125,153 @@ struct SeeleSeekMessageBuilderTests {
     }
 }
 
-// MARK: - SeeleSeekPeerCode Enum Tests
+// MARK: - Extension Code Enum Tests
 
-@Suite("SeeleSeekPeerCode Enum")
-struct SeeleSeekPeerCodeTests {
+@Suite("SeeleSeekExtendedClientInfoCode Enum")
+struct SeeleSeekExtendedClientInfoCodeTests {
 
     @Test("Code values are in 10000+ range")
     func codeValues() {
-        #expect(SeeleSeekPeerCode.handshake.rawValue == 10000)
-        #expect(SeeleSeekPeerCode.artworkRequest.rawValue == 10001)
-        #expect(SeeleSeekPeerCode.artworkReply.rawValue == 10002)
+        #expect(SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue == 10000)
+        #expect(SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue == 10001)
+        #expect(SeeleSeekExtendedClientInfoCode.artworkReply.rawValue == 10002)
     }
 
     @Test("Codes don't overlap with standard peer codes")
     func noOverlapWithStandardCodes() {
         let standardCodes: [UInt32] = [0, 1, 4, 5, 8, 9, 15, 16, 36, 37, 40, 41, 42, 43, 44, 46, 50, 51, 52]
-        for code in SeeleSeekPeerCode.allCases {
+        for code in SeeleSeekExtendedClientInfoCode.allCases {
             #expect(!standardCodes.contains(code.rawValue),
-                    "SeeleSeek code \(code.rawValue) overlaps with standard peer code")
+                    "Extension code \(code.rawValue) overlaps with standard peer code")
         }
     }
 
-    @Test("Code descriptions are meaningful")
-    func codeDescriptions() {
-        #expect(SeeleSeekPeerCode.handshake.description == "SeeleSeekHandshake")
-        #expect(SeeleSeekPeerCode.artworkRequest.description == "ArtworkRequest")
-        #expect(SeeleSeekPeerCode.artworkReply.description == "ArtworkReply")
+    /// Wire names are the identity peers match on, so they are part of the
+    /// protocol contract and must not be renamed casually.
+    @Test("Wire names match the published spec")
+    func wireNames() {
+        #expect(SeeleSeekExtendedClientInfoCode.extendedClientInfo.wireName == "ExtendedClientInfo")
+        #expect(SeeleSeekExtendedClientInfoCode.artworkRequest.wireName == "ArtworkRequest")
+        #expect(SeeleSeekExtendedClientInfoCode.artworkReply.wireName == "ArtworkReply")
     }
 
     @Test("Init from raw value round-trips")
     func rawValueRoundTrip() {
-        for code in SeeleSeekPeerCode.allCases {
-            let fromRaw = SeeleSeekPeerCode(rawValue: code.rawValue)
-            #expect(fromRaw == code)
+        for code in SeeleSeekExtendedClientInfoCode.allCases {
+            #expect(SeeleSeekExtendedClientInfoCode(rawValue: code.rawValue) == code)
         }
     }
 
     @Test("Init from unknown raw value returns nil")
     func unknownRawValue() {
-        #expect(SeeleSeekPeerCode(rawValue: 9999) == nil)
-        #expect(SeeleSeekPeerCode(rawValue: 10003) == nil)
-        #expect(SeeleSeekPeerCode(rawValue: 0) == nil)
+        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 9999) == nil)
+        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 10003) == nil)
+        #expect(SeeleSeekExtendedClientInfoCode(rawValue: 0) == nil)
+    }
+}
+
+// MARK: - ExtendedClientInfo Parsing
+
+/// The parser is the only thing standing between a hostile peer and our
+/// message loop, so the malformed cases matter more than the happy path.
+@Suite("ExtendedClientInfo parsing")
+struct ExtendedClientInfoParsingTests {
+
+    private func advertisement(
+        revision: UInt32 = 1,
+        clientInfo: String = "",
+        declaredCount: UInt32? = nil,
+        entries: [(UInt32, String)]
+    ) -> Data {
+        var d = Data()
+        d.appendUInt32(revision)
+        d.appendString(clientInfo)
+        d.appendUInt32(declaredCount ?? UInt32(entries.count))
+        for (code, name) in entries {
+            d.appendUInt32(code)
+            d.appendString(name)
+            d.appendUInt32(0)
+        }
+        return d
+    }
+
+    @Test("Unknown revision is rejected rather than guessed at")
+    func unknownRevisionRejected() {
+        let d = advertisement(revision: 2, entries: [(10001, "ArtworkRequest")])
+        #expect(MessageParser.parseExtendedClientInfo(d) == nil)
+    }
+
+    @Test("Truncated entry is rejected")
+    func truncatedRejected() {
+        let full = advertisement(entries: [(10001, "ArtworkRequest")])
+        let chopped = Data(full.prefix(full.count - 3))
+        #expect(MessageParser.parseExtendedClientInfo(chopped) == nil)
+    }
+
+    @Test("Count larger than the body is rejected")
+    func lyingCountRejected() {
+        let d = advertisement(declaredCount: 5, entries: [(10001, "ArtworkRequest")])
+        #expect(MessageParser.parseExtendedClientInfo(d) == nil)
+    }
+
+    @Test("Count over the cap is rejected before iterating")
+    func oversizedCountRejected() {
+        let d = advertisement(declaredCount: .max, entries: [])
+        #expect(MessageParser.parseExtendedClientInfo(d) == nil)
+    }
+
+    @Test("Empty advertisement parses but supports nothing")
+    func emptyAdvertisement() {
+        let info = MessageParser.parseExtendedClientInfo(advertisement(entries: []))
+        #expect(info != nil)
+        #expect(info?.supports(.artworkRequest) == false)
+    }
+
+    /// The spec says a mismatched code means we must not send that message,
+    /// even when the name is one we know.
+    @Test("Known name bound to a different code is not supported")
+    func mismatchedCodeNotSupported() {
+        let info = MessageParser.parseExtendedClientInfo(
+            advertisement(entries: [(10005, "ArtworkRequest")])
+        )
+        #expect(info != nil)
+        #expect(info?.supports(.artworkRequest) == false)
+    }
+
+    @Test("Unknown capability names are retained, not dropped")
+    func unknownNamesRetained() {
+        let info = MessageParser.parseExtendedClientInfo(
+            advertisement(entries: [(10042, "SomeOtherFeature")])
+        )
+        #expect(info?.capabilities["SomeOtherFeature"] == 10042)
+    }
+
+    @Test("Client info string round-trips")
+    func clientInfoRoundTrip() {
+        let info = MessageParser.parseExtendedClientInfo(
+            advertisement(clientInfo: "OtherClient/2.1", entries: [])
+        )
+        #expect(info?.clientInfo == "OtherClient/2.1")
+    }
+
+    @Test("Empty payload is rejected")
+    func emptyPayloadRejected() {
+        #expect(MessageParser.parseExtendedClientInfo(Data()) == nil)
+    }
+
+    /// SeeleSeek 1.x sent a bare version byte at code 10000. It cannot parse
+    /// as the current format, which is what the legacy fallback keys on.
+    @Test("Legacy one-byte handshake does not parse as the new format")
+    func legacyPayloadDoesNotParse() {
+        #expect(MessageParser.parseExtendedClientInfo(Data([1])) == nil)
+    }
+
+    @Test("Legacy fallback grants the 1.x capability set")
+    func legacyFallbackCapabilities() {
+        let info = ExtendedClientInfo.legacySeeleSeek(version: 1)
+        for code in SeeleSeekExtendedClientInfoCode.allCases {
+            #expect(info.supports(code))
+        }
     }
 }
 
@@ -155,16 +280,17 @@ struct SeeleSeekPeerCodeTests {
 @Suite("SeeleSeek Message Round-Trip")
 struct SeeleSeekRoundTripTests {
 
-    @Test("Handshake message payload round-trip")
-    func handshakeRoundTrip() {
-        let message = MessageBuilder.seeleseekHandshakeMessage()
+    @Test("ExtendedClientInfo payload round-trip")
+    func extendedClientInfoRoundTrip() {
+        let message = MessageBuilder.extendedClientInfoMessage(clientInfo: "SeeleSeek/test")
 
         // Skip length prefix (4 bytes) and code (4 bytes) to get payload
         let payload = Data(message[8...])
+        let info = MessageParser.parseExtendedClientInfo(payload)
 
-        // Parse: version byte
-        #expect(payload.count == 1)
-        #expect(payload[payload.startIndex] == 1)
+        #expect(info?.clientInfo == "SeeleSeek/test")
+        #expect(info?.capabilities.count == SeeleSeekExtendedClientInfoCode.allCases.count)
+        #expect(info?.capabilities["ArtworkRequest"] == 10001)
     }
 
     @Test("Artwork request payload round-trip")

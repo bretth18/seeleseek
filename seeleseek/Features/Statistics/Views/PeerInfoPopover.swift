@@ -84,12 +84,13 @@ struct PeerInfoPopover: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(stateColor)
 
-                    if let version = peer.seeleSeekVersion {
-                        // Only set for SeeleSeek peers who completed the
-                        // capability handshake; standard Soulseek clients
-                        // (Nicotine+, SoulseekQt, etc.) never expose their
-                        // version peer-to-peer, so nothing to show.
-                        Text("seeleseek v\(version)")
+                    if let info = peer.extendedClientInfo {
+                        // Set only for peers that advertised extensions
+                        // (code 10000). Most Soulseek clients do not, so this
+                        // is absent for them. The badge is keyed on presence,
+                        // not on `clientInfo` — that string is optional and
+                        // we send it empty ourselves.
+                        Text(info.clientInfo.isEmpty ? "extended client" : info.clientInfo)
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)
