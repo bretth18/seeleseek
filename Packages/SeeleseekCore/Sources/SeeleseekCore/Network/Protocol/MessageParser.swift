@@ -1176,7 +1176,7 @@ public enum MessageParser {
         offset += 4
 
         // Fail closed on an unknown revision rather than guessing at the layout.
-        guard revision == MessageBuilder.extendedClientInfoRevision else { return nil }
+        guard revision == ExtendedClientInfo.currentRevision else { return nil }
 
         guard let (clientInfo, infoBytes) = payload.readString(at: offset) else { return nil }
         offset += infoBytes

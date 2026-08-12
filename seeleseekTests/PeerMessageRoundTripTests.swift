@@ -282,7 +282,7 @@ struct PeerMessageRoundTripTests {
         let msg = MessageBuilder.extendedClientInfoMessage()
         let (code, off) = parsePeerMessage(msg)
         #expect(code == SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue)
-        #expect(msg.readUInt32(at: off) == MessageBuilder.extendedClientInfoRevision)
+        #expect(msg.readUInt32(at: off) == ExtendedClientInfo.currentRevision)
     }
 
     @Test("artworkRequest message")

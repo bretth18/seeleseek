@@ -47,7 +47,7 @@ public final class PeerConnectionPool {
 
     /// Whether `username` has advertised `code`, for building UI synchronously.
     /// An affordance only — the send path re-checks the live socket.
-    public func hasAdvertised(_ code: SeeleSeekExtendedClientInfoCode, by username: String) -> Bool {
+    public func hasAdvertised(_ code: ExtendedClientInfoCode, by username: String) -> Bool {
         extendedClientInfoByUser[username]?.supports(code) ?? false
     }
 
@@ -165,13 +165,8 @@ public final class PeerConnectionPool {
         public var bytesSent: UInt64 = 0
         public var connectedAt: Date?
         public var currentSpeed: Double = 0
-        /// Non-nil once the peer advertised extensions (code 10000). Peers
-        /// that do not implement the handshake stay nil, which is most of
-        /// them. Presence says nothing about *which* client this is.
-        public var extendedClientInfo: ExtendedClientInfo?
-
-        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0, extendedClientInfo: ExtendedClientInfo? = nil) {
-            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed; self.extendedClientInfo = extendedClientInfo;
+        public init(id: String, username: String, ip: String, port: Int, state: PeerConnection.State, connectionType: PeerConnection.ConnectionType, bytesReceived: UInt64 = 0, bytesSent: UInt64 = 0, connectedAt: Date? = nil, currentSpeed: Double = 0) {
+            self.id = id; self.username = username; self.ip = ip; self.port = port; self.state = state; self.connectionType = connectionType; self.bytesReceived = bytesReceived; self.bytesSent = bytesSent; self.connectedAt = connectedAt; self.currentSpeed = currentSpeed;
         }
     }
 
@@ -1109,11 +1104,10 @@ public final class PeerConnectionPool {
 
         case .extendedClientInfoDiscovered(let info):
             let peerUsername = connection.peerInfo.username.isEmpty ? username : connection.peerInfo.username
-            // Stamp onto the exact PeerConnectionInfo for this socket. Prefix
-            // scans on username can hit the wrong row when a user has
-            // multiple concurrent connections.
-            connections[connectionId]?.extendedClientInfo = info
-            if !peerUsername.isEmpty {
+            // Equality-guarded: peers re-advertise on every new P socket, and
+            // browse rows observe this dict. An unguarded write would repaint
+            // the visible file tree on each reconnect for no visual change.
+            if !peerUsername.isEmpty, extendedClientInfoByUser[peerUsername] != info {
                 extendedClientInfoByUser[peerUsername] = info
             }
 

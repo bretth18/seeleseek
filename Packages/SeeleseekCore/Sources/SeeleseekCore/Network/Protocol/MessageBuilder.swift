@@ -856,21 +856,19 @@ public enum MessageBuilder {
 
     // MARK: - SeeleSeek Extension Messages
 
-    public static let extendedClientInfoRevision: UInt32 = 1
-
     /// ExtendedClientInfo (code 10000) — advertise which extension codes we speak.
     ///
     /// `clientInfo` goes on the wire verbatim and is a durable fingerprint, so
     /// it defaults to empty. Nothing in our own logic may depend on its value.
     public nonisolated static func extendedClientInfoMessage(
-        advertising codes: [SeeleSeekExtendedClientInfoCode] = SeeleSeekExtendedClientInfoCode.allCases,
+        advertising codes: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised,
         clientInfo: String = ""
     ) -> Data {
         var payload = Data()
         // 0. send extendedClient code
-        payload.appendUInt32(SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue)
+        payload.appendUInt32(ExtendedClientInfoCode.extendedClientInfo.rawValue)
         // 1. send revision identifier (value is always 1)
-        payload.appendUInt32(extendedClientInfoRevision)
+        payload.appendUInt32(ExtendedClientInfo.currentRevision)
         // 2. send string with optional client info (may identify software or any custom signals)
         payload.appendString(clientInfo)
         
@@ -886,7 +884,7 @@ public enum MessageBuilder {
     /// Artwork request (code 10001) — ask peer for album art embedded in a file.
     public nonisolated static func artworkRequestMessage(token: UInt32, filePath: String) -> Data {
         var payload = Data()
-        payload.appendUInt32(SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue)
+        payload.appendUInt32(ExtendedClientInfoCode.artworkRequest.rawValue)
         payload.appendUInt32(token)
         payload.appendString(filePath)
         return wrapMessage(payload)
@@ -895,7 +893,7 @@ public enum MessageBuilder {
     /// Artwork reply (code 10002) — respond with image data (or empty if none found).
     public nonisolated static func artworkReplyMessage(token: UInt32, imageData: Data) -> Data {
         var payload = Data()
-        payload.appendUInt32(SeeleSeekExtendedClientInfoCode.artworkReply.rawValue)
+        payload.appendUInt32(ExtendedClientInfoCode.artworkReply.rawValue)
         payload.appendUInt32(token)
         // Write raw image bytes (length is implicit from message frame)
         payload.append(imageData)

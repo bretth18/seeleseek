@@ -96,7 +96,7 @@ struct UserProfileSheet: View {
                         .foregroundStyle(SeeleColors.textSecondary)
 
                     if let info = liveExtendedClientInfo {
-                        Text(info.clientInfo.isEmpty ? "extended client" : info.clientInfo)
+                        Text(info.displayLabel)
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)

@@ -247,10 +247,10 @@ public enum PeerMessageCode: UInt8 {
     }
 }
 
-// MARK: - SeeleSeek Extension Codes (client-specific, UInt32 range 10000+)
+// MARK: - Extension Codes (client-specific, UInt32 range 10000+)
 // These codes are only understood by other clients supporting ExtendedClientInfo.
 // Non-supporting peers will silently ignore them (unknown code path).
-public enum SeeleSeekExtendedClientInfoCode: UInt32, CaseIterable {
+public enum ExtendedClientInfoCode: UInt32, CaseIterable, Sendable {
     
     /// Extended client info handshake — sent after PeerInit to identify client extended capabilities peers.
     case extendedClientInfo = 10000
@@ -270,6 +270,13 @@ public enum SeeleSeekExtendedClientInfoCode: UInt32, CaseIterable {
         case .artworkReply: "ArtworkReply"
         }
     }
+
+    /// What we actually implement, and therefore promise to peers.
+    /// Deliberately not `allCases` — this enum is the code table, and a case
+    /// may be added to describe or receive a code before we implement it.
+    public nonisolated static let advertised: [ExtendedClientInfoCode] = [
+        .extendedClientInfo, .artworkRequest, .artworkReply
+    ]
 }
 
 // MARK: - Distributed Message Codes

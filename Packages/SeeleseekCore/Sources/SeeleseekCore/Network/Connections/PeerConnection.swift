@@ -92,15 +92,10 @@ public actor PeerConnection {
     // SeeleSeek extension state
     private(set) var extendedClientInfo: ExtendedClientInfo?
 
-    /// Whether this peer advertised any protocol extensions. Deliberately not
-    /// "is this SeeleSeek" — code 10000 is open to any client, so identity is
-    /// not inferable and nothing should branch on it.
-    public var supportsExtensions: Bool { extendedClientInfo != nil }
-
     /// Authoritative capability gate. Per-socket and always current, unlike
     /// the pool's sticky per-username cache, which peers may invalidate at any
     /// time by re-advertising a different set.
-    public func supports(_ code: SeeleSeekExtendedClientInfoCode) -> Bool {
+    public func supports(_ code: ExtendedClientInfoCode) -> Bool {
         extendedClientInfo?.supports(code) ?? false
     }
 
@@ -462,8 +457,20 @@ public actor PeerConnection {
     /// it drop it as an unknown code. Only safe on P-type sockets — F-type
     /// connections switch to raw file-transfer bytes after init and would
     /// misinterpret this message as file data.
+    ///
+    /// Deliberately uses plain `send` rather than `send(extension:_:)` — this
+    /// is the bootstrap, sent before either side has advertised anything.
     public func sendExtendedClientInfo() async throws {
         try await send(MessageBuilder.extendedClientInfoMessage())
+    }
+
+    /// Send an extension message, refusing if the peer never advertised the
+    /// code. Every extension send must go through here: the spec forbids
+    /// sending a code a peer did not advertise, and expressing that per call
+    /// site is how the first three of four sites came to omit it.
+    public func send(extension code: ExtendedClientInfoCode, _ message: Data) async throws {
+        guard supports(code) else { throw PeerError.capabilityNotAdvertised(code) }
+        try await send(message)
     }
 
     public func sendPierceFirewall() async throws {
@@ -1591,13 +1598,13 @@ public actor PeerConnection {
             handleUserInfoRequest()
 
         // SeeleSeek extension codes
-        case SeeleSeekExtendedClientInfoCode.extendedClientInfo.rawValue:
+        case ExtendedClientInfoCode.extendedClientInfo.rawValue:
             handleExtendedClientInfo(payload)
 
-        case SeeleSeekExtendedClientInfoCode.artworkRequest.rawValue:
+        case ExtendedClientInfoCode.artworkRequest.rawValue:
             handleArtworkRequest(payload)
 
-        case SeeleSeekExtendedClientInfoCode.artworkReply.rawValue:
+        case ExtendedClientInfoCode.artworkReply.rawValue:
             handleArtworkReply(payload)
 
         default:
@@ -2054,6 +2061,7 @@ public enum PeerError: Error, LocalizedError {
     case timeout
     case invalidPort
     case malformedOutboundMessage
+    case capabilityNotAdvertised(ExtendedClientInfoCode)
 
     public var errorDescription: String? {
         switch self {
@@ -2064,6 +2072,7 @@ public enum PeerError: Error, LocalizedError {
         case .timeout: return "Connection timed out"
         case .invalidPort: return "Invalid port number"
         case .malformedOutboundMessage: return "Outbound message is malformed"
+        case .capabilityNotAdvertised(let code): return "Peer has not advertised \(code.wireName)"
         }
     }
 }

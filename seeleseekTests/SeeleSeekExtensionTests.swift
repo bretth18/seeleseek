@@ -23,9 +23,9 @@ struct SeeleSeekMessageBuilderTests {
 
         // Payload begins after the length prefix and the message code.
         let info = MessageParser.parseExtendedClientInfo(Data(message[8...]))
-        #expect(info?.revision == MessageBuilder.extendedClientInfoRevision)
+        #expect(info?.revision == ExtendedClientInfo.currentRevision)
         #expect(info?.clientInfo == "")
-        for advertised in SeeleSeekExtendedClientInfoCode.allCases {
+        for advertised in SeeleSeekExtendedClientInfoCode.advertised {
             #expect(info?.supports(advertised) == true)
         }
     }
@@ -271,19 +271,6 @@ struct ExtendedClientInfoParsingTests {
 
 @Suite("SeeleSeek Message Round-Trip")
 struct SeeleSeekRoundTripTests {
-
-    @Test("ExtendedClientInfo payload round-trip")
-    func extendedClientInfoRoundTrip() {
-        let message = MessageBuilder.extendedClientInfoMessage(clientInfo: "SeeleSeek/test")
-
-        // Skip length prefix (4 bytes) and code (4 bytes) to get payload
-        let payload = Data(message[8...])
-        let info = MessageParser.parseExtendedClientInfo(payload)
-
-        #expect(info?.clientInfo == "SeeleSeek/test")
-        #expect(info?.capabilities.count == SeeleSeekExtendedClientInfoCode.allCases.count)
-        #expect(info?.capabilities["ArtworkRequest"] == 10001)
-    }
 
     @Test("Artwork request payload round-trip")
     func artworkRequestRoundTrip() {

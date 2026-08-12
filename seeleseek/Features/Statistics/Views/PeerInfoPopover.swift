@@ -10,6 +10,13 @@ struct PeerInfoPopover: View {
         !peer.username.isEmpty && peer.username != "unknown"
     }
 
+    /// Capabilities are a per-user fact, so they live in the pool's dedicated
+    /// dict rather than on the connection row.  reading it here invalidates
+    /// this view on discovery alone, not on every bytes update.
+    private var extendedClientInfo: ExtendedClientInfo? {
+        appState.networkClient.peerConnectionPool.extendedClientInfoByUser[peer.username]
+    }
+
     private var displayName: String {
         hasUsername ? peer.username : peer.ip
     }
@@ -84,13 +91,11 @@ struct PeerInfoPopover: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(stateColor)
 
-                    if let info = peer.extendedClientInfo {
+                    if let info = extendedClientInfo {
                         // Set only for peers that advertised extensions
                         // (code 10000). Most Soulseek clients do not, so this
-                        // is absent for them. The badge is keyed on presence,
-                        // not on `clientInfo` — that string is optional and
-                        // we send it empty ourselves.
-                        Text(info.clientInfo.isEmpty ? "extended client" : info.clientInfo)
+                        // is absent for them.
+                        Text(info.displayLabel)
                             .font(SeeleTypography.caption2)
                             .foregroundStyle(SeeleColors.accent)
                             .padding(.horizontal, SeeleSpacing.xs)
