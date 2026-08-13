@@ -107,14 +107,27 @@ struct NetworkTests {
         #expect(data[3] == 0x01)
     }
 
-    /// Random port in a high-entropy range that production code never uses.
-    /// Concurrent tests stepping on each other across the fixed 2234-2240
-    /// production range was a long-standing flake source; randomizing here
-    /// gives each test its own pair of consecutive ports.
+    /// Random port in a range production code never uses. Concurrent tests
+    /// stepping on each other across the fixed 2234-2240 production range was
+    /// a long-standing flake source; randomizing gives each test its own pair
+    /// of consecutive ports.
+    ///
+    /// Must stay below `net.inet.ip.portrange.first` (49152 on macOS), or the
+    /// OS can hand the same port to a sibling test's outbound socket and the
+    /// bind fails. Even, so `port + 1` (the obfuscated pair) stays in band.
     static func randomTestPort() -> UInt16 {
-        // Keep even so `port + 1` (the obfuscated pair) stays in the same
-        // band. Upper bound leaves headroom below the ephemeral-port ceiling.
-        UInt16(Int.random(in: 40000...59998) & ~1)
+        UInt16(Int.random(in: 20000...39998) & ~1)
+    }
+
+    /// Bind with a fresh port on collision: even inside a private band another
+    /// process on a busy CI runner can hold the pair we happened to draw.
+    static func startListenerOnFreePort(_ listener: ListenerService) async throws -> (port: UInt16, obfuscatedPort: UInt16) {
+        for _ in 0..<9 {
+            if let ports = try? await listener.start(preferredPort: randomTestPort(), fallbackToDefaultRange: false) {
+                return ports
+            }
+        }
+        return try await listener.start(preferredPort: randomTestPort(), fallbackToDefaultRange: false)
     }
 
     // MARK: - Local Loopback Connection Tests
@@ -123,14 +136,11 @@ struct NetworkTests {
     func listenerStartsOnAvailablePort() async throws {
         let listener = ListenerService()
 
-        // High-entropy random port keeps concurrent test suites off the
-        // production 2234-2240 range. fallback=false turns a collision into
-        // a clean error instead of falling through to that fixed range and
-        // contending with other tests.
-        let preferred = Self.randomTestPort()
-        let ports = try await listener.start(preferredPort: preferred, fallbackToDefaultRange: false)
+        // fallback=false keeps a collision from silently falling through to
+        // the production 2234-2240 range and contending with other tests.
+        let ports = try await Self.startListenerOnFreePort(listener)
 
-        #expect(ports.port == preferred, "Should bind to the preferred port")
+        #expect(ports.port >= 20000, "Should bind outside the production range")
         #expect(ports.obfuscatedPort == ports.port + 1, "Obfuscated port should be port + 1")
 
         await listener.stop()
@@ -148,7 +158,7 @@ struct NetworkTests {
             }
         }
 
-        let ports = try await listener.start(preferredPort: Self.randomTestPort(), fallbackToDefaultRange: false)
+        let ports = try await Self.startListenerOnFreePort(listener)
 
         // Connect to ourselves
         let peerInfo = PeerConnection.PeerInfo(username: "localtest", ip: "127.0.0.1", port: Int(ports.port))
@@ -170,7 +180,7 @@ struct NetworkTests {
         let listener = ListenerService()
         var receivedData: Data?
 
-        let ports = try await listener.start(preferredPort: Self.randomTestPort(), fallbackToDefaultRange: false)
+        let ports = try await Self.startListenerOnFreePort(listener)
 
         await confirmation("Receive PierceFirewall") { confirm in
             Task {
