@@ -3,15 +3,15 @@ import Foundation
 
 @MainActor
 final class MockDownloadSettings: DownloadSettingsProviding {
-    var downloadDirectory: URL
+    var downloadLocation: URL
     var activeDownloadTemplate: String
     var incompleteDownloadDirectory: URL
     var setFolderIcons: Bool = false
 
-    init(downloadDirectory: URL, template: String = DownloadManager.fallbackTemplate) {
-        self.downloadDirectory = downloadDirectory
+    init(downloadLocation: URL, template: String = DownloadManager.fallbackTemplate) {
+        self.downloadLocation = downloadLocation
         self.activeDownloadTemplate = template
-        self.incompleteDownloadDirectory = downloadDirectory.appendingPathComponent("Incomplete")
+        self.incompleteDownloadDirectory = downloadLocation.appendingPathComponent("Incomplete")
     }
 }
 

@@ -44,7 +44,7 @@ struct PeerConnectivityTests {
             port: closedPort,
             username: "never-logged-in",
             password: "test",
-            preferredListenPort: UInt16(Int.random(in: 40000...59998) & ~1)
+            preferredListenPort: NetworkTests.randomTestPort()
         )
 
         // Give any (incorrect) reconnect scheduling a chance to fire.
@@ -109,7 +109,7 @@ struct PeerConnectivityTests {
         var statuses: [ConnectionStatus] = []
         client.onConnectionStatusChanged = { statuses.append($0) }
 
-        let preferredListenPort = UInt16(Int.random(in: 40000...59998) & ~1)
+        let preferredListenPort = NetworkTests.randomTestPort()
         await client.connect(
             server: "127.0.0.1",
             port: serverPort,
@@ -383,17 +383,9 @@ struct PeerConnectivityTests {
     func obfuscatedListenerSurfacesConnectionFlagged() async throws {
         let service = ListenerService()
 
-        // Pin to a high-entropy random port with the default-range fallback
-        // disabled so this test never contends with other listener-using
-        // tests on the production 2234-2240 range.
-        let preferred = UInt16(Int.random(in: 40000...59998) & ~1)
-        let (port, obfuscatedPort) = try await service.start(
-            preferredPort: preferred,
-            fallbackToDefaultRange: false
-        )
+        let (port, obfuscatedPort) = try await NetworkTests.startListenerOnFreePort(service)
         defer { Task { await service.stop() } }
 
-        #expect(port == preferred)
         #expect(obfuscatedPort == port + 1)
 
         // If the obfuscated port couldn't be bound (common in CI when a prior

@@ -71,10 +71,6 @@ enum DownloadFolderFormat: String, CaseIterable {
         }
     }
 
-    func resolvedTemplate(custom: String) -> String {
-        let resolved = self == .custom ? custom : template
-        return resolved.isEmpty ? DownloadManager.fallbackTemplate : resolved
-    }
 }
 
 @Observable
@@ -589,6 +585,17 @@ final class SettingsState: DownloadSettingsProviding {
         }
 
         let legacyDefault = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+
+        // Same pin for the incomplete directory: partials from the old
+        // default must stay findable or interrupted downloads restart at 0.
+        let legacyIncomplete = legacyDefault.appendingPathComponent("Incomplete")
+        if isUpgrade, defaults.string(forKey: incompleteLocationKey) == nil,
+           FileManager.default.fileExists(atPath: legacyIncomplete.path) {
+            logger.info("Pinning incomplete directory to previous default \(legacyIncomplete.path)")
+            incompleteLocation = legacyIncomplete
+            defaults.set(incompleteLocation.path, forKey: incompleteLocationKey)
+        }
+
         guard downloadLocation.standardizedFileURL == legacyDefault.standardizedFileURL else { return }
 
         logger.info("Migrating download location from \(legacyDefault.path) to \(SettingsState.defaultDownloadLocation.path)")
@@ -632,11 +639,8 @@ final class SettingsState: DownloadSettingsProviding {
 // MARK: - Download Folder Template
 extension SettingsState {
     var activeDownloadTemplate: String {
-        downloadFolderFormat.resolvedTemplate(custom: downloadFolderTemplate)
-    }
-
-    var downloadDirectory: URL {
-        downloadLocation
+        let template = downloadFolderFormat == .custom ? downloadFolderTemplate : downloadFolderFormat.template
+        return template.isEmpty ? DownloadManager.fallbackTemplate : template
     }
 
     var incompleteDownloadDirectory: URL {

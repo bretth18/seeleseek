@@ -474,8 +474,11 @@ public actor PeerConnection {
     /// bootstrap, sent before either side has advertised anything.
     private func advertiseExtensionsIfNeeded() async {
         guard !hasAdvertisedExtensions, connectionType == .peer else { return }
+        // Set before the suspension so a reentrant trigger can't double-send;
+        // reset on failure so a surviving socket can retry from a later one.
         hasAdvertisedExtensions = true
-        try? await send(MessageBuilder.extendedClientInfoMessage())
+        do { try await send(MessageBuilder.extendedClientInfoMessage()) }
+        catch { hasAdvertisedExtensions = false }
     }
 
     /// Send an extension message, refusing if the peer never advertised the

@@ -158,7 +158,7 @@ struct DownloadRetryFlowTests {
             .appendingPathComponent("seeleseek-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
-        manager._setSettingsForTest(MockDownloadSettings(downloadDirectory: tempRoot))
+        manager._setSettingsForTest(MockDownloadSettings(downloadLocation: tempRoot))
 
         let partialPath = tempRoot
             .appendingPathComponent("Incomplete")
@@ -197,7 +197,7 @@ struct DownloadRetryFlowTests {
             .appendingPathComponent("seeleseek-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
-        manager._setSettingsForTest(MockDownloadSettings(downloadDirectory: tempRoot))
+        manager._setSettingsForTest(MockDownloadSettings(downloadLocation: tempRoot))
 
         let partialPath = tempRoot
             .appendingPathComponent("Incomplete")
