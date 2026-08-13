@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import AppKit
+import Network
 @testable import SeeleseekCore
 @testable import seeleseek
 
@@ -464,6 +465,213 @@ struct StandardPeerCodeRegressionTests {
         #expect(parsed?.username == "testuser")
         #expect(parsed?.token == 12345)
         #expect(parsed?.files.count == 1)
+    }
+}
+
+// MARK: - Receipt Handling (misbehaving peers)
+
+/// Behavior of a live connection receiving code 10000, per the PR #79 review:
+/// no reply loop, no mid-socket capability flapping, and fail-closed handling
+/// of malformed or spammed advertisements.
+@Suite("ExtendedClientInfo Receipt Handling")
+struct ExtendedClientInfoReceiptTests {
+
+    /// Payload (frame stripped) of an advertisement, full set by default.
+    private func payload(advertising: [ExtendedClientInfoCode]? = nil) -> Data {
+        let message = if let advertising {
+            MessageBuilder.extendedClientInfoMessage(advertising: advertising)
+        } else {
+            MessageBuilder.extendedClientInfoMessage()
+        }
+        return Data(message[8...])
+    }
+
+    private func makePeer() -> PeerConnection {
+        PeerConnection(peerInfo: .init(username: "ext-test", ip: "10.0.0.9", port: 2234))
+    }
+
+    @Test("First advertisement wins; a changed re-send never replaces it")
+    func firstAdvertisementWins() async {
+        let peer = makePeer()
+        await peer._handleExtendedClientInfoForTest(payload())
+        #expect(await peer.supports(.artworkRequest))
+
+        // Re-advertising a smaller set must not flap capabilities mid-socket.
+        await peer._handleExtendedClientInfoForTest(payload(advertising: [.extendedClientInfo]))
+        #expect(await peer.supports(.artworkRequest), "capabilities must not change mid-connection")
+        #expect(await !peer.extensionsMisbehaving, "a single re-send is tolerated, not punished")
+    }
+
+    @Test("Identical re-send is tolerated without penalty")
+    func identicalResendTolerated() async {
+        let peer = makePeer()
+        await peer._handleExtendedClientInfoForTest(payload())
+        await peer._handleExtendedClientInfoForTest(payload())
+        #expect(await peer.supports(.artworkRequest))
+        #expect(await !peer.extensionsMisbehaving)
+    }
+
+    @Test("Spamming advertisements marks the peer misbehaving and drops extensions")
+    func spamMarksMisbehaving() async {
+        let peer = makePeer()
+        for _ in 0...PeerConnection.maxExtendedClientInfoReceipts {
+            await peer._handleExtendedClientInfoForTest(payload())
+        }
+        #expect(await peer.extensionsMisbehaving)
+        #expect(await !peer.supports(.artworkRequest),
+                "a spamming peer loses all extension capabilities on this socket")
+    }
+
+    @Test("Malformed advertisement fails closed for the rest of the socket")
+    func malformedFailsClosed() async {
+        let peer = makePeer()
+        await peer._handleExtendedClientInfoForTest(payload())
+        #expect(await peer.supports(.artworkRequest))
+
+        await peer._handleExtendedClientInfoForTest(Data([1]))
+        #expect(await peer.extensionsMisbehaving)
+        #expect(await !peer.supports(.artworkRequest),
+                "garbling the handshake revokes previously granted capabilities")
+
+        // A later valid advertisement must not rehabilitate the socket.
+        await peer._handleExtendedClientInfoForTest(payload())
+        #expect(await !peer.supports(.artworkRequest), "misbehaving is sticky per socket")
+    }
+
+    @Test("Malformed first advertisement leaves the peer with nothing")
+    func malformedFirstReceipt() async {
+        let peer = makePeer()
+        await peer._handleExtendedClientInfoForTest(Data([1]))
+        #expect(await !peer.supports(.extendedClientInfo))
+        #expect(await peer.extensionsMisbehaving)
+    }
+}
+
+// MARK: - Wire Behavior (live sockets)
+
+@Suite("ExtendedClientInfo Wire Behavior")
+struct ExtendedClientInfoWireTests {
+
+    /// Loopback listener surfacing inbound connections, on an OS-assigned port.
+    private static func startFakePeer() async throws -> (NWListener, AsyncStream<NWConnection>, UInt16) {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let inbound = AsyncStream<NWConnection> { continuation in
+            listener.newConnectionHandler = { continuation.yield($0) }
+        }
+        let port = await withCheckedContinuation { (continuation: CheckedContinuation<UInt16, Never>) in
+            listener.stateUpdateHandler = { state in
+                if case .ready = state, let port = listener.port {
+                    continuation.resume(returning: port.rawValue)
+                }
+            }
+            listener.start(queue: .global())
+        }
+        return (listener, inbound, port)
+    }
+
+    private static func receive(exactly count: Int, from connection: NWConnection) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: data ?? Data())
+                }
+            }
+        }
+    }
+
+    private static func send(_ data: Data, on connection: NWConnection) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    /// slook's ping/pong case: an inbound 10000 must never be answered with
+    /// another 10000 — our advertisement is triggered by connection setup
+    /// only. The sentinel is sent after the inbound advertisements have been
+    /// processed, so any echo would land in front of it and break the exact
+    /// byte comparison below.
+    @Test("Receiving an advertisement never triggers a response advertisement", .timeLimit(.minutes(1)))
+    func noAdvertisementPingPong() async throws {
+        let (listener, inbound, port) = try await Self.startFakePeer()
+        defer { listener.cancel() }
+
+        let handshake = MessageBuilder.peerInitMessage(username: "us", connectionType: "P", token: 0)
+            + MessageBuilder.extendedClientInfoMessage()
+        let sentinel = MessageBuilder.queueDownloadMessage(filename: "Music\\a.mp3")
+
+        let fakePeer = Task { () throws -> Data in
+            var iterator = inbound.makeAsyncIterator()
+            guard let connection = await iterator.next() else { throw PeerError.connectionClosed }
+            connection.start(queue: .global())
+            defer { connection.cancel() }
+
+            let received = try await Self.receive(exactly: handshake.count, from: connection)
+            #expect(received == handshake)
+
+            // Two advertisements: reply-once would double-send, reply-always
+            // would loop. Either lands extra bytes before the sentinel.
+            try await Self.send(MessageBuilder.extendedClientInfoMessage(), on: connection)
+            try await Self.send(MessageBuilder.extendedClientInfoMessage(), on: connection)
+
+            return try await Self.receive(exactly: sentinel.count, from: connection)
+        }
+
+        let peer = PeerConnection(peerInfo: .init(username: "fake-peer", ip: "127.0.0.1", port: Int(port)))
+        defer { Task { await peer.disconnect() } }
+        try await peer.connect()
+        try await peer.sendPeerInit(username: "us")
+
+        // Wait until both inbound advertisements were processed (first one
+        // flips supports; give the second a beat to drain) before the sentinel.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while await !peer.supports(.artworkRequest), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(await peer.supports(.artworkRequest), "valid inbound advertisement must be recorded")
+        try await Task.sleep(for: .milliseconds(200))
+        try await peer.queueDownload(filename: "Music\\a.mp3")
+
+        let afterAdvertisements = try await fakePeer.value
+        #expect(afterAdvertisements == sentinel,
+                "nothing but the sentinel may follow — an ECI reply here means a ping/pong loop")
+    }
+
+    /// Pierced sockets carry no PeerInit in either direction, so neither of
+    /// PeerConnection's built-in advertisement triggers fires. The indirect
+    /// finalize step is the only chance to tell the piercer what we speak.
+    @Test("Indirect finalize advertises our extensions on the pierced socket", .timeLimit(.minutes(1)))
+    func indirectFinalizeAdvertises() async throws {
+        let (listener, inbound, port) = try await Self.startFakePeer()
+        defer { listener.cancel() }
+
+        let expected = MessageBuilder.extendedClientInfoMessage()
+        let fakePiercer = Task { () throws -> Data in
+            var iterator = inbound.makeAsyncIterator()
+            guard let connection = await iterator.next() else { throw PeerError.connectionClosed }
+            connection.start(queue: .global())
+            defer { connection.cancel() }
+
+            try await Self.send(MessageBuilder.pierceFirewallMessage(token: 99), on: connection)
+            return try await Self.receive(exactly: expected.count, from: connection)
+        }
+
+        let peer = PeerConnection(peerInfo: .init(username: "piercer", ip: "127.0.0.1", port: Int(port)))
+        defer { Task { await peer.disconnect() } }
+        try await peer.connect()
+
+        let client = NetworkClient()
+        try await client.finalizeIndirectPeerConnection(peer)
+
+        let received = try await fakePiercer.value
+        #expect(received == expected, "the piercer must learn our capabilities")
     }
 }
 

@@ -92,6 +92,18 @@ public actor PeerConnection {
     // SeeleSeek extension state
     private(set) var extendedClientInfo: ExtendedClientInfo?
 
+    /// The protocol allows exactly one advertisement per socket, but a hostile
+    /// peer can resend forever; each receipt past the first is a strike, and
+    /// past this many the peer is marked misbehaving.
+    static let maxExtendedClientInfoReceipts = 3
+    private var extendedClientInfoReceipts = 0
+
+    /// Sticky for the socket's lifetime. Once set, `extendedClientInfo` is
+    /// cleared and stays nil, so `supports()` fails closed and every gated
+    /// extension send is refused — a peer that garbles or spams the handshake
+    /// doesn't get to keep negotiating on the same socket.
+    private(set) var extensionsMisbehaving = false
+
     /// Authoritative capability gate. Per-socket and always current, unlike
     /// the pool's sticky per-username cache, which peers may invalidate at any
     /// time by re-advertising a different set.
@@ -1637,14 +1649,49 @@ public actor PeerConnection {
     /// inferring capabilities from a version byte is the exact practice this
     /// handshake replaces.
     private func handleExtendedClientInfo(_ payload: Data) {
+        guard !extensionsMisbehaving else { return }
+
+        extendedClientInfoReceipts += 1
+        if extendedClientInfoReceipts > Self.maxExtendedClientInfoReceipts {
+            logger.warning("[\(self.peerUsername)] ExtendedClientInfo re-sent \(self.extendedClientInfoReceipts) times, marking peer misbehaving and dropping extensions")
+            markExtensionsMisbehaving()
+            return
+        }
+
         guard let info = MessageParser.parseExtendedClientInfo(payload) else {
-            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
+            // TCP rules out corruption in transit, so a malformed payload at
+            // this code means a buggy or hostile implementation — fail closed
+            // for the rest of the socket rather than trusting a later retry.
+            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, marking peer misbehaving")
+            markExtensionsMisbehaving()
+            return
+        }
+
+        // First advertisement wins. A re-send is at best redundant and at
+        // worst capability-flapping; either way it never replaces what was
+        // negotiated, so a strike is recorded above and the payload dropped.
+        guard extendedClientInfo == nil else {
+            if extendedClientInfo == info {
+                logger.debug("[\(self.peerUsername)] ExtendedClientInfo re-sent identically, ignoring")
+            } else {
+                logger.warning("[\(self.peerUsername)] ExtendedClientInfo changed mid-connection, keeping original advertisement")
+            }
             return
         }
 
         extendedClientInfo = info
         logger.info("[\(self.peerUsername)] Extensions: \(info.capabilities.keys.sorted().joined(separator: ", "))")
         eventContinuation.yield(.extendedClientInfoDiscovered(info))
+    }
+
+    private func markExtensionsMisbehaving() {
+        extensionsMisbehaving = true
+        extendedClientInfo = nil
+    }
+
+    /// Test seam: drive the private 10000 handler with a raw payload.
+    func _handleExtendedClientInfoForTest(_ payload: Data) {
+        handleExtendedClientInfo(payload)
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
