@@ -15,50 +15,28 @@ struct TransferHistoryItem: Identifiable, Sendable {
     let isDownload: Bool
     let localPath: URL?
 
-    /// Resolved local path - uses stored path, or tries the default download location
-    var resolvedLocalPath: URL? {
+    /// The stored path, or where the given settings say the file would be.
+    func resolvedLocalPath(downloadDirectory: URL, template: String) -> URL? {
         if let localPath, FileManager.default.fileExists(atPath: localPath.path) {
             return localPath
         }
         // Only downloads land in the download directory. An upload's source
         // can be anywhere on disk, so a fabricated path is always wrong.
         guard isDownload else { return nil }
-        // Try default download directory: ~/Downloads/SeeleSeek/{username}/{folders}/{filename}
-        return Self.inferDownloadPath(filename: filename, username: username)
-    }
 
-    var fileExists: Bool {
-        resolvedLocalPath != nil
+        let inferred = DownloadManager.destinationURL(
+            downloadDirectory: downloadDirectory,
+            soulseekPath: filename,
+            username: username,
+            template: template
+        )
+        return FileManager.default.fileExists(atPath: inferred.path) ? inferred : nil
     }
 
     var isAudioFile: Bool {
         let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav", "aiff", "alac", "wma", "ape", "aif"]
         let ext = (displayFilename as NSString).pathExtension.lowercased()
         return audioExtensions.contains(ext)
-    }
-
-    /// Reconstruct the likely download path from the soulseek filename
-    private static func inferDownloadPath(filename: String, username: String) -> URL? {
-        let paths = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
-        let baseDir = paths[0].appendingPathComponent("SeeleSeek")
-
-        var components = filename.split(separator: "\\").map(String.init)
-        // Strip @@ root share marker
-        if !components.isEmpty && components[0].hasPrefix("@@") {
-            components.removeFirst()
-        }
-        guard !components.isEmpty else { return nil }
-
-        // Default template: {username}/{folders}/{filename}
-        var url = baseDir.appendingPathComponent(username)
-        for component in components {
-            url = url.appendingPathComponent(component)
-        }
-
-        if FileManager.default.fileExists(atPath: url.path) {
-            return url
-        }
-        return nil
     }
 
     var displayFilename: String {

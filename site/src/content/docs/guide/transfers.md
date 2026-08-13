@@ -79,7 +79,7 @@ Configure downloads in **Settings > General > Downloads**:
 
 ### Download Location
 
-Set the folder for completed files. The default is `~/Downloads/seeleseek/`.
+Set the folder for completed files. The default is `~/Downloads/SeeleSeek/`.
 
 A different folder holds the **incomplete files**. The app keeps a download there until the download is complete.
 
@@ -89,13 +89,16 @@ Select the structure for downloaded files:
 
 | Template | Example |
 |----------|---------|
+| Folder (default) | `Album/track.flac` |
 | Username / Full Path | `alice/Music/Artist/Album/track.flac` |
 | Full Path | `Music/Artist/Album/track.flac` |
 | Artist - Album | `Artist - Album/track.flac` |
 | Filename Only | `track.flac` |
 | Custom | A template that you make with tokens |
 
-These tokens are available for custom templates: `{username}`, `{folders}`, `{artist}`, `{album}`, `{filename}`.
+These tokens are available for custom templates: `{username}`, `{folder}`, `{full-path}`, `{artist}`, `{album}`, `{filename}`. The `{folder}` token is the one folder that contains the file. The `{full-path}` token is all the folders of the path on the other user's computer. The older name `{folders}` continues to operate and is equivalent to `{full-path}`.
+
+The **Artist - Album** template, and custom templates with `{artist}` or `{album}`, read the tags of the file. Files that have no tags, such as cover images, go into the same folder as the other files from that download. This keeps one shared folder together in one destination folder.
 
 ### Transfer Slots
 

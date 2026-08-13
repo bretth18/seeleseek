@@ -86,6 +86,7 @@ public protocol StatisticsRecording: AnyObject, Sendable {
 /// Protocol for download-related settings. Implemented by the app's SettingsState.
 @MainActor
 public protocol DownloadSettingsProviding: AnyObject, Sendable {
+    var downloadDirectory: URL { get }
     var activeDownloadTemplate: String { get }
     var incompleteDownloadDirectory: URL { get }
     var setFolderIcons: Bool { get }

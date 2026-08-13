@@ -43,7 +43,10 @@ struct HistoryRow: View {
     }
 
     private func refreshResolvedPath() {
-        resolvedPath = item.resolvedLocalPath
+        resolvedPath = item.resolvedLocalPath(
+            downloadDirectory: appState.settings.downloadLocation,
+            template: appState.settings.activeDownloadTemplate
+        )
     }
 
     var body: some View {

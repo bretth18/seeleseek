@@ -38,6 +38,69 @@ struct DownloadPathTests {
         #expect(result == "Daft Punk - Discovery/01 One More Time.mp3")
     }
 
+    @Test("Folder template keeps only the containing folder")
+    func testFolderOnly() {
+        let result = DownloadManager.resolveDownloadPath(
+            soulseekPath: "@@music\\Daft Punk\\Discovery\\01 One More Time.mp3",
+            username: "cooldj",
+            template: "{folder}/{filename}"
+        )
+        #expect(result == "Discovery/01 One More Time.mp3")
+    }
+
+    @Test("full-path token is the current spelling of the legacy folders token")
+    func testFullPathAlias() {
+        let path = "@@music\\Daft Punk\\Discovery\\01 One More Time.mp3"
+        let legacy = DownloadManager.resolveDownloadPath(soulseekPath: path, username: "cooldj", template: "{folders}/{filename}")
+        let current = DownloadManager.resolveDownloadPath(soulseekPath: path, username: "cooldj", template: "{full-path}/{filename}")
+        #expect(legacy == current)
+        #expect(current == "Daft Punk/Discovery/01 One More Time.mp3")
+    }
+
+    /// `{folder}` is a prefix of `{folders}`; a naive pass leaves a stray "s".
+    @Test("folder and folders tokens coexist in one template")
+    func testFolderTokenPrefixCollision() {
+        let result = DownloadManager.resolveDownloadPath(
+            soulseekPath: "@@music\\Daft Punk\\Discovery\\01 One More Time.mp3",
+            username: "cooldj",
+            template: "{folders}/{folder}/{filename}"
+        )
+        #expect(result == "Daft Punk/Discovery/Discovery/01 One More Time.mp3")
+    }
+
+    /// A value that looks like a token is data, not another token to expand.
+    @Test("Token-shaped metadata values are not re-substituted")
+    func testValuesAreNotRecursivelySubstituted() {
+        let metadata = AudioFileMetadata(artist: "{album}", album: "Real Album", title: nil)
+        let result = DownloadManager.resolveDownloadPath(
+            soulseekPath: "@@music\\X\\Y\\01 track.mp3",
+            username: "cooldj",
+            template: "{artist}/{album}/{filename}",
+            metadata: metadata
+        )
+        #expect(result == "{album}/Real Album/01 track.mp3")
+    }
+
+    @Test("Unknown tokens are left untouched")
+    func testUnknownTokenPreserved() {
+        let result = DownloadManager.resolveDownloadPath(
+            soulseekPath: "@@music\\Daft Punk\\Discovery\\01 track.mp3",
+            username: "cooldj",
+            template: "{bitrate}/{folder}/{filename}"
+        )
+        #expect(result == "{bitrate}/Discovery/01 track.mp3")
+    }
+
+    @Test("Unbalanced brace does not swallow the rest of the template")
+    func testUnbalancedBrace() {
+        let result = DownloadManager.resolveDownloadPath(
+            soulseekPath: "@@music\\Daft Punk\\Discovery\\01 track.mp3",
+            username: "cooldj",
+            template: "{folder/{filename}"
+        )
+        #expect(result == "{folder/01 track.mp3")
+    }
+
     @Test("Flat template (filename only)")
     func testFlat() {
         let result = DownloadManager.resolveDownloadPath(
