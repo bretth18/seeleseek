@@ -2649,29 +2649,11 @@ public final class NetworkClient {
             throw lastError
         }
         if isIndirect {
-            try await finalizeIndirectPeerConnection(connection)
+            try await connection.finalizeIndirectPeerConnection()
         } else {
             cancelPendingBrowse(token: token)
         }
         return connection
-    }
-
-    /// Bring a pierced P socket up to parity with a direct one.
-    func finalizeIndirectPeerConnection(_ connection: PeerConnection) async throws {
-        // PierceFirewall stops the receive loop assuming file-transfer
-        // mode. P connections need it resumed for peer messages.
-        await connection.resumeReceivingForPeerConnection()
-
-        // The incoming PierceFirewall is the handshake for an indirect
-        // connection. Keep this validation scoped to that path; direct
-        // connections are initialized by the PeerInit we send.
-        try await connection.waitForPeerHandshake(timeout: .seconds(5))
-
-        // A pierced socket never carries a PeerInit in either direction,
-        // so neither of PeerConnection's advertisement triggers fires for
-        // us — without this the piercer learns nothing of our extensions
-        // and can never initiate an extension request on this socket.
-        try? await connection.sendExtendedClientInfo()
     }
 
     // MARK: - SeeleSeek Artwork Request Handling

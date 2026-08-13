@@ -470,20 +470,14 @@ struct StandardPeerCodeRegressionTests {
 
 // MARK: - Receipt Handling (misbehaving peers)
 
-/// Behavior of a live connection receiving code 10000, per the PR #79 review:
-/// no reply loop, no mid-socket capability flapping, and fail-closed handling
-/// of malformed or spammed advertisements.
+/// Live-connection behavior for code 10000: no reply loop, no mid-socket
+/// capability flapping, fail-closed on malformed or spammed advertisements.
 @Suite("ExtendedClientInfo Receipt Handling")
 struct ExtendedClientInfoReceiptTests {
 
     /// Payload (frame stripped) of an advertisement, full set by default.
-    private func payload(advertising: [ExtendedClientInfoCode]? = nil) -> Data {
-        let message = if let advertising {
-            MessageBuilder.extendedClientInfoMessage(advertising: advertising)
-        } else {
-            MessageBuilder.extendedClientInfoMessage()
-        }
-        return Data(message[8...])
+    private func payload(advertising: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised) -> Data {
+        Data(MessageBuilder.extendedClientInfoMessage(advertising: advertising)[8...])
     }
 
     private func makePeer() -> PeerConnection {
@@ -496,7 +490,6 @@ struct ExtendedClientInfoReceiptTests {
         await peer._handleExtendedClientInfoForTest(payload())
         #expect(await peer.supports(.artworkRequest))
 
-        // Re-advertising a smaller set must not flap capabilities mid-socket.
         await peer._handleExtendedClientInfoForTest(payload(advertising: [.extendedClientInfo]))
         #expect(await peer.supports(.artworkRequest), "capabilities must not change mid-connection")
         #expect(await !peer.extensionsMisbehaving, "a single re-send is tolerated, not punished")
@@ -514,7 +507,7 @@ struct ExtendedClientInfoReceiptTests {
     @Test("Spamming advertisements marks the peer misbehaving and drops extensions")
     func spamMarksMisbehaving() async {
         let peer = makePeer()
-        for _ in 0...PeerConnection.maxExtendedClientInfoReceipts {
+        for _ in 0...PeerConnection.maxExtendedClientInfoResends {
             await peer._handleExtendedClientInfoForTest(payload())
         }
         #expect(await peer.extensionsMisbehaving)
@@ -629,14 +622,13 @@ struct ExtendedClientInfoWireTests {
         try await peer.connect()
         try await peer.sendPeerInit(username: "us")
 
-        // Wait until both inbound advertisements were processed (first one
-        // flips supports; give the second a beat to drain) before the sentinel.
+        // The resend counter observes the second advertisement exactly, so
+        // both are guaranteed processed before the sentinel goes out.
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while await !peer.supports(.artworkRequest), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
+        while await peer.extendedClientInfoResends < 1, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
         }
         #expect(await peer.supports(.artworkRequest), "valid inbound advertisement must be recorded")
-        try await Task.sleep(for: .milliseconds(200))
         try await peer.queueDownload(filename: "Music\\a.mp3")
 
         let afterAdvertisements = try await fakePeer.value
@@ -644,9 +636,8 @@ struct ExtendedClientInfoWireTests {
                 "nothing but the sentinel may follow — an ECI reply here means a ping/pong loop")
     }
 
-    /// Pierced sockets carry no PeerInit in either direction, so neither of
-    /// PeerConnection's built-in advertisement triggers fires. The indirect
-    /// finalize step is the only chance to tell the piercer what we speak.
+    /// Pierced sockets carry no PeerInit in either direction; the finalize
+    /// step is the only chance to tell the piercer what we speak.
     @Test("Indirect finalize advertises our extensions on the pierced socket", .timeLimit(.minutes(1)))
     func indirectFinalizeAdvertises() async throws {
         let (listener, inbound, port) = try await Self.startFakePeer()
@@ -666,9 +657,7 @@ struct ExtendedClientInfoWireTests {
         let peer = PeerConnection(peerInfo: .init(username: "piercer", ip: "127.0.0.1", port: Int(port)))
         defer { Task { await peer.disconnect() } }
         try await peer.connect()
-
-        let client = NetworkClient()
-        try await client.finalizeIndirectPeerConnection(peer)
+        try await peer.finalizeIndirectPeerConnection()
 
         let received = try await fakePiercer.value
         #expect(received == expected, "the piercer must learn our capabilities")

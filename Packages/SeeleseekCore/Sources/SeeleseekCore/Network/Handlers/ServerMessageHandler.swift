@@ -518,12 +518,7 @@ public final class ServerMessageHandler {
             logger.debug("connectToPeerThrottled: connection established, sending PierceFirewall...")
 
             try await connection.sendPierceFirewall()
-            // Announce ourselves as a SeeleSeek client on P-type sockets only.
-            // F-type flips to raw file-transfer bytes after PierceFirewall and
-            // would misinterpret an extra 13-byte message as file data.
-            if connectionType == "P" {
-                try? await connection.sendExtendedClientInfo()
-            } else if connectionType == "F" {
+            if connectionType == "F" {
                 // This is the downloader side of an indirect F connection.
                 // The uploader will now send the raw 4-byte FileTransferInit
                 // token, so remove the socket from the framed peer pool and

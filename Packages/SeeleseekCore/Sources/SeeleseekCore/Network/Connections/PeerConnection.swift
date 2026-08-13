@@ -92,17 +92,16 @@ public actor PeerConnection {
     // SeeleSeek extension state
     private(set) var extendedClientInfo: ExtendedClientInfo?
 
-    /// The protocol allows exactly one advertisement per socket, but a hostile
-    /// peer can resend forever; each receipt past the first is a strike, and
-    /// past this many the peer is marked misbehaving.
-    static let maxExtendedClientInfoReceipts = 3
-    private var extendedClientInfoReceipts = 0
+    /// The protocol allows exactly one advertisement per socket; re-sends
+    /// beyond this mark the peer misbehaving.
+    static let maxExtendedClientInfoResends = 3
+    private(set) var extendedClientInfoResends = 0
 
-    /// Sticky for the socket's lifetime. Once set, `extendedClientInfo` is
-    /// cleared and stays nil, so `supports()` fails closed and every gated
-    /// extension send is refused — a peer that garbles or spams the handshake
-    /// doesn't get to keep negotiating on the same socket.
+    /// Sticky for the socket's lifetime; once set, `extendedClientInfo` stays
+    /// nil so `supports()` fails closed.
     private(set) var extensionsMisbehaving = false
+
+    private var hasAdvertisedExtensions = false
 
     /// Authoritative capability gate. Per-socket and always current, unlike
     /// the pool's sticky per-username cache, which peers may invalidate at any
@@ -461,19 +460,22 @@ public actor PeerConnection {
         handshakeComplete = true
         logger.debug("PeerInit sent, handshake marked complete")
 
-        // Send SeeleSeek handshake so the peer knows we support extensions
-        try? await sendExtendedClientInfo()
+        await advertiseExtensionsIfNeeded()
     }
 
-    /// Advertise our extension codes (code 10000). Peers that do not implement
-    /// it drop it as an unknown code. Only safe on P-type sockets — F-type
-    /// connections switch to raw file-transfer bytes after init and would
-    /// misinterpret this message as file data.
+    /// Single choke point for advertising our extension codes (code 10000),
+    /// fired from every moment a socket is affirmed P-type. Stored-type .peer
+    /// only: F sockets switch to raw transfer bytes after init and would
+    /// deliver this as file data, D sockets speak the distributed protocol.
+    /// Inbound sockets store .peer regardless of wire type, so the
+    /// PeerInit-receipt caller must additionally check the parsed type.
     ///
-    /// Deliberately uses plain `send` rather than `send(extension:_:)` — this
-    /// is the bootstrap, sent before either side has advertised anything.
-    public func sendExtendedClientInfo() async throws {
-        try await send(MessageBuilder.extendedClientInfoMessage())
+    /// Uses plain `send` rather than `send(extension:_:)` — this is the
+    /// bootstrap, sent before either side has advertised anything.
+    private func advertiseExtensionsIfNeeded() async {
+        guard !hasAdvertisedExtensions, connectionType == .peer else { return }
+        hasAdvertisedExtensions = true
+        try? await send(MessageBuilder.extendedClientInfoMessage())
     }
 
     /// Send an extension message, refusing if the peer never advertised the
@@ -492,6 +494,7 @@ public actor PeerConnection {
         // Mark handshake as complete from our side - peer will send peer messages (not init messages) now
         handshakeComplete = true
         logger.debug("PierceFirewall sent successfully to \(self.peerInfo.username), handshake complete")
+        await advertiseExtensionsIfNeeded()
     }
 
     // MARK: - Peer Messages
@@ -1109,7 +1112,11 @@ public actor PeerConnection {
     /// Resume receiving for P connections (browse) after PierceFirewall
     /// PierceFirewall normally stops the receive loop for file transfers,
     /// but P connections need to continue receiving peer messages (SharesReply, etc.)
-    public func resumeReceivingForPeerConnection() {
+    public func resumeReceivingForPeerConnection() async {
+        // A pierced socket never carries a PeerInit in either direction, so
+        // this promotion to P-mode is its only advertisement trigger.
+        await advertiseExtensionsIfNeeded()
+
         guard shouldStopReceiving else {
             logger.debug("[\(self.peerInfo.username)] resumeReceivingForPeerConnection: already receiving")
             return
@@ -1134,6 +1141,14 @@ public actor PeerConnection {
         fileBufferDecodedPrefixLength = 0
 
         startReceiving()
+    }
+
+    /// Bring a pierced P socket up to parity with a direct one — the incoming
+    /// PierceFirewall is its handshake, and PierceFirewall stops the receive
+    /// loop assuming file-transfer mode.
+    public func finalizeIndirectPeerConnection() async throws {
+        await resumeReceivingForPeerConnection()
+        try await waitForPeerHandshake(timeout: .seconds(5))
     }
 
     private func startReceiving() {
@@ -1539,10 +1554,11 @@ public actor PeerConnection {
                 } else {
                     // Regular peer connection - notify the pool
                     eventContinuation.yield(.usernameDiscovered(username: username, token: peerToken))
-                    // Reciprocate the SeeleSeek handshake so the initiator learns
-                    // we're also a SeeleSeek client. Only on P-type sockets —
-                    // F-type is handled above and returns before this point.
-                    try? await sendExtendedClientInfo()
+                    // Gate on the parsed wire type, not the stored one:
+                    // inbound sockets store .peer even for a "D" PeerInit.
+                    if connType == "P" {
+                        await advertiseExtensionsIfNeeded()
+                    }
                 }
             }
             handshakeComplete = true
@@ -1651,30 +1667,22 @@ public actor PeerConnection {
     private func handleExtendedClientInfo(_ payload: Data) {
         guard !extensionsMisbehaving else { return }
 
-        extendedClientInfoReceipts += 1
-        if extendedClientInfoReceipts > Self.maxExtendedClientInfoReceipts {
-            logger.warning("[\(self.peerUsername)] ExtendedClientInfo re-sent \(self.extendedClientInfoReceipts) times, marking peer misbehaving and dropping extensions")
-            markExtensionsMisbehaving()
-            return
-        }
-
         guard let info = MessageParser.parseExtendedClientInfo(payload) else {
-            // TCP rules out corruption in transit, so a malformed payload at
-            // this code means a buggy or hostile implementation — fail closed
-            // for the rest of the socket rather than trusting a later retry.
+            // Malformed here means a buggy or hostile peer, not line noise —
+            // fail closed for the rest of the socket.
             logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, marking peer misbehaving")
             markExtensionsMisbehaving()
             return
         }
 
-        // First advertisement wins. A re-send is at best redundant and at
-        // worst capability-flapping; either way it never replaces what was
-        // negotiated, so a strike is recorded above and the payload dropped.
+        // First advertisement wins; capabilities never change mid-socket.
         guard extendedClientInfo == nil else {
-            if extendedClientInfo == info {
-                logger.debug("[\(self.peerUsername)] ExtendedClientInfo re-sent identically, ignoring")
-            } else {
-                logger.warning("[\(self.peerUsername)] ExtendedClientInfo changed mid-connection, keeping original advertisement")
+            extendedClientInfoResends += 1
+            if extendedClientInfoResends >= Self.maxExtendedClientInfoResends {
+                logger.warning("[\(self.peerUsername)] ExtendedClientInfo re-sent \(self.extendedClientInfoResends) times, marking peer misbehaving")
+                markExtensionsMisbehaving()
+            } else if extendedClientInfo != info {
+                logger.warning("[\(self.peerUsername)] ExtendedClientInfo changed mid-connection, keeping original")
             }
             return
         }
