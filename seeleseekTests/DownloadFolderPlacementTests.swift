@@ -16,6 +16,14 @@ struct DownloadFolderPlacementTests {
         return root
     }
 
+    private func makeManager(root: URL, template: String) -> (manager: DownloadManager, reader: MockMetadataReader) {
+        let manager = DownloadManager()
+        manager._setSettingsForTest(MockDownloadSettings(downloadLocation: root, template: template))
+        let reader = MockMetadataReader()
+        manager._setMetadataReaderForTest(reader)
+        return (manager, reader)
+    }
+
     /// Placement runs in detached tasks, so poll rather than sleep a fixed amount.
     private func waitUntil(_ condition: () -> Bool) async -> Bool {
         for _ in 0..<200 {
@@ -36,9 +44,7 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let manager = DownloadManager()
-        let settings = MockDownloadSettings(downloadDirectory: root, template: "{folder}/{filename}")
-        manager._setSettingsForTest(settings)
+        let (manager, _) = makeManager(root: root, template: "{folder}/{filename}")
 
         let dest = manager._destinationForTest(soulseekPath: #"\#(folder)\01 track.mp3"#, username: user)
         #expect(dest == root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3"))
@@ -50,11 +56,7 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let manager = DownloadManager()
-        let settings = MockDownloadSettings(downloadDirectory: root, template: "{artist} - {album}/{filename}")
-        manager._setSettingsForTest(settings)
-        let reader = MockMetadataReader()
-        manager._setMetadataReaderForTest(reader)
+        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
         let tracking = MockTransferTracking()
         manager._setTransferStateForTest(tracking)
 
@@ -121,11 +123,7 @@ struct DownloadFolderPlacementTests {
             try? FileManager.default.removeItem(at: elsewhere)
         }
 
-        let manager = DownloadManager()
-        let settings = MockDownloadSettings(downloadDirectory: root, template: "{artist} - {album}/{filename}")
-        manager._setSettingsForTest(settings)
-        let reader = MockMetadataReader()
-        manager._setMetadataReaderForTest(reader)
+        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
 
         // Two levels deep under the *old* root, so a depth-only walk escapes.
         let strandedDir = elsewhere.appendingPathComponent("Old Root/Milton - 1988 - Eu Sou O Rio")
@@ -148,11 +146,7 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let manager = DownloadManager()
-        let settings = MockDownloadSettings(downloadDirectory: root, template: "{artist} - {album}/{filename}")
-        manager._setSettingsForTest(settings)
-        let reader = MockMetadataReader()
-        manager._setMetadataReaderForTest(reader)
+        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
 
         let soulseek = #"\#(folder)\10 track.mp3"#
         let file = root.appendingPathComponent("Milton - 1988 - Eu Sou O Rio/10 track.mp3")
@@ -171,9 +165,7 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let manager = DownloadManager()
-        let settings = MockDownloadSettings(downloadDirectory: root, template: "{folder}/{filename}")
-        manager._setSettingsForTest(settings)
+        let (manager, _) = makeManager(root: root, template: "{folder}/{filename}")
 
         let soulseek = #"\#(folder)\01 track.mp3"#
         let file = root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3")

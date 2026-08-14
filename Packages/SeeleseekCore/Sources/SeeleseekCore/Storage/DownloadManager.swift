@@ -69,6 +69,9 @@ public final class DownloadManager {
     /// Completed files parked at their folder-derived path, waiting for a
     /// sibling with usable tags to claim the real directory.
     private var pendingFolderJoins: [String: [PlacedFile]] = [:]
+    /// Root + template the claims above were made under; see
+    /// `invalidateClaimsOnSettingsChange`.
+    private var folderClaimContext = ""
     /// Last root passed to `createDirectory`, so the syscall runs on a
     /// settings change rather than on every path computation.
     private var createdDownloadDir: URL?
@@ -1386,7 +1389,7 @@ public final class DownloadManager {
             .appendingPathComponent("SeeleSeek")
 
     private func getDownloadDirectory() -> URL {
-        let downloadsDir = settings?.downloadDirectory ?? Self.defaultDownloadDirectory
+        let downloadsDir = settings?.downloadLocation ?? Self.defaultDownloadDirectory
         if createdDownloadDir == downloadsDir { return downloadsDir }
 
         do {
@@ -1413,12 +1416,8 @@ public final class DownloadManager {
     }
 
     private func computeDestPath(for soulseekPath: String, username: String) -> URL {
-        let template = activeTemplate
-
-        // A claim only applies while the template that produced it is in
-        // effect: switching to a path-based one must not keep grouping.
-        if Self.isTagBased(template),
-           let claimed = folderDestinations[Self.sourceFolderKey(soulseekPath: soulseekPath, username: username)] {
+        invalidateClaimsOnSettingsChange()
+        if let claimed = folderDestinations[Self.sourceFolderKey(soulseekPath: soulseekPath, username: username)] {
             return claimed.appendingPathComponent(Self.sanitizedLeafName(of: soulseekPath))
         }
 
@@ -1426,13 +1425,22 @@ public final class DownloadManager {
             downloadDirectory: getDownloadDirectory(),
             soulseekPath: soulseekPath,
             username: username,
-            template: template
+            template: activeTemplate
         )
     }
 
-    private var activeTemplate: String {
-        let template = settings?.activeDownloadTemplate ?? Self.fallbackTemplate
-        return template.isEmpty ? Self.fallbackTemplate : template
+    private var activeTemplate: String { settings?.activeDownloadTemplate ?? Self.fallbackTemplate }
+
+    /// A claim is only meaningful under the settings that produced it —
+    /// without this, changing the download location or template keeps routing
+    /// a folder's remaining files to the old destination.
+    private func invalidateClaimsOnSettingsChange() {
+        let root = settings?.downloadLocation ?? Self.defaultDownloadDirectory
+        let context = "\(root.path)\u{0}\(activeTemplate)"
+        guard context != folderClaimContext else { return }
+        folderClaimContext = context
+        folderDestinations.removeAll(keepingCapacity: true)
+        pendingFolderJoins.removeAll(keepingCapacity: true)
     }
 
     public static let fallbackTemplate = "{folder}/{filename}"
@@ -1802,6 +1810,7 @@ public final class DownloadManager {
         username: String,
         transferId: UUID
     ) {
+        invalidateClaimsOnSettingsChange()
         let template = activeTemplate
         guard Self.isTagBased(template) else { return }
 
@@ -1850,6 +1859,9 @@ public final class DownloadManager {
     /// Must not suspend: concurrent completions from one folder would
     /// otherwise both claim a destination.
     private func placeInFolder(key: String, candidate: URL?, file: PlacedFile) {
+        // Reached via a detached tag-read, so settings may have changed
+        // since `organizeCompletedDownload` checked.
+        invalidateClaimsOnSettingsChange()
         // Both maps count toward the cap: a folder that never produces a
         // tagged file only ever grows `pendingFolderJoins`. Forgetting a
         // mapping just means a later folder re-decides its destination.
@@ -1872,7 +1884,13 @@ public final class DownloadManager {
 
     private func relocate(_ files: [PlacedFile], toDirectory directory: URL) {
         let moves = files.filter { $0.path.deletingLastPathComponent() != directory }
-        guard !moves.isEmpty else { return }
+        guard !moves.isEmpty else {
+            // Well-tagged shares often resolve to the folder-derived path, so
+            // nothing moves — but the icon pass must still run, since no
+            // later move ever will.
+            if let file = files.first { applyFolderArtworkIfNeeded(for: file.path) }
+            return
+        }
         let downloadDir = getDownloadDirectory()
 
         Task.detached { [weak self, logger, transferState = self.transferState] in

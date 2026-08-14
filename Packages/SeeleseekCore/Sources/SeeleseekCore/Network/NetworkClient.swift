@@ -2649,14 +2649,7 @@ public final class NetworkClient {
             throw lastError
         }
         if isIndirect {
-            // PierceFirewall stops the receive loop assuming file-transfer
-            // mode. P connections need it resumed for peer messages.
-            await connection.resumeReceivingForPeerConnection()
-
-            // The incoming PierceFirewall is the handshake for an indirect
-            // connection. Keep this validation scoped to that path; direct
-            // connections are initialized by the PeerInit we send.
-            try await connection.waitForPeerHandshake(timeout: .seconds(5))
+            try await connection.finalizeIndirectPeerConnection()
         } else {
             cancelPendingBrowse(token: token)
         }

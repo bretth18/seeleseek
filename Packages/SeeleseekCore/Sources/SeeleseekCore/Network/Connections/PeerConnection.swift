@@ -92,6 +92,17 @@ public actor PeerConnection {
     // SeeleSeek extension state
     private(set) var extendedClientInfo: ExtendedClientInfo?
 
+    /// The protocol allows exactly one advertisement per socket; re-sends
+    /// beyond this mark the peer misbehaving.
+    static let maxExtendedClientInfoResends = 3
+    private(set) var extendedClientInfoResends = 0
+
+    /// Sticky for the socket's lifetime; once set, `extendedClientInfo` stays
+    /// nil so `supports()` fails closed.
+    private(set) var extensionsMisbehaving = false
+
+    private var hasAdvertisedExtensions = false
+
     /// Authoritative capability gate. Per-socket and always current, unlike
     /// the pool's sticky per-username cache, which peers may invalidate at any
     /// time by re-advertising a different set.
@@ -449,19 +460,25 @@ public actor PeerConnection {
         handshakeComplete = true
         logger.debug("PeerInit sent, handshake marked complete")
 
-        // Send SeeleSeek handshake so the peer knows we support extensions
-        try? await sendExtendedClientInfo()
+        await advertiseExtensionsIfNeeded()
     }
 
-    /// Advertise our extension codes (code 10000). Peers that do not implement
-    /// it drop it as an unknown code. Only safe on P-type sockets — F-type
-    /// connections switch to raw file-transfer bytes after init and would
-    /// misinterpret this message as file data.
+    /// Single choke point for advertising our extension codes (code 10000),
+    /// fired from every moment a socket is affirmed P-type. Stored-type .peer
+    /// only: F sockets switch to raw transfer bytes after init and would
+    /// deliver this as file data, D sockets speak the distributed protocol.
+    /// Inbound sockets store .peer regardless of wire type, so the
+    /// PeerInit-receipt caller must additionally check the parsed type.
     ///
-    /// Deliberately uses plain `send` rather than `send(extension:_:)` — this
-    /// is the bootstrap, sent before either side has advertised anything.
-    public func sendExtendedClientInfo() async throws {
-        try await send(MessageBuilder.extendedClientInfoMessage())
+    /// Uses plain `send` rather than `send(extension:_:)` — this is the
+    /// bootstrap, sent before either side has advertised anything.
+    private func advertiseExtensionsIfNeeded() async {
+        guard !hasAdvertisedExtensions, connectionType == .peer else { return }
+        // Set before the suspension so a reentrant trigger can't double-send;
+        // reset on failure so a surviving socket can retry from a later one.
+        hasAdvertisedExtensions = true
+        do { try await send(MessageBuilder.extendedClientInfoMessage()) }
+        catch { hasAdvertisedExtensions = false }
     }
 
     /// Send an extension message, refusing if the peer never advertised the
@@ -480,6 +497,7 @@ public actor PeerConnection {
         // Mark handshake as complete from our side - peer will send peer messages (not init messages) now
         handshakeComplete = true
         logger.debug("PierceFirewall sent successfully to \(self.peerInfo.username), handshake complete")
+        await advertiseExtensionsIfNeeded()
     }
 
     // MARK: - Peer Messages
@@ -1097,7 +1115,11 @@ public actor PeerConnection {
     /// Resume receiving for P connections (browse) after PierceFirewall
     /// PierceFirewall normally stops the receive loop for file transfers,
     /// but P connections need to continue receiving peer messages (SharesReply, etc.)
-    public func resumeReceivingForPeerConnection() {
+    public func resumeReceivingForPeerConnection() async {
+        // A pierced socket never carries a PeerInit in either direction, so
+        // this promotion to P-mode is its only advertisement trigger.
+        await advertiseExtensionsIfNeeded()
+
         guard shouldStopReceiving else {
             logger.debug("[\(self.peerInfo.username)] resumeReceivingForPeerConnection: already receiving")
             return
@@ -1122,6 +1144,14 @@ public actor PeerConnection {
         fileBufferDecodedPrefixLength = 0
 
         startReceiving()
+    }
+
+    /// Bring a pierced P socket up to parity with a direct one — the incoming
+    /// PierceFirewall is its handshake, and PierceFirewall stops the receive
+    /// loop assuming file-transfer mode.
+    public func finalizeIndirectPeerConnection() async throws {
+        await resumeReceivingForPeerConnection()
+        try await waitForPeerHandshake(timeout: .seconds(5))
     }
 
     private func startReceiving() {
@@ -1527,10 +1557,11 @@ public actor PeerConnection {
                 } else {
                     // Regular peer connection - notify the pool
                     eventContinuation.yield(.usernameDiscovered(username: username, token: peerToken))
-                    // Reciprocate the SeeleSeek handshake so the initiator learns
-                    // we're also a SeeleSeek client. Only on P-type sockets —
-                    // F-type is handled above and returns before this point.
-                    try? await sendExtendedClientInfo()
+                    // Gate on the parsed wire type, not the stored one:
+                    // inbound sockets store .peer even for a "D" PeerInit.
+                    if connType == "P" {
+                        await advertiseExtensionsIfNeeded()
+                    }
                 }
             }
             handshakeComplete = true
@@ -1637,14 +1668,41 @@ public actor PeerConnection {
     /// inferring capabilities from a version byte is the exact practice this
     /// handshake replaces.
     private func handleExtendedClientInfo(_ payload: Data) {
+        guard !extensionsMisbehaving else { return }
+
         guard let info = MessageParser.parseExtendedClientInfo(payload) else {
-            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, ignoring")
+            // Malformed here means a buggy or hostile peer, not line noise —
+            // fail closed for the rest of the socket.
+            logger.warning("[\(self.peerUsername)] ExtendedClientInfo malformed or unknown revision, marking peer misbehaving")
+            markExtensionsMisbehaving()
+            return
+        }
+
+        // First advertisement wins; capabilities never change mid-socket.
+        guard extendedClientInfo == nil else {
+            extendedClientInfoResends += 1
+            if extendedClientInfoResends >= Self.maxExtendedClientInfoResends {
+                logger.warning("[\(self.peerUsername)] ExtendedClientInfo re-sent \(self.extendedClientInfoResends) times, marking peer misbehaving")
+                markExtensionsMisbehaving()
+            } else if extendedClientInfo != info {
+                logger.warning("[\(self.peerUsername)] ExtendedClientInfo changed mid-connection, keeping original")
+            }
             return
         }
 
         extendedClientInfo = info
         logger.info("[\(self.peerUsername)] Extensions: \(info.capabilities.keys.sorted().joined(separator: ", "))")
         eventContinuation.yield(.extendedClientInfoDiscovered(info))
+    }
+
+    private func markExtensionsMisbehaving() {
+        extensionsMisbehaving = true
+        extendedClientInfo = nil
+    }
+
+    /// Test seam: drive the private 10000 handler with a raw payload.
+    func _handleExtendedClientInfoForTest(_ payload: Data) {
+        handleExtendedClientInfo(payload)
     }
 
     /// Handle artwork request (code 10001) — peer wants album art for a file.
