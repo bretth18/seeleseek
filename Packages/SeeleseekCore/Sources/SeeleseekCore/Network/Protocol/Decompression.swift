@@ -14,8 +14,11 @@ public enum DecompressionError: Error {
 /// Standalone zlib/deflate decompression utility.
 /// Mirrors the logic in PeerConnection but is testable in isolation.
 public enum ZlibDecompression {
-    /// Maximum decompressed output size (50 MB)
-    nonisolated static let maxDecompressedSize = 50 * 1024 * 1024
+    /// Maximum decompressed output size. Real share lists from large sharers
+    /// exceed 50 MiB decompressed (seen in the field at ~1.04:1 ratio), so
+    /// this bounds hostile bombs, not legitimate traffic — keep it well above
+    /// the 150 MiB framed-message receive cap times typical list ratios.
+    nonisolated static let maxDecompressedSize = 256 * 1024 * 1024
     /// Maximum allowed compression ratio before flagging as suspicious
     nonisolated static let maxCompressionRatio = 1000
 

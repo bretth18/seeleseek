@@ -82,78 +82,65 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
     /// Build a hierarchical tree from flat file paths
     /// Input: Flat array of files with paths like "@@share\Folder\Subfolder\file.mp3"
     /// Output: Tree structure with directories containing children
+    ///
+    /// Adjacency is precomputed in the discovery pass. Mega-shares are real
+    /// (250k+ folders, 2M+ files seen in the field), so anything that scans
+    /// all folders per folder is minutes of CPU, not a constant factor.
     public nonisolated static func buildTree(from flatFiles: [SharedFile]) -> [SharedFile] {
-        // Use a dictionary to track folders by their full path
-        var folderMap: [String: (id: UUID, children: [SharedFile])] = [:]
+        var folderIDs: [String: UUID] = [:]
+        var filesByFolder: [String: [SharedFile]] = [:]
+        var subfolders: [String: [String]] = [:]
         var rootFolders: [String] = []
 
         for file in flatFiles {
             let pathComponents = file.filename.split(separator: "\\").map(String.init)
             guard !pathComponents.isEmpty else { continue }
 
-            // Build folder hierarchy
+            guard pathComponents.count > 1 else {
+                // File at root level (unusual but handle it): keep the
+                // longstanding behavior of surfacing it as an empty folder.
+                if folderIDs[file.filename] == nil {
+                    folderIDs[file.filename] = UUID()
+                    rootFolders.append(file.filename)
+                }
+                continue
+            }
+
+            // Register any not-yet-seen folders along the path
             var currentPath = ""
             for (index, component) in pathComponents.dropLast().enumerated() {
-                _ = currentPath
+                let parentPath = currentPath
                 currentPath = currentPath.isEmpty ? component : "\(currentPath)\\\(component)"
 
-                if folderMap[currentPath] == nil {
-                    folderMap[currentPath] = (id: UUID(), children: [])
-
-                    // Track root folders
-                    if index == 0 && !rootFolders.contains(currentPath) {
+                if folderIDs[currentPath] == nil {
+                    folderIDs[currentPath] = UUID()
+                    if index == 0 {
                         rootFolders.append(currentPath)
+                    } else {
+                        subfolders[parentPath, default: []].append(currentPath)
                     }
                 }
             }
-
-            // Add file to its parent folder
-            if pathComponents.count > 1 {
-                let parentPath = pathComponents.dropLast().joined(separator: "\\")
-                folderMap[parentPath]?.children.append(file)
-            } else {
-                // File at root level (unusual but handle it)
-                if !rootFolders.contains(file.filename) {
-                    rootFolders.append(file.filename)
-                    folderMap[file.filename] = (id: UUID(), children: [])
-                }
-            }
+            filesByFolder[currentPath, default: []].append(file)
         }
 
-        // Build the tree recursively
-        func buildFolder(path: String, name: String) -> SharedFile {
-            guard let folderData = folderMap[path] else {
-                return SharedFile(filename: path, isDirectory: true)
-            }
+        func buildFolder(path: String) -> SharedFile {
+            var children = (subfolders[path] ?? []).map(buildFolder)
+            children.append(contentsOf: filesByFolder[path] ?? [])
 
-            // Find child folders
-            var children: [SharedFile] = []
-
-            // Add subfolders
-            for (childPath, _) in folderMap {
-                // Check if childPath is a direct child of path
-                if childPath.hasPrefix(path + "\\") {
-                    let remaining = String(childPath.dropFirst(path.count + 1))
-                    if !remaining.contains("\\") {
-                        // Direct child folder
-                        let childName = remaining
-                        children.append(buildFolder(path: childPath, name: childName))
+            // Sort: folders first, then files, alphabetically. Keys are
+            // cached — displayName re-splits the path per call, which the
+            // comparator would otherwise do millions of times.
+            children = children
+                .map { (file: $0, key: $0.displayName) }
+                .sorted { a, b in
+                    if a.file.isDirectory != b.file.isDirectory {
+                        return a.file.isDirectory
                     }
+                    return a.key.localizedCaseInsensitiveCompare(b.key) == .orderedAscending
                 }
-            }
+                .map(\.file)
 
-            // Add files (already in folderData.children)
-            children.append(contentsOf: folderData.children)
-
-            // Sort: folders first, then files, alphabetically
-            children.sort { a, b in
-                if a.isDirectory != b.isDirectory {
-                    return a.isDirectory
-                }
-                return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
-            }
-
-            // Calculate total size and file count for folder
             let totalSize = children.reduce(0) { $0 + $1.size }
             let totalFiles = children.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
 
@@ -166,7 +153,7 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
             let isFolderPrivate = !children.isEmpty && children.allSatisfy { $0.isPrivate }
 
             return SharedFile(
-                id: folderData.id,
+                id: folderIDs[path] ?? UUID(),
                 filename: path,
                 size: totalSize,
                 isDirectory: true,
@@ -176,13 +163,6 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
             )
         }
 
-        // Build root folders
-        var result: [SharedFile] = []
-        for rootPath in rootFolders.sorted() {
-            let name = rootPath.split(separator: "\\").last.map(String.init) ?? rootPath
-            result.append(buildFolder(path: rootPath, name: name))
-        }
-
-        return result
+        return rootFolders.sorted().map(buildFolder)
     }
 }

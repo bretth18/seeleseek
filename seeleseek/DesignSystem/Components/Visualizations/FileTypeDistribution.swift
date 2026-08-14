@@ -2,25 +2,43 @@ import SwiftUI
 import SeeleseekCore
 
 struct FileTypeDistribution: View {
-    let files: [SharedFile]
+    struct Entry: Equatable, Sendable {
+        let type: String
+        let count: Int
+        let size: UInt64
+    }
 
-    private var distribution: [(type: String, count: Int, size: UInt64, color: Color)] {
+    /// Top extensions by size, with the total over ALL files (so the bar
+    /// leaves a gap for types beyond the top 8). Precomputed off-main by the
+    /// caller: aggregating in `body` walks every file per render, which
+    /// beachballs on 2M-file shares.
+    let entries: [Entry]
+    let allFilesSize: UInt64
+
+    static func summarize(files: [SharedFile]) -> (entries: [Entry], allFilesSize: UInt64) {
         var grouped: [String: (count: Int, size: UInt64)] = [:]
+        var total: UInt64 = 0
 
         for file in files {
             let ext = file.fileExtension.isEmpty ? "other" : file.fileExtension.lowercased()
             grouped[ext, default: (0, 0)].count += 1
             grouped[ext, default: (0, 0)].size += file.size
+            total += file.size
         }
 
-        return grouped
+        let top = grouped
             .sorted { $0.value.size > $1.value.size }
             .prefix(8)
-            .map { (type: $0.key, count: $0.value.count, size: $0.value.size, color: colorForType($0.key)) }
+            .map { Entry(type: $0.key, count: $0.value.count, size: $0.value.size) }
+        return (top, max(total, 1))
+    }
+
+    private var distribution: [(type: String, count: Int, size: UInt64, color: Color)] {
+        entries.map { (type: $0.type, count: $0.count, size: $0.size, color: colorForType($0.type)) }
     }
 
     private var totalSize: UInt64 {
-        max(files.reduce(0) { $0 + $1.size }, 1)
+        max(allFilesSize, 1)
     }
 
     var body: some View {
@@ -77,7 +95,7 @@ struct FileTypeDistribution: View {
 }
 
 #Preview {
-    FileTypeDistribution(files: [])
+    FileTypeDistribution(entries: [], allFilesSize: 1)
         .frame(width: 400)
         .padding()
         .background(SeeleColors.background)

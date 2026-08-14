@@ -1,7 +1,6 @@
 import Foundation
 import Network
 import os
-import Compression
 import Synchronization
 
 /// Manages a single peer-to-peer connection
@@ -1743,7 +1742,7 @@ public actor PeerConnection {
         // Shares are zlib compressed per protocol spec.
         let decompressed: Data
         do {
-            decompressed = try decompressZlib(data)
+            decompressed = try ZlibDecompression.decompress(data)
             logger.debug("[\(self.peerInfo.username)] Decompressed shares: \(data.count) -> \(decompressed.count) bytes")
         } catch {
             logger.error("[\(self.peerInfo.username)] Failed to decompress shares: \(error)")
@@ -1779,7 +1778,7 @@ public actor PeerConnection {
         var candidatePayloads: [(data: Data, wasCompressed: Bool)] = [(data, false)]
         if data.count > 4 {
             do {
-                let decompressed = try decompressZlib(data)
+                let decompressed = try ZlibDecompression.decompress(data)
                 logger.debug("[\(self.peerInfo.username)] Decompressed search reply from \(data.count) to \(decompressed.count) bytes")
                 candidatePayloads.insert((decompressed, true), at: 0)
             } catch {
@@ -1945,7 +1944,7 @@ public actor PeerConnection {
 
     private func handleFolderContentsReply(_ data: Data) async {
         // Folder contents are zlib compressed
-        guard let decompressed = try? decompressZlib(data) else {
+        guard let decompressed = try? ZlibDecompression.decompress(data) else {
             logger.error("Failed to decompress folder contents")
             return
         }
@@ -1990,115 +1989,6 @@ public actor PeerConnection {
         touchLastActivity()
     }
 
-    // MARK: - Zlib Decompression
-
-    private func decompressZlib(_ data: Data) throws -> Data {
-        // SoulSeek uses standard zlib format (RFC 1950):
-        // - 2-byte header
-        // - DEFLATE compressed data
-        // - 4-byte Adler-32 checksum
-        //
-        // Apple's COMPRESSION_ZLIB expects raw DEFLATE (RFC 1951) without header/footer.
-        // We need to strip the 2-byte header and 4-byte footer.
-
-        guard data.count > 6 else {
-            logger.debug("Decompression: data too short (\(data.count) bytes)")
-            throw PeerError.decompressionFailed
-        }
-
-        // Verify zlib header (first byte should have compression method 8 = deflate)
-        let cmf = data[data.startIndex]
-        let compressionMethod = cmf & 0x0F
-        #if DEBUG
-        let flg = data[data.startIndex + 1]
-        logger.debug("Decompression: CMF=0x\(String(format: "%02x", cmf)) FLG=0x\(String(format: "%02x", flg)) method=\(compressionMethod)")
-        #endif
-
-        guard compressionMethod == 8 else {
-            logger.debug("Not zlib format (method != 8), trying raw deflate")
-            // Not zlib format, try raw deflate
-            return try decompressRawDeflate(data)
-        }
-
-        // Strip zlib header (2 bytes) and Adler-32 checksum (4 bytes)
-        let deflateData = data.dropFirst(2).dropLast(4)
-        logger.debug("Stripped zlib header/footer: \(data.count) -> \(deflateData.count) bytes")
-
-        let result = try decompressRawDeflate(Data(deflateData))
-        #if DEBUG
-        let preview = result.prefix(20).map { String(format: "%02x", $0) }.joined(separator: " ")
-        logger.debug("Decompressed: \(deflateData.count) -> \(result.count) bytes, preview: \(preview)")
-        #endif
-
-        return result
-    }
-
-    private func decompressRawDeflate(_ data: Data) throws -> Data {
-        // SECURITY: Maximum decompressed size to prevent decompression bombs
-        let maxDecompressedSize = 50 * 1024 * 1024  // 50MB max
-        // SECURITY: Maximum compression ratio (normal zlib is ~10-50x, >1000x is suspicious)
-        let maxCompressionRatio = 1000
-
-        let decompressed = try data.withUnsafeBytes { sourceBuffer -> Data in
-            let sourceSize = data.count
-            guard let baseAddress = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
-                throw PeerError.decompressionFailed
-            }
-
-            // Start with a reasonable estimate, expand if needed
-            var destinationSize = min(max(sourceSize * 20, 65536), maxDecompressedSize)
-            var destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
-
-            var decodedSize = compression_decode_buffer(
-                &destinationBuffer,
-                destinationSize,
-                baseAddress,
-                sourceSize,
-                nil,
-                COMPRESSION_ZLIB
-            )
-
-            // If output buffer was too small, try with larger buffer (but capped)
-            if decodedSize == 0 || decodedSize == destinationSize {
-                destinationSize = min(sourceSize * 100, maxDecompressedSize)
-                // SECURITY: Check if we've hit the limit
-                guard destinationSize <= maxDecompressedSize else {
-                    logger.warning("SECURITY: Decompression size limit exceeded")
-                    throw PeerError.decompressionFailed
-                }
-                destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
-                decodedSize = compression_decode_buffer(
-                    &destinationBuffer,
-                    destinationSize,
-                    baseAddress,
-                    sourceSize,
-                    nil,
-                    COMPRESSION_ZLIB
-                )
-            }
-
-            guard decodedSize > 0 else {
-                throw PeerError.decompressionFailed
-            }
-
-            // SECURITY: Check compression ratio
-            let compressionRatio = decodedSize / max(sourceSize, 1)
-            if compressionRatio > maxCompressionRatio {
-                logger.warning("SECURITY: Suspicious compression ratio \(compressionRatio):1")
-                throw PeerError.decompressionFailed
-            }
-
-            // SECURITY: Final size check
-            guard decodedSize <= maxDecompressedSize else {
-                logger.warning("SECURITY: Decompressed size \(decodedSize) exceeds limit \(maxDecompressedSize)")
-                throw PeerError.decompressionFailed
-            }
-
-            return Data(destinationBuffer.prefix(decodedSize))
-        }
-
-        return decompressed
-    }
 }
 
 // MARK: - Types

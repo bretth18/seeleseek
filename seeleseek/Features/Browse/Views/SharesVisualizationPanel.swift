@@ -4,18 +4,21 @@ import SeeleseekCore
 struct SharesVisualizationPanel: View {
     let shares: UserShares
 
-    @State private var cachedAllFiles: [SharedFile]?
-    @State private var cachedAudioFiles: [SharedFile]?
-    @State private var cachedTopFiles: [(String, UInt64)]?
+    /// Everything the sections render, and nothing more. Holding the flat
+    /// file arrays here kept ~2 GB of structs alive in view state for
+    /// mega-shares; the arrays now live only inside the summarize pass.
+    struct Summary: Sendable {
+        let typeEntries: [FileTypeDistribution.Entry]
+        let typeTotalSize: UInt64
+        let bitrateBuckets: [BitrateDistribution.Bucket]
+        let hasAudio: Bool
+        let topFiles: [(String, UInt64)]
+        let treemapFiles: [SharedFile]
+        let hasFiles: Bool
+    }
+
+    @State private var summary: Summary?
     @State private var isComputing = false
-
-    private var allFiles: [SharedFile] {
-        cachedAllFiles ?? []
-    }
-
-    private var audioFiles: [SharedFile] {
-        cachedAudioFiles ?? []
-    }
 
     var body: some View {
         ScrollView {
@@ -31,20 +34,20 @@ struct SharesVisualizationPanel: View {
                             .foregroundStyle(SeeleColors.textTertiary)
                     }
                     .padding()
-                } else if cachedAllFiles != nil {
+                } else if let summary {
                     Divider().background(SeeleColors.surfaceSecondary)
-                    fileTypeSection
+                    fileTypeSection(summary)
                     Divider().background(SeeleColors.surfaceSecondary)
 
-                    if !audioFiles.isEmpty {
-                        bitrateSection
+                    if summary.hasAudio {
+                        bitrateSection(summary)
                         Divider().background(SeeleColors.surfaceSecondary)
                     }
 
-                    largestFilesSection
+                    largestFilesSection(summary)
 
-                    if !allFiles.isEmpty {
-                        treemapSection
+                    if summary.hasFiles {
+                        treemapSection(summary)
                     }
                 }
             }
@@ -55,39 +58,45 @@ struct SharesVisualizationPanel: View {
             computeStatsIfNeeded()
         }
         .onChange(of: shares.id) { _, _ in
-            cachedAllFiles = nil
-            cachedAudioFiles = nil
-            cachedTopFiles = nil
+            summary = nil
             computeStatsIfNeeded()
         }
     }
 
     private func computeStatsIfNeeded() {
-        guard cachedAllFiles == nil && !isComputing else { return }
+        guard summary == nil && !isComputing else { return }
 
         isComputing = true
         let folders = shares.folders
 
         Task.detached(priority: .userInitiated) {
-            let (files, audio, top) = Self.computeStats(from: folders)
+            let computed = Self.computeStats(from: folders)
 
             await MainActor.run {
-                cachedAllFiles = files
-                cachedAudioFiles = audio
-                cachedTopFiles = top
+                summary = computed
                 isComputing = false
             }
         }
     }
 
-    nonisolated private static func computeStats(from folders: [SharedFile]) -> (files: [SharedFile], audio: [SharedFile], top: [(String, UInt64)]) {
+    nonisolated private static func computeStats(from folders: [SharedFile]) -> Summary {
         let files = collectFilesNonRecursive(from: folders)
         let audio = files.filter { $0.isAudioFile }
         let top = files
             .sorted { $0.size > $1.size }
             .prefix(5)
             .map { ($0.displayFilename, $0.size) }
-        return (files, audio, Array(top))
+        let (typeEntries, typeTotalSize) = FileTypeDistribution.summarize(files: files)
+
+        return Summary(
+            typeEntries: typeEntries,
+            typeTotalSize: typeTotalSize,
+            bitrateBuckets: BitrateDistribution.summarize(files: audio),
+            hasAudio: !audio.isEmpty,
+            topFiles: Array(top),
+            treemapFiles: Array(files.prefix(50)),
+            hasFiles: !files.isEmpty
+        )
     }
 
     nonisolated private static func collectFilesNonRecursive(from folders: [SharedFile]) -> [SharedFile] {
@@ -126,43 +135,43 @@ struct SharesVisualizationPanel: View {
         }
     }
 
-    private var fileTypeSection: some View {
+    private func fileTypeSection(_ summary: Summary) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Text("File Types")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            FileTypeDistribution(files: allFiles)
+            FileTypeDistribution(entries: summary.typeEntries, allFilesSize: summary.typeTotalSize)
         }
     }
 
-    private var bitrateSection: some View {
+    private func bitrateSection(_ summary: Summary) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Text("Audio Quality")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            BitrateDistribution(files: audioFiles)
+            BitrateDistribution(buckets: summary.bitrateBuckets)
         }
     }
 
-    private var largestFilesSection: some View {
+    private func largestFilesSection(_ summary: Summary) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Text("Largest Files")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            SizeComparisonBars(items: cachedTopFiles ?? [])
+            SizeComparisonBars(items: summary.topFiles)
         }
     }
 
-    private var treemapSection: some View {
+    private func treemapSection(_ summary: Summary) -> some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
             Text("Size Distribution")
                 .font(SeeleTypography.headline)
                 .foregroundStyle(SeeleColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
-            FileTreemap(files: Array(allFiles.prefix(50)))
+            FileTreemap(files: summary.treemapFiles)
                 .frame(height: 200)
                 .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))
         }
