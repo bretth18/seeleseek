@@ -15,7 +15,9 @@ struct FileTypeDistribution: View {
     let entries: [Entry]
     let allFilesSize: UInt64
 
-    static func summarize(files: [SharedFile]) -> (entries: [Entry], allFilesSize: UInt64) {
+    // nonisolated is load-bearing: the app target defaults to MainActor
+    // isolation, and this runs inside the panel's detached stats task.
+    nonisolated static func summarize(files: [SharedFile]) -> (entries: [Entry], allFilesSize: UInt64) {
         var grouped: [String: (count: Int, size: UInt64)] = [:]
         var total: UInt64 = 0
 

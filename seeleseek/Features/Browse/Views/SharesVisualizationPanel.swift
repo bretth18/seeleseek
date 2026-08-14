@@ -17,8 +17,14 @@ struct SharesVisualizationPanel: View {
         let hasFiles: Bool
     }
 
-    @State private var summary: Summary?
-    @State private var isComputing = false
+    /// Keyed by `shares.id` so switching tabs and back does not re-run the
+    /// full-tree walk. A refresh mints a new UserShares id, so stale entries
+    /// are never served; the cap bounds ids orphaned by refreshes.
+    @State private var summaryCache: [UUID: Summary] = [:]
+    @State private var computingIds: Set<UUID> = []
+
+    private var summary: Summary? { summaryCache[shares.id] }
+    private var isComputing: Bool { computingIds.contains(shares.id) }
 
     var body: some View {
         ScrollView {
@@ -58,23 +64,26 @@ struct SharesVisualizationPanel: View {
             computeStatsIfNeeded()
         }
         .onChange(of: shares.id) { _, _ in
-            summary = nil
             computeStatsIfNeeded()
         }
     }
 
     private func computeStatsIfNeeded() {
-        guard summary == nil && !isComputing else { return }
+        let id = shares.id
+        guard summaryCache[id] == nil, !computingIds.contains(id) else { return }
 
-        isComputing = true
+        computingIds.insert(id)
         let folders = shares.folders
 
         Task.detached(priority: .userInitiated) {
             let computed = Self.computeStats(from: folders)
 
             await MainActor.run {
-                summary = computed
-                isComputing = false
+                if summaryCache.count > 8 {
+                    summaryCache.removeAll(keepingCapacity: true)
+                }
+                summaryCache[id] = computed
+                computingIds.remove(id)
             }
         }
     }

@@ -11,7 +11,9 @@ struct BitrateDistribution: View {
     /// the full file list six times per render.
     let buckets: [Bucket]
 
-    static func summarize(files: [SharedFile]) -> [Bucket] {
+    // nonisolated is load-bearing: the app target defaults to MainActor
+    // isolation, and this runs inside the panel's detached stats task.
+    nonisolated static func summarize(files: [SharedFile]) -> [Bucket] {
         let ranges: [(String, ClosedRange<UInt32>)] = [
             ("< 128", 0...127),
             ("128", 128...191),

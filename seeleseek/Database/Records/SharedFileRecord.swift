@@ -94,9 +94,12 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
             childrenByParentId[key]?.sort { $0.sortOrder < $1.sortOrder }
         }
 
-        // Recursively build tree
+        // Recursively build tree. fileCount is not a column — restore the
+        // aggregate here or cache-loaded folders show no counts and
+        // UserShares' O(roots) totals read zeros.
         func buildFile(from record: SharedFileRecord) -> SharedFile {
             let children = childrenByParentId[record.id]?.map { buildFile(from: $0) }
+            let fileCount = children?.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) } ?? 0
             return SharedFile(
                 id: UUID(uuidString: record.id) ?? UUID(),
                 filename: record.filename,
@@ -105,7 +108,8 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
                 duration: record.duration.map { UInt32($0) },
                 isDirectory: record.isDirectory,
                 isPrivate: record.isPrivate,
-                children: children
+                children: children,
+                fileCount: fileCount
             )
         }
 

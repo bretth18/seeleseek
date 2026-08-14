@@ -2,10 +2,15 @@ import SwiftUI
 import os
 import SeeleseekCore
 
-struct FlatTreeItem: Identifiable {
+struct FlatTreeItem: Identifiable, Sendable {
     let id: UUID
     let file: SharedFile
     let depth: Int
+    /// Computed during flat-tree construction rather than read from
+    /// `expandedFolders` inside each row: a row-side read makes every
+    /// materialized row observe the set, so one toggle re-rendered them all —
+    /// seconds of main-thread work on large trees.
+    let isExpanded: Bool
 }
 
 @Observable
@@ -36,14 +41,18 @@ final class BrowseState {
     // MARK: - UI State
     var expandedFolders: Set<UUID> = []
     var selectedFile: SharedFile?
-    var filterQuery: String = ""
+    var filterQuery: String = "" {
+        didSet { scheduleFilter() }
+    }
 
     /// Target path to auto-expand after browse loads (e.g., "@@music\\Artist\\Album")
     private var targetPath: String?
 
     /// Current folder path being viewed (nil = show all shares from root)
     /// When set, only shows contents of this specific folder
-    var currentFolderPath: String?
+    var currentFolderPath: String? {
+        didSet { scheduleFilter() }
+    }
 
     /// The folders to display (filtered by currentFolderPath if set)
     var displayedFolders: [SharedFile] {
@@ -65,17 +74,57 @@ final class BrowseState {
         return result
     }
 
-    /// Filtered flat tree: if filterQuery is non-empty, walks the FULL
-    /// tree (not just expanded rows — the old behavior silently missed
-    /// matches inside collapsed folders) and includes every match plus
-    /// its ancestor chain, with matching subtrees rendered expanded for
-    /// display. The no-filter path is unchanged.
+    /// Filtered flat tree: if filterQuery is non-empty, the FULL tree is
+    /// walked (not just expanded rows — collapsed folders would silently
+    /// hide matches) and every match plus its ancestor chain is included.
+    /// The walk runs debounced off the main actor: on mega-shares (2M+
+    /// nodes) a synchronous per-keystroke walk beachballed the app.
     var filteredFlatTree: [FlatTreeItem] {
         let query = filterQuery.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return visibleFlatTree }
+        return filterResults ?? []
+    }
 
+    /// Published by the most recent completed filter walk; nil while no
+    /// filter is active.
+    private var filterResults: [FlatTreeItem]?
+    private(set) var isFiltering = false
+    private var filterTask: Task<Void, Never>?
+
+    /// Debounce, then walk the tree off-main. Called whenever the query or
+    /// the displayed scope (tab, folder navigation, fresh results) changes.
+    private func scheduleFilter() {
+        filterTask?.cancel()
+        let query = filterQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
+            filterTask = nil
+            filterResults = nil
+            isFiltering = false
+            return
+        }
+
+        isFiltering = true
+        let roots = displayedFolders
+        filterTask = Task.detached(priority: .userInitiated) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled,
+                  let result = Self.matchingFlatTree(in: roots, query: query) else { return }
+            await self?.applyFilterResults(result, for: query)
+        }
+    }
+
+    private func applyFilterResults(_ items: [FlatTreeItem], for query: String) {
+        // A superseded walk can finish after its replacement; only the walk
+        // for the current query may publish.
+        guard filterQuery.trimmingCharacters(in: .whitespaces) == query else { return }
+        filterResults = items
+        isFiltering = false
+    }
+
+    /// nil means the walk was cancelled mid-flight.
+    private nonisolated static func matchingFlatTree(in files: [SharedFile], query: String) -> [FlatTreeItem]? {
         var result: [FlatTreeItem] = []
-        appendMatching(files: displayedFolders, depth: 0, query: query, to: &result)
+        guard (try? appendMatching(files: files, depth: 0, query: query, to: &result)) != nil else { return nil }
         return result
     }
 
@@ -85,21 +134,24 @@ final class BrowseState {
     /// before recursing and removed again when the subtree contributed
     /// nothing. Returns true if anything at this level (or below) matched.
     @discardableResult
-    private func appendMatching(
+    private nonisolated static func appendMatching(
         files: [SharedFile],
         depth: Int,
         query: String,
         to result: inout [FlatTreeItem]
-    ) -> Bool {
+    ) throws -> Bool {
         var anyMatch = false
         for file in files {
+            try Task.checkCancellation()
             let selfMatch = file.displayName.localizedCaseInsensitiveContains(query)
             if file.isDirectory {
                 let insertIndex = result.count
-                result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
+                // Filter results render matches with their ancestor chain, so
+                // every directory row displays expanded.
+                result.append(FlatTreeItem(id: file.id, file: file, depth: depth, isExpanded: true))
                 var childMatch = false
                 if let children = file.children {
-                    childMatch = appendMatching(files: children, depth: depth + 1, query: query, to: &result)
+                    childMatch = try appendMatching(files: children, depth: depth + 1, query: query, to: &result)
                 }
                 if selfMatch || childMatch {
                     anyMatch = true
@@ -109,7 +161,7 @@ final class BrowseState {
                     result.removeSubrange(insertIndex..<result.count)
                 }
             } else if selfMatch {
-                result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
+                result.append(FlatTreeItem(id: file.id, file: file, depth: depth, isExpanded: false))
                 anyMatch = true
             }
         }
@@ -118,8 +170,9 @@ final class BrowseState {
 
     private func appendVisible(files: [SharedFile], depth: Int, to result: inout [FlatTreeItem]) {
         for file in files {
-            result.append(FlatTreeItem(id: file.id, file: file, depth: depth))
-            if file.isDirectory, expandedFolders.contains(file.id), let children = file.children {
+            let expanded = file.isDirectory && expandedFolders.contains(file.id)
+            result.append(FlatTreeItem(id: file.id, file: file, depth: depth, isExpanded: expanded))
+            if expanded, let children = file.children {
                 appendVisible(files: children, depth: depth + 1, to: &result)
             }
         }
@@ -435,6 +488,8 @@ final class BrowseState {
                 // Find the browse by ID (index may have changed)
                 if let idx = self.browses.firstIndex(where: { $0.id == browseId }) {
                     self.browses[idx] = precomputedShares
+                    // Fresh results changed the scope under any active filter.
+                    self.scheduleFilter()
                     self.logger.info("Got \(flatFiles.count) files -> \(precomputedShares.folders.count) root folders for \(username)")
 
                     // Cache the results
@@ -481,6 +536,9 @@ final class BrowseState {
         if selectedBrowseIndex >= browses.count {
             selectedBrowseIndex = max(0, browses.count - 1)
         }
+
+        // The displayed scope changed under any active filter.
+        scheduleFilter()
 
         logger.info("Closed tab at index \(index)")
     }

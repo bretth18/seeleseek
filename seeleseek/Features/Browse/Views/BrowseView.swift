@@ -314,12 +314,26 @@ struct BrowseView: View {
                     .padding(.horizontal, SeeleSpacing.lg)
                     .padding(.vertical, SeeleSpacing.xs)
 
+                if browseState.isFiltering {
+                    HStack(spacing: SeeleSpacing.xs) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                        Text("Filtering...")
+                            .font(SeeleTypography.caption)
+                            .foregroundStyle(SeeleColors.textTertiary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.xxs)
+                }
+
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(browseState.filteredFlatTree) { item in
                             FileTreeRow(
                                 file: item.file,
                                 depth: item.depth,
+                                isExpanded: item.isExpanded,
                                 browseState: browseState,
                                 username: shares.username
                             )

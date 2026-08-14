@@ -17,50 +17,44 @@ public struct UserShares: Identifiable, Sendable {
         username: String,
         folders: [SharedFile] = [],
         isLoading: Bool = true,
-        error: String? = nil
+        error: String? = nil,
+        totalFiles: Int? = nil,
+        totalSize: UInt64? = nil
     ) {
         self.id = id
         self.username = username
         self.folders = folders
         self.isLoading = isLoading
         self.error = error
+        self.cachedTotalFiles = totalFiles
+        self.cachedTotalSize = totalSize
     }
 
+    // These getters run inside UI bodies (tab labels, browse headers) on
+    // every render, so they must never walk the tree: profiling caught the
+    // old recursive fallback spending seconds per render on a 2M-node share.
+    // Root nodes carry aggregates from tree building, making the fallback
+    // O(roots).
+
     public var totalFiles: Int {
-        cachedTotalFiles ?? countFiles(in: folders)
+        cachedTotalFiles ?? Self.rootFileCount(of: folders)
     }
 
     public var totalSize: UInt64 {
-        cachedTotalSize ?? sumSize(in: folders)
+        cachedTotalSize ?? Self.rootSize(of: folders)
     }
 
-    /// Compute and cache stats (call this after building tree, off main thread)
+    /// Cache the aggregates so even O(roots) is paid once.
     public nonisolated mutating func computeStats() {
-        cachedTotalFiles = countFiles(in: folders)
-        cachedTotalSize = sumSize(in: folders)
+        cachedTotalFiles = Self.rootFileCount(of: folders)
+        cachedTotalSize = Self.rootSize(of: folders)
     }
 
-    private nonisolated func countFiles(in files: [SharedFile]) -> Int {
-        var count = 0
-        for file in files {
-            if file.isDirectory, let children = file.children {
-                count += countFiles(in: children)
-            } else if !file.isDirectory {
-                count += 1
-            }
-        }
-        return count
+    private nonisolated static func rootFileCount(of folders: [SharedFile]) -> Int {
+        folders.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
     }
 
-    private nonisolated func sumSize(in files: [SharedFile]) -> UInt64 {
-        var total: UInt64 = 0
-        for file in files {
-            if file.isDirectory, let children = file.children {
-                total += sumSize(in: children)
-            } else {
-                total += file.size
-            }
-        }
-        return total
+    private nonisolated static func rootSize(of folders: [SharedFile]) -> UInt64 {
+        folders.reduce(0) { $0 + $1.size }
     }
 }
