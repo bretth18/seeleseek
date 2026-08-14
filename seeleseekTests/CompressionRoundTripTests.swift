@@ -12,41 +12,6 @@ import Compression
 @Suite("Compression Round-Trip Tests")
 struct CompressionRoundTripTests {
 
-    // MARK: - Zlib decompression helper (mirrors PeerConnection.decompressZlib)
-
-    /// Decompress zlib-wrapped data: strip 2-byte header + 4-byte Adler32, then raw DEFLATE.
-    private func decompressZlib(_ data: Data) throws -> Data {
-        guard data.count > 6 else { throw TestError.tooShort }
-        let cmf = data[data.startIndex]
-        guard cmf & 0x0F == 8 else { throw TestError.notZlib }
-
-        let deflateData = Data(data.dropFirst(2).dropLast(4))
-        return try decompressRawDeflate(deflateData)
-    }
-
-    private func decompressRawDeflate(_ data: Data) throws -> Data {
-        let maxSize = 50 * 1024 * 1024
-        return try data.withUnsafeBytes { sourceBuffer -> Data in
-            guard let base = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else {
-                throw TestError.decompressionFailed
-            }
-            var destSize = min(max(data.count * 20, 65536), maxSize)
-            var destBuffer = [UInt8](repeating: 0, count: destSize)
-            var decoded = compression_decode_buffer(&destBuffer, destSize, base, data.count, nil, COMPRESSION_ZLIB)
-
-            if decoded == 0 || decoded == destSize {
-                destSize = min(destSize * 4, maxSize)
-                destBuffer = [UInt8](repeating: 0, count: destSize)
-                decoded = compression_decode_buffer(&destBuffer, destSize, base, data.count, nil, COMPRESSION_ZLIB)
-            }
-            guard decoded > 0 && decoded < destSize else { throw TestError.decompressionFailed }
-            return Data(destBuffer.prefix(decoded))
-        }
-    }
-
-    enum TestError: Error {
-        case tooShort, notZlib, decompressionFailed
-    }
 
     /// Extract compressed payload from a built message: skip length(4) + code(4)
     private func extractCompressedPayload(_ message: Data) -> Data {
@@ -76,7 +41,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         // Parse decompressed payload
         var o = 0
@@ -118,7 +83,7 @@ struct CompressionRoundTripTests {
             results: []
         )
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let (user, uLen) = decompressed.readString(at: o)!; o += uLen
@@ -138,7 +103,7 @@ struct CompressionRoundTripTests {
             queueLength: 10
         )
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let (_, uLen) = decompressed.readString(at: o)!; o += uLen
@@ -175,7 +140,7 @@ struct CompressionRoundTripTests {
 
         let msg = MessageBuilder.sharesReplyMessage(files: dirs)
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let dirCount = decompressed.readUInt32(at: o)!; o += 4
@@ -223,7 +188,7 @@ struct CompressionRoundTripTests {
 
         let msg = MessageBuilder.sharesReplyMessage(files: dirs)
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let dirCount = decompressed.readUInt32(at: o)!; o += 4
@@ -249,7 +214,7 @@ struct CompressionRoundTripTests {
     func testSharesReplyEmpty() throws {
         let msg = MessageBuilder.sharesReplyMessage(files: [])
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 0); o += 4 // 0 dirs
@@ -278,7 +243,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 54321); o += 4 // token
@@ -315,7 +280,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 11111); o += 4
@@ -337,7 +302,7 @@ struct CompressionRoundTripTests {
         corrupt.append(Data([0x00, 0x00, 0x00, 0x00])) // fake checksum
 
         do {
-            _ = try decompressZlib(corrupt)
+            _ = try ZlibDecompression.decompress(corrupt)
             Issue.record("Expected decompression to fail on corrupt data")
         } catch {
             // Expected
@@ -348,12 +313,42 @@ struct CompressionRoundTripTests {
     func testDataTooShort() {
         let short = Data([0x78, 0x9C, 0x01])
         do {
-            _ = try decompressZlib(short)
+            _ = try ZlibDecompression.decompress(short)
             Issue.record("Expected failure for data < 6 bytes")
-        } catch TestError.tooShort {
+        } catch DecompressionError.dataTooShort {
             // Expected
         } catch {
             // Also acceptable
         }
+    }
+
+    // MARK: - Large share lists
+
+    /// Field share lists exceed 50 MiB decompressed at barely-compressible
+    /// ratios; the cap must clear them in full.
+    @Test("Share lists larger than 50 MiB decompress in full")
+    func testLargeShareListBeyondOldCap() throws {
+        let targetSize = 56 * 1024 * 1024
+        var plain = Data(capacity: targetSize)
+        var i = 0
+        while plain.count < targetSize {
+            plain.append(Data("Music\\Artist \(i)\\Album \(i % 97)\\\(i) - Track title \(i).flac\n".utf8))
+            i += 1
+        }
+
+        let compressed = try plain.withUnsafeBytes { (source: UnsafeRawBufferPointer) -> Data in
+            var destination = [UInt8](repeating: 0, count: plain.count + 1024)
+            let encoded = compression_encode_buffer(
+                &destination, destination.count,
+                source.bindMemory(to: UInt8.self).baseAddress!, plain.count,
+                nil, COMPRESSION_ZLIB
+            )
+            try #require(encoded > 0, "test payload failed to compress")
+            return Data(destination.prefix(encoded))
+        }
+
+        let decompressed = try ZlibDecompression.decompressRawDeflate(compressed)
+        #expect(decompressed.count == plain.count)
+        #expect(decompressed == plain)
     }
 }

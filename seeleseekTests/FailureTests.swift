@@ -982,11 +982,36 @@ struct FailureTests {
         #expect(MessageParser.parseSharesReply(Data()) == nil)
     }
 
-    @Test("SharesReply with dir count exceeding limit")
+    @Test("SharesReply with dir count the payload cannot hold is rejected")
     func testSharesReplyDirCountExceedsLimit() {
         var payload = Data()
         payload.appendUInt32(MessageParser.maxItemCount + 1)
         #expect(MessageParser.parseSharesReply(payload) == nil)
+    }
+
+    /// Real mega-sharers exceed the old fixed 100k cap (250k+ directories);
+    /// size-bounded lists must not reject them.
+    @Test("SharesReply with more directories than the old fixed cap parses fully")
+    func testSharesReplyMegaShareParses() {
+        let dirCount = Int(MessageParser.maxItemCount) + 50_000
+        var payload = Data()
+        payload.appendUInt32(UInt32(dirCount))
+        // First directory carries one file; the rest are empty but real.
+        payload.appendString("Music\\A")
+        payload.appendUInt32(1)
+        payload.appendUInt8(1)
+        payload.appendString("01 track.mp3")
+        payload.appendUInt64(1_000_000)
+        payload.appendString("mp3")
+        payload.appendUInt32(0) // no attributes
+        for i in 1..<dirCount {
+            payload.appendString("d\(i)")
+            payload.appendUInt32(0)
+        }
+
+        let parsed = MessageParser.parseSharesReply(payload)
+        #expect(parsed?.files.count == 1)
+        #expect(parsed?.files.first?.filename == "Music\\A\\01 track.mp3")
     }
 
     @Test("SharesReply with dir count but truncated dir name")

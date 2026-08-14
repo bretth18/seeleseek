@@ -19,7 +19,9 @@ struct UserSharesRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
             username: username,
             folders: folders,
             isLoading: false,
-            error: nil
+            error: nil,
+            totalFiles: totalFiles,
+            totalSize: UInt64(max(totalSize, 0))
         )
     }
 

@@ -13,6 +13,16 @@ public enum MessageParser {
     nonisolated static let maxItemCount: UInt32 = 100_000
     /// Maximum number of attributes per file
     nonisolated static let maxAttributeCount: UInt32 = 100
+
+    /// Count guard for size-bounded lists (share lists, folder contents) —
+    /// a fixed cap rejects real 250k+-directory shares. Every entry consumes
+    /// at least `minBytesPerItem`, so any count the remaining payload cannot
+    /// hold is a lie.
+    private nonisolated static func plausibleItemCount(
+        _ count: UInt32, at offset: Int, in data: Data, minBytesPerItem: Int = 8
+    ) -> Bool {
+        count <= UInt32(clamping: (data.count - offset) / minBytesPerItem)
+    }
     /// Maximum message size — large share lists can exceed 10MB compressed.
     public nonisolated static let maxMessageSize: UInt32 = 100_000_000  // 100MB
 
@@ -564,7 +574,7 @@ public enum MessageParser {
         var files: [ShareFileInfo] = []
 
         guard let dirCount = decompressed.readUInt32(at: offset) else { return nil }
-        guard dirCount <= maxItemCount else { return nil }
+        guard plausibleItemCount(dirCount, at: offset + 4, in: decompressed) else { return nil }
         offset += 4
 
         for _ in 0..<dirCount {
@@ -572,7 +582,7 @@ public enum MessageParser {
             offset += dirLen
 
             guard let fileCount = decompressed.readUInt32(at: offset) else { return nil }
-            guard fileCount <= maxItemCount else { return nil }
+            guard plausibleItemCount(fileCount, at: offset + 4, in: decompressed) else { return nil }
             offset += 4
 
             for _ in 0..<fileCount {
@@ -590,14 +600,15 @@ public enum MessageParser {
         // malformed entry stops the WHOLE section — the offset is misaligned
         // past that point, so continuing the outer loop would decode garbage.
         if let privateDirCount = decompressed.readUInt32(at: offset),
-           privateDirCount > 0, privateDirCount <= maxItemCount {
+           privateDirCount > 0, plausibleItemCount(privateDirCount, at: offset + 4, in: decompressed) {
             offset += 4
 
             privateSection: for _ in 0..<privateDirCount {
                 guard let (dirName, dirLen) = decompressed.readString(at: offset) else { break privateSection }
                 offset += dirLen
 
-                guard let fileCount = decompressed.readUInt32(at: offset), fileCount <= maxItemCount else { break privateSection }
+                guard let fileCount = decompressed.readUInt32(at: offset),
+                      plausibleItemCount(fileCount, at: offset + 4, in: decompressed) else { break privateSection }
                 offset += 4
 
                 for _ in 0..<fileCount {
@@ -627,7 +638,7 @@ public enum MessageParser {
         offset += folderLen
 
         guard let folderCount = decompressed.readUInt32(at: offset) else { return nil }
-        guard folderCount <= maxItemCount else { return nil }
+        guard plausibleItemCount(folderCount, at: offset + 4, in: decompressed) else { return nil }
         offset += 4
 
         var files: [ShareFileInfo] = []
@@ -638,7 +649,8 @@ public enum MessageParser {
             guard let (_, dirLen) = decompressed.readString(at: offset) else { break folderScan }
             offset += dirLen
 
-            guard let fileCount = decompressed.readUInt32(at: offset), fileCount <= maxItemCount else { break folderScan }
+            guard let fileCount = decompressed.readUInt32(at: offset),
+                  plausibleItemCount(fileCount, at: offset + 4, in: decompressed) else { break folderScan }
             offset += 4
 
             for _ in 0..<fileCount {

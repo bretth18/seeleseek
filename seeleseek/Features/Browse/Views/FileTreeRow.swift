@@ -8,6 +8,10 @@ struct FileTreeRow: View {
     @Environment(\.appState) private var appState
     let file: SharedFile
     let depth: Int
+    /// Plain input, precomputed on the FlatTreeItem — reading the state's
+    /// `expandedFolders` here would subscribe every materialized row to it
+    /// and re-render them all on each toggle.
+    let isExpanded: Bool
     var browseState: BrowseState
     let username: String
     @State private var isHovered = false
@@ -20,16 +24,6 @@ struct FileTreeRow: View {
     /// menu item that could only ever fail.
     private var peerServesArtwork: Bool {
         appState.networkClient.peerConnectionPool.hasAdvertised(.artworkRequest, by: username)
-    }
-
-    private var isExpanded: Bool {
-        // While a filter is active the tree renders matches with their
-        // ancestor chain regardless of expansion state, so show every
-        // directory chevron as expanded for display purposes.
-        if !browseState.filterQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-            return true
-        }
-        return browseState.expandedFolders.contains(file.id)
     }
 
     private var downloadStatus: Transfer.TransferStatus? {

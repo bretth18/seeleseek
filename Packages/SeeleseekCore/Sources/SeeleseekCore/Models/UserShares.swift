@@ -17,50 +17,32 @@ public struct UserShares: Identifiable, Sendable {
         username: String,
         folders: [SharedFile] = [],
         isLoading: Bool = true,
-        error: String? = nil
+        error: String? = nil,
+        totalFiles: Int? = nil,
+        totalSize: UInt64? = nil
     ) {
         self.id = id
         self.username = username
         self.folders = folders
         self.isLoading = isLoading
         self.error = error
+        self.cachedTotalFiles = totalFiles
+        self.cachedTotalSize = totalSize
     }
 
+    // Run inside UI bodies on every render — must stay O(roots), never walk
+    // the tree.
+
     public var totalFiles: Int {
-        cachedTotalFiles ?? countFiles(in: folders)
+        cachedTotalFiles ?? SharedFile.aggregateFileCount(of: folders)
     }
 
     public var totalSize: UInt64 {
-        cachedTotalSize ?? sumSize(in: folders)
+        cachedTotalSize ?? SharedFile.aggregateSize(of: folders)
     }
 
-    /// Compute and cache stats (call this after building tree, off main thread)
     public nonisolated mutating func computeStats() {
-        cachedTotalFiles = countFiles(in: folders)
-        cachedTotalSize = sumSize(in: folders)
-    }
-
-    private nonisolated func countFiles(in files: [SharedFile]) -> Int {
-        var count = 0
-        for file in files {
-            if file.isDirectory, let children = file.children {
-                count += countFiles(in: children)
-            } else if !file.isDirectory {
-                count += 1
-            }
-        }
-        return count
-    }
-
-    private nonisolated func sumSize(in files: [SharedFile]) -> UInt64 {
-        var total: UInt64 = 0
-        for file in files {
-            if file.isDirectory, let children = file.children {
-                total += sumSize(in: children)
-            } else {
-                total += file.size
-            }
-        }
-        return total
+        cachedTotalFiles = SharedFile.aggregateFileCount(of: folders)
+        cachedTotalSize = SharedFile.aggregateSize(of: folders)
     }
 }
