@@ -7,12 +7,10 @@ struct BitrateDistribution: View {
         let count: Int
     }
 
-    /// Precomputed off-main by the caller: bucketing in `body` re-filtered
-    /// the full file list six times per render.
+    /// Precomputed off-main by the caller.
     let buckets: [Bucket]
 
-    // nonisolated is load-bearing: the app target defaults to MainActor
-    // isolation, and this runs inside the panel's detached stats task.
+    // nonisolated: runs in the panel's detached stats task (app default is MainActor).
     nonisolated static func summarize(files: [SharedFile]) -> [Bucket] {
         let ranges: [(String, ClosedRange<UInt32>)] = [
             ("< 128", 0...127),

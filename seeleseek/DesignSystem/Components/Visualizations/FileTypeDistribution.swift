@@ -8,21 +8,20 @@ struct FileTypeDistribution: View {
         let size: UInt64
     }
 
-    /// Top extensions by size, with the total over ALL files (so the bar
-    /// leaves a gap for types beyond the top 8). Precomputed off-main by the
-    /// caller: aggregating in `body` walks every file per render, which
-    /// beachballs on 2M-file shares.
+    /// Top extensions by size; allFilesSize covers ALL files so the bar
+    /// leaves a gap for types past the top 8. Precomputed off-main by the
+    /// caller.
     let entries: [Entry]
     let allFilesSize: UInt64
 
-    // nonisolated is load-bearing: the app target defaults to MainActor
-    // isolation, and this runs inside the panel's detached stats task.
+    // nonisolated: runs in the panel's detached stats task (app default is MainActor).
     nonisolated static func summarize(files: [SharedFile]) -> (entries: [Entry], allFilesSize: UInt64) {
         var grouped: [String: (count: Int, size: UInt64)] = [:]
         var total: UInt64 = 0
 
         for file in files {
-            let ext = file.fileExtension.isEmpty ? "other" : file.fileExtension.lowercased()
+            let fileExtension = file.fileExtension
+            let ext = fileExtension.isEmpty ? "other" : fileExtension
             grouped[ext, default: (0, 0)].count += 1
             grouped[ext, default: (0, 0)].size += file.size
             total += file.size
@@ -32,7 +31,7 @@ struct FileTypeDistribution: View {
             .sorted { $0.value.size > $1.value.size }
             .prefix(8)
             .map { Entry(type: $0.key, count: $0.value.count, size: $0.value.size) }
-        return (top, max(total, 1))
+        return (top, total)
     }
 
     private var distribution: [(type: String, count: Int, size: UInt64, color: Color)] {

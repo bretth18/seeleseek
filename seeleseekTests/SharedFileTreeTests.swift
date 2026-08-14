@@ -53,11 +53,8 @@ struct SharedFileTreeTests {
         #expect(tree[0].children?.isEmpty == true)
     }
 
-    /// Regression: `buildFolder` used to scan every known folder to find each
-    /// folder's children — O(folders²). Real shares reach 250k+ folders
-    /// (2M+ files), which burned minutes of CPU while the browse tab sat on
-    /// its spinner. The adjacency-map rewrite is linear; the old
-    /// implementation cannot finish this case inside the limit.
+    /// buildTree must stay linear: O(folders²) child scans burn minutes of
+    /// CPU on real 250k-folder shares.
     @Test("Mega-share tree builds within the time limit", .timeLimit(.minutes(1)))
     func megaShareScales() {
         var flat: [SharedFile] = []

@@ -62,6 +62,18 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
     public var isArchiveFile: Bool { FileTypes.isArchive(fileExtension) }
     public var isLossless: Bool { FileTypes.isLossless(fileExtension) }
 
+    /// The one formula for a folder's aggregates: directories contribute
+    /// their cached counts, files contribute themselves. Every producer of
+    /// `fileCount` (tree build, cache rehydration) must use these — a
+    /// producer that forgets makes cache-loaded counts diverge from fresh.
+    public nonisolated static func aggregateFileCount(of children: [SharedFile]) -> Int {
+        children.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
+    }
+
+    public nonisolated static func aggregateSize(of children: [SharedFile]) -> UInt64 {
+        children.reduce(0) { $0 + $1.size }
+    }
+
     /// Recursively collect all non-directory files from a tree
     public static func collectAllFiles(in files: [SharedFile]) -> [SharedFile] {
         var result: [SharedFile] = []
@@ -83,9 +95,8 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
     /// Input: Flat array of files with paths like "@@share\Folder\Subfolder\file.mp3"
     /// Output: Tree structure with directories containing children
     ///
-    /// Adjacency is precomputed in the discovery pass. Mega-shares are real
-    /// (250k+ folders, 2M+ files seen in the field), so anything that scans
-    /// all folders per folder is minutes of CPU, not a constant factor.
+    /// Mega-shares reach 250k+ folders / 2M+ files — keep this linear, no
+    /// per-folder scans.
     public nonisolated static func buildTree(from flatFiles: [SharedFile]) -> [SharedFile] {
         var folderIDs: [String: UUID] = [:]
         var filesByFolder: [String: [SharedFile]] = [:]
@@ -93,12 +104,22 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
         var rootFolders: [String] = []
 
         for file in flatFiles {
+            // Siblings share a folder, so most files can skip the
+            // per-component walk: a registered parent implies its whole
+            // ancestor chain is registered.
+            if let cut = file.filename.lastIndex(of: "\\") {
+                let parentPath = String(file.filename[..<cut])
+                if folderIDs[parentPath] != nil {
+                    filesByFolder[parentPath, default: []].append(file)
+                    continue
+                }
+            }
+
             let pathComponents = file.filename.split(separator: "\\").map(String.init)
             guard !pathComponents.isEmpty else { continue }
 
             guard pathComponents.count > 1 else {
-                // File at root level (unusual but handle it): keep the
-                // longstanding behavior of surfacing it as an empty folder.
+                // Root-level file: surface as an empty folder (legacy behavior).
                 if folderIDs[file.filename] == nil {
                     folderIDs[file.filename] = UUID()
                     rootFolders.append(file.filename)
@@ -128,9 +149,8 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
             var children = (subfolders[path] ?? []).map(buildFolder)
             children.append(contentsOf: filesByFolder[path] ?? [])
 
-            // Sort: folders first, then files, alphabetically. Keys are
-            // cached — displayName re-splits the path per call, which the
-            // comparator would otherwise do millions of times.
+            // Folders first, then files, alphabetically. Sort keys
+            // precomputed: displayName re-splits the path per call.
             children = children
                 .map { (file: $0, key: $0.displayName) }
                 .sorted { a, b in
@@ -141,8 +161,8 @@ public struct SharedFile: Identifiable, Hashable, Sendable {
                 }
                 .map(\.file)
 
-            let totalSize = children.reduce(0) { $0 + $1.size }
-            let totalFiles = children.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) }
+            let totalSize = aggregateSize(of: children)
+            let totalFiles = aggregateFileCount(of: children)
 
             // A folder is considered private when every descendant is
             // private — i.e. the peer marked the whole folder buddy-only

@@ -91,10 +91,8 @@ struct BrowseFilterTests {
 @Suite("Browse cache aggregates")
 struct BrowseCacheAggregateTests {
 
-    /// Regression: cache-loaded UserShares carried no cached totals and
-    /// rebuilt trees carried no fileCount, so every totalFiles/totalSize
-    /// access in a UI body (tab labels render per interaction) recursed the
-    /// full 2M-node tree on the main thread — the browse-tab beachball.
+    /// Aggregates must survive the cache round-trip; without them, totals
+    /// walk the full tree inside UI bodies.
     @Test("Cache round-trip preserves aggregates without tree walks")
     func cacheRoundTripPreservesAggregates() {
         let tree = SharedFile.buildTree(from: [
@@ -132,10 +130,8 @@ struct BrowseCacheAggregateTests {
 @Suite("Shares visualization summaries")
 struct SharesVisualizationSummaryTests {
 
-    /// Regression: `summarize` was inferred @MainActor (the app target
-    /// defaults to MainActor isolation) and its sort closure crashed the
-    /// panel's detached stats task with a dispatch queue assertion. Running
-    /// from a detached task pins the nonisolated contract.
+    /// Pins summarize's nonisolated contract: the app target defaults to
+    /// MainActor, and inferred @MainActor crashes the detached stats task.
     @Test("Summaries compute off the main actor")
     func summariesComputeOffMain() async {
         let files = [

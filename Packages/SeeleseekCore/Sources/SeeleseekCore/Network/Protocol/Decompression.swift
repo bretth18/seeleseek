@@ -14,10 +14,8 @@ public enum DecompressionError: Error {
 /// Standalone zlib/deflate decompression utility.
 /// Mirrors the logic in PeerConnection but is testable in isolation.
 public enum ZlibDecompression {
-    /// Maximum decompressed output size. Real share lists from large sharers
-    /// exceed 50 MiB decompressed (seen in the field at ~1.04:1 ratio), so
-    /// this bounds hostile bombs, not legitimate traffic — keep it well above
-    /// the 150 MiB framed-message receive cap times typical list ratios.
+    /// Bounds hostile bombs, not legitimate traffic: real share lists exceed
+    /// 50 MiB decompressed, so stay well above the 150 MiB receive cap.
     nonisolated static let maxDecompressedSize = 256 * 1024 * 1024
     /// Maximum allowed compression ratio before flagging as suspicious
     nonisolated static let maxCompressionRatio = 1000
@@ -58,21 +56,25 @@ public enum ZlibDecompression {
 
     /// RFC 1950 Adler-32, with the standard deferred-modulo chunking so the
     /// hot loop is pure adds (5552 is the largest n with no UInt32 overflow).
+    /// Raw-pointer loop: Data's byte iterator is several times slower, which
+    /// matters at share-list sizes.
     nonisolated static func adler32(_ data: Data) -> UInt32 {
-        var a: UInt32 = 1
-        var b: UInt32 = 0
-        var index = data.startIndex
-        while index < data.endIndex {
-            let chunkEnd = data.index(index, offsetBy: 5552, limitedBy: data.endIndex) ?? data.endIndex
-            for byte in data[index..<chunkEnd] {
-                a &+= UInt32(byte)
-                b &+= a
+        data.withUnsafeBytes { buffer in
+            var a: UInt32 = 1
+            var b: UInt32 = 0
+            var index = 0
+            while index < buffer.count {
+                let chunkEnd = min(index + 5552, buffer.count)
+                while index < chunkEnd {
+                    a &+= UInt32(buffer[index])
+                    b &+= a
+                    index += 1
+                }
+                a %= 65521
+                b %= 65521
             }
-            a %= 65521
-            b %= 65521
-            index = chunkEnd
+            return (b << 16) | a
         }
-        return (b << 16) | a
     }
 
     /// Decompress raw DEFLATE data (RFC 1951) using Apple's Compression framework.
@@ -88,7 +90,12 @@ public enum ZlibDecompression {
             // Grow and retry until the output no longer fills the buffer;
             // a result that still fills a max-size buffer is truncation, not
             // success, so it must throw rather than return partial data.
-            var destinationSize = min(max(sourceSize * 20, 65536), maxDecompressedSize)
+            //
+            // Large inputs (share lists) inflate at ~1-4:1, so 20x would just
+            // zero a 256 MiB scratch buffer; the grow loop covers the rare
+            // denser payload.
+            let multiplier = sourceSize >= 8 * 1024 * 1024 ? 4 : 20
+            var destinationSize = min(max(sourceSize * multiplier, 65536), maxDecompressedSize)
             while true {
                 var destinationBuffer = [UInt8](repeating: 0, count: destinationSize)
                 let decodedSize = compression_decode_buffer(

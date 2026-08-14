@@ -4,9 +4,8 @@ import SeeleseekCore
 struct SharesVisualizationPanel: View {
     let shares: UserShares
 
-    /// Everything the sections render, and nothing more. Holding the flat
-    /// file arrays here kept ~2 GB of structs alive in view state for
-    /// mega-shares; the arrays now live only inside the summarize pass.
+    /// Only what the sections render — never hold the flat file arrays in
+    /// view state (~2 GB on mega-shares).
     struct Summary: Sendable {
         let typeEntries: [FileTypeDistribution.Entry]
         let typeTotalSize: UInt64

@@ -12,10 +12,7 @@ struct UserSharesRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var totalFiles: Int
     var totalSize: Int64
 
-    /// Convert database record to domain model (folders loaded separately).
-    /// The stored aggregates must ride along: without them every
-    /// totalFiles/totalSize access on a cache-loaded browse recomputed from
-    /// the tree, in UI render paths.
+    /// Convert database record to domain model (folders loaded separately)
     func toUserShares(folders: [SharedFile] = []) -> UserShares {
         UserShares(
             id: UUID(uuidString: id) ?? UUID(),

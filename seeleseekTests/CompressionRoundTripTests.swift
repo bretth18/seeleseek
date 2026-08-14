@@ -12,11 +12,6 @@ import Compression
 @Suite("Compression Round-Trip Tests")
 struct CompressionRoundTripTests {
 
-    /// The exact decompression path PeerConnection uses — round-tripping
-    /// through a test-local mirror would let the two drift apart unnoticed.
-    private func decompressZlib(_ data: Data) throws -> Data {
-        try ZlibDecompression.decompress(data)
-    }
 
     /// Extract compressed payload from a built message: skip length(4) + code(4)
     private func extractCompressedPayload(_ message: Data) -> Data {
@@ -46,7 +41,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         // Parse decompressed payload
         var o = 0
@@ -88,7 +83,7 @@ struct CompressionRoundTripTests {
             results: []
         )
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let (user, uLen) = decompressed.readString(at: o)!; o += uLen
@@ -108,7 +103,7 @@ struct CompressionRoundTripTests {
             queueLength: 10
         )
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let (_, uLen) = decompressed.readString(at: o)!; o += uLen
@@ -145,7 +140,7 @@ struct CompressionRoundTripTests {
 
         let msg = MessageBuilder.sharesReplyMessage(files: dirs)
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let dirCount = decompressed.readUInt32(at: o)!; o += 4
@@ -193,7 +188,7 @@ struct CompressionRoundTripTests {
 
         let msg = MessageBuilder.sharesReplyMessage(files: dirs)
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         let dirCount = decompressed.readUInt32(at: o)!; o += 4
@@ -219,7 +214,7 @@ struct CompressionRoundTripTests {
     func testSharesReplyEmpty() throws {
         let msg = MessageBuilder.sharesReplyMessage(files: [])
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 0); o += 4 // 0 dirs
@@ -248,7 +243,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 54321); o += 4 // token
@@ -285,7 +280,7 @@ struct CompressionRoundTripTests {
         )
 
         let compressed = extractCompressedPayload(msg)
-        let decompressed = try decompressZlib(compressed)
+        let decompressed = try ZlibDecompression.decompress(compressed)
 
         var o = 0
         #expect(decompressed.readUInt32(at: o) == 11111); o += 4
@@ -307,7 +302,7 @@ struct CompressionRoundTripTests {
         corrupt.append(Data([0x00, 0x00, 0x00, 0x00])) // fake checksum
 
         do {
-            _ = try decompressZlib(corrupt)
+            _ = try ZlibDecompression.decompress(corrupt)
             Issue.record("Expected decompression to fail on corrupt data")
         } catch {
             // Expected
@@ -318,7 +313,7 @@ struct CompressionRoundTripTests {
     func testDataTooShort() {
         let short = Data([0x78, 0x9C, 0x01])
         do {
-            _ = try decompressZlib(short)
+            _ = try ZlibDecompression.decompress(short)
             Issue.record("Expected failure for data < 6 bytes")
         } catch DecompressionError.dataTooShort {
             // Expected
@@ -329,10 +324,8 @@ struct CompressionRoundTripTests {
 
     // MARK: - Large share lists
 
-    /// Regression: a 50 MiB output was both the old cap and — in
-    /// PeerConnection's since-deleted private copy — returned truncated as
-    /// success, so mega-sharers' lists parsed to 0 files. Field lists exceed
-    /// 50 MiB at barely-compressible ratios, so the cap must clear them.
+    /// Field share lists exceed 50 MiB decompressed at barely-compressible
+    /// ratios; the cap must clear them in full.
     @Test("Share lists larger than 50 MiB decompress in full")
     func testLargeShareListBeyondOldCap() throws {
         let targetSize = 56 * 1024 * 1024

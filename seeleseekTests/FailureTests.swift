@@ -989,10 +989,8 @@ struct FailureTests {
         #expect(MessageParser.parseSharesReply(payload) == nil)
     }
 
-    /// Regression: the fixed 100k `maxItemCount` cap rejected real
-    /// mega-sharers (250k+ directories seen in the field), parsing their
-    /// whole list to nil and caching an empty browse. Size-bounded lists
-    /// are now guarded by payload plausibility instead.
+    /// Real mega-sharers exceed the old fixed 100k cap (250k+ directories);
+    /// size-bounded lists must not reject them.
     @Test("SharesReply with more directories than the old fixed cap parses fully")
     func testSharesReplyMegaShareParses() {
         let dirCount = Int(MessageParser.maxItemCount) + 50_000

@@ -79,12 +79,9 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
 
     /// Convert flat records to hierarchical SharedFile structure
     static func toSharedFiles(from records: [SharedFileRecord]) -> [SharedFile] {
-        // Build lookup maps
-        var recordsById: [String: SharedFileRecord] = [:]
         var childrenByParentId: [String: [SharedFileRecord]] = [:]
 
         for record in records {
-            recordsById[record.id] = record
             let parentKey = record.parentId ?? "root"
             childrenByParentId[parentKey, default: []].append(record)
         }
@@ -94,12 +91,11 @@ struct SharedFileRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
             childrenByParentId[key]?.sort { $0.sortOrder < $1.sortOrder }
         }
 
-        // Recursively build tree. fileCount is not a column — restore the
-        // aggregate here or cache-loaded folders show no counts and
-        // UserShares' O(roots) totals read zeros.
+        // fileCount is not a column — recompute it or cache-loaded totals
+        // read zero.
         func buildFile(from record: SharedFileRecord) -> SharedFile {
             let children = childrenByParentId[record.id]?.map { buildFile(from: $0) }
-            let fileCount = children?.reduce(0) { $0 + ($1.isDirectory ? $1.fileCount : 1) } ?? 0
+            let fileCount = children.map(SharedFile.aggregateFileCount(of:)) ?? 0
             return SharedFile(
                 id: UUID(uuidString: record.id) ?? UUID(),
                 filename: record.filename,

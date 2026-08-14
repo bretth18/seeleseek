@@ -14,12 +14,10 @@ public enum MessageParser {
     /// Maximum number of attributes per file
     nonisolated static let maxAttributeCount: UInt32 = 100
 
-    /// Count guard for size-bounded lists (share lists, folder contents),
-    /// where a fixed cap rejects real mega-sharers — 250k+ directories seen
-    /// in the field. Every entry consumes at least `minBytesPerItem`, so any
-    /// count the remaining payload cannot hold is a lie; loop work stays
-    /// proportional to actual data because each iteration's reads fail once
-    /// the payload runs dry.
+    /// Count guard for size-bounded lists (share lists, folder contents) —
+    /// a fixed cap rejects real 250k+-directory shares. Every entry consumes
+    /// at least `minBytesPerItem`, so any count the remaining payload cannot
+    /// hold is a lie.
     private nonisolated static func plausibleItemCount(
         _ count: UInt32, at offset: Int, in data: Data, minBytesPerItem: Int = 8
     ) -> Bool {
