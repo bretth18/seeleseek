@@ -561,35 +561,50 @@ public final class ShareManager {
     /// distributed relay. Matching is whole-word (canonical SoulSeek /
     /// Nicotine+ behavior), no longer substring-contains.
     ///
+    /// Runs the intersection on a detached utility task so a busy
+    /// distributed relay cannot steal main-actor frames from UI scroll.
+    /// Main actor only snapshots the Sendable index tables (same pattern
+    /// as `scanFolderResult`).
+    ///
     /// `includeBuddyOnly` controls whether folders marked `.buddies` are
     /// visible to the requester. Callers resolve that flag from their
     /// knowledge of the requester (buddy-list membership) before calling.
     public func search(query: String, includeBuddyOnly: Bool) async -> [IndexedFile] {
-        let terms = Set(Self.tokenize(query))
-        guard !terms.isEmpty else { return [] }
+        // Snapshot before hopping off MainActor so a concurrent rescan
+        // cannot mutate the tables mid-intersection. Brief staleness
+        // during a rescan is fine — peers already race the live index.
+        let indexSnapshot = wordIndex
+        let filesSnapshot = fileIndex
+        let buddyOnly = includeBuddyOnly
 
-        // Every term must have a posting list, else no file can match.
-        var lists: [[Int]] = []
-        lists.reserveCapacity(terms.count)
-        for term in terms {
-            guard let list = wordIndex[term] else { return [] }
-            lists.append(list)
-        }
-        lists.sort { $0.count < $1.count }
+        return await Task.detached(priority: .utility) {
+            let terms = Set(Self.tokenize(query))
+            guard !terms.isEmpty else { return [] }
 
-        var candidates = Set(lists[0])
-        for list in lists.dropFirst() {
-            candidates.formIntersection(list)
-            if candidates.isEmpty { return [] }
-        }
+            // Every term must have a posting list, else no file can match.
+            var lists: [[Int]] = []
+            lists.reserveCapacity(terms.count)
+            for term in terms {
+                guard let list = indexSnapshot[term] else { return [] }
+                lists.append(list)
+            }
+            lists.sort { $0.count < $1.count }
 
-        // Materialize in index order; apply the visibility gate here,
-        // same semantics as the old linear filter.
-        return candidates.sorted().compactMap { position in
-            let file = fileIndex[position]
-            if !includeBuddyOnly && file.visibility == .buddies { return nil }
-            return file
-        }
+            var candidates = Set(lists[0])
+            for list in lists.dropFirst() {
+                candidates.formIntersection(list)
+                if candidates.isEmpty { return [] }
+            }
+
+            // Materialize in index order; apply the visibility gate here,
+            // same semantics as the old linear filter.
+            return candidates.sorted().compactMap { position -> IndexedFile? in
+                guard filesSnapshot.indices.contains(position) else { return nil }
+                let file = filesSnapshot[position]
+                if !buddyOnly && file.visibility == .buddies { return nil }
+                return file
+            }
+        }.value
     }
 
     /// Snapshot of all indexed files visible to a given requester. Used

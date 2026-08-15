@@ -20,21 +20,20 @@ struct SidebarConsoleView: View {
     }
 
     // MARK: - Collapsed
+    //
+    // Intentionally does not read `activityLog.events`. Observation tracks
+    // every property access, so a live peek/count here re-renders the sidebar
+    // on every flush and causes the lag this view used to show when collapsed.
 
     private var collapsedView: some View {
-        VStack(spacing: 0) {
-            header
-            if let latest = activityLog.events.first {
-                peekLine(latest)
-            }
-        }
+        header(showLiveEventChrome: false)
     }
 
     // MARK: - Expanded
 
     private var expandedView: some View {
         VStack(spacing: 0) {
-            header
+            header(showLiveEventChrome: true)
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -63,7 +62,10 @@ struct SidebarConsoleView: View {
     // The clear button is a sibling of the toggle button. A button
     // nested inside another button's label is not reachable with
     // VoiceOver.
-    private var header: some View {
+    //
+    // `showLiveEventChrome` gates every `events` read so collapsed mode
+    // stays off Observation's invalidation path.
+    private func header(showLiveEventChrome: Bool) -> some View {
         HStack(spacing: SeeleSpacing.xs) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -80,13 +82,17 @@ struct SidebarConsoleView: View {
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textSecondary)
 
-                    if !activityLog.events.isEmpty {
-                        Text("\(activityLog.events.count)")
-                            .font(SeeleTypography.monoXSmall)
-                            .foregroundStyle(SeeleColors.textTertiary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(SeeleColors.surfaceElevated, in: Capsule())
+                    if showLiveEventChrome {
+                        // Nested so collapsed mode never touches `events`
+                        // (Observation tracks every access during body eval).
+                        if !activityLog.events.isEmpty {
+                            Text("\(activityLog.events.count)")
+                                .font(SeeleTypography.monoXSmall)
+                                .foregroundStyle(SeeleColors.textTertiary)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(SeeleColors.surfaceElevated, in: Capsule())
+                        }
                     }
 
                     Spacer()
@@ -94,10 +100,10 @@ struct SidebarConsoleView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Console, \(activityLog.events.count) events")
+            .accessibilityLabel(consoleAccessibilityLabel(showLiveEventChrome: showLiveEventChrome))
             .accessibilityValue(isExpanded ? "expanded" : "collapsed")
 
-            if isExpanded {
+            if showLiveEventChrome {
                 Button {
                     activityLog.clear()
                 } label: {
@@ -129,29 +135,9 @@ struct SidebarConsoleView: View {
 
     // MARK: - Rows
 
-    private func peekLine(_ event: ActivityLog.ActivityEvent) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: event.type.icon)
-                .font(.system(size: 7))
-                .foregroundStyle(event.type.color)
-
-            Text(event.title)
-                .font(SeeleTypography.monoXSmall)
-                .foregroundStyle(SeeleColors.textTertiary)
-                .lineLimit(1)
-
-            Spacer()
-
-            Text(formatTime(event.timestamp))
-                .font(SeeleTypography.monoXSmall)
-                .foregroundStyle(SeeleColors.textTertiary.opacity(0.6))
-        }
-        .padding(.horizontal, SeeleSpacing.lg)
-        .padding(.bottom, SeeleSpacing.sm)
-        .opacity(0.7)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(rowAccessibilityLabel(event))
-        .accessibilityAddTraits(.isStaticText)
+    private func consoleAccessibilityLabel(showLiveEventChrome: Bool) -> String {
+        guard showLiveEventChrome else { return "Console" }
+        return "Console, \(activityLog.events.count) events"
     }
 
     private func consoleRow(_ event: ActivityLog.ActivityEvent) -> some View {
@@ -215,29 +201,14 @@ private func seedConsolePreview(_ events: () -> Void) {
         }
 }
 
-#Preview("Collapsed — one recent event") {
+#Preview("Collapsed") {
     SidebarConsoleView()
-        .frame(width: 220, height: 80)
+        .frame(width: 220, height: 44)
         .background(SeeleColors.surface)
         .onAppear {
             seedConsolePreview {
                 let log = ActivityLog.shared
                 log.logPeerConnected(username: "musicfan42", ip: "192.168.1.100")
-            }
-        }
-}
-
-#Preview("Collapsed — mixed activity") {
-    SidebarConsoleView()
-        .frame(width: 220, height: 80)
-        .background(SeeleColors.surface)
-        .onAppear {
-            seedConsolePreview {
-                let log = ActivityLog.shared
-                log.logPeerConnected(username: "vinylcollector", ip: "10.0.0.42")
-                log.logSearchStarted(query: "pink floyd dark side flac")
-                log.logSearchResults(query: "pink floyd dark side flac", count: 47, user: "vinylcollector")
-                log.logDownloadStarted(filename: "Speak to Me.flac", from: "vinylcollector")
             }
         }
 }
