@@ -73,6 +73,20 @@ enum DownloadFolderFormat: String, CaseIterable {
 
 }
 
+/// Search-result filter prefs that survive relaunch. Kept separate from
+/// `SearchState` so Settings can load them before the search tab wires up.
+struct PersistedSearchFilters: Equatable, Codable, Sendable {
+    var minBitrate: Int? = nil
+    var minSampleRate: Int? = nil
+    var minBitDepth: Int? = nil
+    var minSize: Int64? = nil
+    var maxSize: Int64? = nil
+    var extensions: Set<String> = []
+    var freeSlotOnly: Bool = false
+
+    static let empty = PersistedSearchFilters()
+}
+
 @Observable
 @MainActor
 final class SettingsState: DownloadSettingsProviding {
@@ -85,6 +99,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let downloadSpeedLimitKey = "settingsDownloadSpeedLimit"
     private let maxSearchResultsKey = "settingsMaxSearchResults"
     private let groupSearchResultsKey = "settingsGroupSearchResults"
+    private let searchFiltersKey = "settingsSearchFilters"
     private let downloadLocationKey = "settingsDownloadLocation"
     private let incompleteLocationKey = "settingsIncompleteLocation"
     private let downloadFolderFormatKey = "settingsDownloadFolderFormat"
@@ -228,6 +243,15 @@ final class SettingsState: DownloadSettingsProviding {
     var groupSearchResults: Bool = false {
         didSet {
             guard !isLoading, groupSearchResults != oldValue else { return }
+            save()
+        }
+    }
+    /// Mirrors `SearchState` quality/format filters. Sort order and panel
+    /// open state stay session-only. Written back on every filter edit
+    /// (including Clear → empty).
+    var searchFilters: PersistedSearchFilters = .empty {
+        didSet {
+            guard !isLoading, searchFilters != oldValue else { return }
             save()
         }
     }
@@ -377,6 +401,7 @@ final class SettingsState: DownloadSettingsProviding {
         downloadSpeedLimit = 0
         maxSearchResults = 500
         groupSearchResults = false
+        searchFilters = .empty
         respondToSearches = true
         minSearchQueryLength = 3
         maxSearchResponseResults = 50
@@ -442,6 +467,9 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
         UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
         UserDefaults.standard.set(groupSearchResults, forKey: groupSearchResultsKey)
+        if let data = try? JSONEncoder().encode(searchFilters) {
+            UserDefaults.standard.set(data, forKey: searchFiltersKey)
+        }
         UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
         UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
@@ -517,6 +545,10 @@ final class SettingsState: DownloadSettingsProviding {
         }
         if UserDefaults.standard.object(forKey: groupSearchResultsKey) != nil {
             groupSearchResults = UserDefaults.standard.bool(forKey: groupSearchResultsKey)
+        }
+        if let data = UserDefaults.standard.data(forKey: searchFiltersKey),
+           let filters = try? JSONDecoder().decode(PersistedSearchFilters.self, from: data) {
+            searchFilters = filters
         }
         if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
             downloadLocation = URL(fileURLWithPath: downloadPath)

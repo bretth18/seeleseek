@@ -482,6 +482,9 @@ final class AppState {
 
         // Load persisted settings from UserDefaults initially (will migrate to DB)
         settings.load()
+        // Wire before anything touches `networkClient` so the search tab
+        // restores grouping + filters on first paint.
+        searchState.settings = settings
 
         // Sync launch-at-login state from system (user may toggle in System Settings)
         settings.syncLaunchAtLoginState()
