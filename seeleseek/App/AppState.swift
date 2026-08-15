@@ -486,6 +486,10 @@ final class AppState {
         // Sync launch-at-login state from system (user may toggle in System Settings)
         settings.syncLaunchAtLoginState()
 
+        #if os(macOS)
+        DockIconPolicy.start(settings: settings)
+        #endif
+
         // Register activity logger with the package
         ActivityLogger.shared = ActivityLog.shared
 

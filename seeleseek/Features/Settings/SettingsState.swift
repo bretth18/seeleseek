@@ -92,6 +92,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let downloadDefaultsMigratedKey = "settingsDownloadDefaultsMigratedV2"
     private let launchAtLoginKey = "settingsLaunchAtLogin"
     private let showInMenuBarKey = "settingsShowInMenuBar"
+    private let minimizeToMenuBarKey = "settingsMinimizeToMenuBar"
     private let notifyDownloadsKey = "settingsNotifyDownloads"
     private let notifyUploadsKey = "settingsNotifyUploads"
     private let notifyPrivateMessagesKey = "settingsNotifyPrivateMessages"
@@ -159,9 +160,33 @@ final class SettingsState: DownloadSettingsProviding {
     var showInMenuBar: Bool = true {
         didSet {
             guard !isLoading else { return }
+            // Dock-hide requires the menu bar icon; clear it when the icon goes away.
+            if !showInMenuBar && minimizeToMenuBar {
+                minimizeToMenuBar = false
+            }
             save()
+            onDockPolicyRelevantChange?()
         }
     }
+    /// When on, closing the last titled window hides the Dock icon (accessory
+    /// policy) while the menu bar extra keeps the process alive.
+    var minimizeToMenuBar: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            if minimizeToMenuBar && !showInMenuBar {
+                isLoading = true
+                minimizeToMenuBar = false
+                isLoading = false
+                return
+            }
+            save()
+            onDockPolicyRelevantChange?()
+        }
+    }
+
+    /// Fired when menu-bar / dock-hide prefs change so AppKit activation
+    /// policy can catch up. Wired by `AppState.configure()`.
+    @ObservationIgnored var onDockPolicyRelevantChange: (() -> Void)?
 
     // MARK: - Network Settings
     var listenPort: Int = 2234 {
@@ -369,6 +394,7 @@ final class SettingsState: DownloadSettingsProviding {
         downloadFolderTemplate = SettingsState.defaultDownloadFolderTemplate
         launchAtLogin = false
         showInMenuBar = true
+        minimizeToMenuBar = false
         listenPort = 2234
         enableUPnP = true
         maxDownloadSlots = 5
@@ -448,6 +474,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
         UserDefaults.standard.set(launchAtLogin, forKey: launchAtLoginKey)
         UserDefaults.standard.set(showInMenuBar, forKey: showInMenuBarKey)
+        UserDefaults.standard.set(minimizeToMenuBar, forKey: minimizeToMenuBarKey)
         UserDefaults.standard.set(notifyDownloads, forKey: notifyDownloadsKey)
         UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
@@ -534,6 +561,12 @@ final class SettingsState: DownloadSettingsProviding {
         migrateDownloadDefaultsIfNeeded()
         if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
             showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
+        }
+        if UserDefaults.standard.object(forKey: minimizeToMenuBarKey) != nil {
+            minimizeToMenuBar = UserDefaults.standard.bool(forKey: minimizeToMenuBarKey)
+        }
+        if !showInMenuBar {
+            minimizeToMenuBar = false
         }
         if UserDefaults.standard.object(forKey: notifyDownloadsKey) != nil {
             notifyDownloads = UserDefaults.standard.bool(forKey: notifyDownloadsKey)

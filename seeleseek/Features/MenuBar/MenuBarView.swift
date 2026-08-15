@@ -3,6 +3,8 @@ import SeeleseekCore
 
 struct MenuBarView: View {
     @Environment(\.appState) private var appState
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     private var status: ConnectionStatus {
         appState.connection.connectionStatus
@@ -90,14 +92,19 @@ struct MenuBarView: View {
         Divider()
 
         Button {
-            NSApplication.shared.activate()
+            openMainWindow()
         } label: {
             Label("Open SeeleSeek", systemImage: "macwindow")
         }
         .keyboardShortcut("o")
 
         // No shortcut: ⌘, is the system Settings equivalent already.
-        SettingsLink {
+        Button {
+            #if os(macOS)
+            DockIconPolicy.prepareToPresentWindow()
+            #endif
+            openSettings()
+        } label: {
             Label("Settings…", systemImage: "gear")
         }
 
@@ -141,7 +148,23 @@ struct MenuBarView: View {
 
     private func open(_ item: SidebarItem) {
         appState.sidebarSelection = item
+        openMainWindow()
+    }
+
+    private func openMainWindow() {
+        #if os(macOS)
+        DockIconPolicy.prepareToPresentWindow()
+        if let window = DockIconPolicy.mainWindow {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            openWindow(id: "main")
+        }
+        #else
         NSApplication.shared.activate()
+        #endif
     }
 
     private var headerAccessibilityLabel: String {

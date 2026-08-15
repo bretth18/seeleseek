@@ -37,7 +37,7 @@ struct SeeleSeekApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             if Self.isRunningTests {
                 Text("seeleseek test host — closing this window is fine")
                     .foregroundStyle(.secondary)
