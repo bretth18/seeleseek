@@ -106,7 +106,7 @@
 	--tw-prose-td-borders: var(--ss-border);
 }
 
-.prose :where(code):not(:where([class~='not-prose'], [class~='not-prose'] *)) {
+.prose :where(code):not(:where([class~='not-prose'], [class~='not-prose'] *, pre *)) {
 	@apply bg-muted px-1.5 py-0.5 text-sm font-medium font-mono before:content-none after:content-none;
 	border-radius: 0;
 }
