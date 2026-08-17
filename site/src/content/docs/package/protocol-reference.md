@@ -10,10 +10,10 @@ section: package
 All Soulseek protocol messages have the same frame:
 
 ```
-┌──────────────┬──────────────┬──────────────────┐
-│ Length (4B)  │ Code (4B)    │ Payload (N bytes)│
-│ uint32 LE    │ uint32 LE    │ varies           │
-└──────────────┴──────────────┴──────────────────┘
++--------------+--------------+-------------------+
+| Length (4B)  | Code (4B)    | Payload (N bytes) |
+| uint32 LE    | uint32 LE    | varies            |
++--------------+--------------+-------------------+
 ```
 
 - **Length**: the size of the code plus the payload. The length field itself is not included.
@@ -196,16 +196,67 @@ public enum DecompressionError: Error, LocalizedError {
 
 The protocol keeps IP addresses as `uint32` values in network byte order (big-endian). The client reads the values as little-endian from the wire. SeeleseekCore does the byte-order conversion internally. You always receive IP strings in the usual format.
 
-## seeleseek Extensions
+## Extended Peer Message Codes
 
-seeleseek defines custom peer message codes. These codes supply features that the standard protocol does not have:
+SeeleSeek defines extended peer message codes. These codes supply features that the standard protocol does not have. All extended codes are `uint32` values of 10000 or higher.
+
+| Code | Name | Function |
+|------|------|----------|
+| 10000 | ExtendedClientInfo | The capability handshake (the list of supported extended codes) |
+| 10001 | ArtworkRequest | Request the album art of a shared file |
+| 10002 | ArtworkReply | The album art response |
+
+The full enum is `ExtendedClientInfoCode` in `MessageCode.swift`.
+
+### ExtendedClientInfo (10000)
+
+A client can send this message after `PeerInit` or `PierceFirewall` on a `P` connection. The message advertises the extended peer codes that the client supports.
+
+Data order:
+
+1. **uint32** — the revision identifier. The value is always `1`.
+2. **string** — optional client info. The string can identify the software or custom signals.
+3. **uint32** — the total number of extended peer codes.
+4. For each extended peer code:
+    1. **uint32** — the code.
+    2. **string** — the name.
+    3. **uint32** — reserved for future use. The value is always `0`.
+
+These rules apply:
+
+- If a peer does not send this message, the peer does not support extensions. You must not send extended messages to that peer.
+- Send an extended message only when the peer advertised the same code and name pair.
+- If a peer sends a malformed message or an unknown revision, ignore the message. You can disconnect from that peer.
+- Do not use the client info string in program logic. Peers select the string freely, and the string can be false.
+
+SeeleseekCore sends the handshake automatically and records the reply:
 
 ```swift
-public enum seeleseekPeerCode: UInt32, CaseIterable {
-    case handshake = 10000       // Custom client identification
-    case artworkRequest = 10001  // Request the album art for a file
-    case artworkReply = 10002    // The album art response
+// The parsed capability data of a peer
+public struct ExtendedClientInfo {
+    public let revision: UInt32
+    public let clientInfo: String
+    public let capabilities: [String: UInt32]  // wire name → code
+
+    public func supports(_ code: ExtendedClientInfoCode) -> Bool
 }
+
+// Query the pool for a known peer
+pool.hasAdvertised(.artworkRequest, by: "username")
 ```
 
-Only other seeleseek clients know these codes.
+`PeerConnection.send(extension:_:)` refuses to send a code that the peer did not advertise.
+
+### ArtworkRequest (10001)
+
+Request the album art that is embedded in a shared file.
+
+1. **uint32** — the request token.
+2. **string** — the file path.
+
+### ArtworkReply (10002)
+
+The album art response.
+
+1. **uint32** — the request token.
+2. **bytes** — the raw image data. The message frame gives the length. Empty data means that the file has no artwork.
