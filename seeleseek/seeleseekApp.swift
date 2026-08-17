@@ -37,7 +37,9 @@ struct SeeleSeekApp: App {
     #endif
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // `Window` (not `WindowGroup`): one main scene. Group + menu-bar Open
+        // after accessory→regular spawned a second instance.
+        Window("SeeleSeek", id: "main") {
             if Self.isRunningTests {
                 Text("seeleseek test host — closing this window is fine")
                     .foregroundStyle(.secondary)
@@ -63,6 +65,7 @@ struct SeeleSeekApp: App {
         #if os(macOS)
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 800)
+        .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(replacing: .newItem) {}
             TabNavigationCommands()
@@ -187,6 +190,12 @@ final class TestHostSafeAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false  // Only consulted under tests — see responds(to:).
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        MainActor.assumeIsolated {
+            DockIconPolicy.handleReopen(hasVisibleWindows: flag)
+        }
     }
 }
 #endif
