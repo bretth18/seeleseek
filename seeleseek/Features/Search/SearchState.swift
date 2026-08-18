@@ -77,7 +77,14 @@ final class SearchState {
 
     // MARK: - Settings Reference
     weak var settings: SettingsState? {
-        didSet { isGrouped = settings?.groupSearchResults ?? false }
+        didSet { syncPersistedSettings() }
+    }
+
+    /// Pull grouping + filter prefs from `settings`. Fired whenever settings
+    /// is (re)assigned — including from `AppState.configure()` after load.
+    func syncPersistedSettings() {
+        isGrouped = settings?.groupSearchResults ?? false
+        applyPersistedFilters(settings?.searchFilters ?? .empty)
     }
 
     // MARK: - Shared Activity Tracker
@@ -184,31 +191,94 @@ final class SearchState {
     // computed version was re-running filter + sort on every SearchView
     // body eval — and each streaming-result batch triggered several evals,
     // so with 500 rows we were doing tens of thousands of ops/sec.
+    // Filter values also write through to `settings.searchFilters` (see
+    // `persistFiltersIfNeeded`); sort order and `showFilters` stay session-only.
+    @ObservationIgnored private var suppressFilterPersist = false
+
     var filterMinBitrate: Int? = nil {
-        didSet { if filterMinBitrate != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterMinBitrate != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterMinSampleRate: Int? = nil {
-        didSet { if filterMinSampleRate != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterMinSampleRate != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterMinBitDepth: Int? = nil {
-        didSet { if filterMinBitDepth != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterMinBitDepth != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterMinSize: Int64? = nil {
-        didSet { if filterMinSize != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterMinSize != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterMaxSize: Int64? = nil {
-        didSet { if filterMaxSize != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterMaxSize != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterExtensions: Set<String> = [] {
-        didSet { if filterExtensions != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterExtensions != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var filterFreeSlotOnly: Bool = false {
-        didSet { if filterFreeSlotOnly != oldValue { recomputeFilteredResults() } }
+        didSet {
+            guard filterFreeSlotOnly != oldValue else { return }
+            recomputeFilteredResults()
+            persistFiltersIfNeeded()
+        }
     }
     var sortOrder: SortOrder = .relevance {
         didSet { if sortOrder != oldValue { recomputeFilteredResults() } }
     }
     var showFilters: Bool = false
+
+    private var currentPersistedFilters: PersistedSearchFilters {
+        PersistedSearchFilters(
+            minBitrate: filterMinBitrate,
+            minSampleRate: filterMinSampleRate,
+            minBitDepth: filterMinBitDepth,
+            minSize: filterMinSize,
+            maxSize: filterMaxSize,
+            extensions: filterExtensions,
+            freeSlotOnly: filterFreeSlotOnly
+        )
+    }
+
+    private func applyPersistedFilters(_ prefs: PersistedSearchFilters) {
+        suppressFilterPersist = true
+        defer { suppressFilterPersist = false }
+        filterMinBitrate = prefs.minBitrate
+        filterMinSampleRate = prefs.minSampleRate
+        filterMinBitDepth = prefs.minBitDepth
+        filterMinSize = prefs.minSize
+        filterMaxSize = prefs.maxSize
+        filterExtensions = prefs.extensions
+        filterFreeSlotOnly = prefs.freeSlotOnly
+    }
+
+    private func persistFiltersIfNeeded() {
+        guard !suppressFilterPersist, let settings else { return }
+        let prefs = currentPersistedFilters
+        guard settings.searchFilters != prefs else { return }
+        settings.searchFilters = prefs
+    }
 
     var hasActiveFilters: Bool {
         filterMinBitrate != nil ||
