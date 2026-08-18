@@ -75,6 +75,8 @@ enum DownloadFolderFormat: String, CaseIterable {
 
 /// Search-result filter prefs that survive relaunch. Kept separate from
 /// `SearchState` so Settings can load them before the search tab wires up.
+/// New fields must be optional: synthesized Codable ignores the defaults
+/// below, so blobs from older builds would fail to decode and reset to .empty.
 struct PersistedSearchFilters: Equatable, Codable, Sendable {
     var minBitrate: Int? = nil
     var minSampleRate: Int? = nil

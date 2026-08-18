@@ -80,9 +80,7 @@ final class SearchState {
         didSet { syncPersistedSettings() }
     }
 
-    /// Pull grouping + filter prefs from `settings`. Fired whenever settings
-    /// is (re)assigned — including from `AppState.configure()` after load.
-    func syncPersistedSettings() {
+    private func syncPersistedSettings() {
         isGrouped = settings?.groupSearchResults ?? false
         applyPersistedFilters(settings?.searchFilters ?? .empty)
     }
