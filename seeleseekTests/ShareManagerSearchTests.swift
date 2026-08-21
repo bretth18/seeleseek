@@ -3,8 +3,9 @@ import Foundation
 @testable import SeeleseekCore
 
 /// Pins `ShareManager.search` semantics and its off-main contract: the
-/// intersection must not infer `@MainActor` inside the detached task
-/// (same pattern as `BrowseFilterTests.summariesComputeOffMain`).
+/// intersection runs on a detached utility task against an immutable
+/// `SearchIndexTables` generation (same pattern as
+/// `BrowseFilterTests.summariesComputeOffMain`).
 @MainActor
 @Suite("ShareManager search")
 struct ShareManagerSearchTests {

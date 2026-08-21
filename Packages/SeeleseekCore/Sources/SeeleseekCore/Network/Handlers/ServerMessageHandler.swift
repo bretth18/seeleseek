@@ -800,10 +800,11 @@ public final class ServerMessageHandler {
             return
         }
 
-        // Search our shared files. `ShareManager.search` snapshots the
-        // index on MainActor then runs the intersection on a detached
-        // utility task — await here only hops for the result. Reply
-        // build / logging / send stay on this actor (see pass scope).
+        // Search our shared files. `ShareManager.search` retains the
+        // current immutable index generation on MainActor, then runs the
+        // intersection on a capped detached utility task — await here
+        // only hops for the result. Reply build / logging / send stay
+        // on this actor (see pass scope).
         guard let client else {
             logger.debug("No client available for distributed search")
             return
