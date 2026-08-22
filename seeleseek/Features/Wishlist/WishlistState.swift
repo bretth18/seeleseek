@@ -98,6 +98,9 @@ final class WishlistState {
             let loaded = try await WishlistRepository.fetchAll()
             items = loaded
             logger.info("Loaded \(loaded.count) wishlist items from database")
+            // Interval may have arrived before items finished loading; start
+            // the scheduler now so persisted wishes are not stuck at 0.
+            restartScheduler()
         } catch {
             logger.error("Failed to load wishlists: \(error.localizedDescription)")
         }
@@ -167,41 +170,46 @@ final class WishlistState {
             logger.error("searchNow: networkClient is nil!")
             return
         }
+        guard client.isConnected else {
+            logger.warning("searchNow: offline, skipping '\(item.query)'")
+            return
+        }
 
         let token = nextWishlistToken()
-        // Drop the item's previous token so the map doesn't grow each cycle.
-        tokenToWishlistId = tokenToWishlistId.filter { $0.value != item.id }
-        tokenToWishlistId[token] = item.id
-        logger.info("searchNow: query='\(item.query)' token=\(String(format: "0x%08X", token)) itemId=\(item.id) activeTokens=\(self.tokenToWishlistId.count)")
-
-        // Clear stale results from previous search cycle, subtracting their
-        // contribution from the sidebar badge so the count stays in sync
-        // with results actually visible in the wishlist view. max(0, …)
-        // guards against markResultsViewed() having already zeroed the
-        // badge between results arriving and this next scan.
-        let staleCount = results[item.id]?.count ?? 0
-        results[item.id] = []
-        unviewedResultCount = max(0, unviewedResultCount - staleCount)
+        logger.info("searchNow: query='\(item.query)' token=\(String(format: "0x%08X", token)) itemId=\(item.id)")
 
         Task {
             do {
-                try await client.addWishlistSearch(query: item.query, token: token)
-                logger.info("Wishlist search sent: '\(item.query)' token=\(token)")
+                // FileSearch (26), not WishlistSearch (103). Code 103 is
+                // server-rate-limited to the wishlist interval; Nicotine+
+                // uses 26 for manual / search-now wishlist runs. Manual
+                // search in seeleseek already uses 26, which is why that
+                // path finds files immediately while wishlist stayed at 0.
+                try await client.search(query: item.query, token: token)
+
+                // Drop the item's previous token only after the new search
+                // is on the wire, so late replies for the old token still
+                // land until then.
+                tokenToWishlistId = tokenToWishlistId.filter { $0.value != item.id }
+                tokenToWishlistId[token] = item.id
+
+                let staleCount = results[item.id]?.count ?? 0
+                results[item.id] = []
+                unviewedResultCount = max(0, unviewedResultCount - staleCount)
+
+                if let index = items.firstIndex(where: { $0.id == item.id }) {
+                    items[index].lastSearchedAt = Date()
+                    items[index].resultCount = 0
+                    let updated = items[index]
+                    try? await WishlistRepository.updateLastSearched(
+                        id: updated.id,
+                        resultCount: 0
+                    )
+                }
+
+                logger.info("Wishlist FileSearch sent: '\(item.query)' token=\(token)")
             } catch {
                 logger.error("Failed to send wishlist search: \(error.localizedDescription)")
-            }
-        }
-
-        // Update last searched time and reset result count
-        if let index = items.firstIndex(where: { $0.id == item.id }) {
-            items[index].lastSearchedAt = Date()
-            items[index].resultCount = 0
-            let updated = items[index]
-            Task {
-                try? await WishlistRepository.updateLastSearched(
-                    id: updated.id,
-                    resultCount: 0
-                )
             }
         }
     }
@@ -277,9 +285,13 @@ final class WishlistState {
         logger.info("Wishlist scheduler: \(enabledItems.count) items, \(perItemInterval)s between searches")
 
         schedulerTask = Task { [weak self] in
+            var isFirstTick = true
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(perItemInterval))
-                guard !Task.isCancelled else { break }
+                if !isFirstTick {
+                    try? await Task.sleep(for: .seconds(perItemInterval))
+                    guard !Task.isCancelled else { break }
+                }
+                isFirstTick = false
                 self?.tickScheduler()
             }
         }
