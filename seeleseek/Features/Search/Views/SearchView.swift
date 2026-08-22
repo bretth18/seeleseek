@@ -450,28 +450,22 @@ struct SearchView: View {
 
             // Results list
             ZStack(alignment: .bottom) {
-                ScrollView {
-                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                        if searchState.isGrouped {
-                            ForEach(searchState.displayItems) { item in
-                                SearchResultListItemView(item: item)
-                            }
-                        } else {
-                            ForEach(searchState.filteredResults) { result in
-                                SearchResultRow(
-                                    result: result,
-                                    isSelectionMode: searchState.isSelectionMode,
-                                    isSelected: searchState.selectedResults.contains(result.id),
-                                    onToggleSelection: {
-                                        searchState.toggleSelection(result.id)
-                                    }
-                                )
-                            }
-                        }
+                SearchResultsTableView(
+                    items: searchState.displayItems,
+                    isSelectionMode: searchState.isSelectionMode,
+                    selectedIDs: searchState.selectedResults,
+                    bottomInset: searchState.isSelectionMode ? 60 : 0,
+                    isExpanded: { searchState.isExpanded($0) },
+                    groupSelectionState: { searchState.selectionState(of: $0) },
+                    onToggleExpansion: { searchState.toggleExpansion($0) },
+                    onToggleSelection: { searchState.toggleSelection($0) },
+                    onToggleGroupSelection: { searchState.toggleSelection(of: $0) },
+                    onDownload: { downloadResult($0) },
+                    onDownloadFolder: { result in
+                        Task { await appState.downloadContainingFolder(of: result) }
                     }
-                    // Add bottom padding when action bar is visible
-                    .padding(.bottom, searchState.isSelectionMode ? 60 : 0)
-                }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 // Floating action bar
                 if searchState.isSelectionMode {
@@ -480,6 +474,12 @@ struct SearchView: View {
                 }
             }
         }
+    }
+
+    private func downloadResult(_ result: SearchResult) {
+        guard !appState.transferState.isFileQueued(filename: result.filename, username: result.username),
+              !appState.socialState.isIgnored(result.username) else { return }
+        appState.downloadManager.queueDownload(from: result)
     }
 
     private var selectionActionBar: some View {

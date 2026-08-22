@@ -268,7 +268,7 @@ struct SearchListItemTests {
         #expect(s.displayItems.count == 1)
     }
 
-    @Test("Ungrouping clears the flattened list so stale items cannot render")
+    @Test("Ungrouping shows loose rows instead of clearing displayItems")
     func ungroupClears() {
         let s = state([
             r("alice", "m\\Album\\01.flac"),
@@ -276,6 +276,27 @@ struct SearchListItemTests {
         ])
         #expect(!s.displayItems.isEmpty)
         s.isGrouped = false
-        #expect(s.displayItems.isEmpty)
+        #expect(s.displayItems.count == 2)
+        #expect(s.displayItems.allSatisfy { $0.id.hasPrefix("loose-") })
+    }
+
+    @Test("Streaming append merges groups incrementally on the selected tab")
+    func incrementalAppend() {
+        let s = SearchState()
+        s.isGrouped = true
+        s.searchQuery = "q"
+        s.startSearch(token: 1)
+        s.addResults([r("alice", "m\\Album\\01.flac")], forToken: 1)
+        #expect(s.displayItems.count == 1)
+        #expect(s.displayItems[0].id.hasPrefix("loose-"))
+
+        s.addResults([r("alice", "m\\Album\\02.flac")], forToken: 1)
+        #expect(s.displayItems.count == 1)
+        #expect(s.displayItems[0].id.hasPrefix("header-"))
+
+        s.toggleExpansion(s.resultGroups[0])
+        s.addResults([r("alice", "m\\Album\\03.flac")], forToken: 1)
+        #expect(s.displayItems.count == 5)
+        #expect(s.displayItems.filter { $0.id.hasPrefix("child-") }.count == 3)
     }
 }

@@ -10,14 +10,26 @@ public final class ShareManager {
     // MARK: - State
 
     public private(set) var sharedFolders: [SharedFolder] = []
+    /// UI / upload-facing mirror of `searchTables.files`. Always replaced
+    /// wholesale via `publishSearchTables` — never mutated in place — so
+    /// concurrent searches holding an older `searchTables` generation do
+    /// not force copy-on-write of the live index on the main actor.
     public private(set) var fileIndex: [IndexedFile] = []
-    /// Inverted word index: lowercased token -> positions in `fileIndex`.
-    /// Rebuilt/extended at every `fileIndex` mutation so `search` is a
-    /// posting-list intersection instead of a linear substring scan.
-    private var wordIndex: [String: [Int]] = [:]
+    /// Immutable inverted-index + file table pair. Searches retain this
+    /// value (a pointer to the arrays) across the detached intersection;
+    /// rescans / appends publish a new pair instead of mutating the live
+    /// buffers underneath in-flight queries.
+    @ObservationIgnored private var searchTables = SearchIndexTables.empty
     public private(set) var isScanning = false
     public private(set) var scanProgress: Double = 0
     public private(set) var lastScanDate: Date?
+
+    /// Caps concurrent detached search workers. Under heavy distributed
+    /// relay traffic, one `Task.detached` per query can otherwise pile up
+    /// unbounded utility work.
+    private static let maxConcurrentSearches = 8
+    private var searchInFlight = 0
+    private var searchWaiters: [CheckedContinuation<Void, Never>] = []
 
     // Computed stats
     public var totalFiles: Int { fileIndex.count }
@@ -31,16 +43,45 @@ public final class ShareManager {
         totalSize = fileIndex.reduce(0) { $0 + $1.size }
     }
 
+    /// Publish a new immutable generation of the search tables and mirror
+    /// `files` into the observable `fileIndex` in one step.
+    private func publishSearchTables(files: [IndexedFile], wordIndex: [String: [Int]]) {
+        searchTables = SearchIndexTables(files: files, wordIndex: wordIndex)
+        fileIndex = files
+    }
+
     /// Edit `fileIndex` through a local copy so observers are notified once,
     /// not once per element. Writing `fileIndex[i]` in a loop fires the
     /// `@Observable` accessor on every iteration, and each notification
     /// invalidates every view reading the array — flipping visibility on a
     /// 10k-file share meant 10k invalidations. Same rule as
     /// `applyFolderStats(_:)`: one write per logical change.
+    ///
+    /// Word postings are unchanged for visibility rewrites (same paths /
+    /// positions), so the prior generation's `wordIndex` is reused.
     private func mutateFileIndex(_ body: (inout [IndexedFile]) -> Void) {
-        var updated = fileIndex
+        var updated = searchTables.files
         body(&updated)
-        fileIndex = updated
+        publishSearchTables(files: updated, wordIndex: searchTables.wordIndex)
+    }
+
+    private func acquireSearchSlot() async {
+        if searchInFlight < Self.maxConcurrentSearches {
+            searchInFlight += 1
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            searchWaiters.append(continuation)
+        }
+    }
+
+    private func releaseSearchSlot() {
+        if searchWaiters.isEmpty {
+            searchInFlight -= 1
+        } else {
+            // Hand the slot to the next waiter without changing inFlight.
+            searchWaiters.removeFirst().resume()
+        }
     }
 
     /// Share-folder paths whose security-scoped access has already been
@@ -276,8 +317,9 @@ public final class ShareManager {
         // Remove indexed files from this folder. Match by folderID so
         // removing `/Music` doesn't also drop files under a sibling
         // `/Music_archive` (same hazard that bit `setVisibility`).
-        fileIndex.removeAll { $0.folderID == folder.id }
-        rebuildWordIndex()
+        var files = searchTables.files
+        files.removeAll { $0.folderID == folder.id }
+        publishSearchTables(files: files, wordIndex: Self.buildWordIndex(from: files))
         recomputeTotalSize()
 
         // Stop accessing security-scoped resource
@@ -349,13 +391,14 @@ public final class ShareManager {
         }
         applyFolderStats(pendingStats)
 
-        // Atomic swap — old index served lookups during the scan. Filter
-        // by live folder IDs so a folder removed mid-scan isn't
-        // resurrected by the swap (removeFolder mutates `fileIndex`
-        // directly, but this loop scanned from a snapshot).
+        // Atomic swap — old `searchTables` generation keeps serving
+        // detached searches during the scan. Filter by live folder IDs so
+        // a folder removed mid-scan isn't resurrected by the swap
+        // (removeFolder publishes its own generation, but this loop
+        // scanned from a folder-list snapshot).
         let liveFolderIDs = Set(sharedFolders.map(\.id))
-        fileIndex = newIndex.filter { liveFolderIDs.contains($0.folderID) }
-        rebuildWordIndex()
+        let files = newIndex.filter { liveFolderIDs.contains($0.folderID) }
+        publishSearchTables(files: files, wordIndex: Self.buildWordIndex(from: files))
         recomputeTotalSize()
 
         lastScanDate = Date()
@@ -395,9 +438,20 @@ public final class ShareManager {
             logger.error("Failed to enumerate folder: \(folder.path)")
             return
         }
-        let start = fileIndex.count
-        fileIndex.append(contentsOf: result.indexed)
-        appendToWordIndex(startingAt: start)
+        // Build the next generation from the prior immutable tables.
+        // Mutating copies here is fine: in-flight searches still hold the
+        // previous `searchTables` buffers and are not forced to COW.
+        let prior = searchTables
+        var files = prior.files
+        let start = files.count
+        files.append(contentsOf: result.indexed)
+        var wordIndex = prior.wordIndex
+        for position in start..<files.count {
+            for token in Set(Self.tokenize(files[position].searchableText)) {
+                wordIndex[token, default: []].append(position)
+            }
+        }
+        publishSearchTables(files: files, wordIndex: wordIndex)
         recomputeTotalSize()
         applyFolderStats([result])
         logger.info("Scanned \(folder.displayName): \(result.fileCount) files")
@@ -523,6 +577,46 @@ public final class ShareManager {
 
     // MARK: - Search
 
+    /// Immutable file table + inverted word index. Generations are swapped
+    /// atomically via `publishSearchTables`; searches retain a generation
+    /// by value (shared array buffers) so rescans never COW underneath them.
+    private struct SearchIndexTables: Sendable {
+        let files: [IndexedFile]
+        let wordIndex: [String: [Int]]
+
+        static let empty = SearchIndexTables(files: [], wordIndex: [:])
+
+        func search(query: String, includeBuddyOnly: Bool) -> [IndexedFile] {
+            let terms = Set(ShareManager.tokenize(query))
+            guard !terms.isEmpty else { return [] }
+
+            // Every term must have a posting list, else no file can match.
+            var lists: [[Int]] = []
+            lists.reserveCapacity(terms.count)
+            for term in terms {
+                guard let list = wordIndex[term] else { return [] }
+                lists.append(list)
+            }
+            lists.sort { $0.count < $1.count }
+
+            var candidates = Set(lists[0])
+            for list in lists.dropFirst() {
+                candidates.formIntersection(list)
+                if candidates.isEmpty { return [] }
+            }
+
+            // Materialize in index order; apply the visibility gate here,
+            // same semantics as the old linear filter. Positions are always
+            // valid for this generation — files and wordIndex were built
+            // together and never mutated afterward.
+            return candidates.sorted().compactMap { position -> IndexedFile? in
+                let file = files[position]
+                if !includeBuddyOnly && file.visibility == .buddies { return nil }
+                return file
+            }
+        }
+    }
+
     /// Split into lowercased tokens on non-alphanumeric boundaries.
     /// Shared by index building and query parsing so both sides agree.
     nonisolated private static func tokenize(_ text: String) -> [String] {
@@ -531,25 +625,15 @@ public final class ShareManager {
             .map(String.init)
     }
 
-    /// Rebuild the inverted index from scratch (rescan swap / removal).
-    private func rebuildWordIndex() {
+    /// Build a fresh inverted index for an immutable file table.
+    nonisolated private static func buildWordIndex(from files: [IndexedFile]) -> [String: [Int]] {
         var index: [String: [Int]] = [:]
-        for (position, file) in fileIndex.enumerated() {
-            for token in Set(Self.tokenize(file.searchableText)) {
+        for (position, file) in files.enumerated() {
+            for token in Set(tokenize(file.searchableText)) {
                 index[token, default: []].append(position)
             }
         }
-        wordIndex = index
-    }
-
-    /// Extend the inverted index for files appended at `start...`.
-    private func appendToWordIndex(startingAt start: Int) {
-        guard start < fileIndex.count else { return }
-        for position in start..<fileIndex.count {
-            for token in Set(Self.tokenize(fileIndex[position].searchableText)) {
-                wordIndex[token, default: []].append(position)
-            }
-        }
+        return index
     }
 
     /// Search local files for a query (used when peers search us).
@@ -561,35 +645,22 @@ public final class ShareManager {
     /// distributed relay. Matching is whole-word (canonical SoulSeek /
     /// Nicotine+ behavior), no longer substring-contains.
     ///
+    /// Retains the current immutable `searchTables` generation (pointer
+    /// to the arrays) and runs the intersection on a detached utility
+    /// task so a busy relay cannot steal main-actor frames. Concurrent
+    /// workers are capped — see `maxConcurrentSearches`.
+    ///
     /// `includeBuddyOnly` controls whether folders marked `.buddies` are
     /// visible to the requester. Callers resolve that flag from their
     /// knowledge of the requester (buddy-list membership) before calling.
     public func search(query: String, includeBuddyOnly: Bool) async -> [IndexedFile] {
-        let terms = Set(Self.tokenize(query))
-        guard !terms.isEmpty else { return [] }
-
-        // Every term must have a posting list, else no file can match.
-        var lists: [[Int]] = []
-        lists.reserveCapacity(terms.count)
-        for term in terms {
-            guard let list = wordIndex[term] else { return [] }
-            lists.append(list)
-        }
-        lists.sort { $0.count < $1.count }
-
-        var candidates = Set(lists[0])
-        for list in lists.dropFirst() {
-            candidates.formIntersection(list)
-            if candidates.isEmpty { return [] }
-        }
-
-        // Materialize in index order; apply the visibility gate here,
-        // same semantics as the old linear filter.
-        return candidates.sorted().compactMap { position in
-            let file = fileIndex[position]
-            if !includeBuddyOnly && file.visibility == .buddies { return nil }
-            return file
-        }
+        let tables = searchTables
+        let buddyOnly = includeBuddyOnly
+        await acquireSearchSlot()
+        defer { releaseSearchSlot() }
+        return await Task.detached(priority: .utility) {
+            tables.search(query: query, includeBuddyOnly: buddyOnly)
+        }.value
     }
 
     /// Snapshot of all indexed files visible to a given requester. Used
@@ -645,8 +716,7 @@ public final class ShareManager {
     /// `rescanAll`. Used by upload retry tests so they don't have to spin
     /// up the disk-walk code path.
     internal func _seedFileIndexForTest(_ files: [IndexedFile]) {
-        fileIndex = files
-        rebuildWordIndex()
+        publishSearchTables(files: files, wordIndex: Self.buildWordIndex(from: files))
         recomputeTotalSize()
     }
 
