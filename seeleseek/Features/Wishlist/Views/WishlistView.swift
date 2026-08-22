@@ -43,35 +43,61 @@ struct WishlistView: View {
             if wishlistState.items.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(wishlistState.items) { item in
-                            WishlistItemRow(item: item)
-                        }
-                    }
-                    .padding(.vertical, SeeleSpacing.sm)
-
-                    // Expanded results
-                    if let expandedId = wishlistState.expandedItemId,
-                       let results = wishlistState.results[expandedId],
-                       !results.isEmpty {
-                        Divider().background(SeeleColors.surfaceSecondary)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("Results")
-                                .font(SeeleTypography.headline)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                                .padding(.horizontal, SeeleSpacing.lg)
-                                .padding(.vertical, SeeleSpacing.sm)
-
-                            LazyVStack(spacing: 1) {
-                                ForEach(results) { result in
-                                    SearchResultRow(result: result)
-                                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: 1) {
+                            ForEach(displayItems) { listItem in
+                                wishlistListItemView(listItem)
                             }
+                        }
+                        .padding(.vertical, SeeleSpacing.sm)
+                    }
+                    .onChange(of: wishlistState.expandedItemId) { _, expandedId in
+                        guard let expandedId else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(expandedId, anchor: .top)
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Flattened list: one view per `ForEach` element. Variable subview
+    /// counts inside a lazy container mis-place expanded results (same bug
+    /// as pre-flatten search grouping — see `SearchListItem`).
+    private var displayItems: [WishlistListItem] {
+        var items: [WishlistListItem] = []
+        for item in wishlistState.items {
+            items.append(.row(item))
+            if wishlistState.expandedItemId == item.id,
+               let results = wishlistState.results[item.id],
+               !results.isEmpty {
+                items.append(.resultsHeader(wishlistId: item.id))
+                items.append(contentsOf: results.map(WishlistListItem.result))
+            }
+        }
+        return items
+    }
+
+    @ViewBuilder
+    private func wishlistListItemView(_ listItem: WishlistListItem) -> some View {
+        switch listItem {
+        case .row(let item):
+            WishlistItemRow(item: item)
+                .id(item.id)
+        case .resultsHeader:
+            VStack(spacing: 0) {
+                Divider().background(SeeleColors.surfaceSecondary)
+                Text("Results")
+                    .font(SeeleTypography.headline)
+                    .foregroundStyle(SeeleColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, SeeleSpacing.lg)
+                    .padding(.vertical, SeeleSpacing.sm)
+            }
+        case .result(let result):
+            SearchResultRow(result: result)
         }
     }
 
@@ -81,6 +107,25 @@ struct WishlistView: View {
             title: "No wishlists",
             subtitle: "Add search queries that run automatically at regular intervals"
         )
+    }
+}
+
+// MARK: - Flat List Items
+
+private enum WishlistListItem: Identifiable {
+    case row(WishlistItem)
+    case resultsHeader(wishlistId: UUID)
+    case result(SearchResult)
+
+    var id: String {
+        switch self {
+        case .row(let item):
+            "row-\(item.id)"
+        case .resultsHeader(let wishlistId):
+            "header-\(wishlistId)"
+        case .result(let result):
+            "result-\(result.id)"
+        }
     }
 }
 
