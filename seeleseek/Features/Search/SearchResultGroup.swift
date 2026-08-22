@@ -41,19 +41,34 @@ struct SearchResultGroup: Identifiable, Hashable {
     }
 
     init(username: String, folderPath: String, results: [SearchResult]) {
+        let sorted = results.sorted {
+            $0.filename.localizedStandardCompare($1.filename) == .orderedAscending
+        }
+        self.init(username: username, folderPath: folderPath, presortedResults: sorted)
+    }
+
+    /// For incremental merges where `results` is already in natural filename order.
+    init(username: String, folderPath: String, presortedResults: [SearchResult]) {
         self.id = Self.key(username: username, folderPath: folderPath)
         self.displayName = folderPath.split(separator: "\\").last.map(String.init) ?? folderPath
         self.username = username
         self.folderPath = folderPath
-        // Natural ordering, so "02" sorts before "10" rather than after it.
-        self.results = results.sorted {
-            $0.filename.localizedStandardCompare($1.filename) == .orderedAscending
-        }
+        self.results = presortedResults
         var total: UInt64 = 0
-        for result in results { total += result.size }
+        for result in presortedResults { total += result.size }
         self.totalSize = total
         self.formattedTotalSize = total.formattedBytes
-        self.commonQuality = Self.commonQuality(of: results)
+        self.commonQuality = Self.commonQuality(of: presortedResults)
+    }
+
+    /// Merges one streaming result without re-sorting the whole bucket.
+    func appending(_ result: SearchResult) -> SearchResultGroup {
+        var merged = results
+        let insertIndex = merged.firstIndex {
+            result.filename.localizedStandardCompare($0.filename) == .orderedAscending
+        } ?? merged.count
+        merged.insert(result, at: insertIndex)
+        return SearchResultGroup(username: username, folderPath: folderPath, presortedResults: merged)
     }
 
     private static func commonQuality(of results: [SearchResult]) -> String? {

@@ -334,6 +334,9 @@ final class SearchState {
 
     private(set) var resultGroups: [SearchResultGroup] = []
 
+    /// Stable key -> index map for incremental streaming merges into `resultGroups`.
+    @ObservationIgnored private var groupIndexByKey: [String: Int] = [:]
+
     /// The flattened list the view renders. Derived from `resultGroups` plus
     /// `expandedGroups`; see `SearchListItem` for why the view must not do
     /// this flattening itself.
@@ -415,11 +418,28 @@ final class SearchState {
         guard let search = currentSearch else {
             filteredResults = []
             resultGroups = []
+            groupIndexByKey = [:]
             displayItems = []
             return
         }
 
-        var results = search.results
+        var results = applyFilters(to: search.results)
+        applySort(to: &results)
+
+        filteredResults = results
+        if isGrouped {
+            resultGroups = Self.group(results)
+            groupIndexByKey = Dictionary(uniqueKeysWithValues: resultGroups.enumerated().map { ($1.id, $0) })
+            rebuildDisplayItems()
+        } else {
+            resultGroups = []
+            groupIndexByKey = [:]
+            displayItems = results.map { .loose($0) }
+        }
+    }
+
+    private func applyFilters(to results: [SearchResult]) -> [SearchResult] {
+        var results = results
 
         if let minBitrate = filterMinBitrate {
             results = results.filter { ($0.bitrate ?? 0) >= UInt32(minBitrate) }
@@ -443,9 +463,13 @@ final class SearchState {
             results = results.filter { $0.freeSlots }
         }
 
+        return results
+    }
+
+    private func applySort(to results: inout [SearchResult]) {
         switch sortOrder {
         case .relevance:
-            break // Keep original order
+            break
         case .bitrate:
             results.sort { ($0.bitrate ?? 0) > ($1.bitrate ?? 0) }
         case .sampleRate:
@@ -457,15 +481,40 @@ final class SearchState {
         case .queue:
             results.sort { $0.queueLength < $1.queueLength }
         }
+    }
 
-        filteredResults = results
+    /// Streaming append on the selected tab: filter new rows and merge without
+    /// re-scanning every result when sort is still relevance-ordered.
+    private func incrementallyAppendFiltered(_ newResults: [SearchResult]) {
+        let filtered = applyFilters(to: newResults)
+        guard !filtered.isEmpty else { return }
+
+        filteredResults.append(contentsOf: filtered)
+
         if isGrouped {
-            resultGroups = Self.group(results)
+            for result in filtered {
+                mergeResultIntoGroups(result)
+            }
             rebuildDisplayItems()
         } else {
-            resultGroups = []
-            displayItems = []
+            displayItems.append(contentsOf: filtered.map { .loose($0) })
         }
+    }
+
+    private func mergeResultIntoGroups(_ result: SearchResult) {
+        let key = SearchResultGroup.key(username: result.username, folderPath: result.folderPath)
+        if let index = groupIndexByKey[key] {
+            resultGroups[index] = resultGroups[index].appending(result)
+        } else {
+            groupIndexByKey[key] = resultGroups.count
+            resultGroups.append(
+                SearchResultGroup(username: result.username, folderPath: result.folderPath, results: [result])
+            )
+        }
+    }
+
+    private var canIncrementallyAppendFiltered: Bool {
+        sortOrder == .relevance
     }
 
     /// Groups in encounter order over the already-sorted array, so the
@@ -590,7 +639,11 @@ final class SearchState {
 
         searches[index].results.append(contentsOf: resultsToAdd)
         if index == selectedSearchIndex {
-            recomputeFilteredResults()
+            if canIncrementallyAppendFiltered {
+                incrementallyAppendFiltered(resultsToAdd)
+            } else {
+                recomputeFilteredResults()
+            }
         }
         logger.info("Added \(resultsToAdd.count) results to '\(self.searches[index].query)' (total: \(self.searches[index].results.count))")
 
