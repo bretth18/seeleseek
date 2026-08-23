@@ -88,7 +88,6 @@ final class SearchResultAppKitRowGlyphOrnament: NSView {
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.contentTintColor = NSColor(SeeleColors.textPrimary)
-        imageView.wantsLayer = true
         imageView.translatesAutoresizingMaskIntoConstraints = true
         addSubview(imageView)
     }
@@ -102,11 +101,11 @@ final class SearchResultAppKitRowGlyphOrnament: NSView {
         SeeleSpacing.iconSizeXXS + SeeleSpacing.xxs * 2
     }
 
-    func configure(image: NSImage, rotationDegrees: CGFloat) {
+    /// Test seam — which symbol is currently shown.
+    var imageForTesting: NSImage? { imageView.image }
+
+    func configure(image: NSImage) {
         imageView.image = image
-        imageView.layer?.setAffineTransform(
-            CGAffineTransform(rotationAngle: rotationDegrees * .pi / 180)
-        )
         needsLayout = true
     }
 

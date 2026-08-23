@@ -185,7 +185,17 @@ struct SearchResultsTableView: NSViewRepresentable {
 
     private static func canAppendRows(from old: [String], to new: [String]) -> Bool {
         guard new.count > old.count, !old.isEmpty else { return false }
-        return zip(old, new.prefix(old.count)).allSatisfy { $0 == $1 }
+        guard zip(old, new.prefix(old.count)).allSatisfy({ $0 == $1 }) else { return false }
+        // Expanding the last folder appends `child-` / `end-` ids. Treating that
+        // as a stream-append would skip reloading the header, leaving the
+        // chevron stuck. Only true loose-result streaming may append in place.
+        let appended = new[old.count...]
+        return appended.allSatisfy { $0.hasPrefix("loose-") }
+    }
+
+    /// Test seam for the append heuristic.
+    static func canAppendRowsForTesting(from old: [String], to new: [String]) -> Bool {
+        canAppendRows(from: old, to: new)
     }
 
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, SearchResultsTableMenuProviding {
@@ -329,6 +339,17 @@ struct SearchResultsTableView: NSViewRepresentable {
                 isSelectionMode: isSelectionMode,
                 groupSelection: groupSelectionState(group),
                 folderRequestState: representative.flatMap { actions.folderRequestState($0) },
+                onRowActivate: { [weak self] in
+                    // Cell owns the click so labels cannot swallow it. Suppress
+                    // the table `action` or we expand then immediately collapse.
+                    self?.suppressNextTableClick = true
+                    guard let self else { return }
+                    if self.isSelectionMode {
+                        self.onToggleGroupSelection(group)
+                    } else {
+                        self.onToggleExpansion(group)
+                    }
+                },
                 onDownloadFolder: { [weak self] result in
                     self?.suppressNextTableClick = true
                     self?.actions.onDownloadFolder(result)
@@ -385,8 +406,16 @@ struct SearchResultsTableView: NSViewRepresentable {
                 suppressNextTableClick = false
                 return
             }
+            handleRowClick(at: sender.clickedRow)
+        }
 
-            let row = sender.clickedRow
+        @objc func tableDoubleClick(_ sender: NSTableView) {
+            handleRowDoubleClick(at: sender.clickedRow)
+        }
+
+        /// Single-click routing for file rows. Headers activate via the cell's
+        /// own `mouseDown` so we never double-toggle against the table action.
+        func handleRowClick(at row: Int) {
             guard items.indices.contains(row) else { return }
 
             switch items[row] {
@@ -394,29 +423,21 @@ struct SearchResultsTableView: NSViewRepresentable {
                 if isSelectionMode {
                     onToggleSelection(result.id)
                 }
-            case .header(let group):
-                if isSelectionMode {
-                    onToggleGroupSelection(group)
-                } else {
-                    onToggleExpansion(group)
-                }
-            case .groupEnd:
+            case .header, .groupEnd:
                 break
             }
         }
 
-        @objc func tableDoubleClick(_ sender: NSTableView) {
-            let row = sender.clickedRow
+        /// Double-click downloads a file row. Headers deliberately do nothing —
+        /// a Finder-style double-click would otherwise expand then queue a
+        /// whole-folder download on the second click.
+        func handleRowDoubleClick(at row: Int) {
             guard items.indices.contains(row), !isSelectionMode else { return }
 
             switch items[row] {
             case .loose(let result), .child(let result):
                 actions.onDownload(result)
-            case .header(let group):
-                if let representative = group.results.first {
-                    actions.onDownloadFolder(representative)
-                }
-            case .groupEnd:
+            case .header, .groupEnd:
                 break
             }
         }

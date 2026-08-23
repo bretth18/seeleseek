@@ -29,6 +29,7 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
     private var isExpanded = false
     private var showsQuality = false
     private var group: SearchResultGroup?
+    private var onRowActivate: (() -> Void)?
     private var onDownloadFolder: ((SearchResult) -> Void)?
     private var folderRequestState: AppState.FolderRequestState?
 
@@ -191,9 +192,11 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
         isSelectionMode: Bool,
         groupSelection: SearchState.GroupSelection,
         folderRequestState: AppState.FolderRequestState?,
+        onRowActivate: @escaping () -> Void,
         onDownloadFolder: @escaping (SearchResult) -> Void
     ) {
         self.group = group
+        self.onRowActivate = onRowActivate
         self.onDownloadFolder = onDownloadFolder
         self.folderRequestState = folderRequestState
         self.isExpanded = isExpanded
@@ -201,9 +204,12 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
         selectionView.isHidden = !isSelectionMode
         selectionView.image = SearchResultSymbolCache.groupSelectionSymbol(for: groupSelection)
 
+        // Swap symbols (same as Browse) — rotating `chevron.right` clipped
+        // outside this ornament's rounded mask.
         chevronOrnament.configure(
-            image: SearchResultSymbolCache.chevronSmall,
-            rotationDegrees: isExpanded ? 90 : 0
+            image: isExpanded
+                ? SearchResultSymbolCache.chevronSmallDown
+                : SearchResultSymbolCache.chevronSmall
         )
 
         titleField.stringValue = model.displayName
@@ -258,8 +264,49 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
         onDownloadFolder?(representative)
     }
 
+    /// Expand / selection lives on the cell so labels cannot swallow the click
+    /// and so we do not fight `NSTableView`'s `action` (double-toggle = no-op).
+    override func mouseDown(with event: NSEvent) {
+        let local = convert(event.locationInWindow, from: nil)
+        if isPointInDownloadChrome(local) {
+            super.mouseDown(with: event)
+            return
+        }
+        onRowActivate?()
+    }
+
+    /// Keep the download control as its own hit target; everything else hits
+    /// the cell so `mouseDown` above can expand.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        if hit === downloadButton
+            || hit === folderProgress
+            || hit === folderFailedView
+            || hit.isDescendant(of: downloadButton) {
+            return hit
+        }
+        return self
+    }
+
+    private func isPointInDownloadChrome(_ point: NSPoint) -> Bool {
+        if !downloadButton.isHidden, downloadButton.frame.contains(point) { return true }
+        if !folderProgress.isHidden, folderProgress.frame.contains(point) { return true }
+        if !folderFailedView.isHidden, folderFailedView.frame.contains(point) { return true }
+        return false
+    }
+
     /// Test seam — fires the same path as a click on the download button.
     func performDownloadForTesting() {
         downloadClicked()
+    }
+
+    /// Test seam — fires the same path as a click on the row body.
+    func performRowActivateForTesting() {
+        onRowActivate?()
+    }
+
+    /// Test seam — disclosure symbol after the last `configure`.
+    var chevronImageForTesting: NSImage? {
+        chevronOrnament.imageForTesting
     }
 }

@@ -16,6 +16,7 @@ enum SearchResultSymbolCache {
     private static var folderOutlineImage: NSImage?
     private static var uploadArrowImage: NSImage?
     private static var chevronSmallImage: NSImage?
+    private static var chevronSmallDownImage: NSImage?
     private static var groupSelectionNoneImage: NSImage?
     private static var groupSelectionPartialImage: NSImage?
     private static var groupSelectionAllImage: NSImage?
@@ -47,6 +48,13 @@ enum SearchResultSymbolCache {
     static var chevronSmall: NSImage {
         warmIfNeeded()
         return chevronSmallImage!
+    }
+
+    /// Expanded disclosure — swap symbols instead of rotating `chevron.right`,
+    /// which clipped outside the ornament's rounded clip.
+    static var chevronSmallDown: NSImage {
+        warmIfNeeded()
+        return chevronSmallDownImage!
     }
 
     static func groupSelectionSymbol(for state: SearchState.GroupSelection) -> NSImage {
@@ -202,6 +210,11 @@ enum SearchResultSymbolCache {
            let configured = base.withSymbolConfiguration(chevronSmallConfig) {
             configured.isTemplate = true
             chevronSmallImage = configured
+        }
+        if let base = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil),
+           let configured = base.withSymbolConfiguration(chevronSmallConfig) {
+            configured.isTemplate = true
+            chevronSmallDownImage = configured
         }
     }
 }
