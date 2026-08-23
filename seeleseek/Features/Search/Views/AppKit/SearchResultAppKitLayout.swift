@@ -40,11 +40,7 @@ enum SearchResultAppKitLayout {
         RowLayout.secondaryActionsWidth(2)
     }
 
-    /// `RowIconButton(isProminent:)` — 20pt glyph in a 32pt hit target.
-    static var primaryGlyphSize: CGFloat {
-        SeeleSpacing.iconSizeMedium
-    }
-
+    /// `RowIconButton(isProminent:)` — 32pt hit target.
     static var primaryHitTarget: CGFloat {
         SeeleSpacing.iconSizeXL
     }
@@ -133,20 +129,24 @@ enum SearchResultAppKitLayout {
         )
     }
 
-    /// Primary download glyph centered in the trailing hit target column.
+    /// Primary download control in the trailing hit-target column (`RowIconButton`
+    /// prominent size). The control's image is centered by AppKit.
+    static func trailingClusterFrame(in bounds: NSRect, verticalCenter: CGFloat) -> CGRect {
+        let hitTarget = primaryHitTarget
+        let primaryX = bounds.maxX - horizontalPad - hitTarget
+        return CGRect(
+            x: primaryX,
+            y: verticalCenter - hitTarget / 2,
+            width: hitTarget,
+            height: hitTarget
+        )
+    }
+
     static func layoutTrailingCluster(
         downloadView: NSView,
         in bounds: NSRect,
         verticalCenter: CGFloat
     ) {
-        let hitTarget = primaryHitTarget
-        let glyphSize = primaryGlyphSize
-        let primaryX = bounds.maxX - horizontalPad - hitTarget
-        downloadView.frame = CGRect(
-            x: primaryX + (hitTarget - glyphSize) / 2,
-            y: verticalCenter - glyphSize / 2,
-            width: glyphSize,
-            height: glyphSize
-        )
+        downloadView.frame = trailingClusterFrame(in: bounds, verticalCenter: verticalCenter)
     }
 }

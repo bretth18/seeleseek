@@ -8,13 +8,15 @@ struct SearchResultsTableView: NSViewRepresentable {
     var isSelectionMode: Bool
     var selectedIDs: Set<UUID>
     var bottomInset: CGFloat
+    /// Observed so status-driven download chrome refreshes after queueing.
+    var downloadStatusIndex: [String: Transfer.TransferStatus]
+    var folderRequestStates: [AppState.FolderRequest: AppState.FolderRequestState]
     var isExpanded: (SearchResultGroup) -> Bool
     var groupSelectionState: (SearchResultGroup) -> SearchState.GroupSelection
     var onToggleExpansion: (SearchResultGroup) -> Void
     var onToggleSelection: (UUID) -> Void
     var onToggleGroupSelection: (SearchResultGroup) -> Void
-    var onDownload: (SearchResult) -> Void
-    var onDownloadFolder: (SearchResult) -> Void
+    var actions: SearchResultAppKitActions
 
     private static let rowHeight = SearchResultAppKitLayout.rowHeight
     private static let groupEndHeight = SearchResultAppKitLayout.groupEndHeight
@@ -24,13 +26,14 @@ struct SearchResultsTableView: NSViewRepresentable {
             items: items,
             isSelectionMode: isSelectionMode,
             selectedIDs: selectedIDs,
+            downloadStatusIndex: downloadStatusIndex,
+            folderRequestStates: folderRequestStates,
             isExpanded: isExpanded,
             groupSelectionState: groupSelectionState,
             onToggleExpansion: onToggleExpansion,
             onToggleSelection: onToggleSelection,
             onToggleGroupSelection: onToggleGroupSelection,
-            onDownload: onDownload,
-            onDownloadFolder: onDownloadFolder
+            actions: actions
         )
     }
 
@@ -47,7 +50,7 @@ struct SearchResultsTableView: NSViewRepresentable {
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
 
-        let table = NSTableView()
+        let table = SearchResultsNSTableView()
         table.headerView = nil
         table.rowHeight = Self.rowHeight
         table.intercellSpacing = .zero
@@ -63,6 +66,7 @@ struct SearchResultsTableView: NSViewRepresentable {
         table.target = context.coordinator
         table.action = #selector(Coordinator.tableClick(_:))
         table.doubleAction = #selector(Coordinator.tableDoubleClick(_:))
+        table.menuProvider = context.coordinator
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("searchResult"))
         column.title = ""
@@ -88,8 +92,13 @@ struct SearchResultsTableView: NSViewRepresentable {
         coordinator.onToggleExpansion = onToggleExpansion
         coordinator.onToggleSelection = onToggleSelection
         coordinator.onToggleGroupSelection = onToggleGroupSelection
-        coordinator.onDownload = onDownload
-        coordinator.onDownloadFolder = onDownloadFolder
+        coordinator.actions = actions
+
+        let statusChromeChanged =
+            coordinator.downloadStatusIndex != downloadStatusIndex
+            || coordinator.folderRequestStates != folderRequestStates
+        coordinator.downloadStatusIndex = downloadStatusIndex
+        coordinator.folderRequestStates = folderRequestStates
 
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
 
@@ -106,6 +115,9 @@ struct SearchResultsTableView: NSViewRepresentable {
             table.beginUpdates()
             table.insertRows(at: IndexSet(start..<newIDs.count), withAnimation: [])
             table.endUpdates()
+            if statusChromeChanged {
+                coordinator.reloadActionChrome(in: table)
+            }
             return
         }
 
@@ -133,6 +145,14 @@ struct SearchResultsTableView: NSViewRepresentable {
             if !rows.isEmpty {
                 table.reloadData(forRowIndexes: IndexSet(rows), columnIndexes: IndexSet(integer: 0))
             }
+            if statusChromeChanged {
+                coordinator.reloadActionChrome(in: table)
+            }
+            return
+        }
+
+        if statusChromeChanged {
+            coordinator.reloadActionChrome(in: table)
             return
         }
 
@@ -168,21 +188,26 @@ struct SearchResultsTableView: NSViewRepresentable {
         return zip(old, new.prefix(old.count)).allSatisfy { $0 == $1 }
     }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, SearchResultsTableMenuProviding {
         var items: [SearchListItem]
         var isSelectionMode: Bool
         var selectedIDs: Set<UUID>
         var lastSelectedIDs: Set<UUID>
         var lastSelectionMode: Bool
+        var downloadStatusIndex: [String: Transfer.TransferStatus]
+        var folderRequestStates: [AppState.FolderRequest: AppState.FolderRequestState]
         var isExpanded: (SearchResultGroup) -> Bool
         var groupSelectionState: (SearchResultGroup) -> SearchState.GroupSelection
         var onToggleExpansion: (SearchResultGroup) -> Void
         var onToggleSelection: (UUID) -> Void
         var onToggleGroupSelection: (SearchResultGroup) -> Void
-        var onDownload: (SearchResult) -> Void
-        var onDownloadFolder: (SearchResult) -> Void
+        var actions: SearchResultAppKitActions
         weak var tableView: NSTableView?
         var rowDisplayCache: [UUID: SearchResultAppKitDisplayModel] = [:]
+        /// Set when a cell download button fires so the table click does not
+        /// also toggle selection / expansion for the same mouse-up.
+        private var suppressNextTableClick = false
+        private var menuListItem: SearchListItem?
 
         var itemIDs: [String] { items.map(\.id) }
 
@@ -193,30 +218,45 @@ struct SearchResultsTableView: NSViewRepresentable {
             column.width = width
         }
 
+        func reloadActionChrome(in tableView: NSTableView) {
+            let rows = IndexSet(
+                items.enumerated().compactMap { index, item -> Int? in
+                    switch item {
+                    case .loose, .child, .header: return index
+                    case .groupEnd: return nil
+                    }
+                }
+            )
+            guard !rows.isEmpty else { return }
+            tableView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
+        }
+
         init(
             items: [SearchListItem],
             isSelectionMode: Bool,
             selectedIDs: Set<UUID>,
+            downloadStatusIndex: [String: Transfer.TransferStatus],
+            folderRequestStates: [AppState.FolderRequest: AppState.FolderRequestState],
             isExpanded: @escaping (SearchResultGroup) -> Bool,
             groupSelectionState: @escaping (SearchResultGroup) -> SearchState.GroupSelection,
             onToggleExpansion: @escaping (SearchResultGroup) -> Void,
             onToggleSelection: @escaping (UUID) -> Void,
             onToggleGroupSelection: @escaping (SearchResultGroup) -> Void,
-            onDownload: @escaping (SearchResult) -> Void,
-            onDownloadFolder: @escaping (SearchResult) -> Void
+            actions: SearchResultAppKitActions
         ) {
             self.items = items
             self.isSelectionMode = isSelectionMode
             self.selectedIDs = selectedIDs
             self.lastSelectedIDs = selectedIDs
             self.lastSelectionMode = isSelectionMode
+            self.downloadStatusIndex = downloadStatusIndex
+            self.folderRequestStates = folderRequestStates
             self.isExpanded = isExpanded
             self.groupSelectionState = groupSelectionState
             self.onToggleExpansion = onToggleExpansion
             self.onToggleSelection = onToggleSelection
             self.onToggleGroupSelection = onToggleGroupSelection
-            self.onDownload = onDownload
-            self.onDownloadFolder = onDownloadFolder
+            self.actions = actions
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -257,9 +297,16 @@ struct SearchResultsTableView: NSViewRepresentable {
             let model = rowDisplayModel(for: result)
             cell.configure(
                 model: model,
+                result: result,
                 isSelectionMode: isSelectionMode,
                 isSelected: selectedIDs.contains(result.id),
-                isNested: nested
+                isNested: nested,
+                downloadStatus: actions.downloadStatus(result),
+                isIgnored: actions.isIgnored(result.username),
+                onDownload: { [weak self] result in
+                    self?.suppressNextTableClick = true
+                    self?.actions.onDownload(result)
+                }
             )
             return cell
         }
@@ -274,11 +321,18 @@ struct SearchResultsTableView: NSViewRepresentable {
                 cell.identifier = id
             }
             let model = groupDisplayModel(for: group)
+            let representative = group.results.first
             cell.configure(
                 model: model,
+                group: group,
                 isExpanded: isExpanded(group),
                 isSelectionMode: isSelectionMode,
-                groupSelection: groupSelectionState(group)
+                groupSelection: groupSelectionState(group),
+                folderRequestState: representative.flatMap { actions.folderRequestState($0) },
+                onDownloadFolder: { [weak self] result in
+                    self?.suppressNextTableClick = true
+                    self?.actions.onDownloadFolder(result)
+                }
             )
             return cell
         }
@@ -307,7 +361,31 @@ struct SearchResultsTableView: NSViewRepresentable {
             SearchResultAppKitGroupDisplayModel.make(from: group)
         }
 
+        func menu(forRow row: Int) -> NSMenu? {
+            guard items.indices.contains(row) else { return nil }
+            let listItem = items[row]
+            menuListItem = listItem
+            return actions.makeMenu(
+                for: listItem,
+                target: self,
+                action: #selector(contextMenuItemClicked(_:))
+            )
+        }
+
+        @objc func contextMenuItemClicked(_ sender: NSMenuItem) {
+            guard let listItem = menuListItem,
+                  let item = sender.representedObject as? SearchResultAppKitMenuItem else {
+                return
+            }
+            actions.perform(item, for: listItem)
+        }
+
         @objc func tableClick(_ sender: NSTableView) {
+            if suppressNextTableClick {
+                suppressNextTableClick = false
+                return
+            }
+
             let row = sender.clickedRow
             guard items.indices.contains(row) else { return }
 
@@ -333,14 +411,34 @@ struct SearchResultsTableView: NSViewRepresentable {
 
             switch items[row] {
             case .loose(let result), .child(let result):
-                onDownload(result)
+                actions.onDownload(result)
             case .header(let group):
                 if let representative = group.results.first {
-                    onDownloadFolder(representative)
+                    actions.onDownloadFolder(representative)
                 }
             case .groupEnd:
                 break
             }
         }
+    }
+}
+
+/// Supplies a per-row context menu; `NSTableView.menu` alone cannot vary by row.
+protocol SearchResultsTableMenuProviding: AnyObject {
+    func menu(forRow row: Int) -> NSMenu?
+}
+
+private final class SearchResultsNSTableView: NSTableView {
+    weak var menuProvider: SearchResultsTableMenuProviding?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        guard row >= 0 else { return nil }
+        // Highlight the right-clicked row so the menu target is visible.
+        if selectedRowIndexes != IndexSet(integer: row) {
+            selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+        return menuProvider?.menu(forRow: row)
     }
 }

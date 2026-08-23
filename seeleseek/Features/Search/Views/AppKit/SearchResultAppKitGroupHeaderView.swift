@@ -21,11 +21,16 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
     private let userArrowView = NSImageView()
     private let userField = NSTextField(labelWithString: "")
     private let summaryField = NSTextField(labelWithString: "")
-    private let downloadView = NSImageView()
+    private let downloadButton = NSButton()
+    private let folderProgress = NSProgressIndicator()
+    private let folderFailedView = NSImageView()
 
     private var showsSelectionCheckbox = false
     private var isExpanded = false
     private var showsQuality = false
+    private var group: SearchResultGroup?
+    private var onDownloadFolder: ((SearchResult) -> Void)?
+    private var folderRequestState: AppState.FolderRequestState?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -57,9 +62,25 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
         folderIconView.contentTintColor = NSColor(SeeleColors.warning)
         folderIconView.image = SearchResultSymbolCache.folder
 
-        downloadView.imageScaling = .scaleProportionallyUpOrDown
-        downloadView.contentTintColor = NSColor(SeeleColors.textSecondary)
-        downloadView.image = SearchResultSymbolCache.download
+        downloadButton.isBordered = false
+        downloadButton.imagePosition = .imageOnly
+        downloadButton.imageScaling = .scaleProportionallyUpOrDown
+        downloadButton.contentTintColor = NSColor(SeeleColors.textSecondary)
+        downloadButton.image = SearchResultSymbolCache.download
+        downloadButton.toolTip = "Download entire folder"
+        downloadButton.setAccessibilityLabel("Download entire folder")
+        downloadButton.target = self
+        downloadButton.action = #selector(downloadClicked)
+
+        folderProgress.style = .spinning
+        folderProgress.controlSize = .small
+        folderProgress.isDisplayedWhenStopped = false
+        folderProgress.isHidden = true
+
+        folderFailedView.imageScaling = .scaleProportionallyUpOrDown
+        folderFailedView.contentTintColor = NSColor(SeeleColors.warning)
+        folderFailedView.image = SearchResultSymbolCache.folderRequestFailed
+        folderFailedView.isHidden = true
 
         userArrowView.imageScaling = .scaleProportionallyUpOrDown
         userArrowView.contentTintColor = NSColor(SeeleColors.textTertiary)
@@ -75,7 +96,7 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
 
         let views: [NSView] = [
             rowBackground, selectionView, folderBadge, titleField, qualityBadge,
-            userArrowView, userField, summaryField, downloadView
+            userArrowView, userField, summaryField, downloadButton, folderProgress, folderFailedView
         ]
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = true
@@ -154,19 +175,27 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
             height: lineH
         )
 
-        SearchResultAppKitLayout.layoutTrailingCluster(
-            downloadView: downloadView,
+        let trailingFrame = SearchResultAppKitLayout.trailingClusterFrame(
             in: b,
             verticalCenter: b.height / 2
         )
+        downloadButton.frame = trailingFrame
+        folderProgress.frame = trailingFrame
+        folderFailedView.frame = trailingFrame
     }
 
     func configure(
         model: SearchResultAppKitGroupDisplayModel,
+        group: SearchResultGroup,
         isExpanded: Bool,
         isSelectionMode: Bool,
-        groupSelection: SearchState.GroupSelection
+        groupSelection: SearchState.GroupSelection,
+        folderRequestState: AppState.FolderRequestState?,
+        onDownloadFolder: @escaping (SearchResult) -> Void
     ) {
+        self.group = group
+        self.onDownloadFolder = onDownloadFolder
+        self.folderRequestState = folderRequestState
         self.isExpanded = isExpanded
         showsSelectionCheckbox = isSelectionMode
         selectionView.isHidden = !isSelectionMode
@@ -190,6 +219,47 @@ final class SearchResultAppKitGroupHeaderView: NSTableCellView {
             qualityBadge.isHidden = true
         }
 
+        applyFolderRequestState(folderRequestState, username: group.username)
+
         needsLayout = true
+    }
+
+    private func applyFolderRequestState(_ state: AppState.FolderRequestState?, username: String) {
+        switch state {
+        case .fetching:
+            downloadButton.isHidden = true
+            folderFailedView.isHidden = true
+            folderProgress.isHidden = false
+            folderProgress.startAnimation(nil)
+            folderProgress.toolTip = "Getting folder contents from \(username)..."
+            folderProgress.setAccessibilityLabel("Getting folder contents from \(username)")
+        case .failed(let reason):
+            folderProgress.stopAnimation(nil)
+            folderProgress.isHidden = true
+            downloadButton.isHidden = true
+            folderFailedView.isHidden = false
+            folderFailedView.toolTip = reason
+            folderFailedView.setAccessibilityLabel("Folder download failed. \(reason)")
+        case nil:
+            folderProgress.stopAnimation(nil)
+            folderProgress.isHidden = true
+            folderFailedView.isHidden = true
+            downloadButton.isHidden = false
+            downloadButton.image = SearchResultSymbolCache.download
+            downloadButton.contentTintColor = NSColor(SeeleColors.textSecondary)
+            downloadButton.toolTip = "Download entire folder"
+            downloadButton.setAccessibilityLabel("Download entire folder")
+            downloadButton.isEnabled = true
+        }
+    }
+
+    @objc private func downloadClicked() {
+        guard folderRequestState == nil, let representative = group?.results.first else { return }
+        onDownloadFolder?(representative)
+    }
+
+    /// Test seam — fires the same path as a click on the download button.
+    func performDownloadForTesting() {
+        downloadClicked()
     }
 }

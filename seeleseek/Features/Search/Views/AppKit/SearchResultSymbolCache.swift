@@ -6,6 +6,10 @@ enum SearchResultSymbolCache {
     private static var icons: [String: NSImage] = [:]
     private static var chevronImage: NSImage?
     private static var downloadImage: NSImage?
+    private static var downloadFilledImage: NSImage?
+    private static var downloadCompleteImage: NSImage?
+    private static var downloadRetryImage: NSImage?
+    private static var folderRequestFailedImage: NSImage?
     private static var selectionOnImage: NSImage?
     private static var selectionOffImage: NSImage?
     private static var folderImage: NSImage?
@@ -64,6 +68,26 @@ enum SearchResultSymbolCache {
         return downloadImage!
     }
 
+    static var downloadFilled: NSImage {
+        warmIfNeeded()
+        return downloadFilledImage!
+    }
+
+    static var downloadComplete: NSImage {
+        warmIfNeeded()
+        return downloadCompleteImage!
+    }
+
+    static var downloadRetry: NSImage {
+        warmIfNeeded()
+        return downloadRetryImage!
+    }
+
+    static var folderRequestFailed: NSImage {
+        warmIfNeeded()
+        return folderRequestFailedImage!
+    }
+
     static var selectionOn: NSImage {
         warmIfNeeded()
         return selectionOnImage!
@@ -105,6 +129,28 @@ enum SearchResultSymbolCache {
            let configured = base.withSymbolConfiguration(downloadConfig) {
             configured.isTemplate = true
             downloadImage = configured
+        }
+        if let base = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil),
+           let configured = base.withSymbolConfiguration(downloadConfig) {
+            configured.isTemplate = true
+            downloadFilledImage = configured
+        }
+        if let base = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil),
+           let configured = base.withSymbolConfiguration(downloadConfig) {
+            configured.isTemplate = true
+            downloadCompleteImage = configured
+        }
+        if let base = NSImage(systemSymbolName: "arrow.clockwise.circle", accessibilityDescription: nil),
+           let configured = base.withSymbolConfiguration(downloadConfig) {
+            configured.isTemplate = true
+            downloadRetryImage = configured
+        }
+        if let base = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil),
+           let configured = base.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: SeeleSpacing.iconSizeSmall, weight: .regular)
+           ) {
+            configured.isTemplate = true
+            folderRequestFailedImage = configured
         }
 
         let selectionConfig = NSImage.SymbolConfiguration(pointSize: SeeleSpacing.iconSize, weight: .regular)

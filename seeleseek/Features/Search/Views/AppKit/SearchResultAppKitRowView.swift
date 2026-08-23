@@ -6,9 +6,13 @@ protocol SearchResultAppKitRowConfiguring: AnyObject {
     var identifier: NSUserInterfaceItemIdentifier? { get set }
     func configure(
         model: SearchResultAppKitDisplayModel,
+        result: SearchResult,
         isSelectionMode: Bool,
         isSelected: Bool,
-        isNested: Bool
+        isNested: Bool,
+        downloadStatus: Transfer.TransferStatus?,
+        isIgnored: Bool,
+        onDownload: @escaping (SearchResult) -> Void
     )
 }
 
@@ -33,10 +37,12 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
     private let durationField = NSTextField(labelWithString: "")
     private let sizeField = NSTextField(labelWithString: "")
     private let availabilityField = NSTextField(labelWithString: "")
-    private let downloadView = NSImageView()
+    private let downloadButton = NSButton()
 
     private var showsSelectionCheckbox = false
     private var isNested = false
+    private var result: SearchResult?
+    private var onDownload: ((SearchResult) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -69,9 +75,16 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
         selectionView.isHidden = true
 
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        downloadView.imageScaling = .scaleProportionallyUpOrDown
-        downloadView.contentTintColor = NSColor(SeeleColors.textSecondary)
-        downloadView.image = SearchResultSymbolCache.download
+
+        downloadButton.isBordered = false
+        downloadButton.imagePosition = .imageOnly
+        downloadButton.imageScaling = .scaleProportionallyUpOrDown
+        downloadButton.contentTintColor = NSColor(SeeleColors.textSecondary)
+        downloadButton.image = SearchResultSymbolCache.download
+        downloadButton.toolTip = "Download"
+        downloadButton.setAccessibilityLabel("Download")
+        downloadButton.target = self
+        downloadButton.action = #selector(downloadClicked)
 
         userArrowView.imageScaling = .scaleProportionallyUpOrDown
         userArrowView.contentTintColor = NSColor(SeeleColors.textTertiary)
@@ -95,7 +108,7 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
             rowBackground, selectionBackground, nestedRail, selectionView, iconView,
             titleField, userArrowView, userField, speedField, folderIconView, folderField,
             qualityBadge, bitrateField, sampleField, durationField, sizeField,
-            availabilityField, downloadView
+            availabilityField, downloadButton
         ]
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = true
@@ -178,7 +191,7 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
         )
 
         SearchResultAppKitLayout.layoutTrailingCluster(
-            downloadView: downloadView,
+            downloadView: downloadButton,
             in: b,
             verticalCenter: b.height / 2
         )
@@ -195,10 +208,16 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
 
     func configure(
         model: SearchResultAppKitDisplayModel,
+        result: SearchResult,
         isSelectionMode: Bool,
         isSelected: Bool,
-        isNested: Bool = false
+        isNested: Bool = false,
+        downloadStatus: Transfer.TransferStatus?,
+        isIgnored: Bool,
+        onDownload: @escaping (SearchResult) -> Void
     ) {
+        self.result = result
+        self.onDownload = onDownload
         self.isNested = isNested
         showsSelectionCheckbox = isSelectionMode
         selectionView.isHidden = !isSelectionMode
@@ -230,6 +249,10 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
         availabilityField.stringValue = model.availabilityText
         availabilityField.textColor = model.availabilityColor
 
+        applyDownloadAppearance(
+            SearchResultAppKitDownloadAppearance.make(status: downloadStatus, isIgnored: isIgnored)
+        )
+
         if isSelected {
             selectionBackground.isHidden = false
             selectionBackground.layer?.backgroundColor = NSColor(SeeleColors.selectionBackground).cgColor
@@ -239,6 +262,24 @@ final class SearchResultAppKitRowView: NSTableCellView, SearchResultAppKitRowCon
         }
 
         needsLayout = true
+    }
+
+    private func applyDownloadAppearance(_ appearance: SearchResultAppKitDownloadAppearance) {
+        downloadButton.image = appearance.image
+        downloadButton.contentTintColor = appearance.tint
+        downloadButton.toolTip = appearance.toolTip
+        downloadButton.setAccessibilityLabel(appearance.accessibilityLabel)
+        downloadButton.isEnabled = appearance.isEnabled
+    }
+
+    @objc private func downloadClicked() {
+        guard let result, downloadButton.isEnabled else { return }
+        onDownload?(result)
+    }
+
+    /// Test seam — fires the same path as a click on the download button.
+    func performDownloadForTesting() {
+        downloadClicked()
     }
 }
 

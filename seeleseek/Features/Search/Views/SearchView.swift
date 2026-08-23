@@ -455,15 +455,14 @@ struct SearchView: View {
                     isSelectionMode: searchState.isSelectionMode,
                     selectedIDs: searchState.selectedResults,
                     bottomInset: searchState.isSelectionMode ? 60 : 0,
+                    downloadStatusIndex: appState.transferState.downloadStatusIndex,
+                    folderRequestStates: appState.folderRequestStates,
                     isExpanded: { searchState.isExpanded($0) },
                     groupSelectionState: { searchState.selectionState(of: $0) },
                     onToggleExpansion: { searchState.toggleExpansion($0) },
                     onToggleSelection: { searchState.toggleSelection($0) },
                     onToggleGroupSelection: { searchState.toggleSelection(of: $0) },
-                    onDownload: { downloadResult($0) },
-                    onDownloadFolder: { result in
-                        Task { await appState.downloadContainingFolder(of: result) }
-                    }
+                    actions: searchResultActions
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -476,9 +475,54 @@ struct SearchView: View {
         }
     }
 
+    private var searchResultActions: SearchResultAppKitActions {
+        SearchResultAppKitActions(
+            onDownload: { downloadResult($0) },
+            onDownloadFolder: { result in
+                Task { await appState.downloadContainingFolder(of: result) }
+            },
+            onBrowseFolder: { result in
+                appState.browseState.browseUser(result.username, targetPath: result.filename)
+                appState.sidebarSelection = .browse
+            },
+            onBrowseUser: { result in
+                appState.browseState.browseUser(result.username)
+                appState.sidebarSelection = .browse
+            },
+            onViewProfile: { result in
+                Task { await appState.socialState.loadProfile(for: result.username) }
+            },
+            onToggleIgnore: { result in
+                Task {
+                    if appState.socialState.isIgnored(result.username) {
+                        await appState.socialState.unignoreUser(result.username)
+                    } else {
+                        await appState.socialState.ignoreUser(result.username)
+                    }
+                }
+            },
+            onCopyFilename: { result in
+                result.displayFilename.copyToPasteboard()
+            },
+            onCopyPath: { result in
+                result.filename.copyToPasteboard()
+            },
+            isIgnored: { appState.socialState.isIgnored($0) },
+            downloadStatus: { result in
+                appState.transferState.downloadStatus(for: result.filename, from: result.username)
+            },
+            folderRequestState: { result in
+                appState.folderRequestState(for: result)
+            }
+        )
+    }
+
     private func downloadResult(_ result: SearchResult) {
-        guard !appState.transferState.isFileQueued(filename: result.filename, username: result.username),
-              !appState.socialState.isIgnored(result.username) else { return }
+        guard !appState.socialState.isIgnored(result.username) else { return }
+        if let status = appState.transferState.downloadStatus(for: result.filename, from: result.username),
+           status != .completed, status != .cancelled, status != .failed {
+            return
+        }
         appState.downloadManager.queueDownload(from: result)
     }
 
