@@ -54,6 +54,10 @@ struct SeeleSeekApp: App {
                             DemoDataSeeder.seed(into: appState)
                             return
                         }
+                        if SyntheticSearchDriver.isEnabled {
+                            SyntheticSearchDriver.start(appState: appState)
+                            return
+                        }
                         #endif
                         #if DEBUG
                         if SyntheticSearchDriver.isEnabled {
