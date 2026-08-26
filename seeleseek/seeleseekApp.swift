@@ -58,6 +58,11 @@ struct SeeleSeekApp: App {
                             SyntheticSearchDriver.start(appState: appState)
                             return
                         }
+                        if SyntheticSearchDriver.isLiveEnabled {
+                            appState.configure()
+                            SyntheticSearchDriver.startLive(appState: appState)
+                            return
+                        }
                         #endif
                         #if DEBUG
                         if SyntheticSearchDriver.isEnabled {
