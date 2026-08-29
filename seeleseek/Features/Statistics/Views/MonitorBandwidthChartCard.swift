@@ -6,7 +6,7 @@ struct MonitorBandwidthChartCard: View {
     @Environment(\.appState) private var appState
 
     private var speedHistory: [PeerConnectionPool.SpeedSample] {
-        appState.networkClient.peerConnectionPool.speedHistory
+        appState.networkClient.monitor.speedHistory
     }
 
     var body: some View {

@@ -47,15 +47,15 @@ struct UploadRetryPersistenceTests {
         )
     }
 
-    private func makeSetup(transfers: [Transfer], indexedFiles: [ShareManager.IndexedFile] = []) -> (UploadManager, MockTransferTracking, ShareManager) {
+    private func makeSetup(transfers: [Transfer], indexedFiles: [ShareManager.IndexedFile] = []) async -> (UploadManager, MockTransferTracking, ShareManager) {
         let manager = UploadManager()
         let tracking = MockTransferTracking()
         let shares = ShareManager(defaults: TestDefaults.isolated())
         if !indexedFiles.isEmpty {
-            shares._seedFileIndexForTest(indexedFiles)
+            await shares._seedFileIndexForTest(indexedFiles)
         }
-        manager._setTransferStateForTest(tracking)
-        manager._setShareManagerForTest(shares)
+        await manager._setTransferStateForTest(tracking)
+        await manager._setShareManagerForTest(shares)
         for t in transfers {
             tracking.uploads.append(t)
         }
@@ -67,14 +67,14 @@ struct UploadRetryPersistenceTests {
     @Test("Past-due retry fires immediately on rearm and reuses the same row")
     func pastDueFiresImmediately() async {
         let pastDue = makeFailed(retryCount: 1, nextRetryAt: Date().addingTimeInterval(-60))
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             transfers: [pastDue],
             indexedFiles: [makeIndexedFile(for: pastDue)]
         )
         // shareManager is held weakly by UploadManager. Keep it alive.
         _ = shares
 
-        manager.rearmPersistedRetries()
+        await manager.rearmPersistedRetries()
 
         // Deterministically wait for the rearm Task to finish its body
         // (Task.sleep(0) → MainActor.run → retryUploadInternal). Polling
@@ -89,7 +89,7 @@ struct UploadRetryPersistenceTests {
         // scheduleUploadRetry, but retryCount is stamped synchronously
         // inside retryUploadInternal so it's stable by the time rearm's
         // task body completes.
-        if let task = manager._pendingRetryTaskForTest(transferId: pastDue.id) {
+        if let task = await manager._pendingRetryTaskForTest(transferId: pastDue.id) {
             await task.value
         }
 
@@ -104,20 +104,20 @@ struct UploadRetryPersistenceTests {
     @Test("Future retry stays .failed and is rescheduled, not fired")
     func futureRetryRearms() async {
         let future = makeFailed(retryCount: 1, nextRetryAt: Date().addingTimeInterval(120))
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             transfers: [future],
             indexedFiles: [makeIndexedFile(for: future)]
         )
         _ = shares
 
-        manager.rearmPersistedRetries()
+        await manager.rearmPersistedRetries()
 
         try? await Task.sleep(for: .milliseconds(50))
 
         let row = tracking.uploads.first
         #expect(row?.status == .failed, "future retry must not fire yet")
         #expect(row?.nextRetryAt != nil, "future nextRetryAt must be preserved")
-        #expect(manager._uploadQueueForTest.isEmpty, "future retry should not have enqueued")
+        #expect(await manager._uploadQueueForTest.isEmpty, "future retry should not have enqueued")
     }
 
     // MARK: - Skip non-eligible rows
@@ -127,35 +127,35 @@ struct UploadRetryPersistenceTests {
         // maxRetries == retryDelays.count. With the 5-step ladder, a row
         // at retryCount 5 is fully exhausted and should not re-arm.
         let exhausted = makeFailed(retryCount: 5, nextRetryAt: Date().addingTimeInterval(-60))
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             transfers: [exhausted],
             indexedFiles: [makeIndexedFile(for: exhausted)]
         )
         _ = shares
 
-        manager.rearmPersistedRetries()
+        await manager.rearmPersistedRetries()
         try? await Task.sleep(for: .milliseconds(100))
 
         let row = tracking.uploads.first
         #expect(row?.status == .failed, "exhausted retry must not be rearmed")
-        #expect(manager._uploadQueueForTest.isEmpty)
+        #expect(await manager._uploadQueueForTest.isEmpty)
     }
 
     @Test("Rearm skips rows without nextRetryAt")
     func skipMissingTimestamp() async {
         let noStamp = makeFailed(retryCount: 1, nextRetryAt: nil)
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             transfers: [noStamp],
             indexedFiles: [makeIndexedFile(for: noStamp)]
         )
         _ = shares
 
-        manager.rearmPersistedRetries()
+        await manager.rearmPersistedRetries()
         try? await Task.sleep(for: .milliseconds(100))
 
         let row = tracking.uploads.first
         #expect(row?.status == .failed, "no nextRetryAt → no rearm")
-        #expect(manager._uploadQueueForTest.isEmpty)
+        #expect(await manager._uploadQueueForTest.isEmpty)
     }
 
     @Test("Rearm skips rows in non-failed state even if nextRetryAt is set")
@@ -164,18 +164,18 @@ struct UploadRetryPersistenceTests {
         // to .completed must not resurrect a retry on launch.
         var completed = makeFailed(retryCount: 1, nextRetryAt: Date().addingTimeInterval(-60))
         completed.status = .completed
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             transfers: [completed],
             indexedFiles: [makeIndexedFile(for: completed)]
         )
         _ = shares
 
-        manager.rearmPersistedRetries()
+        await manager.rearmPersistedRetries()
         try? await Task.sleep(for: .milliseconds(100))
 
         let row = tracking.uploads.first
         #expect(row?.status == .completed, ".completed row must remain untouched")
-        #expect(manager._uploadQueueForTest.isEmpty)
+        #expect(await manager._uploadQueueForTest.isEmpty)
     }
 
     // MARK: - cancelRetry clears the persisted timestamp
@@ -183,10 +183,10 @@ struct UploadRetryPersistenceTests {
     @Test("cancelRetry clears persisted nextRetryAt so it can't resurrect on relaunch")
     func cancelRetryClears() async {
         let pending = makeFailed(retryCount: 1, nextRetryAt: Date().addingTimeInterval(120))
-        let (manager, tracking, shares) = makeSetup(transfers: [pending])
+        let (manager, tracking, shares) = await makeSetup(transfers: [pending])
         _ = shares
 
-        manager.cancelRetry(transferId: pending.id)
+        await manager.cancelRetry(transferId: pending.id)
 
         let row = tracking.uploads.first
         #expect(row?.nextRetryAt == nil, "cancelRetry must clear nextRetryAt")

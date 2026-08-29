@@ -121,7 +121,7 @@ struct ConnectionStatusView: View {
     }
 
     private func disconnect() {
-        appState.networkClient.disconnect()
+        Task { await appState.networkClient.disconnect() }
         appState.connection.setDisconnected()
     }
 }

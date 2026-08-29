@@ -11,27 +11,27 @@ import SeeleseekCore
 struct SharesSummaryStats: View {
     @Environment(\.appState) private var appState
 
-    private var shareManager: ShareManager {
-        appState.networkClient.shareManager
+    private var shares: ShareState {
+        appState.networkClient.shareManager.state
     }
 
     var body: some View {
         HStack(spacing: SeeleSpacing.md) {
             SharesStatItem(
                 icon: "folder.fill",
-                value: "\(shareManager.totalFolders)",
+                value: "\(shares.totalFolders)",
                 label: "Folders",
                 color: SeeleColors.warning
             )
             SharesStatItem(
                 icon: "doc.fill",
-                value: "\(shareManager.totalFiles)",
+                value: "\(shares.totalFiles)",
                 label: "Files",
                 color: SeeleColors.accent
             )
             SharesStatItem(
                 icon: "externaldrive.fill",
-                value: shareManager.totalSize.formattedBytes,
+                value: shares.totalSize.formattedBytes,
                 label: "Size",
                 color: SeeleColors.info
             )

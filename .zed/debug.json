@@ -1,0 +1,27 @@
+[
+  {
+    "label": "Debug seeleseek (Debug build)",
+    "adapter": "CodeLLDB",
+    "request": "launch",
+    "program": "$ZED_WORKTREE_ROOT/build/Debug/seeleseek.app/Contents/MacOS/seeleseek",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [],
+    "env": {},
+    "stopOnEntry": false,
+    "build": {
+      "command": "xcodebuild",
+      "args": [
+        "-project",
+        "seeleseek.xcodeproj",
+        "-scheme",
+        "seeleseek",
+        "-configuration",
+        "Debug",
+        "-destination",
+        "platform=macOS",
+        "CONFIGURATION_BUILD_DIR=$ZED_WORKTREE_ROOT/build/Debug",
+        "build"
+      ]
+    }
+  }
+]

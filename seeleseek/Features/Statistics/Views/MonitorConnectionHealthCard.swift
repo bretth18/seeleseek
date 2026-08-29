@@ -4,13 +4,13 @@ import SeeleseekCore
 struct MonitorConnectionHealthCard: View {
     @Environment(\.appState) private var appState
 
-    private var peerPool: PeerConnectionPool {
-        appState.networkClient.peerConnectionPool
+    private var monitor: NetworkMonitorState {
+        appState.networkClient.monitor
     }
 
     private var healthScore: Double {
-        let active = Double(peerPool.activeConnections)
-        let total = Double(max(peerPool.totalConnections, 1))
+        let active = Double(monitor.activeConnections)
+        let total = Double(max(monitor.totalConnections, 1))
         return min(active / total, 1.0) * 100
     }
 
@@ -39,17 +39,17 @@ struct MonitorConnectionHealthCard: View {
                     VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
                         StandardStatBadge(
                             "Active",
-                            value: "\(peerPool.activeConnections)",
+                            value: "\(monitor.activeConnections)",
                             color: SeeleColors.success
                         )
                         StandardStatBadge(
                             "Total",
-                            value: "\(peerPool.totalConnections)",
+                            value: "\(monitor.totalConnections)",
                             color: SeeleColors.textSecondary
                         )
                         StandardStatBadge(
                             "Avg Duration",
-                            value: formatDuration(peerPool.averageConnectionDuration),
+                            value: formatDuration(monitor.averageConnectionDuration),
                             color: SeeleColors.info
                         )
                     }
@@ -79,7 +79,7 @@ struct MonitorConnectionHealthCard: View {
         }
         .accessibleChart(
             label: "Connection health",
-            value: "\(Int(healthScore)) percent, \(healthTier), \(peerPool.activeConnections) of \(peerPool.totalConnections) connections active"
+            value: "\(Int(healthScore)) percent, \(healthTier), \(monitor.activeConnections) of \(monitor.totalConnections) connections active"
         )
     }
 

@@ -52,33 +52,33 @@ struct NetworkMonitorView: View {
 struct MonitorLiveStatsBadge: View {
     @Environment(\.appState) private var appState
 
-    private var peerPool: PeerConnectionPool {
-        appState.networkClient.peerConnectionPool
+    private var monitor: NetworkMonitorState {
+        appState.networkClient.monitor
     }
 
     var body: some View {
         StandardStatCluster {
             StandardLiveStat(
                 icon: "arrow.down",
-                value: Int64(peerPool.currentDownloadSpeed).formattedSpeed,
+                value: Int64(monitor.currentDownloadSpeed).formattedSpeed,
                 iconColor: SeeleColors.info,
-                accessibilityLabel: "Download speed \(peerPool.currentDownloadSpeed.formattedSpeed)"
+                accessibilityLabel: "Download speed \(monitor.currentDownloadSpeed.formattedSpeed)"
             )
             StandardLiveStat(
                 icon: "arrow.up",
-                value: Int64(peerPool.currentUploadSpeed).formattedSpeed,
+                value: Int64(monitor.currentUploadSpeed).formattedSpeed,
                 iconColor: SeeleColors.success,
-                accessibilityLabel: "Upload speed \(peerPool.currentUploadSpeed.formattedSpeed)"
+                accessibilityLabel: "Upload speed \(monitor.currentUploadSpeed.formattedSpeed)"
             )
             StandardLiveStat(
                 icon: "person.2.fill",
-                value: "\(peerPool.activeConnections)",
-                accessibilityLabel: "\(peerPool.activeConnections) active peers"
+                value: "\(monitor.activeConnections)",
+                accessibilityLabel: "\(monitor.activeConnections) active peers"
             )
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Live network stats")
-        .accessibilityValue("Download \(peerPool.currentDownloadSpeed.formattedSpeed), upload \(peerPool.currentUploadSpeed.formattedSpeed), \(peerPool.activeConnections) active peers")
+        .accessibilityValue("Download \(monitor.currentDownloadSpeed.formattedSpeed), upload \(monitor.currentUploadSpeed.formattedSpeed), \(monitor.activeConnections) active peers")
     }
 }
 
@@ -97,8 +97,8 @@ struct MonitorPeersTab: View {
 private struct MonitorTopologyCard: View {
     @Environment(\.appState) private var appState
 
-    private var peerPool: PeerConnectionPool {
-        appState.networkClient.peerConnectionPool
+    private var monitor: NetworkMonitorState {
+        appState.networkClient.monitor
     }
 
     var body: some View {
@@ -110,14 +110,14 @@ private struct MonitorTopologyCard: View {
                         .foregroundStyle(SeeleColors.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Text("\(peerPool.activeConnections) active")
+                    Text("\(monitor.activeConnections) active")
                         .font(SeeleTypography.caption)
                         .foregroundStyle(SeeleColors.textTertiary)
                         .contentTransition(.numericText())
                 }
 
                 NetworkTopologyView(
-                    connections: Array(peerPool.connections.values),
+                    connections: Array(monitor.connections.values),
                     centerUsername: appState.connection.username ?? "You"
                 )
                 .frame(height: 320)

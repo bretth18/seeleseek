@@ -4,18 +4,23 @@ import os
 import CryptoKit
 
 
-/// Manages the download queue and file transfers
-@Observable
-@MainActor
-public final class DownloadManager {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "DownloadManager")
+/// Manages the download queue and file transfers.
+///
+/// An actor: queue/timer bookkeeping, peer handshakes, and chunk streaming
+/// run on its own executor. Nothing observes this type directly — all
+/// UI-facing state flows through `TransferTracking` (the app's
+/// TransferState).
+public actor DownloadManager {
+    nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "DownloadManager")
 
     // MARK: - Dependencies
     private weak var networkClient: NetworkClient?
     private weak var transferState: (any TransferTracking)?
     private weak var statisticsState: (any StatisticsRecording)?
     private weak var uploadManager: UploadManager?
-    private weak var settings: (any DownloadSettingsProviding)?
+    /// Pushed-down settings snapshot (see `DownloadSettingsSnapshot`).
+    /// Nil until the app pushes — path helpers fall back to defaults.
+    private var settings: DownloadSettingsSnapshot?
 
     // MARK: - Pending Downloads
     // Maps token to pending download info
@@ -49,16 +54,65 @@ public final class DownloadManager {
     /// Partial files are kept on cancel so a later manual retry can resume.
     private var cancelledTransferIds: Set<UUID> = []
 
-    /// A transfer is "cancelled" if the user marked it so (in our set) or
-    /// the row already reads `.cancelled` (covers app-side cancels that
-    /// flipped the row before/without calling `cancelDownload`).
+    /// A transfer is "cancelled" iff the user marked it so in our set.
+    /// The set is authoritative: every app-side cancel routes through
+    /// `cancelDownload` (TransferState.onCancelRequested wiring), which
+    /// stamps it. Deliberately does NOT consult the row's status — the
+    /// receive loops call this per chunk, and a cross-actor row read
+    /// there would put a MainActor hop back on the transfer hot path.
     private func isCancelled(_ transferId: UUID) -> Bool {
         cancelledTransferIds.contains(transferId)
-            || transferState?.getTransfer(id: transferId)?.status == .cancelled
     }
 
     // MARK: - Post-Download Processing
     private var metadataReader: (any MetadataReading)?
+
+    // Bus consumer tasks installed by `configure`.
+    private var transferEventsTask: Task<Void, Never>?
+    private var transferNoticesTask: Task<Void, Never>?
+    private var socialEventsTask: Task<Void, Never>?
+
+    private func handle(_ event: TransferEvent) {
+        switch event {
+        case .fileTransferConnection(let username, let token, let connection):
+            logger.debug("File transfer connection event: username='\(username)' token=\(token)")
+            Task {
+                await self.handleFileTransferConnection(username: username, token: token, connection: connection)
+            }
+        case .pierceFirewall(let token, let connection):
+            Task {
+                await self.handlePierceFirewall(token: token, connection: connection)
+            }
+        case .transferRequest(let request, let connection):
+            // Pool-level TransferRequests arrive on connections not directly
+            // managed by us, e.g. stale direct connections when PierceFirewall
+            // won the race, or fresh incoming connections opened later when
+            // the peer's upload queue drains.
+            Task {
+                await self.handlePoolTransferRequest(request, connection: connection)
+            }
+        case .placeInQueueReply(let username, let filename, let position):
+            Task {
+                await self.handlePlaceInQueueReply(username: username, filename: filename, position: position)
+            }
+        case .queueUpload, .transferResponse, .placeInQueueRequest:
+            break  // UploadManager's side of the domain
+        }
+    }
+
+    private func handle(_ event: TransferNoticeEvent) {
+        switch event {
+        case .uploadDenied(let username, let filename, let reason):
+            Task { await self.handleUploadDenied(username: username, filename: filename, reason: reason) }
+        case .uploadFailed(let username, let filename):
+            Task { await self.handleUploadFailed(username: username, filename: filename) }
+        case .cantConnectToPeer(let token):
+            // Fast-fail instead of waiting for timeout.
+            Task { await self.handleCantConnectToPeer(token: token) }
+        case .peerAddress:
+            break
+        }
+    }
     /// Directories that already have folder icons applied (avoid redundant work)
     private var iconAppliedDirs: Set<URL> = []
     /// Directory each remote folder settled on, keyed by `sourceFolderKey`.
@@ -76,7 +130,7 @@ public final class DownloadManager {
     /// settings change rather than on every path computation.
     private var createdDownloadDir: URL?
 
-    struct PlacedFile {
+    struct PlacedFile: Sendable {
         let transferId: UUID
         let path: URL
     }
@@ -130,11 +184,11 @@ public final class DownloadManager {
         offlineUsers[username] = Date()
     }
 
-    private func markPeerOnline(_ username: String) {
+    private func markPeerOnline(_ username: String) async {
         guard offlineUsers.removeValue(forKey: username) != nil else { return }
         logger.info("Peer \(username) back online — re-driving their downloads")
         guard let transferState else { return }
-        let theirs = transferState.downloads.filter {
+        let theirs = await transferState.downloads.filter {
             $0.username == username
                 && ($0.status == .queued || $0.status == .waiting || $0.status == .failed)
                 && !isCancelled($0.id)
@@ -147,7 +201,7 @@ public final class DownloadManager {
         }
     }
 
-    public struct PendingDownload {
+    public struct PendingDownload: Sendable {
         public let transferId: UUID
         public let username: String
         public let filename: String
@@ -168,7 +222,7 @@ public final class DownloadManager {
     // Track partial downloads for resume
     private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
 
-    public struct PendingFileTransfer {
+    public struct PendingFileTransfer: Sendable {
         public let transferId: UUID
         public let username: String
         public let filename: String
@@ -209,7 +263,7 @@ public final class DownloadManager {
 
     public init() {}
 
-    public func configure(networkClient: NetworkClient, transferState: any TransferTracking, statisticsState: any StatisticsRecording, uploadManager: UploadManager, settings: any DownloadSettingsProviding, metadataReader: any MetadataReading) {
+    public func configure(networkClient: NetworkClient, transferState: any TransferTracking, statisticsState: any StatisticsRecording, uploadManager: UploadManager, settings: DownloadSettingsSnapshot, metadataReader: any MetadataReading) {
         self.networkClient = networkClient
         self.transferState = transferState
         self.statisticsState = statisticsState
@@ -217,87 +271,49 @@ public final class DownloadManager {
         self.settings = settings
         self.metadataReader = metadataReader
 
-        // Connection establishment for downloads now goes through
-        // NetworkClient.establishPeerConnection (which is shared with
-        // browse/folder-contents/user-info). That means DownloadManager no
-        // longer needs to react to GetPeerAddress responses or
-        // incomingConnectionMatched — the establishment helper drives the
-        // ConnectToPeer + direct/indirect race itself, so the previous
-        // addPeerAddressHandler / onIncomingConnectionMatched registrations
-        // are intentionally absent.
+        // Connection establishment for downloads goes through
+        // NetworkClient.establishPeerConnection (shared with
+        // browse/folder-contents/user-info), which drives the ConnectToPeer
+        // + direct/indirect race itself — nothing here reacts to
+        // GetPeerAddress responses.
+
+        // Each consumer loop spawns a Task per event so a slow transfer
+        // setup never stalls subsequent transfer events. Deliberately
+        // unbounded: every transfer event is load-bearing (a dropped
+        // transferResponse hangs its download), and the consumer body is
+        // O(1) — it only spawns the handler Task.
+        transferEventsTask?.cancel()
+        let transferEvents = networkClient.events.transfers.subscribe()
+        transferEventsTask = Task { [weak self] in
+            for await event in transferEvents {
+                guard let self else { return }
+                await self.handle(event)
+            }
+        }
+
+        // Bounded: notices are informational (denials, peer addresses);
+        // tail-drop past 1024 queued events under a storm.
+        transferNoticesTask?.cancel()
+        let transferNotices = networkClient.events.transferNotices.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        transferNoticesTask = Task { [weak self] in
+            for await event in transferNotices {
+                guard let self else { return }
+                await self.handle(event)
+            }
+        }
 
         // Live offline/online pushes for the offline-peer dial suppression.
         // The app WatchUser-es every transfer peer, so these arrive for
-        // exactly the users we care about.
-        networkClient.addUserStatusHandler { [weak self] username, status, _ in
-            guard let self else { return }
-            if status == .offline {
-                // Only suppress users we actually have transfers with —
-                // don't grow the cache with every buddy/chat status.
-                let hasTransfers = self.transferState?.downloads.contains {
-                    $0.username == username
-                } ?? false
-                if hasTransfers {
-                    self.markPeerOffline(username)
-                }
-            } else {
-                self.markPeerOnline(username)
-            }
-        }
-
-        // Set up callback for incoming file transfer connections
-        networkClient.onFileTransferConnection = { [weak self] username, token, connection in
-            self?.logger.debug("File transfer connection callback invoked: username='\(username)' token=\(token)")
-            guard let self else {
-                return
-            }
-            Task { @MainActor in
-                await self.handleFileTransferConnection(username: username, token: token, connection: connection)
-            }
-        }
-
-        // Set up callback for PierceFirewall (indirect connections)
-        networkClient.onPierceFirewall = { [weak self] token, connection in
-            guard let self else { return }
-            Task { @MainActor in
-                await self.handlePierceFirewall(token: token, connection: connection)
-            }
-        }
-
-        // Set up callback for upload denied
-        networkClient.onUploadDenied = { [weak self] username, filename, reason in
-            Task { @MainActor in
-                self?.handleUploadDenied(username: username, filename: filename, reason: reason)
-            }
-        }
-
-        // Set up callback for upload failed
-        networkClient.onUploadFailed = { [weak self] username, filename in
-            Task { @MainActor in
-                self?.handleUploadFailed(username: username, filename: filename)
-            }
-        }
-
-        // Set up callback for pool-level TransferRequests (arrives on connections not directly managed by us,
-        // e.g. stale direct connections when PierceFirewall won the race, or fresh
-        // incoming connections opened later when the peer's upload queue drains).
-        networkClient.onTransferRequest = { [weak self] request, connection in
-            Task { @MainActor in
-                await self?.handlePoolTransferRequest(request, connection: connection)
-            }
-        }
-
-        // Set up callback for PlaceInQueueReply (peer tells us our queue position)
-        networkClient.onPlaceInQueueReply = { [weak self] username, filename, position in
-            Task { @MainActor in
-                self?.handlePlaceInQueueReply(username: username, filename: filename, position: position)
-            }
-        }
-
-        // Set up callback for CantConnectToPeer (fast-fail instead of waiting for timeout)
-        networkClient.onCantConnectToPeer = { [weak self] token in
-            Task { @MainActor in
-                self?.handleCantConnectToPeer(token: token)
+        // exactly the users we care about. Bounded: suppression is an
+        // optimization backed by retry timers, so tail-dropping a status
+        // under a 1024-event storm costs at most one wasted dial.
+        socialEventsTask?.cancel()
+        let socialEvents = networkClient.events.social.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        socialEventsTask = Task { [weak self] in
+            for await event in socialEvents {
+                guard let self else { return }
+                guard case .userStatus(let username, let status, _) = event else { continue }
+                await self.handlePeerStatus(username: username, status: status)
             }
         }
 
@@ -308,22 +324,43 @@ public final class DownloadManager {
         startStaleRecoveryTimer()     // Recovers stale downloads every 15 min
     }
 
+    private func handlePeerStatus(username: String, status: UserStatus) async {
+        if status == .offline {
+            // Only suppress users we actually have transfers with — don't
+            // grow the cache with every buddy/chat status.
+            let hasTransfers = await transferState?.downloads.contains {
+                $0.username == username
+            } ?? false
+            if hasTransfers {
+                markPeerOffline(username)
+            }
+        } else {
+            await markPeerOnline(username)
+        }
+    }
+
+    /// Push updated settings. Path computations read this snapshot
+    /// synchronously; the app re-pushes whenever the source values change.
+    public func updateSettings(_ snapshot: DownloadSettingsSnapshot) {
+        settings = snapshot
+    }
+
     // MARK: - Download API
 
     /// Resume all retriable downloads on connect (queued, waiting, and failed-but-retriable)
-    public func resumeDownloadsOnConnect() {
+    public func resumeDownloadsOnConnect() async {
         guard let transferState else {
             logger.error("TransferState not configured for resume")
             return
         }
 
         // Gather downloads that should be resumed
-        let queuedDownloads = transferState.downloads.filter {
+        let queuedDownloads = await transferState.downloads.filter {
             $0.status == .queued || $0.status == .waiting || $0.status == .connecting
         }
 
         // Also gather failed downloads with retriable errors
-        let retriableFailedDownloads = transferState.downloads.filter {
+        let retriableFailedDownloads = await transferState.downloads.filter {
             $0.status == .failed && $0.direction == .download &&
             isRetriableError($0.error ?? "")
         }
@@ -339,7 +376,7 @@ public final class DownloadManager {
 
         // Reset failed downloads back to queued
         for transfer in retriableFailedDownloads {
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
                 t.error = nil
                 t.retryCount = 0
@@ -368,7 +405,7 @@ public final class DownloadManager {
     }
 
     /// Queue a file for download
-    public func queueDownload(from result: SearchResult) {
+    public func queueDownload(from result: SearchResult) async {
         // Skip macOS resource fork files (._xxx in __MACOSX folders)
         // These are metadata files that usually don't exist as real files
         if isMacOSResourceFork(result.filename) {
@@ -395,7 +432,7 @@ public final class DownloadManager {
         let dupePending = pendingDownloads.values.contains {
             $0.username == result.username && $0.filename == result.filename
         }
-        if let existing = transferState.downloads.first(where: {
+        if let existing = await transferState.downloads.first(where: {
             $0.direction == .download &&
             $0.username == result.username &&
             $0.filename == result.filename
@@ -407,7 +444,7 @@ public final class DownloadManager {
             case .completed, .failed, .cancelled:
                 logger.info("Re-queuing previously \(existing.status.rawValue) download: \(result.filename)")
                 cancelledTransferIds.remove(existing.id)
-                transferState.updateTransfer(id: existing.id) { t in
+                await transferState.updateTransfer(id: existing.id) { t in
                     t.status = .queued
                     t.error = nil
                     t.bytesTransferred = 0
@@ -435,7 +472,7 @@ public final class DownloadManager {
             status: .queued
         )
 
-        transferState.addDownload(transfer)
+        await transferState.addDownload(transfer)
         logger.info("Queued download: \(result.filename) from \(result.username)")
 
         // Start the download process
@@ -448,7 +485,7 @@ public final class DownloadManager {
 
     /// Start download with existing transfer ID (used for retries after UploadFailed)
     private func startDownload(transferId: UUID, username: String, filename: String, size: UInt64) async {
-        guard let transfer = transferState?.getTransfer(id: transferId) else {
+        guard let transfer = await transferState?.getTransfer(id: transferId) else {
             logger.error("Transfer not found for ID \(transferId)")
             return
         }
@@ -496,7 +533,7 @@ public final class DownloadManager {
         // A retry Task scheduled on a prior attempt could fire later and
         // call into us mid-flight; cancel it now since this fresh attempt
         // is the new source of truth.
-        cancelRetry(transferId: transfer.id)
+        await cancelRetry(transferId: transfer.id)
         // An explicit (re)start is the user's intent to revive this row, so
         // drop any prior cancellation marker — otherwise the receive loop
         // and completion paths would immediately abort the new attempt.
@@ -504,7 +541,7 @@ public final class DownloadManager {
 
         let token = UInt32.random(in: 0...UInt32.max)
 
-        transferState.updateTransfer(id: transfer.id) { t in
+        await transferState.updateTransfer(id: transfer.id) { t in
             t.status = .connecting
         }
 
@@ -535,7 +572,7 @@ public final class DownloadManager {
             if error.localizedDescription.localizedCaseInsensitiveContains("offline") {
                 markPeerOffline(transfer.username)
             }
-            failPending(token: token, reason: error.localizedDescription)
+            await failPending(token: token, reason: error.localizedDescription)
         }
     }
 
@@ -580,15 +617,15 @@ public final class DownloadManager {
             }
         } catch {
             logger.error("queueOnConnection(\(pending.filename)): \(error.localizedDescription)")
-            failPending(token: token, reason: error.localizedDescription)
+            await failPending(token: token, reason: error.localizedDescription)
         }
     }
 
     private func markWaitingIfStillConnecting(token: UInt32) async {
         try? await Task.sleep(for: .seconds(60))
         guard let transferState, let pending = pendingDownloads[token] else { return }
-        if let current = transferState.getTransfer(id: pending.transferId), current.status == .connecting {
-            transferState.updateTransfer(id: pending.transferId) { t in
+        if let current = await transferState.getTransfer(id: pending.transferId), current.status == .connecting {
+            await transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .waiting
             }
         }
@@ -597,20 +634,20 @@ public final class DownloadManager {
     /// Fail a pending download, remove its entry, and schedule a retry if
     /// eligible. Centralizes the error-handling that used to be sprinkled
     /// across startDownload/handlePeerAddress/queue paths.
-    private func failPending(token: UInt32, reason: String) {
+    private func failPending(token: UInt32, reason: String) async {
         guard let transferState, let pending = pendingDownloads[token] else { return }
         if isCancelled(pending.transferId) {
             pendingDownloads.removeValue(forKey: token)
             return
         }
-        let currentRetryCount = transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
-        transferState.updateTransfer(id: pending.transferId) { t in
+        let currentRetryCount = await transferState.getTransfer(id: pending.transferId)?.retryCount ?? 0
+        await transferState.updateTransfer(id: pending.transferId) { t in
             t.status = .failed
             t.error = reason
         }
         pendingDownloads.removeValue(forKey: token)
         if isRetriableError(reason) && currentRetryCount < maxRetries {
-            scheduleRetry(
+            await scheduleRetry(
                 transferId: pending.transferId,
                 username: pending.username,
                 filename: pending.filename,
@@ -709,7 +746,7 @@ public final class DownloadManager {
         // was the effective behavior anyway.
         if !peerUsername.isEmpty,
            !alreadyPending,
-           let transfer = transferState?.findSalvageableDownload(
+           let transfer = await transferState?.findSalvageableDownload(
                username: peerUsername,
                filename: request.filename
            ),
@@ -757,7 +794,7 @@ public final class DownloadManager {
             } catch {
                 logger.error("Failed to send transfer reply: \(error.localizedDescription)")
                 pendingDownloads.removeValue(forKey: token)
-                failDownload(
+                await failDownload(
                     transferId: pending.transferId,
                     username: pending.username,
                     filename: pending.filename,
@@ -804,9 +841,9 @@ public final class DownloadManager {
             // any retry Task that may have been scheduled from a prior
             // timeout/failure so it can't wake up and stomp this
             // in-flight transfer back to `.queued` later.
-            cancelRetry(transferId: pending.transferId)
+            await cancelRetry(transferId: pending.transferId)
 
-            transferState.updateTransfer(id: pending.transferId) { t in
+            await transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .transferring
                 t.startTime = Date()
                 t.queuePosition = nil
@@ -827,22 +864,19 @@ public final class DownloadManager {
             let wKey = watchdogKey(username: peerUsername, transferToken: transferToken)
             fileTransferWatchdogs.removeValue(forKey: wKey)?.cancel()
             fileTransferWatchdogs[wKey] = Task { [weak self] in
-                guard let self else { return }
                 // Wait 5 seconds for peer to connect to us
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled else { return }
 
                 // If still pending, try connecting to them instead (NAT traversal fallback)
-                if self.hasPendingFileTransfer(username: peerUsername, transferToken: transferToken) {
-                    await self.initiateOutgoingFileConnection(
-                        username: peerUsername,
-                        ip: peerIP,
-                        port: peerPort,
-                        transferToken: transferToken,
-                        fileSize: fileSize,
-                        downloadToken: token
-                    )
-                }
+                await self?.runFileConnectionFallback(
+                    username: peerUsername,
+                    ip: peerIP,
+                    port: peerPort,
+                    transferToken: transferToken,
+                    fileSize: fileSize,
+                    downloadToken: token
+                )
 
                 // Wait another 55 seconds for either connection type
                 try? await Task.sleep(for: .seconds(55))
@@ -850,20 +884,52 @@ public final class DownloadManager {
 
                 // If still pending after total 60 seconds, mark as failed.
                 // The Task is also self-cleared from `fileTransferWatchdogs`
-                // by `removePendingFileTransfer` below — calling
-                // `task.cancel()` on a finished Task is a no-op.
-                if self.removePendingFileTransfer(username: peerUsername, transferToken: transferToken) != nil {
-                    self.pendingDownloads.removeValue(forKey: token)
-                    self.failDownload(
-                        transferId: pending.transferId,
-                        username: pending.username,
-                        filename: pending.filename,
-                        size: pending.size,
-                        reason: "File connection timeout"
-                    )
-                }
+                // by `removePendingFileTransfer` — calling `task.cancel()`
+                // on a finished Task is a no-op.
+                await self?.expireFileTransfer(
+                    username: peerUsername,
+                    transferToken: transferToken,
+                    downloadToken: token,
+                    pending: pending
+                )
             }
         }
+    }
+
+    private func runFileConnectionFallback(
+        username: String,
+        ip: String?,
+        port: Int?,
+        transferToken: UInt32,
+        fileSize: UInt64,
+        downloadToken: UInt32
+    ) async {
+        guard hasPendingFileTransfer(username: username, transferToken: transferToken) else { return }
+        await initiateOutgoingFileConnection(
+            username: username,
+            ip: ip,
+            port: port,
+            transferToken: transferToken,
+            fileSize: fileSize,
+            downloadToken: downloadToken
+        )
+    }
+
+    private func expireFileTransfer(
+        username: String,
+        transferToken: UInt32,
+        downloadToken: UInt32,
+        pending: PendingDownload
+    ) async {
+        guard removePendingFileTransfer(username: username, transferToken: transferToken) != nil else { return }
+        pendingDownloads.removeValue(forKey: downloadToken)
+        await failDownload(
+            transferId: pending.transferId,
+            username: pending.username,
+            filename: pending.filename,
+            size: pending.size,
+            reason: "File connection timeout"
+        )
     }
 
     // MARK: - Outgoing File Connection (NAT traversal fallback)
@@ -1010,16 +1076,16 @@ public final class DownloadManager {
             let filename = finalPath.lastPathComponent
 
             // Calculate transfer duration
-            let duration = Date().timeIntervalSince(transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
+            let duration = Date().timeIntervalSince(await transferState.getTransfer(id: pending.transferId)?.startTime ?? Date())
 
             // A retry may have been scheduled when the transfer first
             // appeared to fail — cancel it before stomping the new
             // `.completed` status, otherwise the retry Task will fire
             // later and reset the row back to `.queued`.
-            cancelRetry(transferId: pending.transferId)
+            await cancelRetry(transferId: pending.transferId)
 
             // Mark as completed with local path for Finder reveal
-            transferState.updateTransfer(id: pending.transferId) { t in
+            await transferState.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = fileSize
                 t.localPath = finalPath
@@ -1027,13 +1093,13 @@ public final class DownloadManager {
             }
 
             logger.info("Download complete (outgoing F): \(filename) -> \(finalPath.path)")
-            ActivityLogger.shared?.logDownloadCompleted(filename: filename)
+            await ActivityLogger.shared?.logDownloadCompleted(filename: filename)
             applyFolderArtworkAfterCompletion(for: finalPath)
             organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: username, transferId: pending.transferId)
 
             // Record only bytes received THIS session against the session
             // duration so resumed transfers don't report inflated totals/speed.
-            statisticsState?.recordTransfer(
+            await statisticsState?.recordTransfer(
                 filename: filename,
                 username: username,
                 size: fileSize > resumeOffset ? fileSize - resumeOffset : fileSize,
@@ -1074,7 +1140,7 @@ public final class DownloadManager {
             if claimedPendingEntry
                 || removePendingFileTransfer(username: username, transferToken: transferToken) != nil {
                 pendingDownloads.removeValue(forKey: downloadToken)
-                failDownload(
+                await failDownload(
                     transferId: pending.transferId,
                     username: pending.username,
                     filename: pending.filename,
@@ -1105,7 +1171,7 @@ public final class DownloadManager {
         // the download.
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask {
+                group.addTask { [connection] in
                     try await withTaskCancellationHandler {
                         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                             connection.stateUpdateHandler = { [weak connection] state in
@@ -1289,7 +1355,7 @@ public final class DownloadManager {
                 let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
                 let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
-                transferState?.updateTransfer(id: transferId) { t in
+                await transferState?.updateTransfer(id: transferId) { [bytesReceived] t in
                     t.bytesTransferred = bytesReceived
                     t.speed = speed
                 }
@@ -1786,12 +1852,23 @@ public final class DownloadManager {
         guard !iconAppliedDirs.contains(directory) else { return }
         iconAppliedDirs.insert(directory)
 
-        Task.detached { [metadataReader, logger] in
-            guard let metadataReader else { return }
-            let applied = await metadataReader.applyArtworkAsFolderIcon(for: directory)
-            if applied {
-                logger.info("Applied album art as folder icon for \(directory.lastPathComponent)")
-            }
+        Task { [metadataReader, logger] in
+            await Self.applyFolderIcon(metadataReader: metadataReader, directory: directory, logger: logger)
+        }
+    }
+
+    /// Off-actor (`@concurrent`) worker: the artwork extraction is an
+    /// AVAsset open per directory and must not run main-isolated.
+    @concurrent
+    private nonisolated static func applyFolderIcon(
+        metadataReader: (any MetadataReading)?,
+        directory: URL,
+        logger: Logger
+    ) async {
+        guard let metadataReader else { return }
+        let applied = await metadataReader.applyArtworkAsFolderIcon(for: directory)
+        if applied {
+            logger.info("Applied album art as folder icon for \(directory.lastPathComponent)")
         }
     }
 
@@ -1831,29 +1908,48 @@ public final class DownloadManager {
         }
 
         let downloadDir = getDownloadDirectory()
-        Task.detached { [weak self] in
-            let metadata = await metadataReader.extractAudioMetadata(from: currentPath)
-
-            // Partial tags must not claim: a file with a title but no album
-            // would resolve via folder-derived fallbacks and beat the tracks
-            // that are properly tagged.
-            let tagValues: [String: String?] = ["{artist}": metadata?.artist, "{album}": metadata?.album]
-            let satisfiesTemplate = tagValues.allSatisfy { token, value in
-                !template.contains(token) || !(value ?? "").isEmpty
-            }
-
-            let candidate: URL? = satisfiesTemplate
-                ? DownloadManager.destinationURL(
-                    downloadDirectory: downloadDir,
-                    soulseekPath: soulseekFilename,
-                    username: username,
-                    template: template,
-                    metadata: metadata
-                ).deletingLastPathComponent()
-                : nil
-
+        Task { [weak self] in
+            let candidate = await Self.tagBasedFolderCandidate(
+                metadataReader: metadataReader,
+                currentPath: currentPath,
+                soulseekFilename: soulseekFilename,
+                username: username,
+                template: template,
+                downloadDir: downloadDir
+            )
             await self?.placeInFolder(key: key, candidate: candidate, file: file)
         }
+    }
+
+    /// Off-actor (`@concurrent`) tag read + destination resolution for
+    /// `organizeCompletedDownload` — an AVAsset open per file.
+    @concurrent
+    private nonisolated static func tagBasedFolderCandidate(
+        metadataReader: any MetadataReading,
+        currentPath: URL,
+        soulseekFilename: String,
+        username: String,
+        template: String,
+        downloadDir: URL
+    ) async -> URL? {
+        let metadata = await metadataReader.extractAudioMetadata(from: currentPath)
+
+        // Partial tags must not claim: a file with a title but no album
+        // would resolve via folder-derived fallbacks and beat the tracks
+        // that are properly tagged.
+        let tagValues: [String: String?] = ["{artist}": metadata?.artist, "{album}": metadata?.album]
+        let satisfiesTemplate = tagValues.allSatisfy { token, value in
+            !template.contains(token) || !(value ?? "").isEmpty
+        }
+        guard satisfiesTemplate else { return nil }
+
+        return DownloadManager.destinationURL(
+            downloadDirectory: downloadDir,
+            soulseekPath: soulseekFilename,
+            username: username,
+            template: template,
+            metadata: metadata
+        ).deletingLastPathComponent()
     }
 
     /// Must not suspend: concurrent completions from one folder would
@@ -1893,46 +1989,61 @@ public final class DownloadManager {
         }
         let downloadDir = getDownloadDirectory()
 
-        Task.detached { [weak self, logger, transferState = self.transferState] in
-            let fm = FileManager.default
-            do {
-                try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-            } catch {
-                logger.warning("Failed to create organized directory: \(error.localizedDescription)")
-                return
-            }
-
-            var moved: [PlacedFile] = []
-            var vacated: Set<URL> = []
-            for file in moves {
-                let newPath = directory.appendingPathComponent(file.path.lastPathComponent)
-                // Never overwrite: a same-named file here is either this very
-                // download (already moved) or a pre-existing copy.
-                guard !fm.fileExists(atPath: newPath.path) else {
-                    logger.debug("Organized path already occupied, leaving \(file.path.lastPathComponent) in place")
-                    continue
-                }
-                do {
-                    try fm.moveItem(at: file.path, to: newPath)
-                    moved.append(PlacedFile(transferId: file.transferId, path: newPath))
-                    vacated.insert(file.path.deletingLastPathComponent())
-                } catch {
-                    logger.warning("Failed to reorganize download: \(error.localizedDescription)")
-                }
-            }
+        Task { [weak self, logger, transferState = self.transferState] in
+            let (moved, vacated) = await Self.performRelocation(moves: moves, directory: directory, logger: logger)
             guard let first = moved.first else { return }
             logger.info("Reorganized \(moved.count) file(s) into \(directory.lastPathComponent)")
 
-            await MainActor.run {
-                for file in moved {
-                    transferState?.updateTransfer(id: file.transferId) { $0.localPath = file.path }
-                }
+            for file in moved {
+                await transferState?.updateTransfer(id: file.transferId) { $0.localPath = file.path }
             }
             await self?.applyFolderArtworkIfNeeded(for: first.path)
 
-            for vacatedDirectory in vacated {
-                DownloadManager.pruneEmptyDirectories(from: vacatedDirectory, upTo: downloadDir)
+            await Self.pruneVacatedDirectories(vacated, upTo: downloadDir)
+        }
+    }
+
+    /// Off-actor (`@concurrent`) FileManager half of `relocate` — creates
+    /// the destination and moves each file, never overwriting.
+    @concurrent
+    private nonisolated static func performRelocation(
+        moves: [PlacedFile],
+        directory: URL,
+        logger: Logger
+    ) async -> (moved: [PlacedFile], vacated: Set<URL>) {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            logger.warning("Failed to create organized directory: \(error.localizedDescription)")
+            return ([], [])
+        }
+
+        var moved: [PlacedFile] = []
+        var vacated: Set<URL> = []
+        for file in moves {
+            let newPath = directory.appendingPathComponent(file.path.lastPathComponent)
+            // Never overwrite: a same-named file here is either this very
+            // download (already moved) or a pre-existing copy.
+            guard !fm.fileExists(atPath: newPath.path) else {
+                logger.debug("Organized path already occupied, leaving \(file.path.lastPathComponent) in place")
+                continue
             }
+            do {
+                try fm.moveItem(at: file.path, to: newPath)
+                moved.append(PlacedFile(transferId: file.transferId, path: newPath))
+                vacated.insert(file.path.deletingLastPathComponent())
+            } catch {
+                logger.warning("Failed to reorganize download: \(error.localizedDescription)")
+            }
+        }
+        return (moved, vacated)
+    }
+
+    @concurrent
+    private nonisolated static func pruneVacatedDirectories(_ vacated: Set<URL>, upTo root: URL) async {
+        for vacatedDirectory in vacated {
+            pruneEmptyDirectories(from: vacatedDirectory, upTo: root)
         }
     }
 
@@ -2106,22 +2217,22 @@ public final class DownloadManager {
 
             let finalPath = try finalizeCompletedDownload(from: incompletePath, to: desiredFinalPath)
 
-            let duration = Date().timeIntervalSince(transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
-            cancelRetry(transferId: pending.transferId)
+            let duration = Date().timeIntervalSince(await transferState?.getTransfer(id: pending.transferId)?.startTime ?? Date())
+            await cancelRetry(transferId: pending.transferId)
             // Drop the pendingDownloads entry so a late UploadFailed/Denied
             // can't re-queue an already-finished transfer.
             pendingDownloads.removeValue(forKey: pending.downloadToken)
-            transferState?.updateTransfer(id: pending.transferId) { t in
+            await transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .completed
                 t.bytesTransferred = pending.size
                 t.localPath = finalPath
                 t.error = nil
             }
-            ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
+            await ActivityLogger.shared?.logDownloadCompleted(filename: finalPath.lastPathComponent)
             applyFolderArtworkAfterCompletion(for: finalPath)
             organizeCompletedDownload(currentPath: finalPath, soulseekFilename: pending.filename, username: pending.username, transferId: pending.transferId)
             // Record only this session's bytes (resumed portion was on disk).
-            statisticsState?.recordTransfer(
+            await statisticsState?.recordTransfer(
                 filename: finalPath.lastPathComponent,
                 username: pending.username,
                 size: pending.size > pending.offset ? pending.size - pending.offset : pending.size,
@@ -2134,7 +2245,7 @@ public final class DownloadManager {
             guard let matched else { return }
             pendingDownloads.removeValue(forKey: matched.downloadToken)
             if isCancelled(matched.transferId) { return }
-            failDownload(
+            await failDownload(
                 transferId: matched.transferId,
                 username: matched.username,
                 filename: matched.filename,
@@ -2216,7 +2327,7 @@ public final class DownloadManager {
             bytesReceived += UInt64(bufferedFileData.count)
 
             // Update progress
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { [bytesReceived] t in
                 t.bytesTransferred = bytesReceived
             }
         }
@@ -2328,7 +2439,7 @@ public final class DownloadManager {
                         let sessionBytes = bytesReceived > resumeOffset ? bytesReceived - resumeOffset : 0
                         let speed = elapsed > 0 ? Int64(Double(sessionBytes) / elapsed) : 0
 
-                        transferState?.updateTransfer(id: transferId) { t in
+                        await transferState?.updateTransfer(id: transferId) { [bytesReceived] t in
                             t.bytesTransferred = bytesReceived
                             t.speed = speed
                         }
@@ -2438,7 +2549,7 @@ public final class DownloadManager {
     public func handlePierceFirewall(token: UInt32, connection: PeerConnection) async {
         logger.debug("handlePierceFirewall: token=\(token)")
 
-        if let uploadManager, uploadManager.hasPendingUpload(token: token) {
+        if let uploadManager, await uploadManager.hasPendingUpload(token: token) {
             logger.debug("PierceFirewall token \(token) delegated to UploadManager")
             await uploadManager.handlePierceFirewall(token: token, connection: connection)
             return
@@ -2458,12 +2569,12 @@ public final class DownloadManager {
     /// waiting for the 30s timeout. Browse/folder/userinfo/download races all
     /// share `pendingBrowseStates` in NetworkClient, so we forward there;
     /// uploads have their own pending tracking in UploadManager.
-    private func handleCantConnectToPeer(token: UInt32) {
-        networkClient?.failPendingBrowse(token: token, reason: "Peer unreachable (CantConnectToPeer)")
+    private func handleCantConnectToPeer(token: UInt32) async {
+        await networkClient?.failPendingBrowse(token: token, reason: "Peer unreachable (CantConnectToPeer)")
 
-        if let uploadManager, uploadManager.hasPendingUpload(token: token) {
+        if let uploadManager, await uploadManager.hasPendingUpload(token: token) {
             logger.warning("CantConnectToPeer for upload token \(token) — failing upload")
-            uploadManager.handleCantConnectToPeer(token: token)
+            await uploadManager.handleCantConnectToPeer(token: token)
             return
         }
 
@@ -2489,7 +2600,7 @@ public final class DownloadManager {
     private func reQueueWaitingDownloads() async {
         guard let transferState, let networkClient else { return }
 
-        let waitingDownloads = transferState.downloads.filter {
+        let waitingDownloads = await transferState.downloads.filter {
             $0.status == .queued || $0.status == .waiting
         }
         guard !waitingDownloads.isEmpty else { return }
@@ -2506,7 +2617,7 @@ public final class DownloadManager {
 
         // Housekeeping piggybacked on this tick: drop cancelled-ids whose
         // rows no longer exist (they'd otherwise accrete for the session).
-        let liveIds = Set(transferState.downloads.map(\.id))
+        let liveIds = Set(await transferState.downloads.map(\.id))
         cancelledTransferIds.formIntersection(liveIds)
 
         // Cap fresh dials per tick so a big queue of unreachable peers
@@ -2554,16 +2665,20 @@ public final class DownloadManager {
                 if !pendingToRefresh.isEmpty, dialBudget > 0 {
                     dialBudget -= 1
                     Task { [weak self, pendingToRefresh] in
-                        guard let self, let networkClient = self.networkClient else { return }
-                        guard let connection = try? await networkClient.establishPeerConnection(for: username) else {
-                            self.logger.debug("Re-queue dial to \(username) failed; next tick retries")
-                            return
-                        }
-                        await self.refreshQueueSlots(for: pendingToRefresh, over: connection)
+                        await self?.redialAndRefreshQueueSlots(username: username, transfers: pendingToRefresh)
                     }
                 }
             }
         }
+    }
+
+    private func redialAndRefreshQueueSlots(username: String, transfers: [Transfer]) async {
+        guard let networkClient else { return }
+        guard let connection = try? await networkClient.establishPeerConnection(for: username) else {
+            logger.debug("Re-queue dial to \(username) failed; next tick retries")
+            return
+        }
+        await refreshQueueSlots(for: transfers, over: connection)
     }
 
     /// Re-send QueueDownload (keeps our spot in the remote queue) and
@@ -2606,7 +2721,7 @@ public final class DownloadManager {
     private func retryFailedConnectionDownloads() async {
         guard let transferState else { return }
 
-        let failedDownloads = transferState.downloads.filter {
+        let failedDownloads = await transferState.downloads.filter {
             $0.status == .failed && $0.direction == .download &&
             isRetriableError($0.error ?? "") &&
             $0.retryCount < maxRetries &&
@@ -2624,7 +2739,7 @@ public final class DownloadManager {
             let alreadyPending = pendingDownloads.values.contains { $0.transferId == transfer.id }
             if alreadyPending { continue }
 
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
                 t.error = nil
             }
@@ -2667,7 +2782,7 @@ public final class DownloadManager {
     private func updateQueuePositions() async {
         guard let transferState, let networkClient else { return }
 
-        let activeDownloads = transferState.downloads.filter {
+        let activeDownloads = await transferState.downloads.filter {
             $0.status == .waiting || $0.status == .connecting
         }
         guard !activeDownloads.isEmpty else { return }
@@ -2705,7 +2820,7 @@ public final class DownloadManager {
 
         let staleThreshold = Date().addingTimeInterval(-600)  // 10 minutes ago
 
-        let staleDownloads = transferState.downloads.filter {
+        let staleDownloads = await transferState.downloads.filter {
             $0.status == .waiting && $0.direction == .download &&
             ($0.startTime ?? Date()) < staleThreshold
         }
@@ -2728,7 +2843,7 @@ public final class DownloadManager {
             guard dialBudget > 0 else { break }
             dialBudget -= 1
 
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.status = .queued
                 t.error = nil
             }
@@ -2746,7 +2861,7 @@ public final class DownloadManager {
     // MARK: - Queue Position Updates
 
     /// Called when peer tells us our queue position for a file
-    private func handlePlaceInQueueReply(username: String, filename: String, position: UInt32) {
+    private func handlePlaceInQueueReply(username: String, filename: String, position: UInt32) async {
         guard let transferState else { return }
 
         let isLive: (Transfer) -> Bool = {
@@ -2754,10 +2869,10 @@ public final class DownloadManager {
         }
 
         // Try exact match first (cheap and the common case).
-        if let transfer = transferState.downloads.first(where: {
+        if let transfer = await transferState.downloads.first(where: {
             $0.username == username && $0.filename == filename && isLive($0)
         }) {
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.queuePosition = Int(position)
             }
             logger.info("Updated queue position for \(filename) from \(username): \(position)")
@@ -2772,12 +2887,12 @@ public final class DownloadManager {
         // (username, filename-lowered), it's certainly the right one.
         let lowerUser = username.lowercased()
         let lowerFile = filename.lowercased()
-        if let transfer = transferState.downloads.first(where: {
+        if let transfer = await transferState.downloads.first(where: {
             $0.username.lowercased() == lowerUser &&
             $0.filename.lowercased() == lowerFile &&
             isLive($0)
         }) {
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.queuePosition = Int(position)
             }
             logger.info("Updated queue position (ci-fallback) for \(filename) from \(username): \(position)")
@@ -2793,7 +2908,7 @@ public final class DownloadManager {
             $0.filename.lowercased() == lowerFile
         }
         if candidates.count == 1, let pending = candidates.first {
-            transferState.updateTransfer(id: pending.transferId) { t in
+            await transferState.updateTransfer(id: pending.transferId) { t in
                 t.queuePosition = Int(position)
             }
             logger.info("Updated queue position (pending-fallback) for \(filename) from \(username): \(position)")
@@ -2806,7 +2921,7 @@ public final class DownloadManager {
     // MARK: - Upload Denied/Failed Handling
 
     /// Called when peer denies our download request
-    public func handleUploadDenied(username: String, filename: String, reason: String) {
+    public func handleUploadDenied(username: String, filename: String, reason: String) async {
         logger.info("Upload denied from \(username): \(filename) - \(reason)")
 
         guard let (token, pending) = pendingDownloadEntry(username: username, filename: filename) else {
@@ -2814,7 +2929,7 @@ public final class DownloadManager {
             return
         }
 
-        if let current = transferState?.getTransfer(id: pending.transferId) {
+        if let current = await transferState?.getTransfer(id: pending.transferId) {
             // Bytes already flowing — the F-connection receive loop is the
             // authoritative source of truth. An UploadDenied here is either
             // stale (for an earlier attempt) or redundant with a connection
@@ -2837,7 +2952,7 @@ public final class DownloadManager {
 
         logger.warning("Download denied for \(filename): \(reason)")
 
-        transferState?.updateTransfer(id: pending.transferId) { t in
+        await transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .failed
             t.error = "Denied: \(reason)"
         }
@@ -2846,7 +2961,7 @@ public final class DownloadManager {
     }
 
     /// Called when peer's upload to us fails
-    public func handleUploadFailed(username: String, filename: String) {
+    public func handleUploadFailed(username: String, filename: String) async {
         logger.info("Upload failed from \(username): \(filename)")
 
         guard let (token, pending) = pendingDownloadEntry(username: username, filename: filename) else {
@@ -2854,7 +2969,7 @@ public final class DownloadManager {
             return
         }
 
-        if let current = transferState?.getTransfer(id: pending.transferId) {
+        if let current = await transferState?.getTransfer(id: pending.transferId) {
             // Bytes already flowing — defer to the F-connection receive
             // loop. See `handleUploadDenied` for the same guard's
             // rationale. Note: must NOT remove pendingDownloads while
@@ -2882,7 +2997,7 @@ public final class DownloadManager {
         if pending.resumeOffset > 0, FileManager.default.fileExists(atPath: incompletePath.path) {
             logger.warning("Upload failed after resume attempt - deleting partial to retry from scratch")
             try? FileManager.default.removeItem(at: incompletePath)
-            transferState?.updateTransfer(id: pending.transferId) { t in
+            await transferState?.updateTransfer(id: pending.transferId) { t in
                 t.bytesTransferred = 0
             }
         }
@@ -2890,7 +3005,7 @@ public final class DownloadManager {
         logger.warning("Upload failed for \(filename)")
 
         pendingDownloads.removeValue(forKey: token)
-        failDownload(
+        await failDownload(
             transferId: pending.transferId,
             username: pending.username,
             filename: pending.filename,
@@ -2922,7 +3037,7 @@ public final class DownloadManager {
         size: UInt64,
         reason: String,
         retryCount explicitRetryCount: Int? = nil
-    ) {
+    ) async {
         // A cancelled transfer is terminal: don't overwrite .cancelled with
         // .failed and don't schedule a retry.
         if isCancelled(transferId) {
@@ -2930,17 +3045,20 @@ public final class DownloadManager {
             return
         }
 
-        let currentRetryCount = explicitRetryCount
-            ?? transferState?.getTransfer(id: transferId)?.retryCount
-            ?? 0
+        let currentRetryCount: Int
+        if let explicitRetryCount {
+            currentRetryCount = explicitRetryCount
+        } else {
+            currentRetryCount = await transferState?.getTransfer(id: transferId)?.retryCount ?? 0
+        }
 
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.status = .failed
             t.error = reason
         }
 
         if isRetriableError(reason) && currentRetryCount < maxRetries {
-            scheduleRetry(
+            await scheduleRetry(
                 transferId: transferId,
                 username: username,
                 filename: filename,
@@ -2999,7 +3117,7 @@ public final class DownloadManager {
         Self.isRetriableError(error)
     }
 
-    private static func formatRetryDelay(_ delay: TimeInterval) -> String {
+    private nonisolated static func formatRetryDelay(_ delay: TimeInterval) -> String {
         let seconds = Int(delay)
         if seconds < 60 { return "\(seconds)s" }
         let minutes = seconds / 60
@@ -3008,7 +3126,7 @@ public final class DownloadManager {
 
     /// Schedule automatic retry for a failed transfer with backoff measured
     /// in minutes (see `retryDelays`).
-    private func scheduleRetry(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
+    private func scheduleRetry(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) async {
         guard retryCount < self.maxRetries else {
             logger.info("Max retries (\(self.maxRetries)) reached for \(filename)")
             return
@@ -3021,7 +3139,7 @@ public final class DownloadManager {
         // Update status to show pending retry. `nextRetryAt` is persisted
         // so a quit + relaunch in the middle of a 30-minute backoff still
         // honors the original schedule (see `rearmPersistedRetries`).
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
             t.nextRetryAt = fireAt
         }
@@ -3037,42 +3155,53 @@ public final class DownloadManager {
 
         let task = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-
             guard let self, !Task.isCancelled else { return }
-
-            self.pendingRetries.removeValue(forKey: transferId)
-
-            // Only proceed if the transfer is still in a failed
-            // state. Between schedule and wake, the original attempt
-            // may have completed (late data), transitioned into
-            // `.transferring`/`.connecting`, been `.cancelled` by
-            // the user, or been re-queued manually. In all those
-            // cases this scheduled retry is stale — firing it would
-            // stomp a good transfer back to `.queued` with
-            // `bytesTransferred = 0`.
-            guard let current = self.transferState?.getTransfer(id: transferId),
-                  current.status == .failed else {
-                self.logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
-                return
-            }
-
-            self.retryDownload(
+            await self.runScheduledDownloadRetry(
                 transferId: transferId,
                 username: username,
                 filename: filename,
                 size: size,
-                retryCount: retryCount + 1
+                retryCount: retryCount
             )
         }
 
         pendingRetries[transferId] = task
     }
 
+    /// Wake-up body for a scheduled/rearmed retry Task. Only proceeds if
+    /// the transfer is still `.failed` — between schedule and wake, the
+    /// original attempt may have completed (late data), transitioned into
+    /// `.transferring`/`.connecting`, been `.cancelled` by the user, or
+    /// been re-queued manually. In all those cases the retry is stale and
+    /// firing it would stomp a good transfer back to `.queued` with
+    /// `bytesTransferred = 0`.
+    private func runScheduledDownloadRetry(
+        transferId: UUID,
+        username: String,
+        filename: String,
+        size: UInt64,
+        retryCount: Int
+    ) async {
+        pendingRetries.removeValue(forKey: transferId)
+        guard let current = await transferState?.getTransfer(id: transferId),
+              current.status == .failed else {
+            logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
+            return
+        }
+        await retryDownload(
+            transferId: transferId,
+            username: username,
+            filename: filename,
+            size: size,
+            retryCount: retryCount + 1
+        )
+    }
+
     /// Reset a previously-failed (or cancelled) transfer so `startDownload`
     /// can re-run from byte zero. Callers MUST ensure the transfer is
     /// eligible first — the scheduled-retry path checks `.failed` before
     /// calling this; `retryFailedDownload` checks `.failed || .cancelled`.
-    private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) {
+    private func retryDownload(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) async {
         logger.info("Retrying download: \(filename) (attempt \(retryCount))")
         // Manual/automatic retry revives the row; drop any cancellation marker.
         cancelledTransferIds.remove(transferId)
@@ -3081,7 +3210,7 @@ public final class DownloadManager {
         // `startDownload` (which sets it to .connecting) sees a clean slate.
         // Clear `nextRetryAt` — the scheduled retry just fired and the row
         // is moving forward, so the persisted timestamp is stale.
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.status = .queued
             t.error = nil
             t.bytesTransferred = 0
@@ -3116,13 +3245,13 @@ public final class DownloadManager {
     /// guard rejected `.queued` and the manual retry was a silent no-op
     /// (the row went `.failed → .queued` and just sat there until the
     /// next reconnect, where `resumeDownloadsOnConnect` picked it up).
-    public func retryFailedDownload(transferId: UUID) {
-        guard let transfer = transferState?.getTransfer(id: transferId),
+    public func retryFailedDownload(transferId: UUID) async {
+        guard let transfer = await transferState?.getTransfer(id: transferId),
               transfer.status == .failed || transfer.status == .cancelled || transfer.status == .queued else {
             return
         }
 
-        retryDownload(
+        await retryDownload(
             transferId: transferId,
             username: transfer.username,
             filename: transfer.filename,
@@ -3135,7 +3264,7 @@ public final class DownloadManager {
     /// persisted `nextRetryAt` so a subsequent rearm-on-launch doesn't
     /// resurrect this scheduled retry on top of the new flow that just
     /// took the row out of a retriable state.
-    public func cancelRetry(transferId: UUID) {
+    public func cancelRetry(transferId: UUID) async {
         if let task = pendingRetries.removeValue(forKey: transferId) {
             task.cancel()
             logger.info("Cancelled pending retry for transfer \(transferId)")
@@ -3144,8 +3273,8 @@ public final class DownloadManager {
         // startDownload calls this unconditionally, and an unguarded write
         // here was one full row-update cascade (DB write + invalidation)
         // per attempt.
-        if transferState?.getTransfer(id: transferId)?.nextRetryAt != nil {
-            transferState?.updateTransfer(id: transferId) { t in
+        if await transferState?.getTransfer(id: transferId)?.nextRetryAt != nil {
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.nextRetryAt = nil
             }
         }
@@ -3156,9 +3285,9 @@ public final class DownloadManager {
     /// refuse to finalize it, the salvage/TransferRequest path won't resurrect
     /// it, and failDownload treats it as terminal (no retry). Any partial file
     /// is kept on disk so a later manual retry can resume from it. Idempotent.
-    public func cancelDownload(transferId: UUID) {
+    public func cancelDownload(transferId: UUID) async {
         cancelledTransferIds.insert(transferId)
-        cancelRetry(transferId: transferId)
+        await cancelRetry(transferId: transferId)
 
         // Drop our pending bookkeeping for this transfer.
         let tokens = pendingDownloads.compactMap { $0.value.transferId == transferId ? $0.key : nil }
@@ -3179,7 +3308,7 @@ public final class DownloadManager {
             }
         }
 
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.status = .cancelled
             t.error = nil
             t.speed = 0
@@ -3196,10 +3325,10 @@ public final class DownloadManager {
     /// rows fire immediately with a small per-row stagger so 50 pending
     /// retries don't flood the network on launch. Call once at startup
     /// after `transferState.loadPersisted()` completes.
-    public func rearmPersistedRetries() {
+    public func rearmPersistedRetries() async {
         guard let transferState else { return }
         let now = Date()
-        let candidates = transferState.downloads.filter {
+        let candidates = await transferState.downloads.filter {
             $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
         }
         guard !candidates.isEmpty else { return }
@@ -3223,18 +3352,12 @@ public final class DownloadManager {
             let task = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard let self, !Task.isCancelled else { return }
-                self.pendingRetries.removeValue(forKey: transferId)
-                guard let current = self.transferState?.getTransfer(id: transferId),
-                      current.status == .failed else {
-                    self.logger.info("Skipping rearmed retry for \(filename): no longer in .failed state")
-                    return
-                }
-                self.retryDownload(
+                await self.runScheduledDownloadRetry(
                     transferId: transferId,
                     username: username,
                     filename: filename,
                     size: size,
-                    retryCount: retryCount + 1
+                    retryCount: retryCount
                 )
             }
             pendingRetries[transferId] = task
@@ -3253,14 +3376,9 @@ public final class DownloadManager {
         pendingDownloads[token] = pending
     }
 
-    /// `settings` is `weak` in production; retain the double strongly too, or
-    /// ARC releases a test-local mock before the assertions run.
-    internal func _setSettingsForTest(_ settings: any DownloadSettingsProviding) {
-        self._testStrongSettings = settings
+    internal func _setSettingsForTest(_ settings: DownloadSettingsSnapshot) {
         self.settings = settings
     }
-
-    private var _testStrongSettings: (any DownloadSettingsProviding)?
 
     internal func _setMetadataReaderForTest(_ reader: any MetadataReading) {
         self.metadataReader = reader
@@ -3277,8 +3395,8 @@ public final class DownloadManager {
 
     /// Drive the queue-position handler from tests. Real callers reach
     /// it via the pool's `.placeInQueueReply` event in NetworkClient.
-    internal func _handlePlaceInQueueReplyForTest(username: String, filename: String, position: UInt32) {
-        handlePlaceInQueueReply(username: username, filename: filename, position: position)
+    internal func _handlePlaceInQueueReplyForTest(username: String, filename: String, position: UInt32) async {
+        await handlePlaceInQueueReply(username: username, filename: filename, position: position)
     }
 
     /// Test-only re-entry into the salvage path. Real callers go through the
@@ -3306,7 +3424,7 @@ public final class DownloadManager {
     internal func _evaluatePoolTransferRequestForTest(
         _ request: TransferRequest,
         connection: PeerConnection
-    ) -> PoolTransferDecision {
+    ) async -> PoolTransferDecision {
         let peerUsername = request.username.isEmpty ? connection.peerInfo.username : request.username
         let normalized = request.username.isEmpty && !peerUsername.isEmpty
             ? TransferRequest(direction: request.direction, token: request.token, filename: request.filename, size: request.size, username: peerUsername)
@@ -3325,7 +3443,7 @@ public final class DownloadManager {
         // Same salvage lookup as `handlePoolTransferRequest`. The seam
         // previously re-implemented salvage with the retired
         // `.min(by: startTime)` scan and could disagree with production.
-        guard let transfer = transferState?.findSalvageableDownload(
+        guard let transfer = await transferState?.findSalvageableDownload(
             username: peerUsername,
             filename: request.filename
         ), transfer.direction == .download else {
@@ -3354,7 +3472,7 @@ public final class DownloadManager {
     /// `_testStrongTransferState` so it survives across awaits — without
     /// this, test-local mocks get released by ARC before the assertion
     /// runs, the weak ref nils out, and the salvage path's
-    /// `transferState?.downloads` lookup returns nil.
+    /// `await transferState?.downloads` lookup returns nil.
     internal func _setTransferStateForTest(_ tracking: any TransferTracking) {
         self._testStrongTransferState = tracking
         self.transferState = tracking

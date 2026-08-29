@@ -6,7 +6,21 @@ import SeeleseekCore
 @MainActor
 final class SocialState: PeerWatching {
     // MARK: - Buddy List
-    var buddies: [Buddy] = []
+    /// The didSet keeps the core's pushed buddy set in sync — the shares /
+    /// distributed-search handlers gate buddy-only folders against that
+    /// set instead of calling back into this type per request. Fires on
+    /// element mutations too (status updates); the recompute is cheap and
+    /// `updateBuddyList` is a plain assignment.
+    var buddies: [Buddy] = [] {
+        didSet { pushBuddyList() }
+    }
+
+    private func pushBuddyList() {
+        let names = Set(buddies.map { $0.username.lowercased() })
+        Task { [weak networkClient] in
+            await networkClient?.updateBuddyList(names)
+        }
+    }
     var selectedBuddy: String?
     var buddySearchQuery: String = ""
     var showAddBuddySheet = false
@@ -55,8 +69,21 @@ final class SocialState: PeerWatching {
     var isLoadingProfile = false
 
     // MARK: - My Profile
-    var myDescription: String = ""
-    var myPicture: Data?
+    /// The didSets keep the core's pushed `ProfileData` current — it
+    /// serves UserInfoResponse without calling back into this type.
+    var myDescription: String = "" {
+        didSet { pushProfileData() }
+    }
+    var myPicture: Data? {
+        didSet { pushProfileData() }
+    }
+
+    private func pushProfileData() {
+        let data = ProfileData(description: myDescription, picture: myPicture)
+        Task { [weak networkClient] in
+            await networkClient?.updateProfileData(data)
+        }
+    }
 
     // MARK: - Privileges
     var privilegeTimeRemaining: UInt32 = 0
@@ -224,83 +251,22 @@ final class SocialState: PeerWatching {
 
     // MARK: - Setup
 
-    func setupCallbacks(client: NetworkClient) {
+    @ObservationIgnored private var socialEventsTask: Task<Void, Never>?
+
+    func wireNetworkEvents(client: NetworkClient) {
         self.networkClient = client
-        logger.info("Setting up social callbacks with NetworkClient...")
 
-        // User status updates (for watched users / buddies)
-        client.addUserStatusHandler { [weak self] username, status, privileged in
-            guard let self else { return }
-            let buddyStatus = BuddyStatus(from: status)
-            // Record live status for any watched peer (buddy or not)
-            self.peerStatuses[username] = buddyStatus
-            self.updateBuddyStatus(username: username, status: status, privileged: privileged)
-            // Also update viewing profile if this is the user we're looking at
-            if self.viewingProfile?.username == username {
-                self.viewingProfile?.status = buddyStatus
-                self.viewingProfile?.isPrivileged = privileged
+        // One serial consumer for the social domain — never per-event
+        // Tasks, so status/stats updates for the same peer can't reorder.
+        // Bounded: a large buddy list coming online floods this channel;
+        // tail-drop past 1024 queued events instead of growing.
+        socialEventsTask?.cancel()
+        let socialEvents = client.events.social.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        socialEventsTask = Task { [weak self] in
+            for await event in socialEvents {
+                guard let self else { return }
+                self.handle(event)
             }
-        }
-
-        // User stats updates (multi-handler pattern)
-        client.addUserStatsHandler { [weak self] username, avgSpeed, uploadNum, files, dirs in
-            guard let self else { return }
-            self.updateBuddyStats(username: username, speed: avgSpeed, files: files, dirs: dirs)
-            // Also update viewing profile if this is the user we're looking at
-            if self.viewingProfile?.username == username {
-                self.viewingProfile?.averageSpeed = avgSpeed
-                self.viewingProfile?.totalUploads = UInt32(uploadNum)
-                self.viewingProfile?.sharedFiles = files
-                self.viewingProfile?.sharedFolders = dirs
-            }
-        }
-
-        // User interests response
-        client.onUserInterests = { [weak self] username, likes, hates in
-            guard let self else { return }
-            self.handleUserInterests(username: username, likes: likes, hates: hates)
-        }
-
-        // Similar users response
-        client.onSimilarUsers = { [weak self] users in
-            guard let self else { return }
-            self.similarUsers = users
-            self.isLoadingSimilar = false
-            self.similarTimeoutTask?.cancel()
-            self.similarTimeoutTask = nil
-            self.logger.info("Received \(users.count) similar users")
-        }
-
-        // Recommendations response
-        client.onRecommendations = { [weak self] recs, unrecs in
-            guard let self else { return }
-            self.recommendations = recs
-            self.unrecommendations = unrecs
-            self.isLoadingRecommendations = false
-            self.recommendationsTimeoutTask?.cancel()
-            self.recommendationsTimeoutTask = nil
-            self.logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
-        }
-
-        // Global recommendations response (network-wide popular interests)
-        client.onGlobalRecommendations = { [weak self] recs, _ in
-            guard let self else { return }
-            self.globalRecommendations = recs
-            self.logger.info("Received \(recs.count) global recommendations")
-        }
-
-        // User privileges response (for viewing profiles)
-        client.onUserPrivileges = { [weak self] username, privileged in
-            guard let self else { return }
-            // Update viewing profile if this is the user we're looking at
-            if self.viewingProfile?.username == username {
-                self.viewingProfile?.isPrivileged = privileged
-            }
-        }
-
-        // Own privilege time remaining
-        client.onPrivilegesChecked = { [weak self] timeLeft in
-            self?.privilegeTimeRemaining = timeLeft
         }
 
         // Country-code resolutions: persist on the buddy record so the
@@ -311,26 +277,73 @@ final class SocialState: PeerWatching {
             self?.handleCountryResolved(username: username, countryCode: code)
         }
 
-        // Provide profile data for UserInfoResponse
-        client.profileDataProvider = { [weak self] in
-            let desc = self?.myDescription ?? ""
-            let description = desc.isEmpty ? "SeeleSeek - Soulseek client for macOS" : desc
-            return (description: description, picture: self?.myPicture)
-        }
-
-        // Incoming UserInfoReply — populate the currently-viewed profile if it matches.
-        // Fires on fresh network replies (both solicited by fetchUserInfo and
-        // unsolicited). Cache-hit paths are handled by applyUserInfo at the
-        // loadProfile call site, since the handler doesn't fire on cached reads.
-        client.addUserInfoHandler { [weak self] username, info in
-            self?.applyUserInfo(info, for: username)
-        }
-
-        logger.info("Social callbacks configured")
+        // Initial pushes — the didSets keep these current from here on.
+        // (Buddies/profile load async after this; their didSets re-push.)
+        pushBuddyList()
+        pushProfileData()
 
         // Load persisted data
         Task {
             await loadPersistedData()
+        }
+    }
+
+    private func handle(_ event: SocialEvent) {
+        switch event {
+        case .userStatus(let username, let status, let privileged):
+            // Watched users / buddies
+            let buddyStatus = BuddyStatus(from: status)
+            // Record live status for any watched peer (buddy or not)
+            peerStatuses[username] = buddyStatus
+            updateBuddyStatus(username: username, status: status, privileged: privileged)
+            // Also update viewing profile if this is the user we're looking at
+            if viewingProfile?.username == username {
+                viewingProfile?.status = buddyStatus
+                viewingProfile?.isPrivileged = privileged
+            }
+        case .userStats(let username, let avgSpeed, let uploadNum, let files, let dirs):
+            updateBuddyStats(username: username, speed: avgSpeed, files: files, dirs: dirs)
+            // Also update viewing profile if this is the user we're looking at
+            if viewingProfile?.username == username {
+                viewingProfile?.averageSpeed = avgSpeed
+                viewingProfile?.totalUploads = UInt32(uploadNum)
+                viewingProfile?.sharedFiles = files
+                viewingProfile?.sharedFolders = dirs
+            }
+        case .userInfoReply(let username, let info):
+            // Populate the currently-viewed profile if it matches. Fires on
+            // fresh network replies (both solicited by fetchUserInfo and
+            // unsolicited). Cache-hit paths are handled by applyUserInfo at
+            // the loadProfile call site, since no event fires on cached reads.
+            applyUserInfo(info, for: username)
+        case .userInterests(let username, let likes, let hates):
+            handleUserInterests(username: username, likes: likes, hates: hates)
+        case .similarUsers(let users):
+            similarUsers = users
+            isLoadingSimilar = false
+            similarTimeoutTask?.cancel()
+            similarTimeoutTask = nil
+            logger.info("Received \(users.count) similar users")
+        case .recommendations(let recs, let unrecs):
+            recommendations = recs
+            unrecommendations = unrecs
+            isLoadingRecommendations = false
+            recommendationsTimeoutTask?.cancel()
+            recommendationsTimeoutTask = nil
+            logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
+        case .globalRecommendations(let recs, _):
+            // Network-wide popular interests
+            globalRecommendations = recs
+            logger.info("Received \(recs.count) global recommendations")
+        case .userPrivileges(let username, let privileged):
+            // Update viewing profile if this is the user we're looking at
+            if viewingProfile?.username == username {
+                viewingProfile?.isPrivileged = privileged
+            }
+        case .privilegesChecked(let secondsLeft):
+            privilegeTimeRemaining = secondsLeft
+        case .itemRecommendations, .itemSimilarUsers, .privilegedUsers, .adminMessage:
+            break
         }
     }
 
@@ -400,7 +413,7 @@ final class SocialState: PeerWatching {
         // (blocked/ignored/interests/profile/leech) skipped it entirely and
         // silently recreated the stale-buddy-status bug. `watchUser` is
         // idempotent, so overlapping with the event-driven pass is harmless.
-        if networkClient?.isConnected == true {
+        if networkClient?.status.isConnected == true {
             await rewatchAllBuddies()
             await reregisterInterests()
         }
@@ -588,7 +601,7 @@ final class SocialState: PeerWatching {
         // Viewing our own profile: populate the local description+picture directly.
         // The Soulseek protocol has no way to fetch this from the server — other
         // users learn these values only by asking *us* via UserInfoRequest.
-        let isOwnProfile = (networkClient?.username ?? "") == username && !username.isEmpty
+        let isOwnProfile = (networkClient?.status.username ?? "") == username && !username.isEmpty
         if isOwnProfile {
             viewingProfile?.description = myDescription
             viewingProfile?.picture = myPicture
@@ -612,7 +625,7 @@ final class SocialState: PeerWatching {
         // Skipped for our own profile (can't peer-connect to ourselves).
         //
         // We apply the result directly instead of relying only on the handler
-        // registered in setupCallbacks — the handler fires on fresh replies but
+        // registered in wireNetworkEvents — the handler fires on fresh replies but
         // NOT on cache hits, which is what made re-opening the same profile
         // appear empty the second time.
         if !isOwnProfile, let client = networkClient {
@@ -817,7 +830,7 @@ final class SocialState: PeerWatching {
             logger.info("Requested similar users")
             // The server can silently never reply — clear the flag after a
             // timeout so the spinner doesn't spin forever. The response
-            // callback (setupCallbacks) clears the flag on success.
+            // callback (wireNetworkEvents) clears the flag on success.
             similarTimeoutTask?.cancel()
             similarTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))

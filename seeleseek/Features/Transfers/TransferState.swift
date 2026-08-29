@@ -486,7 +486,7 @@ final class TransferState: TransferTracking {
         return probe == after
     }
 
-    func updateTransfer(id: UUID, update: (inout Transfer) -> Void) {
+    func updateTransfer(id: UUID, update: @Sendable (inout Transfer) -> Void) {
         if let index = downloads.firstIndex(where: { $0.id == id }) {
             let before = downloads[index]
             var transfer = before

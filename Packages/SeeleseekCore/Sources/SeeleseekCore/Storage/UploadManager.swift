@@ -3,11 +3,12 @@ import Network
 import os
 import Synchronization
 
-/// Manages upload queue and file transfers to peers
-@Observable
-@MainActor
-public final class UploadManager {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "UploadManager")
+/// Manages the upload queue and file transfers to peers.
+///
+/// An actor: queue processing, peer handshakes, and chunk streaming run on
+/// its own executor. The transfers UI observes the `state` mirror.
+public actor UploadManager {
+    nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "UploadManager")
 
     // MARK: - Dependencies
     private weak var networkClient: NetworkClient?
@@ -16,9 +17,15 @@ public final class UploadManager {
     private weak var statisticsState: (any StatisticsRecording)?
 
     // MARK: - Upload Queue
-    private var uploadQueue: [QueuedUpload] = []
-    private var activeUploads: [UUID: ActiveUpload] = [:]
-    private var pendingTransfers: [UInt32: PendingUpload] = [:]  // token -> pending
+    private var uploadQueue: [QueuedUpload] = [] {
+        didSet { publishState() }
+    }
+    private var activeUploads: [UUID: ActiveUpload] = [:] {
+        didSet { publishState() }
+    }
+    private var pendingTransfers: [UInt32: PendingUpload] = [:] {  // token -> pending
+        didSet { publishState() }
+    }
     /// Per-token timeout for "peer didn't reply to TransferRequest". Cancelled
     /// by handleTransferResponse so the timer doesn't fire after the response
     /// arrives — without this, the same `pendingTransfers[token]` entry that
@@ -42,7 +49,9 @@ public final class UploadManager {
     private var directConnectAttempts: Set<UInt32> = []
 
     // Configuration
-    public private(set) var maxConcurrentUploads = 5
+    public private(set) var maxConcurrentUploads = 5 {
+        didSet { publishState() }
+    }
     public var maxQueuedPerUser = 50  // Max files queued per user (nicotine+ default)
     public var uploadSpeedLimit: Int64? = nil  // bytes per second, nil = unlimited
 
@@ -91,13 +100,19 @@ public final class UploadManager {
     private var isProcessingQueue = false
     private var needsQueuePass = false
 
-    /// Called to check if an upload should be allowed (checks blocklist + leech status)
-    /// Set by AppState to delegate to SocialState
-    public var uploadPermissionChecker: ((String) -> Bool)?
+    /// Called to check if an upload should be allowed (checks blocklist +
+    /// leech status). `@MainActor` — it reads app-layer state
+    /// (SocialState/SettingsState). Set by AppState via
+    /// `setUploadPermissionChecker`.
+    private var uploadPermissionChecker: (@MainActor (String) -> Bool)?
+
+    public func setUploadPermissionChecker(_ checker: (@MainActor (String) -> Bool)?) {
+        uploadPermissionChecker = checker
+    }
 
     // MARK: - Types
 
-    public struct QueuedUpload: Identifiable {
+    public struct QueuedUpload: Identifiable, Sendable {
         public let id = UUID()
         public let username: String
         public let filename: String
@@ -135,7 +150,7 @@ public final class UploadManager {
         }
     }
 
-    public struct ActiveUpload {
+    public struct ActiveUpload: Sendable {
         public let transferId: UUID
         public let username: String
         public let filename: String
@@ -146,7 +161,7 @@ public final class UploadManager {
         public var startTime: Date?
     }
 
-    public struct PendingUpload {
+    public struct PendingUpload: Sendable {
         public let transferId: UUID
         public let username: String
         public let filename: String
@@ -178,9 +193,67 @@ public final class UploadManager {
         }
     }
 
+    // MARK: - UI Mirror
+
+    /// `@MainActor` mirror the transfers UI observes instead of this
+    /// actor. Fed conflated (`.bufferingNewest(1)`) — snapshots carry
+    /// complete state.
+    public nonisolated let state: UploadState
+
+    private let stateContinuation: AsyncStream<UploadQueueSnapshot>.Continuation
+
+    private func publishState() {
+        var s = UploadQueueSnapshot()
+        s.queuedUploads = uploadQueue
+        s.activeUploadCount = activeUploads.count
+        s.inFlightTransferCount = inFlightTransferCount
+        s.maxConcurrentUploads = maxConcurrentUploads
+        stateContinuation.yield(s)
+    }
+
     // MARK: - Configuration
 
-    public init() {}
+    /// `@MainActor` so the `state` mirror can be constructed inline and
+    /// its consumer registers before any producer can run.
+    @MainActor
+    public init() {
+        let state = UploadState()
+        self.state = state
+        let (updates, continuation) = AsyncStream.makeStream(
+            of: UploadQueueSnapshot.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        self.stateContinuation = continuation
+        Task { @MainActor in
+            for await snapshot in updates {
+                state.apply(snapshot)
+            }
+        }
+    }
+
+    private var transferEventsTask: Task<Void, Never>?
+
+    private func handle(_ event: TransferEvent) {
+        switch event {
+        case .queueUpload(let username, let filename, let connection):
+            // Peer wants to download from us.
+            Task {
+                await self.handleQueueUpload(username: username, filename: filename, connection: connection)
+            }
+        case .transferResponse(let token, let allowed, _, let reason, let connection):
+            // Peer accepted/rejected our upload offer.
+            Task {
+                await self.handleTransferResponse(token: token, allowed: allowed, reason: reason, connection: connection)
+            }
+        case .placeInQueueRequest(let username, let filename, let connection):
+            // Peer wants to know their queue position.
+            Task {
+                await self.handlePlaceInQueueRequest(username: username, filename: filename, connection: connection)
+            }
+        case .fileTransferConnection, .pierceFirewall, .transferRequest, .placeInQueueReply:
+            break  // DownloadManager's side of the domain
+        }
+    }
 
     public func configure(networkClient: NetworkClient, transferState: any TransferTracking, shareManager: ShareManager, statisticsState: any StatisticsRecording) {
         self.networkClient = networkClient
@@ -188,29 +261,17 @@ public final class UploadManager {
         self.shareManager = shareManager
         self.statisticsState = statisticsState
 
-        // Set up callback for QueueUpload requests (peer wants to download from us).
-        // Fire-and-forget Tasks so a long-running handler (an upload can
-        // stream for minutes) never blocks the network event dispatch.
-        networkClient.onQueueUpload = { [weak self] username, filename, connection in
-            guard let self else { return }
-            Task {
-                await self.handleQueueUpload(username: username, filename: filename, connection: connection)
-            }
-        }
-
-        // Set up callback for TransferResponse (peer accepted/rejected our upload offer)
-        networkClient.onTransferResponse = { [weak self] token, allowed, _, reason, connection in
-            guard let self else { return }
-            Task {
-                await self.handleTransferResponse(token: token, allowed: allowed, reason: reason, connection: connection)
-            }
-        }
-
-        // Set up callback for PlaceInQueueRequest (peer wants to know their queue position)
-        networkClient.onPlaceInQueueRequest = { [weak self] username, filename, connection in
-            guard let self else { return }
-            Task {
-                await self.handlePlaceInQueueRequest(username: username, filename: filename, connection: connection)
+        // The consumer spawns a fire-and-forget Task per event so a
+        // long-running handler (an upload can stream for minutes) never
+        // blocks event dispatch. Deliberately unbounded: every transfer
+        // event is load-bearing (a dropped queueUpload strands the
+        // requesting peer), and the consumer body is O(1).
+        transferEventsTask?.cancel()
+        let transferEvents = networkClient.events.transfers.subscribe()
+        transferEventsTask = Task { [weak self] in
+            for await event in transferEvents {
+                guard let self else { return }
+                await self.handle(event)
             }
         }
 
@@ -256,7 +317,7 @@ public final class UploadManager {
             // Could send UploadDenied here if file doesn't exist
             guard let shareManager else { return }
 
-            if shareManager.fileIndex.first(where: { $0.sharedPath == filename }) == nil {
+            if await shareManager.fileIndex.first(where: { $0.sharedPath == filename }) == nil {
                 do {
                     try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
                 } catch {
@@ -356,7 +417,7 @@ public final class UploadManager {
     /// Shared validation for QueueUpload and legacy TransferRequest
     /// (direction=download). Checks share index, buddy visibility, local
     /// file existence, permission checker, and per-user queue limit.
-    private func validateUploadRequest(username: String, filename: String) -> UploadRequestValidation {
+    private func validateUploadRequest(username: String, filename: String) async -> UploadRequestValidation {
         guard let shareManager else {
             logger.error("ShareManager not configured")
             return .denied(reason: "Server error")
@@ -364,7 +425,7 @@ public final class UploadManager {
 
         // Look up the file in our shares
         // The filename from SoulSeek uses backslashes as path separators
-        guard let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
+        guard let indexedFile = await shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("File not found in shares: \(filename)")
             return .denied(reason: "File not shared.")
         }
@@ -378,10 +439,10 @@ public final class UploadManager {
         // we use for unknown files so non-buddies can't probe for
         // buddy-only path existence.
         if indexedFile.visibility == .buddies {
-            let isBuddy = networkClient?.isBuddyChecker?(username) ?? false
+            let isBuddy = await networkClient?.isBuddy(username) ?? false
             if !isBuddy {
                 logger.info("Upload denied (buddy-only file, non-buddy requester): \(username) \(filename)")
-                ActivityLogger.shared?.logInfo(
+                await ActivityLogger.shared?.logInfo(
                     "Denied upload of buddy-only file to \(username)",
                     detail: filename
                 )
@@ -396,9 +457,9 @@ public final class UploadManager {
         }
 
         // Check if upload is allowed (blocklist + leech detection)
-        if let checker = uploadPermissionChecker, !checker(username) {
+        if let checker = uploadPermissionChecker, await checker(username) == false {
             logger.info("Upload denied for \(username): blocked or leech")
-            ActivityLogger.shared?.logInfo(
+            await ActivityLogger.shared?.logInfo(
                 "Denied upload request from \(username)",
                 detail: filename
             )
@@ -420,7 +481,7 @@ public final class UploadManager {
         logger.info("QueueUpload from \(username): \(filename)")
 
         let indexedFile: ShareManager.IndexedFile
-        switch validateUploadRequest(username: username, filename: filename) {
+        switch await validateUploadRequest(username: username, filename: filename) {
         case .denied(let reason):
             do {
                 try await connection.sendUploadDenied(filename: filename, reason: reason)
@@ -460,12 +521,12 @@ public final class UploadManager {
         // peer's request supersedes the backoff), and route through
         // `existingTransferId` so startUpload reuses the row.
         var existingTransferId: UUID?
-        if let row = transferState?.uploads.first(where: { t in
+        if let row = await transferState?.uploads.first(where: { t in
             t.username == username && t.filename == filename
                 && (pendingRetries[t.id] != nil
                     || ((t.status == .failed || t.status == .queued) && t.nextRetryAt != nil))
         }) {
-            cancelRetry(transferId: row.id)
+            await cancelRetry(transferId: row.id)
             existingTransferId = row.id
             logger.info("QueueUpload matched retry-pending row for \(filename) — reusing transfer \(row.id)")
         }
@@ -509,7 +570,7 @@ public final class UploadManager {
         logger.info("Legacy TransferRequest(download) from \(username): \(filename), token=\(token)")
 
         let indexedFile: ShareManager.IndexedFile
-        switch validateUploadRequest(username: username, filename: filename) {
+        switch await validateUploadRequest(username: username, filename: filename) {
         case .denied(let reason):
             do {
                 try await connection.sendTransferReply(token: token, allowed: false, reason: reason)
@@ -554,12 +615,12 @@ public final class UploadManager {
 
         // Re-check permission — blocklist/leech status may have changed
         // while the item sat in the queue.
-        if let checker = uploadPermissionChecker, !checker(upload.username) {
+        if let checker = uploadPermissionChecker, await checker(upload.username) == false {
             logger.info("Upload denied at start for \(upload.username): blocked or leech")
             await sendUploadDeniedToPeer(username: upload.username, filename: upload.filename, reason: "File not shared.")
             if let existing = upload.existingTransferId {
-                cancelRetry(transferId: existing)
-                transferState?.updateTransfer(id: existing) { t in
+                await cancelRetry(transferId: existing)
+                await transferState?.updateTransfer(id: existing) { t in
                     t.status = .failed
                     t.error = "Denied"
                 }
@@ -580,7 +641,7 @@ public final class UploadManager {
         let transferId: UUID
         if let existing = upload.existingTransferId {
             transferId = existing
-            transferState?.updateTransfer(id: existing) { t in
+            await transferState?.updateTransfer(id: existing) { t in
                 t.status = .connecting
                 t.error = nil
                 t.bytesTransferred = 0
@@ -598,7 +659,7 @@ public final class UploadManager {
                 status: .connecting,
                 localPath: URL(fileURLWithPath: upload.localPath)
             )
-            transferState?.addUpload(transfer)
+            await transferState?.addUpload(transfer)
             transferId = transfer.id
         }
 
@@ -628,7 +689,7 @@ public final class UploadManager {
         }
         guard let connection = resolved else {
             logger.warning("No connection to \(upload.username), upload cannot proceed")
-            failUpload(transferId: transferId, error: "Peer disconnected")
+            await failUpload(transferId: transferId, error: "Peer disconnected")
             pendingTransfers.removeValue(forKey: token)
             await processQueue()
             return
@@ -652,17 +713,21 @@ public final class UploadManager {
             transferResponseTimeouts[token] = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled, let self else { return }
-                self.transferResponseTimeouts.removeValue(forKey: token)
-                if let pending = self.pendingTransfers.removeValue(forKey: token) {
-                    self.failUpload(transferId: pending.transferId, error: "Timeout waiting for peer response")
-                    // Refill the freed slot.
-                    await self.processQueue()
-                }
+                await self.transferResponseTimedOut(token: token)
             }
         } catch {
             logger.error("Failed to send TransferRequest: \(error.localizedDescription)")
             transferResponseTimeouts.removeValue(forKey: token)?.cancel()
             await failUploadAttempt(transferId: transferId, error: error.localizedDescription, token: token)
+        }
+    }
+
+    private func transferResponseTimedOut(token: UInt32) async {
+        transferResponseTimeouts.removeValue(forKey: token)
+        if let pending = pendingTransfers.removeValue(forKey: token) {
+            await failUpload(transferId: pending.transferId, error: "Timeout waiting for peer response")
+            // Refill the freed slot.
+            await processQueue()
         }
     }
 
@@ -694,7 +759,7 @@ public final class UploadManager {
             case .failed:
                 // Hard rejection — route through failUpload so the retry
                 // classifier sees the reason text.
-                failUpload(transferId: pending.transferId, error: detail)
+                await failUpload(transferId: pending.transferId, error: detail)
             case .queued:
                 // Peer accepted but is queueing us. Set the row to .queued
                 // so the UI accurately reflects "waiting in peer's queue",
@@ -704,13 +769,13 @@ public final class UploadManager {
                 // PlaceInQueueReply, but if they never do (or never get
                 // around to actually serving us) the retry's backoff
                 // ladder makes sure we re-attempt eventually.
-                let currentRetryCount = transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
-                transferState?.updateTransfer(id: pending.transferId) { t in
+                let currentRetryCount = await transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+                await transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .queued
                     t.error = detail
                 }
                 if currentRetryCount < maxRetries {
-                    scheduleUploadRetry(
+                    await scheduleUploadRetry(
                         transferId: pending.transferId,
                         username: pending.username,
                         filename: pending.filename,
@@ -720,14 +785,14 @@ public final class UploadManager {
                 }
             case .cancelled:
                 // Terminal user-initiated cancel on the peer side. No retry.
-                transferState?.updateTransfer(id: pending.transferId) { t in
+                await transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .cancelled
                     t.error = detail
                 }
             default:
                 // Anything new from `status(forReject:)` falls through to
                 // the row-state path so we don't lose the reason.
-                transferState?.updateTransfer(id: pending.transferId) { t in
+                await transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = status
                     t.error = detail
                 }
@@ -748,7 +813,7 @@ public final class UploadManager {
             return
         }
 
-        transferState?.updateTransfer(id: pending.transferId) { t in
+        await transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .transferring
             t.startTime = Date()
         }
@@ -873,7 +938,7 @@ public final class UploadManager {
             if pendingTransfers[token] != nil {
                 logger.info("Waiting for peer \(pending.username) to connect via PierceFirewall (token=\(token))")
 
-                transferState?.updateTransfer(id: pending.transferId) { t in
+                await transferState?.updateTransfer(id: pending.transferId) { t in
                     t.status = .connecting
                     t.error = "Waiting for peer to connect (firewall)"
                 }
@@ -886,11 +951,7 @@ public final class UploadManager {
                 pierceFirewallTimeouts[token] = Task { [weak self] in
                     try? await Task.sleep(for: .seconds(30))
                     guard let self, !Task.isCancelled else { return }
-                    self.pierceFirewallTimeouts.removeValue(forKey: token)
-                    if let stale = self.pendingTransfers.removeValue(forKey: token) {
-                        self.logger.warning("PierceFirewall timeout for upload \(stale.filename) to \(stale.username)")
-                        await self.failUploadAttempt(transferId: stale.transferId, error: "Peer connection timeout (firewall)")
-                    }
+                    await self.pierceFirewallTimedOut(token: token)
                 }
             } else {
                 logger.debug("Upload already completed via PierceFirewall for token=\(token)")
@@ -921,7 +982,7 @@ public final class UploadManager {
 
         // Send PeerInit with type "F" and token 0 (always 0 for F connections per protocol)
         // PeerInit format: [length][code=1][username][type="F"][token=0]
-        let username = networkClient.username
+        let username = await networkClient.username
         var initPayload = Data()
         initPayload.appendUInt8(1)  // PeerInit code
         initPayload.appendString(username)
@@ -980,6 +1041,14 @@ public final class UploadManager {
             logger.error("Failed during F connection handshake: \(error.localizedDescription)")
             connection.cancel()
             await failUploadAttempt(transferId: pending.transferId, error: "Failed to start file transfer")
+        }
+    }
+
+    private func pierceFirewallTimedOut(token: UInt32) async {
+        pierceFirewallTimeouts.removeValue(forKey: token)
+        if let stale = pendingTransfers.removeValue(forKey: token) {
+            logger.warning("PierceFirewall timeout for upload \(stale.filename) to \(stale.username)")
+            await failUploadAttempt(transferId: stale.transferId, error: "Peer connection timeout (firewall)")
         }
     }
 
@@ -1059,7 +1128,7 @@ public final class UploadManager {
                     lastProgressUpdate = Date()
                     let elapsed = Date().timeIntervalSince(startTime)
                     let speed = elapsed > 0 ? Int64(Double(bytesSent - offset) / elapsed) : 0
-                    transferState?.updateTransfer(id: transferId) { t in
+                    await transferState?.updateTransfer(id: transferId) { [bytesSent] t in
                         t.bytesTransferred = bytesSent
                         t.speed = speed
                     }
@@ -1129,7 +1198,7 @@ public final class UploadManager {
             // Report upload speed to server (filtered, peak-tracked)
             await reportUploadSpeedIfValid(bytesTransferred: bytesSent - offset, elapsed: duration)
 
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { [bytesSent] t in
                 t.status = .completed
                 t.bytesTransferred = bytesSent
                 t.localPath = URL(fileURLWithPath: filePath)
@@ -1137,7 +1206,7 @@ public final class UploadManager {
 
             // Record session delta only (matches PF path), not the
             // resumed offset we never sent.
-            statisticsState?.recordTransfer(
+            await statisticsState?.recordTransfer(
                 filename: filename,
                 username: uploadUsername,
                 size: bytesSent - offset,
@@ -1147,7 +1216,7 @@ public final class UploadManager {
 
             uploadTeardowns.removeValue(forKey: transferId)
             activeUploads.removeValue(forKey: transferId)
-            ActivityLogger.shared?.logUploadCompleted(filename: filename)
+            await ActivityLogger.shared?.logUploadCompleted(filename: filename)
 
             // Process queue for next upload
             await processQueue()
@@ -1159,7 +1228,7 @@ public final class UploadManager {
             uploadTeardowns.removeValue(forKey: transferId)
 
             if !wasCancelled {
-                failUpload(transferId: transferId, error: error.localizedDescription)
+                await failUpload(transferId: transferId, error: error.localizedDescription)
 
                 // Notify peer so they can re-queue
                 if let active = activeUploads[transferId] {
@@ -1342,8 +1411,8 @@ public final class UploadManager {
         uploadQueue.removeAll { $0.id == id }
         await sendUploadDeniedToPeer(username: queued.username, filename: queued.filename, reason: "Cancelled")
         if let transferId = queued.existingTransferId {
-            cancelRetry(transferId: transferId)
-            transferState?.updateTransfer(id: transferId) { t in
+            await cancelRetry(transferId: transferId)
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .cancelled
                 t.error = "Cancelled"
             }
@@ -1354,13 +1423,13 @@ public final class UploadManager {
     /// Cancel an upload wherever it is in the pipeline: queued, pending
     /// (TransferRequest sent / awaiting PierceFirewall), or streaming.
     public func cancelUpload(transferId: UUID) async {
-        cancelRetry(transferId: transferId)
+        await cancelRetry(transferId: transferId)
 
         // Queued (retry-driven entries carry the transferId)
         if let queued = uploadQueue.first(where: { $0.existingTransferId == transferId }) {
             uploadQueue.removeAll { $0.id == queued.id }
             await sendUploadDeniedToPeer(username: queued.username, filename: queued.filename, reason: "Cancelled")
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .cancelled
                 t.error = "Cancelled"
             }
@@ -1374,7 +1443,7 @@ public final class UploadManager {
             transferResponseTimeouts.removeValue(forKey: token)?.cancel()
             pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
             directConnectAttempts.remove(token)
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .cancelled
                 t.error = "Cancelled"
             }
@@ -1391,7 +1460,7 @@ public final class UploadManager {
         if let active = activeUploads.removeValue(forKey: transferId) {
             cancelledTransferIds.insert(transferId)
             uploadTeardowns.removeValue(forKey: transferId)?()
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .cancelled
                 t.error = "Cancelled"
             }
@@ -1414,7 +1483,7 @@ public final class UploadManager {
     }
 
     /// Handle CantConnectToPeer — server tells us the peer couldn't reach us, fail the upload
-    public func handleCantConnectToPeer(token: UInt32) {
+    public func handleCantConnectToPeer(token: UInt32) async {
         // The peer's us-ward attempt failing says nothing about OUR direct
         // us→peer F-connect. If that attempt is still in flight, let its
         // own success/failure decide: failing here removes the pending
@@ -1431,9 +1500,9 @@ public final class UploadManager {
         // to avoid double-fire.
         pierceFirewallTimeouts.removeValue(forKey: token)?.cancel()
         logger.warning("CantConnectToPeer for upload \(pending.filename) — peer unreachable")
-        failUpload(transferId: pending.transferId, error: "Peer unreachable (firewall)")
+        await failUpload(transferId: pending.transferId, error: "Peer unreachable (firewall)")
         activeUploads.removeValue(forKey: pending.transferId)
-        Task { await processQueue() }
+        await processQueue()
     }
 
     /// Handle PierceFirewall for upload (indirect connection from peer)
@@ -1454,7 +1523,7 @@ public final class UploadManager {
         await networkClient?.peerConnectionPool.updateConnectionUsername(connection: connection, username: pending.username)
 
         // Update transfer status
-        transferState?.updateTransfer(id: pending.transferId) { t in
+        await transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .connecting
             t.error = nil
         }
@@ -1482,7 +1551,7 @@ public final class UploadManager {
         )
         activeUploads[pending.transferId] = active
 
-        transferState?.updateTransfer(id: pending.transferId) { t in
+        await transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .transferring
             t.startTime = Date()
         }
@@ -1618,7 +1687,7 @@ public final class UploadManager {
                     let bytesTransferred = bytesSent - offset
                     let speed = elapsed > 0 ? Int64(Double(bytesTransferred) / elapsed) : 0
 
-                    transferState?.updateTransfer(id: transferId) { t in
+                    await transferState?.updateTransfer(id: transferId) { [bytesSent] t in
                         t.bytesTransferred = bytesSent
                         t.speed = speed
                     }
@@ -1659,7 +1728,7 @@ public final class UploadManager {
             // Report upload speed to server (filtered, peak-tracked)
             await reportUploadSpeedIfValid(bytesTransferred: bytesTransferred, elapsed: elapsed)
 
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { [bytesSent] t in
                 t.status = .completed
                 t.bytesTransferred = bytesSent
                 t.error = nil
@@ -1668,11 +1737,11 @@ public final class UploadManager {
 
             uploadTeardowns.removeValue(forKey: transferId)
             activeUploads.removeValue(forKey: transferId)
-            ActivityLogger.shared?.logUploadCompleted(filename: (filePath as NSString).lastPathComponent)
+            await ActivityLogger.shared?.logUploadCompleted(filename: (filePath as NSString).lastPathComponent)
 
             // Record statistics
-            if let transfer = transferState?.getTransfer(id: transferId) {
-                statisticsState?.recordTransfer(
+            if let transfer = await transferState?.getTransfer(id: transferId) {
+                await statisticsState?.recordTransfer(
                     filename: transfer.filename,
                     username: transfer.username,
                     size: bytesTransferred,
@@ -1691,7 +1760,7 @@ public final class UploadManager {
             uploadTeardowns.removeValue(forKey: transferId)
 
             if !wasCancelled {
-                failUpload(transferId: transferId, error: error.localizedDescription)
+                await failUpload(transferId: transferId, error: error.localizedDescription)
 
                 // Notify peer so they can re-queue
                 if let active = activeUploads[transferId] {
@@ -1788,7 +1857,7 @@ public final class UploadManager {
     /// We saw rows stuck in `.queued` for minutes after a connection-
     /// setup failure even though the slot was free the whole time.
     private func failUploadAttempt(transferId: UUID, error: String, token: UInt32? = nil) async {
-        failUpload(transferId: transferId, error: error)
+        await failUpload(transferId: transferId, error: error)
         if let token {
             pendingTransfers.removeValue(forKey: token)
             // Cancel any PierceFirewall watchdog armed for this token so it
@@ -1809,8 +1878,8 @@ public final class UploadManager {
     /// via `uploadQueue` + `processQueue()`, not via those dictionaries.
     /// Most failure paths should use `failUploadAttempt` instead — it bundles
     /// cleanup and `processQueue()` so freed slots don't sit idle.
-    private func failUpload(transferId: UUID, error: String) {
-        guard let transfer = transferState?.getTransfer(id: transferId) else {
+    private func failUpload(transferId: UUID, error: String) async {
+        guard let transfer = await transferState?.getTransfer(id: transferId) else {
             logger.warning("failUpload: no transfer for \(transferId)")
             return
         }
@@ -1820,7 +1889,7 @@ public final class UploadManager {
             return
         }
         let currentRetryCount = transfer.retryCount
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.status = .failed
             t.error = error
         }
@@ -1832,7 +1901,7 @@ public final class UploadManager {
             logger.info("Upload \(transfer.filename) hit max retries (\(self.maxRetries))")
             return
         }
-        scheduleUploadRetry(
+        await scheduleUploadRetry(
             transferId: transferId,
             username: transfer.username,
             filename: transfer.filename,
@@ -1848,7 +1917,7 @@ public final class UploadManager {
         filename: String,
         size: UInt64,
         retryCount: Int
-    ) {
+    ) async {
         guard retryCount < self.maxRetries else { return }
         let delay = retryDelays[retryCount]
         let fireAt = Date().addingTimeInterval(delay)
@@ -1858,7 +1927,7 @@ public final class UploadManager {
         // a 30-minute backoff still honors the original schedule (see
         // `rearmPersistedRetries`). The error string is the format
         // contract `TransferRow` parses for the "Retrying in 2m" badge.
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
             t.nextRetryAt = fireAt
         }
@@ -1872,30 +1941,46 @@ public final class UploadManager {
         let task = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard let self, !Task.isCancelled else { return }
-            self.pendingRetries.removeValue(forKey: transferId)
-            // Between schedule and wake the row may have completed
-            // (a late TransferResponse landed), been cancelled, or
-            // been re-queued manually. Only proceed if it's still
-            // sitting in `.failed` or `.queued`. `.queued` covers the
-            // "peer accepted but is queueing us" case in
-            // `handleTransferResponse` — we leave the row at `.queued`
-            // for accurate UI but still need the retry to fire so the
-            // upload doesn't sit inert if peer never sends a follow-up
-            // TransferRequest.
-            guard let current = self.transferState?.getTransfer(id: transferId),
-                  current.status == .failed || current.status == .queued else {
-                self.logger.info("Skipping scheduled upload retry for \(filename): no longer in .failed/.queued state")
-                return
-            }
-            self.retryUploadInternal(
+            await self.runScheduledRetry(
                 transferId: transferId,
                 username: username,
                 filename: filename,
                 size: size,
-                retryCount: retryCount + 1
+                retryCount: retryCount,
+                requiredStatuses: [.failed, .queued]
             )
         }
         pendingRetries[transferId] = task
+    }
+
+    /// Wake-up body for a scheduled/rearmed retry Task. Between schedule
+    /// and wake the row may have completed (a late TransferResponse
+    /// landed), been cancelled, or been re-queued manually — only proceed
+    /// if it still sits in one of `requiredStatuses`. `.queued` covers the
+    /// "peer accepted but is queueing us" case in `handleTransferResponse`:
+    /// the row stays `.queued` for accurate UI but the retry must still
+    /// fire so the upload doesn't sit inert if the peer never follows up.
+    private func runScheduledRetry(
+        transferId: UUID,
+        username: String,
+        filename: String,
+        size: UInt64,
+        retryCount: Int,
+        requiredStatuses: Set<Transfer.TransferStatus>
+    ) async {
+        pendingRetries.removeValue(forKey: transferId)
+        guard let current = await transferState?.getTransfer(id: transferId),
+              requiredStatuses.contains(current.status) else {
+            logger.info("Skipping scheduled upload retry for \(filename): row moved on")
+            return
+        }
+        await retryUploadInternal(
+            transferId: transferId,
+            username: username,
+            filename: filename,
+            size: size,
+            retryCount: retryCount + 1
+        )
     }
 
     /// Re-resolve the file via `ShareManager` and put it back on the queue.
@@ -1917,28 +2002,50 @@ public final class UploadManager {
         filename: String,
         size: UInt64,
         retryCount: Int
-    ) {
+    ) async {
+        let enqueued = await enqueueRetry(
+            transferId: transferId,
+            username: username,
+            filename: filename,
+            size: size,
+            retryCount: retryCount
+        )
+        if enqueued {
+            await processQueue()
+        }
+    }
+
+    /// The queue-mutation half of a retry, without the processQueue kick —
+    /// split out so the test seam can assert the enqueued state
+    /// deterministically. Returns whether an entry was enqueued.
+    private func enqueueRetry(
+        transferId: UUID,
+        username: String,
+        filename: String,
+        size: UInt64,
+        retryCount: Int
+    ) async -> Bool {
         let alreadyDriven = uploadQueue.contains(where: { $0.existingTransferId == transferId })
             || pendingTransfers.values.contains(where: { $0.transferId == transferId })
             || activeUploads.keys.contains(transferId)
         if alreadyDriven {
             logger.debug("Upload retry skipped (transfer already in flight): \(filename)")
-            return
+            return false
         }
 
         // Re-driving this transferId — drop any stale cancel flag.
         cancelledTransferIds.remove(transferId)
 
         // Re-check permission; terminal fail if no longer allowed.
-        if let checker = uploadPermissionChecker, !checker(username) {
+        if let checker = uploadPermissionChecker, await checker(username) == false {
             logger.info("Upload retry denied for \(username): blocked or leech")
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .failed
                 t.error = "Denied"
                 t.retryCount = retryCount
                 t.nextRetryAt = nil
             }
-            return
+            return false
         }
 
         // Re-resolve the share's `localPath` (not on the Transfer record).
@@ -1946,19 +2053,19 @@ public final class UploadManager {
         // file has been removed from shares between attempts, drop the
         // retry and leave the row terminal so it doesn't loop.
         guard let shareManager,
-              let indexedFile = shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
+              let indexedFile = await shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("Upload retry aborted, file no longer shared: \(filename)")
-            transferState?.updateTransfer(id: transferId) { t in
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .failed
                 t.error = "File no longer shared"
                 t.retryCount = retryCount
                 t.nextRetryAt = nil
             }
-            return
+            return false
         }
 
         logger.info("Retrying upload: \(filename) (attempt \(retryCount))")
-        transferState?.updateTransfer(id: transferId) { t in
+        await transferState?.updateTransfer(id: transferId) { t in
             t.status = .queued
             t.error = nil
             t.bytesTransferred = 0
@@ -1978,13 +2085,13 @@ public final class UploadManager {
             existingTransferId: transferId
         )
         uploadQueue.append(queued)
-        Task { await self.processQueue() }
+        return true
     }
 
     /// Manual retry from the Retry button. Drops any pending automatic
     /// retry, then re-runs `retryUploadInternal` immediately.
-    public func retryFailedUpload(transferId: UUID) {
-        guard let transfer = transferState?.getTransfer(id: transferId),
+    public func retryFailedUpload(transferId: UUID) async {
+        guard let transfer = await transferState?.getTransfer(id: transferId),
               transfer.direction == .upload else {
             return
         }
@@ -1993,8 +2100,8 @@ public final class UploadManager {
         // `.queued` here rather than gating on `.failed` only.
         let eligible: Set<Transfer.TransferStatus> = [.failed, .cancelled, .queued]
         guard eligible.contains(transfer.status) else { return }
-        cancelRetry(transferId: transferId)
-        retryUploadInternal(
+        await cancelRetry(transferId: transferId)
+        await retryUploadInternal(
             transferId: transferId,
             username: transfer.username,
             filename: transfer.filename,
@@ -2015,13 +2122,13 @@ public final class UploadManager {
     /// we'd see every retriable row as "File no longer shared" and mark
     /// it terminal, defeating the resume. So we wait for `isScanning ==
     /// false` before sweeping.
-    public func resumeUploadsOnConnect() {
+    public func resumeUploadsOnConnect() async {
         guard let transferState else {
             logger.error("TransferState not configured for upload resume")
             return
         }
 
-        let retriable = transferState.uploads.filter {
+        let retriable = await transferState.uploads.filter {
             $0.status == .failed
                 && $0.direction == .upload
                 && Self.isRetriableError($0.error)
@@ -2037,7 +2144,7 @@ public final class UploadManager {
         // prior session, so each row gets a fresh four-attempt budget.
         // Mirrors `resumeDownloadsOnConnect`.
         for transfer in retriable {
-            transferState.updateTransfer(id: transfer.id) { t in
+            await transferState.updateTransfer(id: transfer.id) { t in
                 t.retryCount = 0
             }
         }
@@ -2045,8 +2152,9 @@ public final class UploadManager {
         // If shareManager is still rescanning, wait. Polling is enough
         // here — there's no rescan-complete callback today and the worst
         // case is one polling Task that exits on its own.
+        let shares = shareManager
         Task { [weak self] in
-            while let manager = self?.shareManager, manager.isScanning {
+            while let shares, await shares.isScanning {
                 try? await Task.sleep(for: .seconds(2))
             }
             guard let self else { return }
@@ -2059,7 +2167,7 @@ public final class UploadManager {
                     if delay > 0 {
                         try? await Task.sleep(for: .milliseconds(Int(delay * 1000)))
                     }
-                    self.retryUploadInternal(
+                    await self.retryUploadInternal(
                         transferId: transfer.id,
                         username: transfer.username,
                         filename: transfer.filename,
@@ -2076,7 +2184,7 @@ public final class UploadManager {
     /// the persisted `nextRetryAt` so a subsequent rearm-on-launch
     /// doesn't resurrect this scheduled retry on top of the new flow
     /// that just took the row out of a retriable state.
-    public func cancelRetry(transferId: UUID) {
+    public func cancelRetry(transferId: UUID) async {
         if let task = pendingRetries.removeValue(forKey: transferId) {
             task.cancel()
             logger.info("Cancelled pending upload retry for \(transferId)")
@@ -2085,8 +2193,8 @@ public final class UploadManager {
         // several paths call this unconditionally, and an unguarded write
         // is one full row-update cascade (DB write + invalidation) per
         // call. Same guard as `DownloadManager.cancelRetry`.
-        if transferState?.getTransfer(id: transferId)?.nextRetryAt != nil {
-            transferState?.updateTransfer(id: transferId) { t in
+        if await transferState?.getTransfer(id: transferId)?.nextRetryAt != nil {
+            await transferState?.updateTransfer(id: transferId) { t in
                 t.nextRetryAt = nil
             }
         }
@@ -2097,10 +2205,10 @@ public final class UploadManager {
     /// `DownloadManager.rearmPersistedRetries` — see that method for
     /// motivation. Call once at startup after
     /// `transferState.loadPersisted()` completes.
-    public func rearmPersistedRetries() {
+    public func rearmPersistedRetries() async {
         guard let transferState else { return }
         let now = Date()
-        let candidates = transferState.uploads.filter {
+        let candidates = await transferState.uploads.filter {
             $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
         }
         guard !candidates.isEmpty else { return }
@@ -2122,18 +2230,13 @@ public final class UploadManager {
             let task = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard let self, !Task.isCancelled else { return }
-                self.pendingRetries.removeValue(forKey: transferId)
-                guard let current = self.transferState?.getTransfer(id: transferId),
-                      current.status == .failed else {
-                    self.logger.info("Skipping rearmed upload retry for \(filename): no longer in .failed state")
-                    return
-                }
-                self.retryUploadInternal(
+                await self.runScheduledRetry(
                     transferId: transferId,
                     username: username,
                     filename: filename,
                     size: size,
-                    retryCount: retryCount + 1
+                    retryCount: retryCount,
+                    requiredStatuses: [.failed]
                 )
             }
             pendingRetries[transferId] = task
@@ -2153,16 +2256,18 @@ public final class UploadManager {
         self.shareManager = manager
     }
 
-    /// Direct entry point for retry-internal tests. Real callers go through
-    /// `failUpload` (auto) or `retryFailedUpload` (manual).
+    /// Direct entry point for retry-internal tests. Drives the enqueue
+    /// half only (no processQueue kick) so tests can assert the queued
+    /// state deterministically. Real callers go through `failUpload`
+    /// (auto) or `retryFailedUpload` (manual).
     internal func _retryUploadForTest(
         transferId: UUID,
         username: String,
         filename: String,
         size: UInt64,
         retryCount: Int
-    ) {
-        retryUploadInternal(
+    ) async {
+        _ = await enqueueRetry(
             transferId: transferId,
             username: username,
             filename: filename,
@@ -2209,15 +2314,15 @@ public final class UploadManager {
         let status = Self.status(forReject: reason)
         switch status {
         case .failed:
-            failUpload(transferId: pending.transferId, error: detail)
+            await failUpload(transferId: pending.transferId, error: detail)
         case .queued:
-            let currentRetryCount = transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
-            transferState?.updateTransfer(id: pending.transferId) { t in
+            let currentRetryCount = await transferState?.getTransfer(id: pending.transferId)?.retryCount ?? 0
+            await transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .queued
                 t.error = detail
             }
             if currentRetryCount < maxRetries {
-                scheduleUploadRetry(
+                await scheduleUploadRetry(
                     transferId: pending.transferId,
                     username: pending.username,
                     filename: pending.filename,
@@ -2226,12 +2331,12 @@ public final class UploadManager {
                 )
             }
         case .cancelled:
-            transferState?.updateTransfer(id: pending.transferId) { t in
+            await transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = .cancelled
                 t.error = detail
             }
         default:
-            transferState?.updateTransfer(id: pending.transferId) { t in
+            await transferState?.updateTransfer(id: pending.transferId) { t in
                 t.status = status
                 t.error = detail
             }

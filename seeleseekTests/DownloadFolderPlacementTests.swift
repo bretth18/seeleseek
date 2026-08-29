@@ -16,21 +16,21 @@ struct DownloadFolderPlacementTests {
         return root
     }
 
-    private func makeManager(root: URL, template: String) -> (manager: DownloadManager, reader: MockMetadataReader) {
+    private func makeManager(root: URL, template: String) async -> (manager: DownloadManager, reader: MockMetadataReader) {
         let manager = DownloadManager()
-        manager._setSettingsForTest(MockDownloadSettings(downloadLocation: root, template: template))
+        await manager._setSettingsForTest(DownloadSettingsSnapshot(from: MockDownloadSettings(downloadLocation: root, template: template)))
         let reader = MockMetadataReader()
-        manager._setMetadataReaderForTest(reader)
+        await manager._setMetadataReaderForTest(reader)
         return (manager, reader)
     }
 
     /// Placement runs in detached tasks, so poll rather than sleep a fixed amount.
-    private func waitUntil(_ condition: () -> Bool) async -> Bool {
+    private func waitUntil(_ condition: () async -> Bool) async -> Bool {
         for _ in 0..<200 {
-            if condition() { return true }
+            if await condition() { return true }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        return condition()
+        return await condition()
     }
 
     private func write(_ url: URL) throws {
@@ -40,13 +40,13 @@ struct DownloadFolderPlacementTests {
 
     /// Issue #75.
     @Test("Destination honors the configured download location")
-    func destinationUsesConfiguredLocation() throws {
+    func destinationUsesConfiguredLocation() async throws {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let (manager, _) = makeManager(root: root, template: "{folder}/{filename}")
+        let (manager, _) = await makeManager(root: root, template: "{folder}/{filename}")
 
-        let dest = manager._destinationForTest(soulseekPath: #"\#(folder)\01 track.mp3"#, username: user)
+        let dest = await manager._destinationForTest(soulseekPath: #"\#(folder)\01 track.mp3"#, username: user)
         #expect(dest == root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3"))
     }
 
@@ -56,9 +56,9 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
+        let (manager, reader) = await makeManager(root: root, template: "{artist} - {album}/{filename}")
         let tracking = MockTransferTracking()
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
         // Where every file resolves without tags.
         let fallbackDir = root.appendingPathComponent("Milton - 1988 - Eu Sou O Rio")
@@ -77,8 +77,8 @@ struct DownloadFolderPlacementTests {
             let soulseek = #"\#(folder)\\#(path.lastPathComponent)"#
             tracking.downloads.append(Transfer(id: id, username: user, filename: soulseek, size: 1, direction: .download, status: .completed))
         }
-        func complete(_ path: URL) {
-            manager.organizeCompletedDownload(
+        func complete(_ path: URL) async {
+            await manager.organizeCompletedDownload(
                 currentPath: path,
                 soulseekFilename: #"\#(folder)\\#(path.lastPathComponent)"#,
                 username: user,
@@ -87,11 +87,11 @@ struct DownloadFolderPlacementTests {
         }
 
         // Untagged files first — the ordering that produced the split.
-        complete(untagged)
-        complete(cover)
-        #expect(await waitUntil { manager._pendingFolderJoinCount == 2 })
+        await complete(untagged)
+        await complete(cover)
+        #expect(await waitUntil { await manager._pendingFolderJoinCount == 2 })
 
-        complete(taggedFile)
+        await complete(taggedFile)
 
         let fm = FileManager.default
         #expect(await waitUntil {
@@ -108,7 +108,7 @@ struct DownloadFolderPlacementTests {
         }
 
         // A later arrival skips the fallback directory entirely.
-        let laterDest = manager._destinationForTest(soulseekPath: #"\#(folder)\11 track.mp3"#, username: user)
+        let laterDest = await manager._destinationForTest(soulseekPath: #"\#(folder)\11 track.mp3"#, username: user)
         #expect(laterDest == albumDir.appendingPathComponent("11 track.mp3"))
     }
 
@@ -123,7 +123,7 @@ struct DownloadFolderPlacementTests {
             try? FileManager.default.removeItem(at: elsewhere)
         }
 
-        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
+        let (manager, reader) = await makeManager(root: root, template: "{artist} - {album}/{filename}")
 
         // Two levels deep under the *old* root, so a depth-only walk escapes.
         let strandedDir = elsewhere.appendingPathComponent("Old Root/Milton - 1988 - Eu Sou O Rio")
@@ -131,7 +131,7 @@ struct DownloadFolderPlacementTests {
         try write(stranded)
         reader.metadata[stranded] = tagged
 
-        manager.organizeCompletedDownload(currentPath: stranded, soulseekFilename: #"\#(folder)\01 track.mp3"#, username: user, transferId: UUID())
+        await manager.organizeCompletedDownload(currentPath: stranded, soulseekFilename: #"\#(folder)\01 track.mp3"#, username: user, transferId: UUID())
 
         let albumDir = root.appendingPathComponent("Milton Nascimento - Eu Sou O Rio")
         let fm = FileManager.default
@@ -146,35 +146,35 @@ struct DownloadFolderPlacementTests {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let (manager, reader) = makeManager(root: root, template: "{artist} - {album}/{filename}")
+        let (manager, reader) = await makeManager(root: root, template: "{artist} - {album}/{filename}")
 
         let soulseek = #"\#(folder)\10 track.mp3"#
         let file = root.appendingPathComponent("Milton - 1988 - Eu Sou O Rio/10 track.mp3")
         try write(file)
         reader.metadata[file] = AudioFileMetadata(artist: nil, album: nil, title: "Track Ten")
 
-        manager.organizeCompletedDownload(currentPath: file, soulseekFilename: soulseek, username: user, transferId: UUID())
+        await manager.organizeCompletedDownload(currentPath: file, soulseekFilename: soulseek, username: user, transferId: UUID())
 
-        #expect(await waitUntil { manager._pendingFolderJoinCount == 1 })
+        #expect(await waitUntil { await manager._pendingFolderJoinCount == 1 })
         #expect(FileManager.default.fileExists(atPath: file.path), "it stays put until a tagged sibling arrives")
     }
 
     /// Path-based templates already agree across a folder.
     @Test("Path-based templates skip placement entirely")
-    func pathTemplatesSkipPlacement() throws {
+    func pathTemplatesSkipPlacement() async throws {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let (manager, _) = makeManager(root: root, template: "{folder}/{filename}")
+        let (manager, _) = await makeManager(root: root, template: "{folder}/{filename}")
 
         let soulseek = #"\#(folder)\01 track.mp3"#
         let file = root.appendingPathComponent("1988 - Eu Sou O Rio/01 track.mp3")
         try write(file)
 
         // Returns at the `isTagBased` guard, so there is nothing to await.
-        manager.organizeCompletedDownload(currentPath: file, soulseekFilename: soulseek, username: user, transferId: UUID())
+        await manager.organizeCompletedDownload(currentPath: file, soulseekFilename: soulseek, username: user, transferId: UUID())
 
-        #expect(manager._pendingFolderJoinCount == 0)
+        #expect(await manager._pendingFolderJoinCount == 0)
         #expect(FileManager.default.fileExists(atPath: file.path))
     }
 }

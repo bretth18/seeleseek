@@ -5,12 +5,12 @@ import SeeleseekCore
 struct LivePeersView: View {
     @Environment(\.appState) private var appState
 
-    private var peerPool: PeerConnectionPool {
-        appState.networkClient.peerConnectionPool
+    private var monitor: NetworkMonitorState {
+        appState.networkClient.monitor
     }
 
     private var sortedPeers: [PeerConnectionPool.PeerConnectionInfo] {
-        peerPool.connections.values
+        monitor.connections.values
             .sorted { ($0.bytesReceived + $0.bytesSent) > ($1.bytesReceived + $1.bytesSent) }
     }
 
@@ -29,13 +29,13 @@ struct LivePeersView: View {
                         Circle()
                             .fill(SeeleColors.success)
                             .frame(width: SeeleSpacing.statusDot, height: SeeleSpacing.statusDot)
-                        Text("\(peerPool.activeConnections) active")
+                        Text("\(monitor.activeConnections) active")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textSecondary)
                             .contentTransition(.numericText())
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(peerPool.activeConnections) active peers")
+                    .accessibilityLabel("\(monitor.activeConnections) active peers")
                 }
 
                 if sortedPeers.isEmpty {

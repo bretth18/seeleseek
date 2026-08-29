@@ -23,7 +23,7 @@ struct FileTreeRow: View {
     /// The send path re-checks the live socket; this just avoids showing a
     /// menu item that could only ever fail.
     private var peerServesArtwork: Bool {
-        appState.networkClient.peerConnectionPool.hasAdvertised(.artworkRequest, by: username)
+        appState.networkClient.monitor.hasAdvertised(.artworkRequest, by: username)
     }
 
     private var downloadStatus: Transfer.TransferStatus? {
@@ -287,7 +287,7 @@ struct FileTreeRow: View {
             queueLength: 0
         )
 
-        appState.downloadManager.queueDownload(from: result)
+        Task { await appState.downloadManager.queueDownload(from: result) }
     }
 
     private func downloadFolder() {
@@ -310,7 +310,7 @@ struct FileTreeRow: View {
                     uploadSpeed: 0,
                     queueLength: 0
                 )
-                appState.downloadManager.queueDownload(from: result)
+                Task { await appState.downloadManager.queueDownload(from: result) }
                 queuedCount += 1
             }
         }
@@ -355,7 +355,7 @@ struct FileTreeRow: View {
                     uploadSpeed: 0,
                     queueLength: 0
                 )
-                appState.downloadManager.queueDownload(from: result)
+                Task { await appState.downloadManager.queueDownload(from: result) }
             }
         }
     }
@@ -380,7 +380,8 @@ struct FileTreeRow: View {
         }
 
         isLoadingArtwork = true
-        appState.networkClient.requestArtwork(from: username, filePath: file.filename) { data in
+        Task {
+            let data = await appState.networkClient.requestArtwork(from: username, filePath: file.filename)
             isLoadingArtwork = false
             if let data {
                 artworkData = data

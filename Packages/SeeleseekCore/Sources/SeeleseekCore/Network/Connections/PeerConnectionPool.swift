@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Synchronization
 import os
 
 /// Errors that can occur during peer connection
@@ -23,10 +24,12 @@ public enum PeerConnectionError: Error, LocalizedError {
     }
 }
 
-/// Manages multiple peer connections with statistics tracking
-@Observable
-@MainActor
-public final class PeerConnectionPool {
+/// Manages multiple peer connections with statistics tracking.
+///
+/// An actor: peer/pool coordination runs on its own executor so live
+/// traffic never competes with SwiftUI rendering on the main actor. The
+/// UI-facing statistics surface is the `monitor` mirror, fed at 1 Hz.
+public actor PeerConnectionPool {
     private nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnectionPool")
 
     // MARK: - Connection Tracking
@@ -60,11 +63,11 @@ public final class PeerConnectionPool {
     public private(set) var totalBytesReceived: UInt64 = 0
     public private(set) var totalBytesSent: UInt64 = 0
 
-    /// Raw accumulators bumped by every transfer chunk. Not @Observable — the
-    /// 1Hz speed tracker rolls these up into `totalBytesReceived`/`Sent` so
-    /// SwiftUI isn't invalidated thousands of times per second during transfers.
-    @ObservationIgnored private var pendingBytesReceived: UInt64 = 0
-    @ObservationIgnored private var pendingBytesSent: UInt64 = 0
+    /// Raw (rx, tx) accumulators bumped by every transfer chunk, Mutex-
+    /// guarded so `recordBytes*` stays `nonisolated` — the MainActor
+    /// transfer loops must not pay an actor hop per chunk. The 1 Hz speed
+    /// tracker rolls these up into `totalBytesReceived`/`Sent`.
+    private nonisolated let pendingBytes = Mutex<(rx: UInt64, tx: UInt64)>((0, 0))
     public private(set) var totalConnections: UInt32 = 0
     public private(set) var activeConnections: Int = 0
     public private(set) var connectToPeerCount: Int = 0  // How many ConnectToPeer messages we've received
@@ -77,7 +80,6 @@ public final class PeerConnectionPool {
     // Speed tracking
     public private(set) var currentDownloadSpeed: Double = 0
     public private(set) var currentUploadSpeed: Double = 0
-    public private(set) var speedHistory: [SpeedSample] = []
     private var lastSpeedCheck = Date()
     private var lastBytesReceived: UInt64 = 0
     private var lastBytesSent: UInt64 = 0
@@ -85,8 +87,8 @@ public final class PeerConnectionPool {
     // Owned long-running tasks. Stored so they release `self` when the
     // pool goes away — without `[weak self]` + tracking, the infinite
     // loops inside would retain the pool forever.
-    @ObservationIgnored private var speedTrackingTask: Task<Void, Never>?
-    @ObservationIgnored private var cleanupTask: Task<Void, Never>?
+    private var speedTrackingTask: Task<Void, Never>?
+    private var cleanupTask: Task<Void, Never>?
 
     /// Per-connection last-activity timestamps, kept out of the observable
     /// `connections` dict. Every inbound peer message used to bump
@@ -96,10 +98,34 @@ public final class PeerConnectionPool {
     /// Staleness only matters to the 30s cleanup timer, so observation
     /// buys nothing. Anything that actually wants to display the value
     /// (e.g. PeerInfoPopover) asks via `lastActivity(for:)`.
-    @ObservationIgnored private var lastActivities: [String: Date] = [:]
+    private var lastActivities: [String: Date] = [:]
 
     // Geographic distribution (when available)
     public private(set) var peerLocations: [PeerLocation] = []
+
+    /// `@MainActor` statistics mirror the monitor/diagnostics views
+    /// observe instead of this pool. Fed a full snapshot by the 1 Hz
+    /// speed-tracking tick plus eager capability-discovery updates.
+    public nonisolated let monitor: NetworkMonitorState
+
+    private func publishMonitorSnapshot(newSample: SpeedSample?) async {
+        var snapshot = PoolSnapshot()
+        snapshot.connections = connections
+        snapshot.extendedClientInfoByUser = extendedClientInfoByUser
+        snapshot.lastActivities = lastActivities
+        snapshot.totalBytesReceived = totalBytesReceived
+        snapshot.totalBytesSent = totalBytesSent
+        snapshot.totalConnections = totalConnections
+        snapshot.activeConnections = activeConnections
+        snapshot.connectToPeerCount = connectToPeerCount
+        snapshot.pierceFirewallCount = pierceFirewallCount
+        snapshot.peerInitCount = peerInitCount
+        snapshot.currentDownloadSpeed = currentDownloadSpeed
+        snapshot.currentUploadSpeed = currentUploadSpeed
+        snapshot.newSpeedSample = newSample
+        snapshot.peerLocations = peerLocations
+        await monitor.apply(snapshot)
+    }
 
     // MARK: - Event Stream
 
@@ -112,10 +138,20 @@ public final class PeerConnectionPool {
     public let maxConnectionsPerIP = 30  // Allow bulk transfers while preventing abuse
     public let connectionTimeout: TimeInterval = 60
 
-    /// If set and returns false for a peer username, the connection is silently refused
-    /// (outbound) or dropped before any messages flow (inbound PeerInit). Used to block
-    /// bot accounts by username pattern.
-    public var peerPermissionChecker: ((String) -> Bool)?
+    /// Compiled username block patterns, pushed down from app settings.
+    /// A matching peer is silently refused (outbound) or dropped before
+    /// any messages flow (inbound PeerInit). Used to block bot accounts
+    /// by username pattern.
+    private var blockedUsernamePatterns: [UsernamePatternMatcher.Compiled] = []
+
+    public func updateBlockedUsernamePatterns(_ patterns: [UsernamePatternMatcher.Compiled]) {
+        blockedUsernamePatterns = patterns
+    }
+
+    private func isPeerBlocked(_ username: String) -> Bool {
+        !blockedUsernamePatterns.isEmpty
+            && UsernamePatternMatcher.matches(username, anyOfCompiled: blockedUsernamePatterns)
+    }
 
     // SECURITY: Rate limiting configuration
     private let rateLimitWindow: TimeInterval = 60  // 1 minute window
@@ -132,7 +168,7 @@ public final class PeerConnectionPool {
     /// Monotonic suffix for outgoing connection ids. Two token-0 direct
     /// dials to the same user would otherwise share a key and the second
     /// would overwrite the first's tracking.
-    @ObservationIgnored private var outgoingConnectionSequence: UInt64 = 0
+    private var outgoingConnectionSequence: UInt64 = 0
 
     /// Token → expected username for an upcoming PierceFirewall.
     ///
@@ -150,7 +186,7 @@ public final class PeerConnectionPool {
 
     // MARK: - Types
 
-    public struct PeerConnectionInfo: Identifiable {
+    public struct PeerConnectionInfo: Identifiable, Sendable, Equatable {
         public let id: String
         public let username: String
         public let ip: String
@@ -170,7 +206,7 @@ public final class PeerConnectionPool {
         }
     }
 
-    public struct SpeedSample: Identifiable {
+    public struct SpeedSample: Identifiable, Sendable, Equatable {
         public let id = UUID()
         public let timestamp: Date
         public let downloadSpeed: Double
@@ -181,7 +217,7 @@ public final class PeerConnectionPool {
         }
     }
 
-    public struct PeerLocation: Identifiable {
+    public struct PeerLocation: Identifiable, Sendable, Equatable {
         public let id = UUID()
         public let username: String
         public let country: String
@@ -195,13 +231,24 @@ public final class PeerConnectionPool {
 
     // MARK: - Initialization
 
+    /// `@MainActor` so the `monitor` mirror (a MainActor class) can be
+    /// constructed inline, and so app/test code keeps synchronous
+    /// construction. The timer tasks hop onto the actor to start.
+    @MainActor
     public init() {
         let (stream, continuation) = AsyncStream.makeStream(of: PeerPoolEvent.self)
         self.events = stream
         self.eventContinuation = continuation
-        // Start speed tracking timer
+        self.monitor = NetworkMonitorState()
+        let pool = self
+        Task {
+            // Speed tracking (1 Hz mirror snapshots) + stale-connection cleanup.
+            await pool.startTimers()
+        }
+    }
+
+    private func startTimers() {
         startSpeedTracking()
-        // Start periodic cleanup of stale connections
         startCleanupTimer()
     }
 
@@ -210,7 +257,7 @@ public final class PeerConnectionPool {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard let self else { return }
-                self.cleanupStaleConnections()
+                await self.cleanupStaleConnections()
             }
         }
     }
@@ -261,6 +308,10 @@ public final class PeerConnectionPool {
     /// Our username for PeerInit messages
     public var ourUsername: String = ""
 
+    public func setOurUsername(_ username: String) {
+        ourUsername = username
+    }
+
     /// Connect to a peer
     /// - Parameters:
     ///   - username: Peer's username
@@ -273,9 +324,9 @@ public final class PeerConnectionPool {
         // Reject outbound dials to blocked usernames (e.g. bot patterns like `slsk_*`).
         // Most outbound connections here are server-instructed ConnectToPeer responses,
         // which are effectively remote-initiated — we have no reason to dial a blocked user.
-        if let checker = peerPermissionChecker, !checker(username) {
+        if isPeerBlocked(username) {
             logger.info("Skipping outbound connection to \(username): matches block pattern")
-            ActivityLogger.shared?.logInfo(
+            await ActivityLogger.shared?.logInfo(
                 "Blocked outbound peer: \(username)",
                 detail: "\(ip) — matches block pattern"
             )
@@ -371,7 +422,7 @@ public final class PeerConnectionPool {
         logger.info("Outgoing connection stored: \(connectionId)")
 
         // Log to activity feed
-        ActivityLogger.shared?.logPeerConnected(username: username, ip: ip)
+        await ActivityLogger.shared?.logPeerConnected(username: username, ip: ip)
 
         return connection
     }
@@ -795,17 +846,18 @@ public final class PeerConnectionPool {
 
     // MARK: - Statistics
 
-    /// Called by `DownloadManager` on every received file chunk. Cheap — just
-    /// bumps a non-observable accumulator. The 1Hz tracker turns it into speed.
-    public func recordBytesReceived(_ delta: UInt64) {
+    /// Called by `DownloadManager` on every received file chunk. Deliberately
+    /// `nonisolated` over a Mutex so the MainActor transfer loops don't pay
+    /// an actor hop per chunk. The 1 Hz tracker turns it into speed.
+    public nonisolated func recordBytesReceived(_ delta: UInt64) {
         guard delta > 0 else { return }
-        pendingBytesReceived &+= delta
+        pendingBytes.withLock { $0.rx &+= delta }
     }
 
     /// Called by `UploadManager` on every sent file chunk.
-    public func recordBytesSent(_ delta: UInt64) {
+    public nonisolated func recordBytesSent(_ delta: UInt64) {
         guard delta > 0 else { return }
-        pendingBytesSent &+= delta
+        pendingBytes.withLock { $0.tx &+= delta }
     }
 
     private func startSpeedTracking() {
@@ -813,14 +865,17 @@ public final class PeerConnectionPool {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
-                self.captureSpeedSample()
+                let sample = await self.captureSpeedSample()
                 await self.refreshConnectionTraffic()
+                // After per-connection traffic refresh so the snapshot
+                // carries this tick's speeds, not last tick's.
+                await self.publishMonitorSnapshot(newSample: sample)
             }
         }
     }
 
     /// Previous per-connection totals for speed deltas: id → (time, rx+tx).
-    @ObservationIgnored private var trafficSamples: [String: (date: Date, total: UInt64)] = [:]
+    private var trafficSamples: [String: (date: Date, total: UInt64)] = [:]
 
     /// Pulls each live connection's wire-level byte counters into the
     /// observable `connections` info and derives `currentSpeed` from the
@@ -854,15 +909,14 @@ public final class PeerConnectionPool {
         trafficSamples = trafficSamples.filter { connections[$0.key] != nil }
     }
 
-    private func captureSpeedSample() {
+    @discardableResult
+    private func captureSpeedSample() -> SpeedSample? {
         let now = Date()
         let elapsed = now.timeIntervalSince(lastSpeedCheck)
-        guard elapsed > 0 else { return }
+        guard elapsed > 0 else { return nil }
 
-        // Snapshot once — writes (from transfer loops) and this read are both
-        // on MainActor, so no further locking is needed.
-        let rx = pendingBytesReceived
-        let tx = pendingBytesSent
+        // Snapshot the Mutex-guarded accumulators once for this tick.
+        let (rx, tx) = pendingBytes.withLock { $0 }
 
         let downloadDelta = Double(rx &- lastBytesReceived)
         let uploadDelta = Double(tx &- lastBytesSent)
@@ -872,21 +926,17 @@ public final class PeerConnectionPool {
         totalBytesReceived = rx
         totalBytesSent = tx
 
-        speedHistory.append(SpeedSample(
+        let sample = SpeedSample(
             timestamp: now,
             downloadSpeed: currentDownloadSpeed,
             uploadSpeed: currentUploadSpeed
-        ))
-        if speedHistory.count > 60 {
-            speedHistory.removeFirst()
-        }
+        )
 
         lastBytesReceived = rx
         lastBytesSent = tx
         lastSpeedCheck = now
+        return sample
     }
-
-    // MARK: - Callbacks Setup
 
     // MARK: - Event Stream Consumption
 
@@ -971,9 +1021,9 @@ public final class PeerConnectionPool {
             // Reject inbound peers whose username matches a user-configured block pattern.
             // Fires only for PeerInit (remote-initiated direct connections); PierceFirewall
             // connections get their username via setPeerUsername and never hit this path.
-            if let checker = peerPermissionChecker, !checker(discoveredUsername) {
+            if isPeerBlocked(discoveredUsername) {
                 logger.info("Dropping inbound peer connection: \(discoveredUsername) matches block pattern")
-                ActivityLogger.shared?.logInfo(
+                await ActivityLogger.shared?.logInfo(
                     "Blocked inbound peer: \(discoveredUsername)",
                     detail: capturedIP.isEmpty ? "matches block pattern" : "\(capturedIP) — matches block pattern"
                 )
@@ -1109,6 +1159,9 @@ public final class PeerConnectionPool {
             // the visible file tree on each reconnect for no visual change.
             if !peerUsername.isEmpty, extendedClientInfoByUser[peerUsername] != info {
                 extendedClientInfoByUser[peerUsername] = info
+                // Eager mirror update — capability-gated UI (browse-row
+                // artwork buttons) shouldn't wait out the 1 Hz snapshot.
+                await monitor.applyClientInfo(username: peerUsername, info: info)
             }
 
         case .artworkRequest(let token, let filePath):

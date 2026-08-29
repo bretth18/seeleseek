@@ -1,0 +1,56 @@
+{
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/.build",
+    "**/.swiftpm",
+    "**/DerivedData",
+    "**/build",
+    "**/node_modules",
+    "**/*.xcodeproj/xcuserdata",
+    "**/*.xcodeproj/project.xcworkspace/xcuserdata",
+    "**/*.xcactivitylog",
+    "**/*.profraw"
+  ],
+  "lsp": {
+    "sourcekit-lsp": {
+      "binary": {
+        "path": "/usr/bin/sourcekit-lsp"
+      }
+    }
+  },
+  "languages": {
+    "Swift": {
+      "tab_size": 4,
+      "hard_tabs": false,
+      "preferred_line_length": 120,
+      "language_servers": ["sourcekit-lsp"],
+      "format_on_save": "off",
+      "formatter": {
+        "external": {
+          "command": "xcrun",
+          "arguments": [
+            "swift-format",
+            "format",
+            "--configuration",
+            ".swift-format",
+            "-"
+          ]
+        }
+      }
+    },
+    "JSON": {
+      "tab_size": 2
+    },
+    "YAML": {
+      "tab_size": 2
+    }
+  }
+}

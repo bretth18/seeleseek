@@ -103,7 +103,7 @@ struct SeeleSeekApp: App {
                 Divider()
 
                 Button("Disconnect") {
-                    appState.networkClient.disconnect()
+                    Task { await appState.networkClient.disconnect() }
                     appState.connection.setDisconnected()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])

@@ -354,7 +354,7 @@ struct UserProfileSheet: View {
     /// not on every connection-state or bytes mutation the way observing
     /// `connections` would.
     private var liveExtendedClientInfo: ExtendedClientInfo? {
-        appState.networkClient.peerConnectionPool.extendedClientInfoByUser[profile.username]
+        appState.networkClient.monitor.extendedClientInfoByUser[profile.username]
     }
 }
 

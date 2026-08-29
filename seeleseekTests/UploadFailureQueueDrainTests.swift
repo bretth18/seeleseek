@@ -29,7 +29,7 @@ struct UploadFailureQueueDrainTests {
             status: .connecting
         )
         tracking.uploads.append(row)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
         let pending = UploadManager.PendingUpload(
             transferId: transferId,
@@ -39,9 +39,9 @@ struct UploadFailureQueueDrainTests {
             size: 1_000_000,
             token: token
         )
-        manager._seedPendingUploadForTest(pending, token: token)
+        await manager._seedPendingUploadForTest(pending, token: token)
 
-        #expect(manager._pendingTransferCountForTest == 1)
+        #expect(await manager._pendingTransferCountForTest == 1)
 
         await manager._failUploadAttemptForTest(
             transferId: transferId,
@@ -51,14 +51,14 @@ struct UploadFailureQueueDrainTests {
 
         // Both dicts cleared so processQueue's "in-flight" accounting
         // (active.count + pending.count) reflects the freed slot.
-        #expect(manager._pendingTransferCountForTest == 0,
+        #expect(await manager._pendingTransferCountForTest == 0,
                 "failUploadAttempt must drop the pendingTransfers entry")
-        #expect(manager._activeUploadCountForTest == 0,
+        #expect(await manager._activeUploadCountForTest == 0,
                 "failUploadAttempt must drop the activeUploads entry")
 
         // Row was retriable ("Failed to connect to peer" is not in the
         // terminal-pattern list), so we expect a retry task scheduled.
-        #expect(manager._pendingRetryTaskForTest(transferId: transferId) != nil,
+        #expect(await manager._pendingRetryTaskForTest(transferId: transferId) != nil,
                 "Retriable failure must schedule a retry")
 
         // Row status reflects failUpload's transition.
@@ -82,7 +82,7 @@ struct UploadFailureQueueDrainTests {
             status: .connecting
         )
         tracking.uploads.append(row)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
         let pending = UploadManager.PendingUpload(
             transferId: transferId,
@@ -92,7 +92,7 @@ struct UploadFailureQueueDrainTests {
             size: 1_000_000,
             token: token
         )
-        manager._seedPendingUploadForTest(pending, token: token)
+        await manager._seedPendingUploadForTest(pending, token: token)
 
         // Simulate the PierceFirewall watchdog being armed (production
         // arms it inside `openFileConnection` when direct F connect
@@ -105,7 +105,7 @@ struct UploadFailureQueueDrainTests {
             token: token
         )
 
-        #expect(manager._pierceFirewallTimeoutTaskForTest(token: token) == nil,
+        #expect(await manager._pierceFirewallTimeoutTaskForTest(token: token) == nil,
                 "failUploadAttempt must clear the per-token PierceFirewall watchdog so it can't fire and overwrite the row later")
     }
 }

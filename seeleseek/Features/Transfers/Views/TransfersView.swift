@@ -220,9 +220,9 @@ struct TransfersView: View {
                         onRetry: {
                             transferState.retryTransfer(id: transfer.id)
                             if transfer.direction == .download {
-                                appState.downloadManager.retryFailedDownload(transferId: transfer.id)
+                                Task { await appState.downloadManager.retryFailedDownload(transferId: transfer.id) }
                             } else {
-                                appState.uploadManager.retryFailedUpload(transferId: transfer.id)
+                                Task { await appState.uploadManager.retryFailedUpload(transferId: transfer.id) }
                             }
                         },
                         onRemove: { transferState.removeTransfer(id: transfer.id) },

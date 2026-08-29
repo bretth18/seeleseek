@@ -1,46 +1,90 @@
 import Foundation
+import Synchronization
 import os
 
-/// Manages shared folders and file index for the SoulSeek client
-@Observable
-@MainActor
-public final class ShareManager {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "ShareManager")
+/// Manages shared folders and the file index for the SoulSeek client.
+///
+/// An actor: rescans, word-index rebuilds, and visibility rewrites run on
+/// its own executor instead of the main actor. The shares-settings UI
+/// observes the `state` mirror; peer search reads the lock-protected
+/// `ShareSearchSnapshot` via nonisolated `search`.
+public actor ShareManager {
+    nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "ShareManager")
 
     // MARK: - State
 
-    public private(set) var sharedFolders: [SharedFolder] = []
-    public private(set) var fileIndex: [IndexedFile] = []
+    public private(set) var sharedFolders: [SharedFolder] = [] {
+        didSet { publishState() }
+    }
+    public private(set) var fileIndex: [IndexedFile] = [] {
+        didSet { publishState() }
+    }
     /// Inverted word index: lowercased token -> positions in `fileIndex`.
     /// Rebuilt/extended at every `fileIndex` mutation so `search` is a
     /// posting-list intersection instead of a linear substring scan.
     private var wordIndex: [String: [Int]] = [:]
-    public private(set) var isScanning = false
-    public private(set) var scanProgress: Double = 0
-    public private(set) var lastScanDate: Date?
+    public private(set) var isScanning = false {
+        didSet { publishState() }
+    }
+    public private(set) var scanProgress: Double = 0 {
+        didSet { publishState() }
+    }
+    public private(set) var lastScanDate: Date? {
+        didSet { publishState() }
+    }
 
     // Computed stats
     public var totalFiles: Int { fileIndex.count }
     public var totalFolders: Int { sharedFolders.count }
-    /// Cached — recomputed whenever `fileIndex` changes. As a computed
-    /// property this was an O(n) reduce on every access from an
-    /// @Observable, re-run on each observation invalidation.
-    public private(set) var totalSize: UInt64 = 0
+    /// Cached — recomputed whenever `fileIndex` changes (an O(n) reduce).
+    public private(set) var totalSize: UInt64 = 0 {
+        didSet { publishState() }
+    }
 
     private func recomputeTotalSize() {
         totalSize = fileIndex.reduce(0) { $0 + $1.size }
     }
 
-    /// Edit `fileIndex` through a local copy so observers are notified once,
-    /// not once per element. Writing `fileIndex[i]` in a loop fires the
-    /// `@Observable` accessor on every iteration, and each notification
-    /// invalidates every view reading the array — flipping visibility on a
-    /// 10k-file share meant 10k invalidations. Same rule as
-    /// `applyFolderStats(_:)`: one write per logical change.
+    // MARK: - UI Mirror
+
+    /// `@MainActor` mirror the shares-settings UI observes instead of this
+    /// actor. Fed conflated (`.bufferingNewest(1)`) — snapshots carry
+    /// complete state, so collapsing a backlog to its newest entry is
+    /// lossless.
+    public nonisolated let state: ShareState
+
+    private let stateContinuation: AsyncStream<ShareSnapshot>.Continuation
+
+    private func publishState() {
+        var s = ShareSnapshot()
+        s.sharedFolders = sharedFolders
+        s.totalFiles = fileIndex.count
+        s.totalSize = totalSize
+        s.isScanning = isScanning
+        s.scanProgress = scanProgress
+        s.lastScanDate = lastScanDate
+        stateContinuation.yield(s)
+    }
+
+    /// Edit `fileIndex` through a local copy so the mirror and search
+    /// snapshot are republished once, not once per element.
     private func mutateFileIndex(_ body: (inout [IndexedFile]) -> Void) {
         var updated = fileIndex
         body(&updated)
         fileIndex = updated
+        publishSearchSnapshot()
+    }
+
+    /// Search-index snapshot readable from any executor. Republished at
+    /// every `fileIndex`/`wordIndex` mutation funnel (`rebuildWordIndex`,
+    /// `appendToWordIndex`, `mutateFileIndex`) so `search` never has to
+    /// hop onto this actor. The store is cheap: arrays/dicts share storage
+    /// with the live index via COW.
+    private nonisolated let searchSnapshotStore = Mutex<ShareSearchSnapshot>(.empty)
+
+    private func publishSearchSnapshot() {
+        let snapshot = ShareSearchSnapshot(wordIndex: wordIndex, files: fileIndex)
+        searchSnapshotStore.withLock { $0 = snapshot }
     }
 
     /// Share-folder paths whose security-scoped access has already been
@@ -50,23 +94,17 @@ public final class ShareManager {
     /// unbalanced access counts. One start per folder per run.
     private var securityScopedPaths: Set<String> = []
 
-    /// Per-subscriber continuations. Vanilla `AsyncStream` is
-    /// single-consumer, so we fan out yields ourselves.
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    /// Multi-subscriber counts-changed fan-out. Sync subscribe (see
+    /// `EventChannel`) — `NetworkClient.init` registers its consumer
+    /// before any producer can run, and that guarantee needs a
+    /// synchronous registration path.
+    private nonisolated let countsChannel = EventChannel<Void>()
     private var countsChangedDebounce: Task<Void, Never>?
 
     /// Subscribe to share-count change events. Each call returns a fresh
     /// stream; cancelling the consuming Task tears down the continuation.
-    public func countsChangesStream() -> AsyncStream<Void> {
-        AsyncStream { continuation in
-            let id = UUID()
-            self.continuations[id] = continuation
-            continuation.onTermination = { [weak self] _ in
-                Task { @MainActor in
-                    self?.continuations.removeValue(forKey: id)
-                }
-            }
-        }
+    public nonisolated func countsChangesStream() -> AsyncStream<Void> {
+        countsChannel.subscribe()
     }
 
     /// Coalesce rapid changes into a single trailing-edge yield (200 ms
@@ -77,11 +115,7 @@ public final class ShareManager {
         countsChangedDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(200))
             guard let self, !Task.isCancelled else { return }
-            // Snapshot — subscriber teardown can mutate the dict.
-            let snapshot = Array(self.continuations.values)
-            for continuation in snapshot {
-                continuation.yield()
-            }
+            self.countsChannel.publish(())
         }
     }
 
@@ -97,7 +131,7 @@ public final class ShareManager {
         case buddies
     }
 
-    public struct SharedFolder: Identifiable, Codable, Hashable {
+    public struct SharedFolder: Identifiable, Codable, Hashable, Sendable {
         public let id: UUID
         public let path: String
         public var fileCount: Int
@@ -201,15 +235,36 @@ public final class ShareManager {
     /// Backing store for shared-folder list and per-path security-scoped
     /// bookmarks. Injectable so tests can hand in a fresh suite and not
     /// race other tests over `UserDefaults.standard`.
-    private let defaults: UserDefaults
+    /// `nonisolated(unsafe)`: UserDefaults is documented thread-safe but
+    /// not Sendable, and the `@MainActor` init couldn't otherwise hand it
+    /// to actor-isolated storage.
+    private nonisolated(unsafe) let defaults: UserDefaults
 
     // MARK: - Initialization
 
     /// Side-effect-free. Caller must invoke `loadPersistedFolders()` and
     /// `rescanAll()` explicitly after wiring `countsChangesStream()`
     /// consumers.
+    ///
+    /// `@MainActor` so the `state` mirror (a MainActor class) can be
+    /// constructed inline and its consumer registers before any producer
+    /// can run.
+    @MainActor
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+
+        let state = ShareState()
+        self.state = state
+        let (updates, continuation) = AsyncStream.makeStream(
+            of: ShareSnapshot.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        self.stateContinuation = continuation
+        Task { @MainActor in
+            for await snapshot in updates {
+                state.apply(snapshot)
+            }
+        }
     }
 
     // MARK: - Folder Management
@@ -263,11 +318,15 @@ public final class ShareManager {
         // after its index swap so the new folder's files can't be dropped.
         enqueueScan { [weak self] in
             guard let self else { return }
-            self.isScanning = true
+            await self.setScanning(true)
             await self.scanFolder(folder)
-            self.isScanning = false
-            self.notifyCountsChanged()
+            await self.setScanning(false)
+            await self.notifyCountsChanged()
         }
+    }
+
+    private func setScanning(_ scanning: Bool) {
+        isScanning = scanning
     }
 
     public func removeFolder(_ folder: SharedFolder) {
@@ -301,14 +360,13 @@ public final class ShareManager {
     /// files (and racing the word-index append).
     private var scanChain: Task<Void, Never>?
     /// True while a rescan is running or queued on the chain; folds
-    /// concurrent `rescanAll` requests into one (the old `!isScanning`
-    /// dedupe, adapted to the serialized chain).
+    /// concurrent `rescanAll` requests into one.
     private var rescanPending = false
 
     @discardableResult
-    private func enqueueScan(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+    private func enqueueScan(_ operation: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
         let previous = scanChain
-        let task = Task { @MainActor in
+        let task = Task {
             await previous?.value
             await operation()
         }
@@ -322,8 +380,12 @@ public final class ShareManager {
         await enqueueScan { [weak self] in
             guard let self else { return }
             await self.performRescanAll()
-            self.rescanPending = false
+            await self.clearRescanPending()
         }.value
+    }
+
+    private func clearRescanPending() {
+        rescanPending = false
     }
 
     private func performRescanAll() async {
@@ -375,12 +437,9 @@ public final class ShareManager {
         notifyCountsChanged()
     }
 
-    /// Bundle of per-folder scan outputs produced on a background task and
-    /// published back to the main actor in one atomic step. Splitting the
-    /// disk walk from the state mutation keeps large rescans off the main
-    /// thread — previously the per-file loop called `fileIndex.append`
-    /// directly under @MainActor, which on ~10k-file libraries stalled the
-    /// UI and starved other main-actor networking orchestration.
+    /// Bundle of per-folder scan outputs produced off-actor and published
+    /// back in one atomic step. Splitting the disk walk from the state
+    /// mutation keeps large rescans from occupying the actor per file.
     private struct ScanResult: Sendable {
         let folderID: UUID
         let indexed: [IndexedFile]
@@ -434,15 +493,15 @@ public final class ShareManager {
         return unique
     }
 
-    /// Walk a folder on a background task and return the indexed files
-    /// plus stats, without touching published state.
+    /// Walk a folder off-actor and return the indexed files plus stats,
+    /// without touching published state.
     private func scanFolderResult(_ folder: SharedFolder) async -> ScanResult? {
         let folderURL = URL(fileURLWithPath: folder.path)
 
-        // Restore bookmark access on the main actor before handing the URL
-        // to a detached task. Started at most once per folder per app run
-        // (see `securityScopedPaths`) — the access must persist for
-        // serving uploads, so it is deliberately never stopped here, and
+        // Restore bookmark access before handing the URL to the off-actor
+        // walk. Started at most once per folder per app run (see
+        // `securityScopedPaths`) — the access must persist for serving
+        // uploads, so it is deliberately never stopped here, and
         // re-starting on every rescan would pile up unbalanced counts.
         if !securityScopedPaths.contains(folder.path),
            let bookmarkData = defaults.data(forKey: "bookmark-\(folder.path)") {
@@ -457,61 +516,73 @@ public final class ShareManager {
             }
         }
 
-        // Copy the Sendable bits the worker needs. Folder identity is a
-        // UUID and the visibility/path are value types — no main-actor
-        // references escape.
+        // Copy the Sendable bits the worker needs — no actor references
+        // escape.
         let folderID = folder.id
         let folderVisibility = folder.visibility
         // Suffix duplicate root names so sharedPaths are unique.
         let folderDisplayName = uniqueDisplayName(for: folder)
 
-        return await Task.detached(priority: .utility) {
-            let fileManager = FileManager.default
-            guard let enumerator = fileManager.enumerator(
-                at: folderURL,
-                includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                return nil
-            }
-
-            var files: [IndexedFile] = []
-            var count = 0
-            var total: UInt64 = 0
-            let basePath = folderURL.path
-
-            while let fileURL = enumerator.nextObject() as? URL {
-                do {
-                    let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
-                    guard values.isDirectory != true else { continue }
-
-                    let size = UInt64(values.fileSize ?? 0)
-                    let relativePath = String(fileURL.path.dropFirst(basePath.count))
-                    let sharedPath = folderDisplayName + relativePath.replacingOccurrences(of: "/", with: "\\")
-
-                    files.append(IndexedFile(
-                        localPath: fileURL.path,
-                        sharedPath: sharedPath,
-                        size: size,
-                        bitrate: Self.extractBitrate(from: fileURL),
-                        visibility: folderVisibility,
-                        folderID: folderID
-                    ))
-                    count += 1
-                    total += size
-                } catch {
-                    // Per-file failures are silent — one unreadable file
-                    // shouldn't abort the whole rescan.
-                }
-            }
-
-            return ScanResult(folderID: folderID, indexed: files, fileCount: count, totalSize: total)
-        }.value
+        return await Self.walkFolder(
+            at: folderURL,
+            folderID: folderID,
+            visibility: folderVisibility,
+            displayName: folderDisplayName
+        )
     }
 
-    // Static so the detached scan task can call it without a main-actor hop.
-    // `nonisolated` is required even on a static on a @MainActor type.
-    nonisolated private static func extractBitrate(from url: URL) -> UInt32? {
+    /// Off-actor (`@concurrent`) filesystem walk for `scanFolderResult` —
+    /// touches no published state.
+    @concurrent
+    private nonisolated static func walkFolder(
+        at folderURL: URL,
+        folderID: UUID,
+        visibility: Visibility,
+        displayName: String
+    ) async -> ScanResult? {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: folderURL,
+            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        var files: [IndexedFile] = []
+        var count = 0
+        var total: UInt64 = 0
+        let basePath = folderURL.path
+
+        while let fileURL = enumerator.nextObject() as? URL {
+            do {
+                let values = try fileURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+                guard values.isDirectory != true else { continue }
+
+                let size = UInt64(values.fileSize ?? 0)
+                let relativePath = String(fileURL.path.dropFirst(basePath.count))
+                let sharedPath = displayName + relativePath.replacingOccurrences(of: "/", with: "\\")
+
+                files.append(IndexedFile(
+                    localPath: fileURL.path,
+                    sharedPath: sharedPath,
+                    size: size,
+                    bitrate: Self.extractBitrate(from: fileURL),
+                    visibility: visibility,
+                    folderID: folderID
+                ))
+                count += 1
+                total += size
+            } catch {
+                // Per-file failures are silent — one unreadable file
+                // shouldn't abort the whole rescan.
+            }
+        }
+
+        return ScanResult(folderID: folderID, indexed: files, fileCount: count, totalSize: total)
+    }
+
+    private nonisolated static func extractBitrate(from url: URL) -> UInt32? {
         // Simple bitrate extraction - in a real app, use AVFoundation
         let audioExtensions = ["mp3", "flac", "ogg", "m4a", "aac", "wav"]
         guard audioExtensions.contains(url.pathExtension.lowercased()) else { return nil }
@@ -523,73 +594,38 @@ public final class ShareManager {
 
     // MARK: - Search
 
-    /// Split into lowercased tokens on non-alphanumeric boundaries.
-    /// Shared by index building and query parsing so both sides agree.
-    nonisolated private static func tokenize(_ text: String) -> [String] {
-        text.lowercased()
-            .split(whereSeparator: { !($0.isLetter || $0.isNumber) })
-            .map(String.init)
-    }
-
     /// Rebuild the inverted index from scratch (rescan swap / removal).
     private func rebuildWordIndex() {
         var index: [String: [Int]] = [:]
         for (position, file) in fileIndex.enumerated() {
-            for token in Set(Self.tokenize(file.searchableText)) {
+            for token in Set(ShareSearchSnapshot.tokenize(file.searchableText)) {
                 index[token, default: []].append(position)
             }
         }
         wordIndex = index
+        publishSearchSnapshot()
     }
 
     /// Extend the inverted index for files appended at `start...`.
     private func appendToWordIndex(startingAt start: Int) {
         guard start < fileIndex.count else { return }
         for position in start..<fileIndex.count {
-            for token in Set(Self.tokenize(fileIndex[position].searchableText)) {
+            for token in Set(ShareSearchSnapshot.tokenize(fileIndex[position].searchableText)) {
                 wordIndex[token, default: []].append(position)
             }
         }
+        publishSearchSnapshot()
     }
 
     /// Search local files for a query (used when peers search us).
     ///
-    /// Inverted-index lookup: tokenize the query, fetch each term's
-    /// posting list, and intersect starting from the smallest list. This
-    /// replaced a per-packet linear scan (O(files × terms) substring
-    /// checks) that kept the CPU busy all day on a 5-50 queries/sec
-    /// distributed relay. Matching is whole-word (canonical SoulSeek /
-    /// Nicotine+ behavior), no longer substring-contains.
-    ///
-    /// `includeBuddyOnly` controls whether folders marked `.buddies` are
-    /// visible to the requester. Callers resolve that flag from their
-    /// knowledge of the requester (buddy-list membership) before calling.
-    public func search(query: String, includeBuddyOnly: Bool) async -> [IndexedFile] {
-        let terms = Set(Self.tokenize(query))
-        guard !terms.isEmpty else { return [] }
-
-        // Every term must have a posting list, else no file can match.
-        var lists: [[Int]] = []
-        lists.reserveCapacity(terms.count)
-        for term in terms {
-            guard let list = wordIndex[term] else { return [] }
-            lists.append(list)
-        }
-        lists.sort { $0.count < $1.count }
-
-        var candidates = Set(lists[0])
-        for list in lists.dropFirst() {
-            candidates.formIntersection(list)
-            if candidates.isEmpty { return [] }
-        }
-
-        // Materialize in index order; apply the visibility gate here,
-        // same semantics as the old linear filter.
-        return candidates.sorted().compactMap { position in
-            let file = fileIndex[position]
-            if !includeBuddyOnly && file.visibility == .buddies { return nil }
-            return file
-        }
+    /// The distributed-search handler fires this 5-50 times/sec on a busy
+    /// relay: it reads the immutable `ShareSearchSnapshot` and executes on
+    /// whatever executor calls it, never hopping onto this actor.
+    /// See `ShareSearchSnapshot.search` for the matching semantics.
+    nonisolated public func search(query: String, includeBuddyOnly: Bool) -> [IndexedFile] {
+        searchSnapshotStore.withLock { $0 }
+            .search(query: query, includeBuddyOnly: includeBuddyOnly)
     }
 
     /// Snapshot of all indexed files visible to a given requester. Used
@@ -634,11 +670,6 @@ public final class ShareManager {
         // broadcast semantics to public-only.
     }
 
-    // The old `toSharedFiles()` / `buildChildren(for:from:)` tree builder
-    // lived here. It had no callers anywhere in the repo (the shares-browse
-    // reply is built from the database via `SharedFileRecord.toSharedFiles`
-    // in the app layer) and its child-matching logic was buggy — removed.
-
     // MARK: - Test seams
 
     /// Inject a synthetic file index without going through `addFolder` /
@@ -661,10 +692,10 @@ public final class ShareManager {
         }
     }
 
-    /// Decode persisted shared-folder list from `UserDefaults`. Synchronous
-    /// — does NOT trigger a rescan. Call `rescanAll()` after this to
-    /// repopulate `fileIndex`. The two steps are split so the caller can
-    /// register `countsChangesStream` subscribers between them; the
+    /// Decode persisted shared-folder list from `UserDefaults`. Does NOT
+    /// trigger a rescan. Call `rescanAll()` after this to repopulate
+    /// `fileIndex`. The two steps are split so the caller can register
+    /// `countsChangesStream` subscribers between them; the
     /// rescan-completion yield is then guaranteed to be observed.
     public func loadPersistedFolders() {
         guard let data = defaults.data(forKey: sharedFoldersKey) else { return }
