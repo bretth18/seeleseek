@@ -189,13 +189,13 @@ final class AppState {
 
         Task {
             await uploadManager.setUploadPermissionChecker { [weak self] username in
-            guard let self else { return true }
-            let patterns = self.settings.activeBlockedPatterns
-            if !patterns.isEmpty,
-               UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
-                return false
-            }
-            Task { try? await self.networkClient.getUserStats(username) }
+                guard let self else { return true }
+                let patterns = self.settings.activeBlockedPatterns
+                if !patterns.isEmpty,
+                   UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
+                    return false
+                }
+                Task { try? await self.networkClient.getUserStats(username) }
                 return self.socialState.shouldAllowUpload(to: username)
             }
         }
@@ -208,7 +208,6 @@ final class AppState {
         settings.onActiveBlockedPatternsChange = { [weak client] patterns in
             Task { await client?.peerConnectionPool.updateBlockedUsernamePatterns(patterns) }
         }
-
 
         // Push the search-response policy and keep it in sync — the
         // distributed-search handler fires at relay rates and reads the
@@ -505,7 +504,6 @@ final class AppState {
         guard components.count > 1 else { return "" }
         return components.dropLast().joined(separator: "\\")
     }
-
 
     // MARK: - Download Manager
     let downloadManager = DownloadManager()

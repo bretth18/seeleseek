@@ -1067,7 +1067,7 @@ public actor UploadManager {
             return
         }
         // See `sendFileDataViaPeerConnection` for the rationale on hopping
-        // file I/O to a non-MainActor actor.
+        // file I/O to its own actor.
         let fileIO = TransferFileIO(handle: rawFileHandle)
         defer {
             Task { await fileIO.close() }
@@ -1105,7 +1105,7 @@ public actor UploadManager {
                     return
                 }
 
-                // Read chunk off MainActor
+                // Read chunk via the file-I/O actor
                 guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
@@ -1621,12 +1621,12 @@ public actor UploadManager {
             return
         }
 
-        // Hand the FileHandle to a non-MainActor actor so each per-chunk
-        // `read(upToCount:)` runs off the main thread. Synchronous disk
-        // reads of 64 KB are typically fast on SSDs, but on slower disks
-        // (or HDDs, or under memory pressure) the cumulative blocking
-        // delays peer-event dispatch and the timeout watchdog enough to
-        // cause spurious stalls.
+        // Hand the FileHandle to the `TransferFileIO` actor so each
+        // per-chunk `read(upToCount:)` runs off this actor. Synchronous
+        // disk reads of 64 KB are typically fast on SSDs, but on slower
+        // disks (or under memory pressure) the cumulative blocking would
+        // delay this actor's event handling and the timeout watchdog
+        // enough to cause spurious stalls.
         let fileIO = TransferFileIO(handle: rawFileHandle)
 
         defer {
@@ -1661,7 +1661,7 @@ public actor UploadManager {
                     return
                 }
 
-                // Read chunk from file (off MainActor)
+                // Read chunk via the file-I/O actor
                 guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
@@ -2281,10 +2281,8 @@ public actor UploadManager {
     internal var _uploadQueueForTest: [QueuedUpload] { uploadQueue }
 
     /// Hand back the in-flight rearm/retry Task for `transferId` so tests
-    /// can `await task.value` instead of polling for side-effects. Lets
-    /// rearm tests be deterministic without making production code
-    /// inline-fire (CI's contended MainActor was starving the rearm
-    /// Task's continuation past a 5s polling deadline).
+    /// can `await task.value` instead of polling for side-effects — a
+    /// contended CI executor can starve a polling deadline.
     internal func _pendingRetryTaskForTest(transferId: UUID) -> Task<Void, Never>? {
         pendingRetries[transferId]
     }

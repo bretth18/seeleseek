@@ -148,9 +148,14 @@ The retry puts the download in the queue again, with the same filename and usern
 The server reports when it cannot connect you to a peer:
 
 ```swift
-client.onCantConnectToPeer = { token in
-    // The server-mediated connection to the peer failed
-    // The download manager receives this event internally
+let notices = client.events.transferNotices.subscribe()
+Task {
+    for await notice in notices {
+        if case .cantConnectToPeer(let token) = notice {
+            // The server-mediated connection to the peer failed
+            // The download manager receives this event internally
+        }
+    }
 }
 ```
 
@@ -159,12 +164,17 @@ client.onCantConnectToPeer = { token in
 A peer can deny an upload, or report a failed upload:
 
 ```swift
-client.onUploadDenied = { filename, reason in
-    // Possible reasons: "Queued", "Too many files", "Blocked"
-}
-
-client.onUploadFailed = { filename in
-    // The upload failed. No reason was given
+for await notice in client.events.transferNotices.subscribe() {
+    switch notice {
+    case .uploadDenied(_, let filename, let reason):
+        // Possible reasons: "Queued", "Too many files", "Blocked"
+        break
+    case .uploadFailed(_, let filename):
+        // The upload failed. No reason was given
+        break
+    default:
+        break
+    }
 }
 ```
 

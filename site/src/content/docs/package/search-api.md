@@ -12,10 +12,13 @@ Searches use tokens. You supply a unique token. The token connects the results t
 ```swift
 let token = UInt32.random(in: 0...UInt32.max)
 
-client.onSearchResults = { resultToken, results in
-    if resultToken == token {
-        for result in results {
-            print("\(result.username): \(result.filename) (\(result.formattedSize))")
+let searchEvents = client.events.search.subscribe()
+Task {
+    for await event in searchEvents {
+        if case .results(let resultToken, let results) = event, resultToken == token {
+            for result in results {
+                print("\(result.username): \(result.filename) (\(result.formattedSize))")
+            }
         }
     }
 }
@@ -23,7 +26,7 @@ client.onSearchResults = { resultToken, results in
 try await client.search(query: "boards of canada", token: token)
 ```
 
-Results arrive asynchronously when peers on the network respond. The callback can fire many times for one search.
+Results arrive asynchronously when peers on the network respond. The stream can send many result batches for one search. Subscribe before you connect — the bus does not buffer events for subscribers that arrive late.
 
 ## Search Types
 
@@ -58,9 +61,11 @@ Add a search that the server repeats at an interval:
 ```swift
 try await client.addWishlistSearch(query: "rare album", token: token)
 
-// The server sets the interval
-client.onWishlistInterval = { seconds in
-    print("Wishlist searches occur every \(seconds) seconds")
+// The server sets the interval. It arrives on the search event stream.
+for await event in client.events.search.subscribe() {
+    if case .wishlistInterval(let seconds) = event {
+        print("Wishlist searches occur every \(seconds) seconds")
+    }
 }
 ```
 

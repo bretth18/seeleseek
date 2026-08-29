@@ -3,7 +3,6 @@ import Network
 import os
 import CryptoKit
 
-
 /// Manages the download queue and file transfers.
 ///
 /// An actor: queue/timer bookkeeping, peer handshakes, and chunk streaming
@@ -155,7 +154,7 @@ public actor DownloadManager {
     // With a large queue against offline/unreachable peers, the timers above
     // used to re-attempt every transfer forever (one ConnectToPeer +
     // GetUserAddress + Tasks + DB writes per attempt, hundreds per minute)
-    // — pinning the main actor and growing memory via task backlog. Two
+    // — pinning the manager and growing memory via task backlog. Two
     // brakes fix that:
     //
     // 1. Peers the server reports offline are cached here and skipped by
@@ -163,7 +162,7 @@ public actor DownloadManager {
     //    back (the app already WatchUser-es every transfer peer), with a
     //    TTL fallback probe in case the push was missed.
     // 2. Each timer tick re-drives at most `maxDialsPerTick` transfers, so
-    //    a 200-row queue can't burst-saturate the main actor.
+    //    a 200-row queue can't burst-saturate the manager.
     private var offlineUsers: [String: Date] = [:]
     private let offlineRecheckInterval: TimeInterval = 30 * 60
     private let maxDialsPerTick = 8
@@ -221,6 +220,14 @@ public actor DownloadManager {
 
     // Track partial downloads for resume
     private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
+
+    /// (username, filename) pairs currently inside `queueDownload`'s
+    /// check-then-add window. The duplicate checks there suspend on a
+    /// transferState read; without this synchronous claim, two rapid
+    /// `queueDownload` calls for one file both pass the checks and add two
+    /// rows — the double-F-connection corruption the checks exist to
+    /// prevent.
+    private var queueDownloadsInProgress: Set<String> = []
 
     public struct PendingFileTransfer: Sendable {
         public let transferId: UUID
@@ -413,7 +420,6 @@ public actor DownloadManager {
             return
         }
 
-
         guard let transferState else {
             logger.error("TransferState not configured")
             return
@@ -422,6 +428,14 @@ public actor DownloadManager {
         guard networkClient != nil else {
             return
         }
+
+        let dupeKey = "\(result.username)\u{0}\(result.filename)"
+        guard !queueDownloadsInProgress.contains(dupeKey) else {
+            logger.info("Skipping duplicate download (queue already in progress): \(result.filename)")
+            return
+        }
+        queueDownloadsInProgress.insert(dupeKey)
+        defer { queueDownloadsInProgress.remove(dupeKey) }
 
         // Duplicate detection. Two rows for the same (username, filename)
         // mean two pendingDownloads entries and two F-connections appending
@@ -1314,7 +1328,7 @@ public actor DownloadManager {
             rawFileHandle = handle
         }
 
-        // Hand the FileHandle off to a non-MainActor actor — same rationale
+        // Hand the FileHandle off to the file-I/O actor — same rationale
         // as `receiveFileDataFromPeer` / `sendFileDataViaPeerConnection`.
         let fileIO = TransferFileIO(handle: rawFileHandle)
 
@@ -1728,9 +1742,9 @@ public actor DownloadManager {
 
     /// Sanitize a filename/folder name for the filesystem
     /// Prevents directory traversal attacks and invalid filesystem characters
-    /// `nonisolated static` so off-main-actor workers (e.g. the metadata
+    /// `nonisolated static` so the off-actor workers (e.g. the metadata
     /// reorganize task in `organizeCompletedDownload`) can call it without
-    /// a hop — that task previously re-implemented this logic inline.
+    /// a hop.
     nonisolated static func sanitizeFilename(_ name: String) -> String {
         // SECURITY: Prevent directory traversal attacks
         // Reject ".." and "." components that could escape the download directory
@@ -2279,12 +2293,12 @@ public actor DownloadManager {
             throw DownloadError.cannotCreateFile
         }
 
-        // Open the file handle on MainActor (file creation is fast),
-        // then hand it off to a `TransferFileIO` actor that owns the handle
-        // for the rest of the function. Every per-chunk write hops to that
-        // actor so the synchronous `write(contentsOf:)` runs off the main
-        // thread — without this, a slow disk could block UI updates and
-        // delay the timeout watchdog enough to make 30 s look like 60 s.
+        // Open the file handle here (creation is fast), then hand it off
+        // to a `TransferFileIO` actor that owns it for the rest of the
+        // function. Every per-chunk write hops to that actor so the
+        // synchronous `write(contentsOf:)` never blocks this actor — a
+        // slow disk would otherwise delay event handling and the timeout
+        // watchdog enough to make 30 s look like 60 s.
         let rawFileHandle: FileHandle
 
         if resumeOffset > 0 && FileManager.default.fileExists(atPath: destPath.path) {
@@ -2621,7 +2635,7 @@ public actor DownloadManager {
         cancelledTransferIds.formIntersection(liveIds)
 
         // Cap fresh dials per tick so a big queue of unreachable peers
-        // can't burst-saturate the main actor; the next tick picks up
+        // can't burst-saturate the manager; the next tick picks up
         // where this one stopped (dictionary order rotates naturally).
         var dialBudget = maxDialsPerTick
 
@@ -2929,7 +2943,17 @@ public actor DownloadManager {
             return
         }
 
-        if let current = await transferState?.getTransfer(id: pending.transferId) {
+        let current = await transferState?.getTransfer(id: pending.transferId)
+        // Re-validate after the suspension above: peers can send Denied and
+        // Failed back-to-back for one file, and the sibling handler may have
+        // consumed the entry while we read the row — acting twice would
+        // double-fail the row.
+        guard pendingDownloads[token]?.transferId == pending.transferId else {
+            logger.debug("Pending entry for \(filename) consumed while reading row state; dropping denied")
+            return
+        }
+
+        if let current {
             // Bytes already flowing — the F-connection receive loop is the
             // authoritative source of truth. An UploadDenied here is either
             // stale (for an earlier attempt) or redundant with a connection
@@ -2952,12 +2976,13 @@ public actor DownloadManager {
 
         logger.warning("Download denied for \(filename): \(reason)")
 
+        // Claim the entry before the row update suspends, so a concurrent
+        // handler can't act on it too.
+        pendingDownloads.removeValue(forKey: token)
         await transferState?.updateTransfer(id: pending.transferId) { t in
             t.status = .failed
             t.error = "Denied: \(reason)"
         }
-
-        pendingDownloads.removeValue(forKey: token)
     }
 
     /// Called when peer's upload to us fails
@@ -2969,7 +2994,15 @@ public actor DownloadManager {
             return
         }
 
-        if let current = await transferState?.getTransfer(id: pending.transferId) {
+        let current = await transferState?.getTransfer(id: pending.transferId)
+        // Same re-validation as `handleUploadDenied` — the sibling handler
+        // may have consumed the entry during the row read above.
+        guard pendingDownloads[token]?.transferId == pending.transferId else {
+            logger.debug("Pending entry for \(filename) consumed while reading row state; dropping failed")
+            return
+        }
+
+        if let current {
             // Bytes already flowing — defer to the F-connection receive
             // loop. See `handleUploadDenied` for the same guard's
             // rationale. Note: must NOT remove pendingDownloads while
@@ -2988,6 +3021,10 @@ public actor DownloadManager {
             }
         }
 
+        // Claim the entry before the file-system + row-update suspensions
+        // below, so a concurrent handler can't act on it too.
+        pendingDownloads.removeValue(forKey: token)
+
         // If THIS attempt resumed from a partial (offset > 0) and the peer
         // rejected it, the peer likely can't resume — drop the partial so the
         // retry starts clean. Otherwise keep the partial as groundwork. Either
@@ -3004,7 +3041,6 @@ public actor DownloadManager {
 
         logger.warning("Upload failed for \(filename)")
 
-        pendingDownloads.removeValue(forKey: token)
         await failDownload(
             transferId: pending.transferId,
             username: pending.username,
