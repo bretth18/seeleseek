@@ -2,12 +2,10 @@ import Foundation
 import Synchronization
 import os
 
-/// Manages shared folders and the file index for the SoulSeek client.
-///
-/// An actor: rescans, word-index rebuilds, and visibility rewrites run on
-/// its own executor instead of the main actor. The shares-settings UI
-/// observes the `state` mirror; peer search reads the lock-protected
-/// `ShareSearchSnapshot` via nonisolated `search`.
+/// An actor that owns the shared folders and the file index; rescans,
+/// word-index rebuilds, and visibility rewrites all happen here. The
+/// shares-settings UI observes the `state` mirror; peer search reads the
+/// lock-protected `ShareSearchSnapshot` via nonisolated `search`.
 public actor ShareManager {
     nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "ShareManager")
 
@@ -47,10 +45,8 @@ public actor ShareManager {
 
     // MARK: - UI Mirror
 
-    /// `@MainActor` mirror the shares-settings UI observes instead of this
-    /// actor. Fed conflated (`.bufferingNewest(1)`) — snapshots carry
-    /// complete state, so collapsing a backlog to its newest entry is
-    /// lossless.
+    /// What the shares-settings UI observes. Fed by `publishState` on the
+    /// didSets above; pipe semantics in `makeMirrorPipe`.
     public nonisolated let state: ShareState
 
     private let stateContinuation: AsyncStream<ShareSnapshot>.Continuation
@@ -245,26 +241,12 @@ public actor ShareManager {
     /// Side-effect-free. Caller must invoke `loadPersistedFolders()` and
     /// `rescanAll()` explicitly after wiring `countsChangesStream()`
     /// consumers.
-    ///
-    /// `@MainActor` so the `state` mirror (a MainActor class) can be
-    /// constructed inline and its consumer registers before any producer
-    /// can run.
     @MainActor
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-
         let state = ShareState()
         self.state = state
-        let (updates, continuation) = AsyncStream.makeStream(
-            of: ShareSnapshot.self,
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        self.stateContinuation = continuation
-        Task { @MainActor in
-            for await snapshot in updates {
-                state.apply(snapshot)
-            }
-        }
+        self.stateContinuation = makeMirrorPipe(into: state) { $0.apply($1) }
     }
 
     // MARK: - Folder Management

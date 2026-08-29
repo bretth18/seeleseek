@@ -1,7 +1,6 @@
 import Foundation
 
-/// Value snapshot of `UploadManager`'s UI-facing queue state, built by the
-/// manager at every queue/slot mutation and applied to `UploadState`.
+/// The upload manager's queue and slot state as one value.
 public struct UploadQueueSnapshot: Sendable {
     public var queuedUploads: [UploadManager.QueuedUpload] = []
     public var activeUploadCount = 0
@@ -11,10 +10,8 @@ public struct UploadQueueSnapshot: Sendable {
     public init() {}
 }
 
-/// `@MainActor` mirror of the upload manager's queue state — what the
-/// transfers UI (and AppState's leech check) observes instead of the
-/// manager actor. Fed conflated (`.bufferingNewest(1)`): snapshots carry
-/// complete state.
+/// What the transfers UI and AppState's leech check observe: queue
+/// contents and slot occupancy.
 @Observable
 @MainActor
 public final class UploadState {

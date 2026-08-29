@@ -3,10 +3,8 @@ import Network
 import os
 import Synchronization
 
-/// Manages the upload queue and file transfers to peers.
-///
-/// An actor: queue processing, peer handshakes, and chunk streaming run on
-/// its own executor. The transfers UI observes the `state` mirror.
+/// An actor that owns the upload queue: slot gating, peer handshakes, and
+/// chunk streaming. The transfers UI observes the `state` mirror.
 public actor UploadManager {
     nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "UploadManager")
 
@@ -195,9 +193,9 @@ public actor UploadManager {
 
     // MARK: - UI Mirror
 
-    /// `@MainActor` mirror the transfers UI observes instead of this
-    /// actor. Fed conflated (`.bufferingNewest(1)`) — snapshots carry
-    /// complete state.
+    /// What the transfers UI (and AppState's leech check) observes. Fed by
+    /// `publishState` on the didSets above; pipe semantics in
+    /// `makeMirrorPipe`.
     public nonisolated let state: UploadState
 
     private let stateContinuation: AsyncStream<UploadQueueSnapshot>.Continuation
@@ -213,22 +211,11 @@ public actor UploadManager {
 
     // MARK: - Configuration
 
-    /// `@MainActor` so the `state` mirror can be constructed inline and
-    /// its consumer registers before any producer can run.
     @MainActor
     public init() {
         let state = UploadState()
         self.state = state
-        let (updates, continuation) = AsyncStream.makeStream(
-            of: UploadQueueSnapshot.self,
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        self.stateContinuation = continuation
-        Task { @MainActor in
-            for await snapshot in updates {
-                state.apply(snapshot)
-            }
-        }
+        self.stateContinuation = makeMirrorPipe(into: state) { $0.apply($1) }
     }
 
     private var transferEventsTask: Task<Void, Never>?
@@ -263,9 +250,9 @@ public actor UploadManager {
 
         // The consumer spawns a fire-and-forget Task per event so a
         // long-running handler (an upload can stream for minutes) never
-        // blocks event dispatch. Deliberately unbounded: every transfer
-        // event is load-bearing (a dropped queueUpload strands the
-        // requesting peer), and the consumer body is O(1).
+        // blocks event dispatch. Unbounded on purpose: a dropped
+        // queueUpload strands the requesting peer, and the consumer body
+        // only spawns the handler Task.
         transferEventsTask?.cancel()
         let transferEvents = networkClient.events.transfers.subscribe()
         transferEventsTask = Task { [weak self] in

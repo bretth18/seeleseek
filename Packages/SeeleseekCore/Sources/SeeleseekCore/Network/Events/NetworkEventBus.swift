@@ -17,10 +17,11 @@ public final class EventChannel<Event: Sendable>: Sendable {
     ///
     /// `bufferingPolicy` is the subscriber's back-pressure contract: it
     /// bounds how many undelivered events queue while the consumer is
-    /// busy. The default `.unbounded` never drops — correct for domains
-    /// where every event is load-bearing (transfers). Hot domains whose
-    /// consumers can fall behind under a flood (search results, social
-    /// status storms) should pass `.bufferingOldest(n)`: overflow is
+    /// busy. The default `.unbounded` never drops — required where a lost
+    /// event breaks something (a transfer event that never arrives hangs
+    /// its transfer). Hot domains whose consumers can fall behind under a
+    /// flood (search results, social status storms) should pass
+    /// `.bufferingOldest(n)`: overflow is
     /// tail-dropped like a network queue, so events already accepted are
     /// never displaced and the consumer drains in arrival order. A
     /// dropped event is gone for every purpose — pick `n` far above any

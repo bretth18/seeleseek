@@ -3,12 +3,9 @@ import Network
 import os
 import CryptoKit
 
-/// Manages the download queue and file transfers.
-///
-/// An actor: queue/timer bookkeeping, peer handshakes, and chunk streaming
-/// run on its own executor. Nothing observes this type directly — all
-/// UI-facing state flows through `TransferTracking` (the app's
-/// TransferState).
+/// An actor that owns the download queue: retry timers, peer handshakes,
+/// and chunk streaming. It has no mirror — all UI-facing state flows
+/// through `TransferTracking` (the app's TransferState).
 public actor DownloadManager {
     nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "DownloadManager")
 
@@ -285,10 +282,9 @@ public actor DownloadManager {
         // GetPeerAddress responses.
 
         // Each consumer loop spawns a Task per event so a slow transfer
-        // setup never stalls subsequent transfer events. Deliberately
-        // unbounded: every transfer event is load-bearing (a dropped
-        // transferResponse hangs its download), and the consumer body is
-        // O(1) — it only spawns the handler Task.
+        // setup never stalls subsequent transfer events. Unbounded on
+        // purpose: a dropped transferResponse hangs its download, and the
+        // consumer body only spawns the handler Task.
         transferEventsTask?.cancel()
         let transferEvents = networkClient.events.transfers.subscribe()
         transferEventsTask = Task { [weak self] in

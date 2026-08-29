@@ -3,11 +3,10 @@ import os
 
 /// Caches user information like country codes, resolved from IP addresses.
 ///
-/// Deliberately `@MainActor` while the other managers are actors: this IS
-/// the UI-facing surface — views read `flag(for:)`/`countryCode(for:)`
-/// synchronously in their bodies and observe `countries` — and it's fed at
-/// low rates (one GeoIP resolution per newly seen peer), so it needs no
-/// mirror and gains nothing from its own executor.
+/// `@MainActor` on purpose while the other managers are actors: views
+/// read `flag(for:)`/`countryCode(for:)` synchronously in their bodies and
+/// observe `countries`, and it's fed at low rates (one GeoIP resolution
+/// per newly seen peer), so this class is its own mirror.
 @Observable
 @MainActor
 public final class UserInfoCache {

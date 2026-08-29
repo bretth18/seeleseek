@@ -1,9 +1,8 @@
 import Foundation
 
-/// Value snapshot of `PeerConnectionPool`'s statistics surface, built by
-/// the pool's 1 Hz speed-tracking tick and applied to
-/// `NetworkMonitorState`. One MainActor observation write per second
-/// regardless of peer traffic volume.
+/// The pool's statistics as one value, yielded by its 1 Hz speed-tracking
+/// tick — one MainActor observation write per second regardless of peer
+/// traffic volume.
 public struct PoolSnapshot: Sendable {
     public var connections: [String: PeerConnectionPool.PeerConnectionInfo] = [:]
     public var extendedClientInfoByUser: [String: ExtendedClientInfo] = [:]
@@ -25,11 +24,10 @@ public struct PoolSnapshot: Sendable {
     public init() {}
 }
 
-/// `@MainActor` mirror of the pool's statistics — what the diagnostics /
-/// network-monitor views observe instead of the live connection pool.
-/// Fed two ways: the full snapshot at 1 Hz, and eager per-discovery
-/// `applyClientInfo` updates so capability-gated UI (browse-row artwork
-/// buttons, peer popovers) doesn't wait out the tick.
+/// What the diagnostics and network-monitor views observe. Fed two ways:
+/// the full snapshot at 1 Hz, and eager per-discovery `applyClientInfo`
+/// updates so capability-gated UI (browse-row artwork buttons, peer
+/// popovers) doesn't wait out the tick.
 @Observable
 @MainActor
 public final class NetworkMonitorState {

@@ -201,8 +201,8 @@ final class AppState {
         }
 
         // Push the compiled username block patterns into the pool and keep
-        // them in sync — the pool evaluates locally on its per-connection
-        // hot path instead of calling back into settings.
+        // them in sync; the pool evaluates them on its per-connection hot
+        // path.
         let initialPatterns = settings.activeBlockedPatterns
         Task { await client.peerConnectionPool.updateBlockedUsernamePatterns(initialPatterns) }
         settings.onActiveBlockedPatternsChange = { [weak client] patterns in
@@ -210,8 +210,7 @@ final class AppState {
         }
 
         // Push the search-response policy and keep it in sync — the
-        // distributed-search handler fires at relay rates and reads the
-        // pushed value instead of calling back into settings.
+        // distributed-search handler reads it at relay rates.
         let initialPolicy = settings.searchResponsePolicy
         Task { await client.updateSearchResponsePolicy(initialPolicy) }
         settings.onSearchResponsePolicyChange = { [weak client] policy in

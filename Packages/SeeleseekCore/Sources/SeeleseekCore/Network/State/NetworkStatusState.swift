@@ -1,9 +1,7 @@
 import Foundation
 
-/// Value snapshot of `NetworkClient`'s UI-facing connection state.
-/// Built by the client at every state transition and applied to
-/// `NetworkStatusState` — the one road from network coordination to
-/// SwiftUI observation for this data.
+/// Complete connection state as one value, yielded by the client at every
+/// state transition.
 public struct NetworkStatusSnapshot: Sendable, Equatable {
     public var isConnecting = false
     public var isConnected = false
@@ -24,10 +22,9 @@ public struct NetworkStatusSnapshot: Sendable, Equatable {
     public init() {}
 }
 
-/// Lightweight `@MainActor` mirror of the client's connection state — the
-/// object views observe instead of the live socket coordinator. All
-/// transitions are low-frequency (connect/login/NAT setup), so per-property
-/// change guards keep observation invalidations tight.
+/// What views observe for connection state. All transitions are
+/// low-frequency (connect/login/NAT setup); the per-property change guards
+/// in `apply` keep observation invalidations tight.
 @Observable
 @MainActor
 public final class NetworkStatusState {

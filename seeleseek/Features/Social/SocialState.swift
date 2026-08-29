@@ -6,9 +6,9 @@ import SeeleseekCore
 @MainActor
 final class SocialState: PeerWatching {
     // MARK: - Buddy List
-    /// The didSet keeps the core's pushed buddy set in sync — the shares /
-    /// distributed-search handlers gate buddy-only folders against that
-    /// set instead of calling back into this type per request. Fires on
+    /// The didSet keeps the core's pushed buddy set in sync; the shares /
+    /// distributed-search handlers gate buddy-only folders against it
+    /// per request. Fires on
     /// element mutations too (status updates); the recompute is cheap and
     /// `updateBuddyList` is a plain assignment.
     var buddies: [Buddy] = [] {

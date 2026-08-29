@@ -4,29 +4,24 @@ import os
 import Synchronization
 
 /// The network control plane: server socket, login/reconnect, peer
-/// coordination, protocol facade. An actor — none of this competes with
-/// SwiftUI rendering on the main executor. The UI observes the `status`
-/// and `monitor` mirrors and consumes `events`; app code calls the async
-/// methods directly (cross-actor await).
+/// coordination, protocol facade. An actor, so none of this work shares
+/// the main thread with SwiftUI rendering — that rationale holds for every
+/// actor in the package. The UI observes the `status` and `monitor`
+/// mirrors and consumes `events`; app code awaits the methods directly.
 public actor NetworkClient {
     nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "NetworkClient")
 
     // MARK: - Status Mirror
 
-    /// `@MainActor` mirror of the connection-state properties below — the
-    /// object views observe instead of this coordinator. Fed FIFO by
-    /// `publishStatus` through a dedicated stream, so transitions
-    /// (connecting → connected → disconnected) can never reorder.
+    /// Connection-state mirror for the UI, fed by `publishStatus` on every
+    /// didSet below. FIFO through one stream, so transitions
+    /// (connecting → connected → disconnected) cannot reorder.
     public nonisolated let status: NetworkStatusState
 
     /// Statistics mirror for the monitor/diagnostics views, owned and fed
     /// by the pool.
     public nonisolated var monitor: NetworkMonitorState { peerConnectionPool.monitor }
 
-    /// FIFO pipe from actor-side state changes to the MainActor `status`
-    /// mirror. The consumer task starts in `init`, before any producer
-    /// can run; it ends when this actor (and thus the continuation)
-    /// deinits and the stream finishes.
     private let statusContinuation: AsyncStream<NetworkStatusSnapshot>.Continuation
 
     private func publishStatus() {
@@ -268,11 +263,9 @@ public actor NetworkClient {
 
     // MARK: - Initialization
 
-    /// `@MainActor` so the MainActor collaborators (`shareManager`,
-    /// `userInfoCache`, `status`) can be constructed inline and the
-    /// status/pool consumer tasks register before any event can be
-    /// produced. App and test call sites are all MainActor, so
-    /// construction stays synchronous for them.
+    /// `@MainActor`: the MainActor collaborators (`shareManager`,
+    /// `userInfoCache`, `status`) are constructed inline, and the app/test
+    /// call sites are all MainActor anyway.
     @MainActor
     public init() {
         logger.info("NetworkClient initializing...")
@@ -281,22 +274,9 @@ public actor NetworkClient {
         self.shareManager = ShareManager()
         self.userInfoCache = UserInfoCache()
 
-        // Consumer registered before any producer can run, so no update is
-        // lost. `.bufferingNewest(1)`: snapshots carry complete state, so
-        // conflating a backlog to its newest entry is lossless and bounds
-        // the pipe if the main thread stalls.
         let status = NetworkStatusState()
         self.status = status
-        let (statusUpdates, statusContinuation) = AsyncStream.makeStream(
-            of: NetworkStatusSnapshot.self,
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        self.statusContinuation = statusContinuation
-        Task { @MainActor in
-            for await snapshot in statusUpdates {
-                status.apply(snapshot)
-            }
-        }
+        self.statusContinuation = makeMirrorPipe(into: status) { $0.apply($1) }
 
         // Serial pool-event consumer: awaiting each handler in turn keeps
         // per-peer event order (a transferResponse can't leapfrog its

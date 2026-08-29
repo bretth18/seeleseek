@@ -1,7 +1,6 @@
 import Foundation
 
-/// Value snapshot of `ShareManager`'s UI-facing state, built by the
-/// manager at every mutation and applied to `ShareState`.
+/// The share manager's UI-facing state as one value.
 public struct ShareSnapshot: Sendable {
     public var sharedFolders: [ShareManager.SharedFolder] = []
     public var totalFiles = 0
@@ -13,9 +12,8 @@ public struct ShareSnapshot: Sendable {
     public init() {}
 }
 
-/// `@MainActor` mirror of the share manager's state — the object the
-/// shares-settings UI observes instead of the manager actor. Fed FIFO
-/// conflated (`.bufferingNewest(1)`): snapshots carry complete state.
+/// What the shares-settings UI observes: folder list, counts, and scan
+/// progress.
 @Observable
 @MainActor
 public final class ShareState {

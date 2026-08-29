@@ -1,9 +1,9 @@
 import Foundation
 
 /// Policy for responding to other users' distributed searches. Pushed
-/// down from app settings via `NetworkClient.updateSearchResponsePolicy`
-/// so the per-query hot path (5-50 queries/sec on a busy relay) reads
-/// local state instead of calling back into the app layer.
+/// down from app settings via `NetworkClient.updateSearchResponsePolicy`;
+/// the per-query hot path (5-50 queries/sec on a busy relay) reads it
+/// locally.
 public struct SearchResponsePolicy: Sendable, Equatable {
     public var enabled: Bool
     public var minQueryLength: Int

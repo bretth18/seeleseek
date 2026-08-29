@@ -24,11 +24,9 @@ public enum PeerConnectionError: Error, LocalizedError {
     }
 }
 
-/// Manages multiple peer connections with statistics tracking.
-///
-/// An actor: peer/pool coordination runs on its own executor so live
-/// traffic never competes with SwiftUI rendering on the main actor. The
-/// UI-facing statistics surface is the `monitor` mirror, fed at 1 Hz.
+/// An actor that manages every peer connection: dialing, handshakes,
+/// rate limits, reuse, and traffic statistics. The UI-facing statistics
+/// surface is the `monitor` mirror, fed at 1 Hz.
 public actor PeerConnectionPool {
     private nonisolated let logger = Logger(subsystem: "com.seeleseek", category: "PeerConnectionPool")
 
