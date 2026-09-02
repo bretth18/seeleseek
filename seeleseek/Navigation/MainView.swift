@@ -14,6 +14,9 @@ struct MainView: View {
     #endif
 
     var body: some View {
+        #if DEBUG
+        let _ = { if SynthDiag.logChanges { Self._printChanges() } }()
+        #endif
         Group {
             #if os(macOS)
             macOSLayout

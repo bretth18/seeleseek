@@ -12,9 +12,14 @@ The main entry point is `NetworkClient`. Make an instance and call `connect`:
 ```swift
 let client = NetworkClient()
 
-// Set the callbacks before you connect
-client.onConnectionStatusChanged = { status in
-    print("Connection status: \(status)")
+// Subscribe to connection events before you connect
+let connectionEvents = client.events.connection.subscribe()
+Task {
+    for await event in connectionEvents {
+        if case .statusChanged(let status) = event {
+            print("Connection status: \(status)")
+        }
+    }
 }
 
 // Connect to the Soulseek server
@@ -29,27 +34,31 @@ await client.connect(
 
 ## Connection Status
 
-Monitor the connection with the `onConnectionStatusChanged` callback, or with the observable properties:
+Monitor the connection with the connection event stream, or with the `status` mirror. The mirror is a `@MainActor` observable object for SwiftUI:
 
 ```swift
-// Observable properties (for SwiftUI)
-client.isConnecting  // true during the connection sequence
-client.isConnected   // true after a successful login
-client.connectionError // the error message after a failure
+// Observable mirror (for SwiftUI)
+client.status.isConnecting  // true during the connection sequence
+client.status.isConnected   // true after a successful login
+client.status.connectionError // the error message after a failure
 
-// Callback
-client.onConnectionStatusChanged = { status in
-    switch status {
-    case .disconnected:
-        print("Not connected")
-    case .connecting:
-        print("Connection in progress")
-    case .connected:
-        print("Logged in")
-    case .reconnecting:
-        print("New connection in progress")
-    case .error:
-        print("Connection error")
+// Event stream
+let connectionEvents = client.events.connection.subscribe()
+Task {
+    for await event in connectionEvents {
+        guard case .statusChanged(let status) = event else { continue }
+        switch status {
+        case .disconnected:
+            print("Not connected")
+        case .connecting:
+            print("Connection in progress")
+        case .connected:
+            print("Logged in")
+        case .reconnecting:
+            print("New connection in progress")
+        case .error:
+            print("Connection error")
+        }
     }
 }
 ```
@@ -100,16 +109,16 @@ When you call `connect`, this sequence occurs:
 4. On success, SeeleseekCore sends the listen port, the online status, and the shared file counts.
 5. `ListenerService` starts to listen for incoming peer connections.
 6. `NATService` tries the UPnP port mapping in the background.
-7. The callbacks fire with `ConnectionStatus.connected`.
+7. The connection event stream sends `ConnectionStatus.connected`.
 
 ## Disconnect
 
 ```swift
 // A disconnect by the user (this stops automatic reconnection)
-client.disconnect()
+await client.disconnect()
 
 // For unexpected disconnects (this permits automatic reconnection)
-client.handleUnexpectedDisconnect(reason: "Connection lost")
+await client.handleUnexpectedDisconnect(reason: "Connection lost")
 ```
 
 ## Automatic Reconnection
@@ -120,7 +129,7 @@ There is one exception: the "Relogged" disconnect. This occurs when a different 
 
 ```swift
 // Called internally when the server sends a Relogged message
-client.handleReloggedDisconnect()
+await client.handleReloggedDisconnect()
 ```
 
 ## Listen for Incoming Connections

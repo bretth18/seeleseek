@@ -458,6 +458,8 @@ struct SearchView: View {
                     items: searchState.displayItems,
                     bottomInset: searchState.isSelectionMode ? 60 : 0
                 )
+                // Nested hosting views inherit this environment.
+                .modifier(ResultsHoverSuppression())
 
                 // Floating action bar
                 if searchState.isSelectionMode {
@@ -570,6 +572,16 @@ struct SearchView: View {
                 searchState.markSearchFailed(token: token, message: error.localizedDescription)
             }
         }
+    }
+}
+
+/// Reads `isListScrolling` in its own body so each scroll start and stop
+/// re-evaluates this node instead of all of `SearchView`.
+private struct ResultsHoverSuppression: ViewModifier {
+    @Environment(\.appState) private var appState
+
+    func body(content: Content) -> some View {
+        content.environment(\.rowHoverSuppressed, appState.searchState.isListScrolling)
     }
 }
 

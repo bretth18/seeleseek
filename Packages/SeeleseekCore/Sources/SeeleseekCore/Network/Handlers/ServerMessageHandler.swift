@@ -1,18 +1,17 @@
 import Foundation
 import os
 
-/// Handles incoming server messages and dispatches to appropriate callbacks
-@MainActor
-public final class ServerMessageHandler {
-    private let logger = Logger(subsystem: "com.seeleseek", category: "ServerMessageHandler")
-    private weak var client: NetworkClient?
-    private let maxItemCount: UInt32 = 100_000
+/// Maximum element count accepted from list-bearing server messages —
+/// a corrupt or hostile frame must not make us allocate unbounded arrays.
+private let maxItemCount: UInt32 = 100_000
 
-    public init(client: NetworkClient) {
-        self.client = client
-    }
-
-    public func handle(_ data: Data) async {
+// MARK: - Server Message Handling
+//
+// Same-isolation with the rest of the actor by construction: the receive
+// loop awaits each message to completion before reading the next frame,
+// so nothing here interleaves with other client work mid-message.
+extension NetworkClient {
+    func handleServerMessage(_ data: Data) async {
         guard data.count >= 8 else {
             logger.warning("Received message too short: \(data.count) bytes")
             return
@@ -30,11 +29,6 @@ public final class ServerMessageHandler {
         // protocol issues but doesn't flood steady-state logs (fires
         // on every inbound server frame).
         logger.debug("Received message: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
-
-        // Extra logging for distributed network messages
-        if codeValue == 102 || codeValue == 93 || codeValue == 83 || codeValue == 84 || codeValue == 71 {
-            logger.debug("DISTRIBUTED MSG: code=\(codeValue) (\(code?.description ?? "unknown")) length=\(messageLength)")
-        }
 
         guard let code = code else {
             logger.warning("Unknown message code: \(codeValue)")
@@ -199,14 +193,18 @@ public final class ServerMessageHandler {
             logger.info("Login response: success")
             logger.info("Login greeting: \(greeting)")
             logger.info("Server reports our IP: \(ip)")
-            logger.info("Peers will connect to: \(ip):\(self.client?.listenPort ?? 0)")
-            client?.setLoggedIn(true, message: greeting)
-            ActivityLogger.shared?.logConnectionSuccess(username: client?.username ?? "unknown", server: client?.serverHost ?? "unknown")
+            logger.info("Peers will connect to: \(ip):\(self.listenPort)")
+            self.setLoggedIn(true, message: greeting)
+            let currentUsername = username
+            let server = serverHost ?? "unknown"
+            Task { @MainActor in
+                ActivityLogger.shared?.logConnectionSuccess(username: currentUsername, server: server)
+            }
 
         case .failure(let reason):
             logger.error("Login failed: \(reason)")
-            client?.setLoggedIn(false, message: reason)
-            ActivityLogger.shared?.logConnectionFailed(reason: reason)
+            self.setLoggedIn(false, message: reason)
+            Task { @MainActor in ActivityLogger.shared?.logConnectionFailed(reason: reason) }
         }
     }
 
@@ -220,16 +218,17 @@ public final class ServerMessageHandler {
         let ownedPrivate = info.ownedPrivate.map { chatRoom(from: $0, isPrivate: true) }
         let memberPrivate = info.memberPrivate.map { chatRoom(from: $0, isPrivate: true) }
 
-        if let fullHandler = client?.onRoomListFull {
-            fullHandler(publicRooms, ownedPrivate, memberPrivate, info.operatedPrivate)
-        } else {
-            client?.onRoomList?(publicRooms)
-        }
+        self.emit(.roomList(
+            publicRooms: publicRooms,
+            ownedPrivate: ownedPrivate,
+            memberPrivate: memberPrivate,
+            operated: info.operatedPrivate
+        ))
     }
 
     /// ChatRoom only carries a name + users array; we surface user *count* by
     /// seeding empty placeholder strings (the full user list arrives on
-    /// JoinRoom). Matches the previous legacy behaviour.
+    /// JoinRoom).
     private func chatRoom(from entry: MessageParser.RoomListEntry, isPrivate: Bool = false) -> ChatRoom {
         let placeholders = Array(repeating: "", count: Int(entry.userCount))
         return ChatRoom(name: entry.name, users: placeholders, isPrivate: isPrivate)
@@ -240,14 +239,16 @@ public final class ServerMessageHandler {
             logger.warning("Failed to parse JoinRoom")
             return
         }
-        client?.onRoomJoined?(info.roomName, info.users, info.owner, info.operators)
-        ActivityLogger.shared?.logRoomJoined(room: info.roomName, userCount: info.users.count)
+        self.emit(.roomJoined(room: info.roomName, users: info.users, owner: info.owner, operators: info.operators))
+        Task { @MainActor [roomName = info.roomName, userCount = info.users.count] in
+            ActivityLogger.shared?.logRoomJoined(room: roomName, userCount: userCount)
+        }
     }
 
     private func handleLeaveRoom(_ data: Data) {
         guard let (roomName, _) = data.readString(at: 0) else { return }
-        client?.onRoomLeft?(roomName)
-        ActivityLogger.shared?.logRoomLeft(room: roomName)
+        self.emit(.roomLeft(room: roomName))
+        Task { @MainActor in ActivityLogger.shared?.logRoomLeft(room: roomName) }
     }
 
     private func handleSayInRoom(_ data: Data) {
@@ -255,9 +256,9 @@ public final class ServerMessageHandler {
         let chatMessage = ChatMessage(
             username: info.username,
             content: info.message,
-            isOwn: info.username == client?.username
+            isOwn: info.username == self.username
         )
-        client?.onRoomMessage?(info.roomName, chatMessage)
+        self.emit(.roomMessage(room: info.roomName, message: chatMessage))
     }
 
     private func handleUserJoinedRoom(_ data: Data) {
@@ -268,7 +269,7 @@ public final class ServerMessageHandler {
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
-        client?.onUserJoinedRoom?(roomName, username)
+        self.emit(.userJoinedRoom(room: roomName, username: username))
     }
 
     private func handleUserLeftRoom(_ data: Data) {
@@ -279,7 +280,7 @@ public final class ServerMessageHandler {
 
         guard let (username, _) = data.readString(at: offset) else { return }
 
-        client?.onUserLeftRoom?(roomName, username)
+        self.emit(.userLeftRoom(room: roomName, username: username))
     }
 
     private func handlePrivateMessage(_ data: Data) {
@@ -296,15 +297,11 @@ public final class ServerMessageHandler {
             isNewMessage: info.isNewMessage
         )
 
-        client?.onPrivateMessage?(info.username, chatMessage)
+        self.emit(.privateMessage(username: info.username, message: chatMessage))
 
         Task {
-            await acknowledgePrivateMessage(info.id)
+            await acknowledgePrivateMessage(messageId: info.id)
         }
-    }
-
-    private func acknowledgePrivateMessage(_ messageId: UInt32) async {
-        await client?.acknowledgePrivateMessage(messageId: messageId)
     }
 
     private func handleGetUserAddress(_ data: Data) {
@@ -335,17 +332,18 @@ public final class ServerMessageHandler {
         let ipAddress = ipString(from: ip)
 
         // Cache IP for country lookup
-        client?.userInfoCache.registerIP(ipAddress, for: username)
+        Task { @MainActor [cache = userInfoCache] in
+            cache.registerIP(ipAddress, for: username)
+        }
 
-        // Use internal handler that dispatches to both pending requests AND external callback
-        client?.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port), obfuscatedPort: obfuscatedPort)
+        self.handlePeerAddressResponse(username: username, ip: ipAddress, port: Int(port), obfuscatedPort: obfuscatedPort)
     }
 
     private func handleWatchUser(_ data: Data) {
         guard let info = MessageParser.parseWatchUser(data) else { return }
 
         guard info.exists else {
-            client?.handleUserStatusResponse(username: info.username, status: .offline, privileged: nil)
+            self.handleUserStatusResponse(username: info.username, status: .offline, privileged: nil)
             return
         }
 
@@ -357,38 +355,27 @@ public final class ServerMessageHandler {
 
         // WatchUser replies don't carry privileged — nil keeps the
         // last server-reported value instead of fabricating false.
-        // Direct calls: this class is already @MainActor, and a
-        // `Task { @MainActor in }` hop here would allow reordering
-        // against later messages.
-        client?.handleUserStatusResponse(username: info.username, status: status, privileged: nil)
-        client?.dispatchUserStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs)
+        // Direct call: a Task hop here would allow reordering against
+        // later messages.
+        self.handleUserStatusResponse(username: info.username, status: status, privileged: nil)
+        self.emit(.userStats(username: info.username, avgSpeed: avgSpeed, uploadNum: UInt64(uploadNum), files: files, dirs: dirs))
 
         if let country = info.countryCode {
             logger.debug("WatchUser country for \(info.username): \(country)")
             // Seed the geoip cache so the flag lights up immediately instead of
             // round-tripping through an IP → country lookup.
-            client?.userInfoCache.seedCountry(country, for: info.username)
+            Task { @MainActor [cache = userInfoCache, username = info.username] in
+                cache.seedCountry(country, for: username)
+            }
         }
     }
 
     private func handleGetUserStatus(_ data: Data) {
         guard let info = MessageParser.parseGetUserStatus(data) else { return }
         logger.info("User \(info.username) status: \(info.status.description), privileged: \(info.privileged)")
-        // Direct call — already on @MainActor; a Task hop would allow reordering.
-        client?.handleUserStatusResponse(username: info.username, status: info.status, privileged: info.privileged)
+        // Direct call — a Task hop would allow reordering.
+        self.handleUserStatusResponse(username: info.username, status: info.status, privileged: info.privileged)
     }
-
-    // Track pending connections to avoid duplicates
-    private var pendingConnections: Set<String> = []
-    private var connectToPeerCount = 0
-    private var droppedConnectToPeerCount = 0
-    private var hasWarnedAboutListener = false
-
-    // Rate limiting for outbound connections
-    private var lastConnectionAttempt = Date.distantPast
-    private let connectionRateLimit: TimeInterval = 0.05  // Max 20 connections per second
-    private var connectionQueue: [(username: String, type: String, ip: String, port: UInt32, token: UInt32)] = []
-    private var isProcessingQueue = false
 
     private func handleConnectToPeer(_ data: Data) {
         guard let info = MessageParser.parseConnectToPeer(data) else { return }
@@ -399,18 +386,20 @@ public final class ServerMessageHandler {
         let token = info.token
         let connectionType = info.connectionType
 
-        connectToPeerCount += 1
+        serverConnectToPeerCount += 1
 
         // Update the pool's counter for diagnostics UI
-        client?.peerConnectionPool.incrementConnectToPeerCount()
+        Task { [pool = peerConnectionPool] in
+            await pool.incrementConnectToPeerCount()
+        }
 
         // Log sparingly to reduce noise
-        if connectToPeerCount <= 5 || connectToPeerCount % 100 == 0 {
-            logger.info("ConnectToPeer #\(self.connectToPeerCount): \(username) type=\(connectionType)")
+        if serverConnectToPeerCount <= 5 || serverConnectToPeerCount % 100 == 0 {
+            logger.info("ConnectToPeer #\(self.serverConnectToPeerCount): \(username) type=\(connectionType)")
         }
 
         // If we're getting tons of ConnectToPeer, our listener isn't reachable
-        if connectToPeerCount == 100 && !hasWarnedAboutListener {
+        if serverConnectToPeerCount == 100 && !hasWarnedAboutListener {
             hasWarnedAboutListener = true
             logger.warning("Received 100+ ConnectToPeer requests - your listen port may not be reachable!")
         }
@@ -446,55 +435,59 @@ public final class ServerMessageHandler {
         isProcessingQueue = true
 
         Task { [weak self] in
-            guard let self else { return }
-            while !self.connectionQueue.isEmpty {
-                // Rate limit: wait if we connected too recently
-                let timeSinceLastConnection = Date().timeIntervalSince(self.lastConnectionAttempt)
-                if timeSinceLastConnection < self.connectionRateLimit {
-                    let waitTime = self.connectionRateLimit - timeSinceLastConnection
-                    try? await Task.sleep(for: .milliseconds(Int(waitTime * 1000)))
-                }
-
-                guard !self.connectionQueue.isEmpty else { break }
-
-                let next = self.connectionQueue.removeFirst()
-                self.lastConnectionAttempt = Date()
-
-                let connectionKey = "\(next.username)-\(next.token)"
-                if self.pendingConnections.contains(connectionKey) {
-                    continue
-                }
-                self.pendingConnections.insert(connectionKey)
-
-                // Fire-and-forget: dispatch each throttled connect to its
-                // own Task so one stuck `pool.connect` (e.g. NWConnection
-                // sitting in `.preparing` against a half-dead peer)
-                // can't block the entire queue. Each connect attempt's
-                // 10s `withTimeout` still bounds its own runtime; the
-                // queue stays responsive regardless.
-                Task { [weak self] in
-                    guard let self else { return }
-                    await self.connectToPeerThrottled(
-                        username: next.username,
-                        connectionType: next.type,
-                        ip: next.ip,
-                        port: next.port,
-                        token: next.token
-                    )
-                    self.pendingConnections.remove(connectionKey)
-                }
-            }
-            self.isProcessingQueue = false
+            await self?.drainConnectionQueue()
         }
+    }
+
+    private func drainConnectionQueue() async {
+        while !connectionQueue.isEmpty {
+            // Rate limit: wait if we connected too recently
+            let timeSinceLastConnection = Date().timeIntervalSince(lastConnectionAttempt)
+            if timeSinceLastConnection < connectionRateLimit {
+                let waitTime = connectionRateLimit - timeSinceLastConnection
+                try? await Task.sleep(for: .milliseconds(Int(waitTime * 1000)))
+            }
+
+            guard !connectionQueue.isEmpty else { break }
+
+            let next = connectionQueue.removeFirst()
+            lastConnectionAttempt = Date()
+
+            let connectionKey = "\(next.username)-\(next.token)"
+            if pendingConnections.contains(connectionKey) {
+                continue
+            }
+            pendingConnections.insert(connectionKey)
+
+            // Fire-and-forget: dispatch each throttled connect to its
+            // own Task so one stuck `pool.connect` (e.g. NWConnection
+            // sitting in `.preparing` against a half-dead peer)
+            // can't block the entire queue. Each connect attempt's
+            // 10s `withTimeout` still bounds its own runtime; the
+            // queue stays responsive regardless.
+            Task { [weak self] in
+                guard let self else { return }
+                await self.connectToPeerThrottled(
+                    username: next.username,
+                    connectionType: next.type,
+                    ip: next.ip,
+                    port: next.port,
+                    token: next.token
+                )
+                await self.clearPendingConnection(connectionKey)
+            }
+        }
+        isProcessingQueue = false
+    }
+
+    private func clearPendingConnection(_ key: String) {
+        pendingConnections.remove(key)
     }
 
     private func connectToPeerThrottled(username: String, connectionType: String, ip: String, port: UInt32, token: UInt32) async {
         logger.debug("connectToPeerThrottled START: \(username) at \(ip):\(port)")
         do {
-            guard let pool = client?.peerConnectionPool else {
-                logger.error("connectToPeerThrottled: pool is nil")
-                return
-            }
+            let pool = self.peerConnectionPool
 
             // For ConnectToPeer responses, use isIndirect=true to skip PeerInit
             // We'll send PierceFirewall instead (correct protocol for indirect connections)
@@ -523,7 +516,7 @@ public final class ServerMessageHandler {
                 // The uploader will now send the raw 4-byte FileTransferInit
                 // token, so remove the socket from the framed peer pool and
                 // hand it to DownloadManager before any bytes are consumed.
-                pool.handoffOutgoingFileTransfer(
+                await pool.handoffOutgoingFileTransfer(
                     username: username,
                     token: token,
                     connection: connection
@@ -533,463 +526,8 @@ public final class ServerMessageHandler {
 
         } catch {
             logger.error("connectToPeerThrottled FAILED: \(username) - \(error)")
-            await client?.sendCantConnectToPeer(token: token, username: username)
+            await self.sendCantConnectToPeer(token: token, username: username)
         }
-    }
-
-    // MARK: - Distributed Network Handlers
-
-    private func handlePossibleParents(_ data: Data) {
-        guard let parsed = MessageParser.parsePossibleParents(data) else { return }
-
-        logger.info("Received \(parsed.count) possible distributed parents")
-
-        let parents: [(username: String, ip: String, port: Int)] = parsed.enumerated().map { i, p in
-            logger.debug("Parent \(i+1): \(p.username) at \(p.ip):\(p.port)")
-            return (username: p.username, ip: p.ip, port: Int(p.port))
-        }
-
-        // Skip if we already have a parent
-        if distributedParentConnection != nil {
-            logger.debug("Already have a distributed parent, ignoring PossibleParents")
-            return
-        }
-
-        // Adoption runs in a task that can take up to 15s (3 × 5s connects);
-        // a second PossibleParents in that window must not start a second
-        // adoption loop (duplicate parents, inconsistent branch reports).
-        if isConnectingToParent {
-            logger.debug("Parent adoption already in progress, ignoring PossibleParents")
-            return
-        }
-        isConnectingToParent = true
-
-        // Try to connect to first few parents until one succeeds (limit to avoid resource exhaustion)
-        Task {
-            defer { isConnectingToParent = false }
-            let maxAttempts = min(3, parents.count)
-            for i in 0..<maxAttempts {
-                let parent = parents[i]
-                let success = await connectToDistributedParent(
-                    username: parent.username,
-                    ip: parent.ip,
-                    port: parent.port
-                )
-                if success {
-                    logger.info("Successfully connected to distributed parent \(parent.username)")
-                    break
-                }
-            }
-        }
-    }
-
-    private var distributedParentConnection: PeerConnection?
-    private var isConnectingToParent = false
-
-    /// Disconnect and drop the distributed-parent socket. Called from
-    /// `NetworkClient.performDisconnect` so a reconnect doesn't inherit
-    /// a live parent from the previous session — the old socket would
-    /// otherwise keep feeding distributed search traffic into the new
-    /// message handler (and would outlive the server connection that
-    /// introduced it).
-    public func tearDownDistributedParent() async {
-        if let parent = distributedParentConnection {
-            distributedParentConnection = nil
-            await parent.disconnect()
-        }
-    }
-
-    private func connectToDistributedParent(username: String, ip: String, port: Int) async -> Bool {
-        logger.info("Connecting to distributed parent: \(username) at \(ip):\(port)")
-
-        let token = UInt32.random(in: 0...UInt32.max)
-
-        // Connect with "D" type for distributed network
-        let peerInfo = PeerConnection.PeerInfo(username: username, ip: ip, port: port)
-        let connection = PeerConnection(peerInfo: peerInfo, type: .distributed, token: token)
-
-        do {
-            // Use shorter timeout to free resources faster
-            try await withTimeout(seconds: 5) {
-                try await connection.connect()
-            }
-
-            // Send PeerInit with "D" type
-            if let myUsername = client?.username {
-                try await connection.sendPeerInit(username: myUsername)
-            }
-
-            logger.info("Connected to distributed parent: \(username)")
-
-            // Store the new parent BEFORE disconnecting the old one so the
-            // old parent's stream-end loss handler sees it was replaced and
-            // doesn't trigger a spurious distributed-network reset.
-            let oldParent = distributedParentConnection
-            distributedParentConnection = connection
-            if let oldParent {
-                logger.info("Disconnecting old distributed parent")
-                await oldParent.disconnect()
-            }
-
-            // Consume distributed messages from the connection's event stream
-            let parentUsername = username
-            Task { [weak self] in
-                for await event in connection.events {
-                    guard let self else { return }
-                    if case .message(let code, let payload) = event {
-                        await self.handleDistributedMessage(code: code, payload: payload, parentUsername: parentUsername)
-                    }
-                }
-                // Stream ended: the parent dropped us (or we tore it down).
-                await self?.handleDistributedParentLoss(connection)
-            }
-
-            // Tell server we have a parent now
-            do {
-                try await client?.sendHaveNoParent(false)
-            } catch {
-                logger.error("Failed to send HaveNoParent(false): \(error.localizedDescription)")
-            }
-
-            return true
-        } catch {
-            logger.error("Failed to connect to distributed parent \(username): \(error.localizedDescription)")
-            // Explicitly disconnect to free resources
-            await connection.disconnect()
-            return false
-        }
-    }
-
-    /// Called when a distributed parent's event stream ends. Without this
-    /// the stale `distributedParentConnection` blocks all future parent
-    /// offers and the client silently leaves the distributed network (our
-    /// shares stop appearing in other users' searches) until reconnect.
-    private func handleDistributedParentLoss(_ connection: PeerConnection) async {
-        // A newer parent may already have replaced this one, and teardown
-        // paths (tearDownDistributedParent) clear the reference themselves.
-        guard distributedParentConnection === connection else { return }
-        distributedParentConnection = nil
-        logger.warning("Distributed parent disconnected; requesting a new parent")
-        await client?.resetDistributedNetwork()
-    }
-
-    private func handleDistributedMessage(code: UInt32, payload: Data, parentUsername: String = "") async {
-        // No per-message log here: this fires 5-50x/sec in steady state.
-
-        // Distributed messages use the same codes as DistributedMessageCode
-        switch code {
-        case UInt32(DistributedMessageCode.branchLevel.rawValue):
-            // uint32 branch level from parent
-            if let parentLevel = payload.readUInt32(at: 0) {
-                let ourLevel = parentLevel + 1
-                logger.info("Parent branch level: \(parentLevel), our level: \(ourLevel)")
-
-                // Report our level to server and propagate to children
-                Task {
-                    try? await client?.setDistributedBranchLevel(ourLevel)
-
-                    // If parent is level 0, they ARE the branch root
-                    if parentLevel == 0 {
-                        logger.info("Parent is branch root: \(parentUsername)")
-                        try? await client?.setDistributedBranchRoot(parentUsername)
-
-                        // Propagate to children
-                        await sendBranchInfoToChildren(level: ourLevel, root: parentUsername)
-                    }
-                }
-            }
-
-        case UInt32(DistributedMessageCode.branchRoot.rawValue):
-            // string branch root username from parent
-            if let (rootUsername, _) = payload.readString(at: 0) {
-                logger.info("Branch root: \(rootUsername)")
-
-                // Report to server and propagate to children
-                Task {
-                    try? await client?.setDistributedBranchRoot(rootUsername)
-
-                    let ourLevel = client?.distributedBranchLevel ?? 0
-                    await sendBranchInfoToChildren(level: ourLevel, root: rootUsername)
-                }
-            }
-
-        case UInt32(DistributedMessageCode.searchRequest.rawValue):
-            // This is a search request from the distributed network
-            handleDistributedSearch(payload)
-
-        case UInt32(DistributedMessageCode.childDepth.rawValue):
-            logger.debug("Distributed child depth update received")
-
-        case UInt32(DistributedMessageCode.embeddedMessage.rawValue):
-            handleEmbeddedMessage(payload)
-
-        default:
-            logger.warning("Unknown distributed message code: \(code)")
-        }
-    }
-
-    private func sendBranchInfoToChildren(level: UInt32, root: String) async {
-        guard let children = client?.distributedChildren, !children.isEmpty else { return }
-
-        // Build DistribBranchLevel message: [length][uint8 code=4][uint32 level]
-        var levelPayload = Data()
-        levelPayload.appendUInt8(DistributedMessageCode.branchLevel.rawValue)
-        levelPayload.appendUInt32(level)
-        var levelMessage = Data()
-        levelMessage.appendUInt32(UInt32(levelPayload.count))
-        levelMessage.append(levelPayload)
-
-        // Build DistribBranchRoot message: [length][uint8 code=5][string root]
-        var rootPayload = Data()
-        rootPayload.appendUInt8(DistributedMessageCode.branchRoot.rawValue)
-        rootPayload.appendString(root)
-        var rootMessage = Data()
-        rootMessage.appendUInt32(UInt32(rootPayload.count))
-        rootMessage.append(rootPayload)
-
-        for child in children {
-            do {
-                try await child.send(levelMessage)
-                try await child.send(rootMessage)
-            } catch {
-                logger.error("Failed to send branch info to child: \(error.localizedDescription)")
-            }
-        }
-
-        logger.info("Propagated branch info (level=\(level), root=\(root)) to \(children.count) children")
-    }
-
-    private func handleEmbeddedMessage(_ data: Data) {
-        // Server sends us an embedded distributed message (when we're a branch root)
-        // Format: uint8 distrib_code + message payload
-        guard let distribCode = data.readByte(at: 0) else { return }
-
-        let payload = data.safeSubdata(in: 1..<data.count) ?? Data()
-
-        if distribCode == DistributedMessageCode.searchRequest.rawValue {
-            // This is a distributed search - we should check our files and respond
-            handleDistributedSearch(payload)
-        }
-    }
-
-    private func handleDistributedSearch(_ data: Data) {
-        guard let info = MessageParser.parseDistributedSearch(data) else { return }
-        let unknown = info.unknown
-        let username = info.username
-        let token = info.token
-        let query = info.query
-
-        // Forward to children
-        Task {
-            await client?.forwardDistributedSearch(unknown: unknown, username: username, token: token, query: query)
-        }
-
-        // Don't respond to our own searches
-        guard username != client?.username else { return }
-
-        // Apply search response filters
-        let filter = client?.searchResponseFilter?() ?? (enabled: true, minQueryLength: 3, maxResults: 50)
-
-        guard filter.enabled else {
-            return
-        }
-
-        // Filter short queries (they match too broadly and waste bandwidth)
-        let trimmedQuery = query.trimmingCharacters(in: .whitespaces)
-        guard trimmedQuery.count >= filter.minQueryLength else {
-            return
-        }
-
-        // Search our shared files. The search itself hops off the main
-        // actor (see ShareManager.search), so the remaining work after
-        // the scan can stay on whatever actor this handler already runs
-        // on — we just need a Task boundary to await the async call.
-        guard let client else {
-            logger.debug("No client available for distributed search")
-            return
-        }
-        let shareManager = client.shareManager
-        let maxResults = filter.maxResults
-        // Resolve buddy status once, here on MainActor, before the
-        // detached search scan. Passing the bool in keeps ShareManager
-        // decoupled from SocialState.
-        let isBuddy = client.isBuddyChecker?(username) ?? false
-
-        Task {
-            var matchingFiles = await shareManager.search(query: query, includeBuddyOnly: isBuddy)
-            guard !matchingFiles.isEmpty else { return }
-
-            if maxResults > 0 && matchingFiles.count > maxResults {
-                matchingFiles = Array(matchingFiles.prefix(maxResults))
-            }
-
-            logger.debug("Distributed search '\(query)' from \(username) (buddy=\(isBuddy)): \(matchingFiles.count) matches")
-            ActivityLogger.shared?.logDistributedSearch(query: query, matchCount: matchingFiles.count)
-
-            await sendDistributedSearchResponse(
-                to: username,
-                token: token,
-                files: matchingFiles
-            )
-        }
-    }
-
-    private func sendDistributedSearchResponse(
-        to username: String,
-        token: UInt32,
-        files: [ShareManager.IndexedFile]
-    ) async {
-        guard let client else { return }
-
-        // Build results once (shared by direct and indirect paths).
-        // Split by visibility so buddy-only matches land in the
-        // protocol's "privately shared results" section — the receiver
-        // uses that split to decorate them as private on their side.
-        typealias SearchResultTuple = (filename: String, size: UInt64, extension_: String, attributes: [(UInt32, UInt32)])
-        func toTuple(_ file: ShareManager.IndexedFile) -> SearchResultTuple {
-            var attributes: [(UInt32, UInt32)] = []
-            if let bitrate = file.bitrate { attributes.append((0, bitrate)) }
-            if let duration = file.duration { attributes.append((1, duration)) }
-            return (
-                filename: file.sharedPath,
-                size: file.size,
-                extension_: file.fileExtension,
-                attributes: attributes
-            )
-        }
-        let publicResults: [SearchResultTuple] = files.filter { $0.visibility == .public }.map(toTuple)
-        let privateResults: [SearchResultTuple] = files.filter { $0.visibility == .buddies }.map(toTuple)
-
-        // Race direct and indirect connections simultaneously for faster delivery
-        let indirectToken = UInt32.random(in: 0...UInt32.max)
-
-        // Register pending indirect BEFORE starting anything (to catch early PierceFirewall)
-        client.registerPendingBrowse(token: indirectToken, username: username, timeout: 15)
-        await client.sendConnectToPeer(token: indirectToken, username: username, connectionType: "P")
-
-        // Tolerate individual path failures: a fast direct refusal must not
-        // kill the still-viable indirect (PierceFirewall) path — rethrowing
-        // the first child's error + cancelAll did exactly that, so search
-        // results were never delivered to firewalled peers. Each child
-        // reports its own outcome; we only give up when both paths failed
-        // or the overall deadline passes.
-        let connection: PeerConnection? = await withTaskGroup(of: SearchDeliveryOutcome.self) { group in
-            // Direct path: get address + connect
-            group.addTask {
-                do {
-                    let address = try await client.getPeerAddress(for: username, timeout: .seconds(5))
-                    let connectionToken = UInt32.random(in: 0...UInt32.max)
-                    let useObf = address.obfuscatedPort > 0
-                    let conn = try await client.peerConnectionPool.connect(
-                        to: username,
-                        ip: address.ip,
-                        port: useObf ? address.obfuscatedPort : address.port,
-                        token: connectionToken,
-                        obfuscated: useObf
-                    )
-                    // Direct PeerInit is one-way — never wait for a
-                    // reciprocal (most clients don't send one).
-                    return .connected(conn)
-                } catch {
-                    return .pathFailed
-                }
-            }
-
-            // Indirect path: wait for PierceFirewall
-            group.addTask {
-                do {
-                    let conn = try await client.waitForPendingBrowse(token: indirectToken)
-                    await conn.resumeReceivingForPeerConnection()
-                    // PierceFirewall IS the handshake for indirect connections -- do NOT send PeerInit
-                    return .connected(conn)
-                } catch {
-                    return .pathFailed
-                }
-            }
-
-            // Overall deadline: give up after 12s
-            group.addTask {
-                try? await Task.sleep(for: .seconds(12))
-                return .deadline
-            }
-
-            var failedPaths = 0
-            for await outcome in group {
-                switch outcome {
-                case .connected(let conn):
-                    group.cancelAll()
-                    return conn
-                case .deadline:
-                    group.cancelAll()
-                    return nil
-                case .pathFailed:
-                    failedPaths += 1
-                    if failedPaths == 2 {
-                        // Both real paths failed — no point waiting out
-                        // the deadline child.
-                        group.cancelAll()
-                        return nil
-                    }
-                }
-            }
-            return nil
-        }
-
-        // Always clear the indirect registration — on success (the direct
-        // path may have won) and on failure alike.
-        client.cancelPendingBrowse(token: indirectToken)
-
-        guard let connection else {
-            logger.debug("Search result delivery to \(username) failed: direct + indirect both failed or timed out")
-            return
-        }
-
-        do {
-            try await connection.sendSearchReply(
-                username: client.username,
-                token: token,
-                results: publicResults,
-                privateResults: privateResults
-            )
-            logger.debug("Sent \(publicResults.count) public + \(privateResults.count) private search results to \(username) for token \(token)")
-        } catch {
-            logger.debug("Search result delivery to \(username) failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Outcome of one leg of the direct/indirect race in
-    /// `sendDistributedSearchResponse`.
-    private enum SearchDeliveryOutcome: Sendable {
-        case connected(PeerConnection)
-        case pathFailed
-        case deadline
-    }
-
-    private func handleResetDistributed() {
-        logger.info("Server requested distributed network reset")
-
-        // Disconnect from current distributed parent
-        if let parentConnection = distributedParentConnection {
-            Task {
-                await parentConnection.disconnect()
-            }
-            distributedParentConnection = nil
-        }
-
-        // Reset distributed state on client and re-register with server
-        Task {
-            await client?.resetDistributedNetwork()
-        }
-    }
-
-    private func handleParentMinSpeed(_ data: Data) {
-        guard let speed = data.readUInt32(at: 0) else { return }
-        logger.debug("Parent minimum speed: \(speed)")
-    }
-
-    private func handleParentSpeedRatio(_ data: Data) {
-        guard let ratio = data.readUInt32(at: 0) else { return }
-        logger.debug("Parent speed ratio: \(ratio)")
     }
 
     // MARK: - Excluded Search Phrases
@@ -997,7 +535,7 @@ public final class ServerMessageHandler {
     private func handleExcludedSearchPhrases(_ data: Data) {
         guard let phrases = MessageParser.parseExcludedSearchPhrases(data) else { return }
         logger.info("Received \(phrases.count) excluded search phrases")
-        client?.onExcludedSearchPhrases?(phrases)
+        self.emit(.excludedPhrases(phrases))
     }
 
     // MARK: - Room Membership & Invitations
@@ -1005,25 +543,25 @@ public final class ServerMessageHandler {
     private func handleRoomMembershipGranted(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
         logger.info("Room membership granted: \(room)")
-        client?.onRoomMembershipGranted?(room)
+        self.emit(.roomMembershipGranted(room: room))
     }
 
     private func handleRoomMembershipRevoked(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
         logger.info("Room membership revoked: \(room)")
-        client?.onRoomMembershipRevoked?(room)
+        self.emit(.roomMembershipRevoked(room: room))
     }
 
     private func handleEnableRoomInvitations(_ data: Data) {
         guard let enabled = data.readBool(at: 0) else { return }
         logger.info("Room invitations enabled: \(enabled)")
-        client?.onRoomInvitationsEnabled?(enabled)
+        self.emit(.roomInvitationsEnabled(enabled))
     }
 
     private func handleNewPassword(_ data: Data) {
         guard let (password, _) = data.readString(at: 0) else { return }
         logger.info("Password changed confirmation received")
-        client?.onPasswordChanged?(password)
+        self.emit(.passwordChanged(password))
     }
 
     // MARK: - Global Room Messages
@@ -1040,7 +578,7 @@ public final class ServerMessageHandler {
         guard let (message, _) = data.readString(at: offset) else { return }
 
         logger.info("Global room message in \(room) from \(username): \(message)")
-        client?.onGlobalRoomMessage?(room, username, message)
+        self.emit(.globalRoomMessage(room: room, username: username, message: message))
     }
 
     // MARK: - User Interests & Recommendations
@@ -1050,7 +588,7 @@ public final class ServerMessageHandler {
         let recommendations = info.recommendations.map { (item: $0.item, score: $0.score) }
         let unrecommendations = info.unrecommendations.map { (item: $0.item, score: $0.score) }
         logger.info("Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
-        client?.onRecommendations?(recommendations, unrecommendations)
+        self.emit(.recommendations(recommendations: recommendations, unrecommendations: unrecommendations))
     }
 
     private func handleGlobalRecommendations(_ data: Data) {
@@ -1058,20 +596,20 @@ public final class ServerMessageHandler {
         let recommendations = info.recommendations.map { (item: $0.item, score: $0.score) }
         let unrecommendations = info.unrecommendations.map { (item: $0.item, score: $0.score) }
         logger.info("Global Recommendations: \(recommendations.count), Unrecommendations: \(unrecommendations.count)")
-        client?.onGlobalRecommendations?(recommendations, unrecommendations)
+        self.emit(.globalRecommendations(recommendations: recommendations, unrecommendations: unrecommendations))
     }
 
     private func handleUserInterests(_ data: Data) {
         guard let info = MessageParser.parseUserInterests(data) else { return }
         logger.info("User \(info.username) interests - likes: \(info.likes.count), hates: \(info.hates.count)")
-        client?.onUserInterests?(info.username, info.likes, info.hates)
+        self.emit(.userInterests(username: info.username, likes: info.likes, hates: info.hates))
     }
 
     private func handleSimilarUsers(_ data: Data) {
         guard let parsed = MessageParser.parseSimilarUsers(data) else { return }
         let users = parsed.map { (username: $0.username, rating: $0.rating) }
         logger.info("Similar users: \(users.count)")
-        client?.onSimilarUsers?(users)
+        self.emit(.similarUsers(users))
     }
 
     private func handleItemRecommendations(_ data: Data) {
@@ -1094,7 +632,7 @@ public final class ServerMessageHandler {
         }
 
         logger.info("Item recommendations for '\(item)': \(recommendations.count)")
-        client?.onItemRecommendations?(item, recommendations)
+        self.emit(.itemRecommendations(item: item, recommendations: recommendations))
     }
 
     private func handleItemSimilarUsers(_ data: Data) {
@@ -1115,7 +653,7 @@ public final class ServerMessageHandler {
         }
 
         logger.info("Similar users for '\(item)': \(users.count)")
-        client?.onItemSimilarUsers?(item, users)
+        self.emit(.itemSimilarUsers(item: item, users: users))
     }
 
     // MARK: - User Stats & Privileges
@@ -1123,13 +661,13 @@ public final class ServerMessageHandler {
     private func handleGetUserStats(_ data: Data) {
         guard let info = MessageParser.parseGetUserStats(data) else { return }
         logger.info("User stats for \(info.username): speed=\(info.avgSpeed), uploads=\(info.uploadNum), files=\(info.files), dirs=\(info.dirs)")
-        client?.dispatchUserStats(username: info.username, avgSpeed: info.avgSpeed, uploadNum: UInt64(info.uploadNum), files: info.files, dirs: info.dirs)
+        self.emit(.userStats(username: info.username, avgSpeed: info.avgSpeed, uploadNum: UInt64(info.uploadNum), files: info.files, dirs: info.dirs))
     }
 
     private func handleCheckPrivileges(_ data: Data) {
         guard let timeLeft = data.readUInt32(at: 0) else { return }
         logger.info("Privileges time remaining: \(timeLeft) seconds")
-        client?.onPrivilegesChecked?(timeLeft)
+        self.emit(.privilegesChecked(secondsLeft: timeLeft))
     }
 
     private func handleUserPrivileges(_ data: Data) {
@@ -1141,7 +679,7 @@ public final class ServerMessageHandler {
         guard let privileged = data.readBool(at: offset) else { return }
 
         logger.info("User \(username) privileged: \(privileged)")
-        client?.onUserPrivileges?(username, privileged)
+        self.emit(.userPrivileges(username: username, privileged: privileged))
     }
 
     private func handlePrivilegedUsers(_ data: Data) {
@@ -1159,7 +697,7 @@ public final class ServerMessageHandler {
         }
 
         logger.info("Privileged users: \(users.count)")
-        client?.onPrivilegedUsers?(users)
+        self.emit(.privilegedUsers(users))
     }
 
     // MARK: - Room Tickers
@@ -1168,7 +706,7 @@ public final class ServerMessageHandler {
         guard let info = MessageParser.parseRoomTickerState(data) else { return }
         let tickers = info.tickers.map { (username: $0.username, ticker: $0.ticker) }
         logger.info("Room ticker state for \(info.room): \(tickers.count) tickers")
-        client?.onRoomTickerState?(info.room, tickers)
+        self.emit(.roomTickerState(room: info.room, tickers: tickers))
     }
 
     private func handleRoomTickerAdd(_ data: Data) {
@@ -1183,7 +721,7 @@ public final class ServerMessageHandler {
         guard let (ticker, _) = data.readString(at: offset) else { return }
 
         logger.info("Room ticker added in \(room): \(username) = '\(ticker)'")
-        client?.onRoomTickerAdd?(room, username, ticker)
+        self.emit(.roomTickerAdd(room: room, username: username, ticker: ticker))
     }
 
     private func handleRoomTickerRemove(_ data: Data) {
@@ -1195,7 +733,7 @@ public final class ServerMessageHandler {
         guard let (username, _) = data.readString(at: offset) else { return }
 
         logger.info("Room ticker removed in \(room): \(username)")
-        client?.onRoomTickerRemove?(room, username)
+        self.emit(.roomTickerRemove(room: room, username: username))
     }
 
     // MARK: - Wishlist
@@ -1203,7 +741,7 @@ public final class ServerMessageHandler {
     private func handleWishlistInterval(_ data: Data) {
         guard let interval = data.readUInt32(at: 0) else { return }
         logger.info("Wishlist interval: \(interval) seconds")
-        client?.onWishlistInterval?(interval)
+        self.emit(.wishlistInterval(seconds: interval))
     }
 
     // MARK: - Private Rooms
@@ -1211,7 +749,7 @@ public final class ServerMessageHandler {
     private func handlePrivateRoomMembers(_ data: Data) {
         guard let info = MessageParser.parseRoomMembers(data) else { return }
         logger.info("Private room \(info.room) members: \(info.members.count)")
-        client?.onPrivateRoomMembers?(info.room, info.members)
+        self.emit(.privateRoomMembers(room: info.room, members: info.members))
     }
 
     private func handlePrivateRoomAddMember(_ data: Data) {
@@ -1223,7 +761,7 @@ public final class ServerMessageHandler {
         guard let (username, _) = data.readString(at: offset) else { return }
 
         logger.info("Private room \(room) member added: \(username)")
-        client?.onPrivateRoomMemberAdded?(room, username)
+        self.emit(.privateRoomMemberAdded(room: room, username: username))
     }
 
     private func handlePrivateRoomRemoveMember(_ data: Data) {
@@ -1235,25 +773,25 @@ public final class ServerMessageHandler {
         guard let (username, _) = data.readString(at: offset) else { return }
 
         logger.info("Private room \(room) member removed: \(username)")
-        client?.onPrivateRoomMemberRemoved?(room, username)
+        self.emit(.privateRoomMemberRemoved(room: room, username: username))
     }
 
     private func handlePrivateRoomOperatorGranted(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
         logger.info("Granted operator in room: \(room)")
-        client?.onPrivateRoomOperatorGranted?(room)
+        self.emit(.privateRoomOperatorGranted(room: room))
     }
 
     private func handlePrivateRoomOperatorRevoked(_ data: Data) {
         guard let (room, _) = data.readString(at: 0) else { return }
         logger.info("Revoked operator in room: \(room)")
-        client?.onPrivateRoomOperatorRevoked?(room)
+        self.emit(.privateRoomOperatorRevoked(room: room))
     }
 
     private func handlePrivateRoomOperators(_ data: Data) {
         guard let info = MessageParser.parseRoomMembers(data) else { return }
         logger.info("Private room \(info.room) operators: \(info.members.count)")
-        client?.onPrivateRoomOperators?(info.room, info.members)
+        self.emit(.privateRoomOperators(room: info.room, operators: info.members))
     }
 
     private func handleCantConnectToPeer(_ data: Data) {
@@ -1265,37 +803,28 @@ public final class ServerMessageHandler {
         }
 
         logger.warning("CantConnectToPeer token=\(token) — peer couldn't reach our listen port")
-        // Fail the pending browse directly — fast-failing in-flight
-        // operations must not depend on an app-layer round-trip through
-        // the single-closure callback below (unconfigured or overwritten,
-        // every failed indirect connection would wait out the full
-        // registration timeout). `failPendingBrowse` is idempotent, so
-        // the app callback calling it again is harmless.
-        client?.failPendingBrowse(token: token, reason: "peer could not connect to us (CantConnectToPeer)")
-        client?.onCantConnectToPeer?(token)
+        // Fail the pending browse directly (idempotent) — waiting out the
+        // full registration timeout instead would hang every failed
+        // indirect connection.
+        self.failPendingBrowse(token: token, reason: "peer could not connect to us (CantConnectToPeer)")
+        self.emit(.cantConnectToPeer(token: token))
     }
 
     private func handleAdminMessage(_ data: Data) {
-        // Server Code 66 - Global/Admin Message
-        // A global message from the server admin has arrived
-        let offset = 0
-        guard let (message, _) = data.readString(at: offset) else {
+        guard let (message, _) = data.readString(at: 0) else {
             logger.warning("Failed to parse AdminMessage")
             return
         }
-
         logger.info("Admin message from server: \(message)")
-
-        // Notify the client about the admin message
-        client?.onAdminMessage?(message)
+        self.emit(.adminMessage(message))
     }
 
     // MARK: - Relogged
 
     private func handleRelogged() {
         logger.warning("Relogged: kicked from server because another client logged in with the same credentials")
-        ActivityLogger.shared?.logRelogged()
-        client?.handleReloggedDisconnect()
+        Task { @MainActor in ActivityLogger.shared?.logRelogged() }
+        self.handleReloggedDisconnect()
     }
 
     // MARK: - Can't Create Room
@@ -1303,7 +832,7 @@ public final class ServerMessageHandler {
     private func handleCantCreateRoom(_ data: Data) {
         guard let (roomName, _) = data.readString(at: 0) else { return }
         logger.warning("Can't create room: \(roomName)")
-        client?.onCantCreateRoom?(roomName)
+        self.emit(.cantCreateRoom(room: roomName))
     }
 
     private func handleRoomAdded(_ data: Data) {
@@ -1312,7 +841,7 @@ public final class ServerMessageHandler {
             return
         }
         logger.info("Room added: \(roomName)")
-        client?.onRoomAdded?(roomName)
+        self.emit(.roomAdded(room: roomName))
     }
 
     private func handleRoomRemoved(_ data: Data) {
@@ -1321,7 +850,7 @@ public final class ServerMessageHandler {
             return
         }
         logger.info("Room removed: \(roomName)")
-        client?.onRoomRemoved?(roomName)
+        self.emit(.roomRemoved(room: roomName))
     }
 
     private func handleProtocolNotice(code: UInt32, payload: Data) {
@@ -1329,7 +858,7 @@ public final class ServerMessageHandler {
         // Keeps parity explicit and provides a single callback surface for future feature wiring.
         let preview = payload.prefix(32).map { String(format: "%02x", $0) }.joined(separator: " ")
         logger.info("Protocol notice: code=\(code) payload=\(payload.count) bytes preview=\(preview)")
-        client?.onProtocolNotice?(code, payload)
+        self.emit(.protocolNotice(code: code, payload: payload))
     }
 
     // MARK: - Helpers

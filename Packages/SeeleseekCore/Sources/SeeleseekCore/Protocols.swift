@@ -62,7 +62,7 @@ public protocol TransferTracking: AnyObject, Sendable {
     var uploads: [Transfer] { get }
     func addDownload(_ transfer: Transfer)
     func addUpload(_ transfer: Transfer)
-    func updateTransfer(id: UUID, update: (inout Transfer) -> Void)
+    func updateTransfer(id: UUID, update: @Sendable (inout Transfer) -> Void)
     func getTransfer(id: UUID) -> Transfer?
     /// Indexed lookup for the salvage path in `DownloadManager`: returns the
     /// download (if any) for `(username, filename)` whose status is still
@@ -90,6 +90,40 @@ public protocol DownloadSettingsProviding: AnyObject, Sendable {
     var activeDownloadTemplate: String { get }
     var incompleteDownloadDirectory: URL { get }
     var setFolderIcons: Bool { get }
+}
+
+/// Value snapshot of the download-relevant settings, pushed into the
+/// `DownloadManager` actor whenever the app-side settings change — the
+/// manager's path computations stay synchronous (the folder-claim logic
+/// in `placeInFolder` must not suspend) instead of pulling from the
+/// MainActor provider per call.
+public struct DownloadSettingsSnapshot: Sendable, Equatable {
+    public var downloadLocation: URL
+    public var activeDownloadTemplate: String
+    public var incompleteDownloadDirectory: URL
+    public var setFolderIcons: Bool
+
+    public init(
+        downloadLocation: URL,
+        activeDownloadTemplate: String,
+        incompleteDownloadDirectory: URL,
+        setFolderIcons: Bool
+    ) {
+        self.downloadLocation = downloadLocation
+        self.activeDownloadTemplate = activeDownloadTemplate
+        self.incompleteDownloadDirectory = incompleteDownloadDirectory
+        self.setFolderIcons = setFolderIcons
+    }
+
+    @MainActor
+    public init(from provider: any DownloadSettingsProviding) {
+        self.init(
+            downloadLocation: provider.downloadLocation,
+            activeDownloadTemplate: provider.activeDownloadTemplate,
+            incompleteDownloadDirectory: provider.incompleteDownloadDirectory,
+            setFolderIcons: provider.setFolderIcons
+        )
+    }
 }
 
 // MARK: - Metadata Reading

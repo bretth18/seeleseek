@@ -75,87 +75,77 @@ final class AppState {
         return client
     }
 
+    @ObservationIgnored private var connectionEventsTask: Task<Void, Never>?
+    @ObservationIgnored private var searchEventsTask: Task<Void, Never>?
+    @ObservationIgnored private var socialEventsTask: Task<Void, Never>?
+
     private func wireNetworkClient(_ client: NetworkClient) {
-        // App-wide connection lifecycle handling. Lives here (installed
-        // exactly once) rather than in LoginView.connect(), which used to
-        // re-install it on every Connect tap.
-        client.onConnectionStatusChanged = { [weak self] status in
-            guard let self else { return }
-            switch status {
-            case .connected:
-                if self.connection.rememberCredentials {
-                    CredentialStorage.save(
-                        username: self.connection.loginUsername,
-                        password: self.connection.loginPassword
-                    )
-                }
-                self.connection.setConnected(
-                    username: self.connection.loginUsername,
-                    ip: "",
-                    greeting: nil
-                )
-                // Resume all retriable downloads from previous session
-                self.downloadManager.resumeDownloadsOnConnect()
-                // Same on the upload side: persisted `.failed` rows
-                // whose error is retriable get a fresh 4-attempt budget.
-                self.uploadManager.resumeUploadsOnConnect()
-                // Re-send peer-status watches (earlier attempts made
-                // during the connecting phase may have been dropped).
-                self.socialState.resubscribeWatchedPeers()
-                // The server wipes buddy watches and interests on every
-                // disconnect. Restore them on each connect
-                self.socialState.resubscribeOnConnect()
-                self.reapplyOnlineStatusIfAway()
-            case .disconnected:
-                self.connection.setDisconnected()
-            case .connecting:
-                self.connection.setConnecting()
-            case .reconnecting:
-                // `self.networkClient` (not the captured `client`) so the
-                // closure doesn't retain-cycle the client instance.
-                self.connection.setReconnecting(reason: self.networkClient.connectionError)
-            case .error:
-                self.connection.setError(self.networkClient.connectionError ?? "Unknown error")
+        // App-wide connection lifecycle handling, subscribed exactly once
+        // (not per Connect tap). One serial consumer per domain — status
+        // transitions must never reorder.
+        connectionEventsTask?.cancel()
+        let connectionEvents = client.events.connection.subscribe()
+        connectionEventsTask = Task { [weak self] in
+            for await event in connectionEvents {
+                guard let self else { return }
+                self.handle(event)
             }
         }
 
-        searchState.setupCallbacks(client: client)
-        chatState.setupCallbacks(client: client)
+        searchState.wireNetworkEvents(client: client)
+        chatState.wireNetworkEvents(client: client)
         browseState.configure(networkClient: client)
-        socialState.setupCallbacks(client: client)
-        wishlistState.setupCallbacks(client: client)
+        socialState.wireNetworkEvents(client: client)
+        wishlistState.wireNetworkEvents(client: client)
 
-        // Route wishlist tokens before falling through to regular search results.
-        let originalSearchCallback = client.onSearchResults
-        client.onSearchResults = { [weak self] token, results in
-            guard let self else { return }
-            let isWishlist = self.wishlistState.isWishlistToken(token)
-            self.logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
-            if isWishlist {
-                self.wishlistState.handleSearchResults(token: token, results: results)
-            } else {
-                originalSearchCallback?(token, results)
+        // Single search-domain consumer: routes wishlist tokens to
+        // WishlistState, everything else into SearchState's coalescing
+        // buffer. Bounded: live searches can deliver hundreds of result batches/sec
+        // across peers; if the main actor stalls, overflow past 1024 queued
+        // batches is tail-dropped rather than growing without limit.
+        searchEventsTask?.cancel()
+        let searchEvents = client.events.search.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        searchEventsTask = Task { [weak self] in
+            for await event in searchEvents {
+                guard let self else { return }
+                self.handle(event)
+            }
+        }
+
+        // Bounded: status/stats storms from large buddy lists are the hot
+        // case; tail-drop past 1024 queued events instead of growing.
+        socialEventsTask?.cancel()
+        let socialEvents = client.events.social.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        socialEventsTask = Task { [weak self] in
+            for await event in socialEvents {
+                guard let self else { return }
+                self.handle(event)
             }
         }
 
         let metadataReader = MetadataReader()
-        client.metadataReader = metadataReader
-        downloadManager.configure(networkClient: client, transferState: transferState, statisticsState: statisticsState, uploadManager: uploadManager, settings: settings, metadataReader: metadataReader)
-        uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
-
-        // Push the settings stepper's value into UploadManager and keep them
-        // in sync as the user changes it. Pre-refactor `maxConcurrentUploads`
-        // was hardcoded to 3 and the stepper was cosmetic — this is the wire.
-        uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
-        settings.onMaxUploadSlotsChange = { [weak uploadManager] newValue in
-            uploadManager?.setMaxConcurrentUploads(newValue)
+        Task { await client.setMetadataReader(metadataReader) }
+        let downloadManager = downloadManager
+        let downloadSettings = DownloadSettingsSnapshot(from: settings)
+        Task {
+            await downloadManager.configure(networkClient: client, transferState: self.transferState, statisticsState: self.statisticsState, uploadManager: self.uploadManager, settings: downloadSettings, metadataReader: metadataReader)
         }
-
-        // Same wiring for the upload speed limit (KB/s, 0 = unlimited) —
-        // previously persisted and displayed but never applied.
-        uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
+        settings.onDownloadSettingsChange = { [weak self, weak downloadManager] in
+            guard let self, let downloadManager else { return }
+            let snapshot = DownloadSettingsSnapshot(from: self.settings)
+            Task { await downloadManager.updateSettings(snapshot) }
+        }
+        let uploadManager = uploadManager
+        Task {
+            await uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
+            await uploadManager.setMaxConcurrentUploads(self.settings.maxUploadSlots)
+            await uploadManager.setUploadSpeedLimit(kbPerSecond: self.settings.uploadSpeedLimit)
+        }
+        settings.onMaxUploadSlotsChange = { [weak uploadManager] newValue in
+            Task { await uploadManager?.setMaxConcurrentUploads(newValue) }
+        }
         settings.onUploadSpeedLimitChange = { [weak uploadManager] newValue in
-            uploadManager?.setUploadSpeedLimit(kbPerSecond: newValue)
+            Task { await uploadManager?.setUploadSpeedLimit(kbPerSecond: newValue) }
         }
 
         // Peer-status watcher — SocialState tracks live online/away/offline
@@ -171,8 +161,10 @@ final class AppState {
         // across directions and the lookup is a no-op when there's no
         // pending entry.
         transferState.onDownloadTerminated = { [weak self] transferId in
-            self?.downloadManager.cancelRetry(transferId: transferId)
-            self?.uploadManager.cancelRetry(transferId: transferId)
+            Task { [weak self] in
+                await self?.downloadManager.cancelRetry(transferId: transferId)
+                await self?.uploadManager.cancelRetry(transferId: transferId)
+            }
         }
 
         // Cancel/remove must stop the actual network work, not just flip the
@@ -183,103 +175,151 @@ final class AppState {
             // Route by direction: cancelDownload on an upload id would stamp
             // the row .cancelled in the wrong manager's bookkeeping.
             if isDownload {
-                self.downloadManager.cancelDownload(transferId: transferId)
+                Task { await self.downloadManager.cancelDownload(transferId: transferId) }
             } else {
                 Task { await self.uploadManager.cancelUpload(transferId: transferId) }
             }
         }
 
-        uploadManager.uploadPermissionChecker = { [weak self] username in
-            guard let self else { return true }
-            let patterns = self.settings.activeBlockedPatterns
-            if !patterns.isEmpty,
-               UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
-                return false
-            }
-            Task { try? await self.networkClient.getUserStats(username) }
-            return self.socialState.shouldAllowUpload(to: username)
-        }
-
-        client.peerConnectionPool.peerPermissionChecker = { [weak self] username in
-            guard let self else { return true }
-            let patterns = self.settings.activeBlockedPatterns
-            guard !patterns.isEmpty else { return true }
-            return !UsernamePatternMatcher.matches(username, anyOfCompiled: patterns)
-        }
-
-        // Core asks "is this requester a buddy?" when responding to
-        // shares / distributed search so it can gate buddy-only folders.
-        // Case-insensitive match mirrors `SocialState.isIgnored`.
-        client.isBuddyChecker = { [weak self] username in
-            guard let self else { return false }
-            let lower = username.lowercased()
-            return self.socialState.buddies.contains { $0.username.lowercased() == lower }
-        }
-
-        client.addUserStatsHandler { [weak self] username, _, _, files, dirs in
-            guard let self else { return }
-            let hasQueuedUpload = self.uploadManager.queuedUploads.contains { $0.username == username }
-                || self.uploadManager.activeUploadCount > 0
-            if hasQueuedUpload {
-                self.socialState.checkForLeech(username: username, files: files, folders: dirs)
+        Task { [uploadManager] in
+            await uploadManager.setUploadPermissionChecker { [weak self] username in
+                guard let self else { return true }
+                let patterns = self.settings.activeBlockedPatterns
+                if !patterns.isEmpty,
+                   UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
+                    return false
+                }
+                Task { try? await self.networkClient.getUserStats(username) }
+                return self.socialState.shouldAllowUpload(to: username)
             }
         }
 
-        client.onAdminMessage = { [weak self] message in
-            Task { @MainActor in
-                guard let self else { return }
-                let adminMessage = AdminMessage(message: message)
-                self.adminMessages.append(adminMessage)
-                self.latestAdminMessage = adminMessage
-                self.showAdminMessageAlert = true
-                self.logger.info("Received admin message: \(message)")
-            }
+        let initialPatterns = settings.activeBlockedPatterns
+        Task { await client.peerConnectionPool.updateBlockedUsernamePatterns(initialPatterns) }
+        settings.onActiveBlockedPatternsChange = { [weak client] patterns in
+            Task { await client?.peerConnectionPool.updateBlockedUsernamePatterns(patterns) }
         }
 
-        // Folder-download response handler: a search-row right-click → "Download
-        // entire folder" triggers `requestFolderContents`, which eventually
-        // lands here with the file list. Match by token to the username that
-        // initiated the request and queue every file. No ActivityLog entry —
-        // individual downloads surface in the Transfers tab and will emit
-        // their own logDownloadCompleted when they finish, matching the
-        // single-file download path.
-        //
-        // The `folder` argument is passed into `queueFolderDownload` because
-        // some peers (e.g. vanilla Nicotine+) send full paths as each file's
-        // `filename`, while others (seen in the wild) send only basenames.
-        // The queue path uses `folder` to reconstruct the full Soulseek path
-        // when the peer sent a basename — otherwise the QueueUpload request
-        // we later send to them comes back `File not shared`.
-        client.onFolderContentsResponse = { [weak self] token, folder, files in
-            guard let self,
-                  let pending = self.pendingFolderDownloads.removeValue(forKey: token) else {
-                return
-            }
-            let username = pending.username
-            if files.isEmpty {
-                self.markFolderRequestFailed(pending, reason: "\(username) shared no files in this folder")
-                ActivityLog.shared.logFolderRequestFailed(
-                    username: username, folder: folder,
-                    reason: "\(username) shared no files in this folder"
+        let initialPolicy = settings.searchResponsePolicy
+        Task { await client.updateSearchResponsePolicy(initialPolicy) }
+        settings.onSearchResponsePolicyChange = { [weak client] policy in
+            Task { await client?.updateSearchResponsePolicy(policy) }
+        }
+    }
+
+    // MARK: - Network Event Handling
+
+    private func handle(_ event: ConnectionEvent) {
+        switch event {
+        case .statusChanged(let status):
+            switch status {
+            case .connected:
+                if connection.rememberCredentials {
+                    CredentialStorage.save(
+                        username: connection.loginUsername,
+                        password: connection.loginPassword
+                    )
+                }
+                connection.setConnected(
+                    username: connection.loginUsername,
+                    ip: "",
+                    greeting: nil
                 )
-                return
+                // Resume all retriable downloads from previous session
+                Task { await self.downloadManager.resumeDownloadsOnConnect() }
+                // Same on the upload side: persisted `.failed` rows
+                // whose error is retriable get a fresh 4-attempt budget.
+                Task { await self.uploadManager.resumeUploadsOnConnect() }
+                // Re-send peer-status watches (earlier attempts made
+                // during the connecting phase may have been dropped).
+                socialState.resubscribeWatchedPeers()
+                // The server wipes buddy watches and interests on every
+                // disconnect. Restore them on each connect
+                socialState.resubscribeOnConnect()
+                reapplyOnlineStatusIfAway()
+            case .disconnected:
+                connection.setDisconnected()
+            case .connecting:
+                connection.setConnecting()
+            case .reconnecting:
+                connection.setReconnecting(reason: networkClient.status.connectionError)
+            case .error:
+                connection.setError(networkClient.status.connectionError ?? "Unknown error")
             }
-            self.clearFolderRequestState(pending)
-            let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
-            self.logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
-            ActivityLog.shared.logFolderQueued(count: queued, username: username, folder: folder)
+        case .protocolNotice:
+            break
         }
+    }
 
-        client.searchResponseFilter = { [weak self] in
-            guard let settings = self?.settings else {
-                return (enabled: true, minQueryLength: 3, maxResults: 50)
+    private func handle(_ event: SearchEvent) {
+        switch event {
+        case .results(let token, let results):
+            let isWishlist = wishlistState.isWishlistToken(token)
+            logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
+            if isWishlist {
+                wishlistState.handleSearchResults(token: token, results: results)
+            } else {
+                searchState.addResults(results, forToken: token)
             }
-            return (
-                enabled: settings.respondToSearches,
-                minQueryLength: settings.minSearchQueryLength,
-                maxResults: settings.maxSearchResponseResults
-            )
+        case .wishlistInterval(let seconds):
+            wishlistState.handleWishlistInterval(seconds)
+        case .folderContentsResponse(let token, let folder, let files):
+            handleFolderContentsResponse(token: token, folder: folder, files: files)
+        case .excludedPhrases:
+            break
         }
+    }
+
+    private func handle(_ event: SocialEvent) {
+        switch event {
+        case .userStats(let username, _, _, let files, let dirs):
+            let hasQueuedUpload = uploadManager.state.queuedUploads.contains { $0.username == username }
+                || uploadManager.state.activeUploadCount > 0
+            if hasQueuedUpload {
+                socialState.checkForLeech(username: username, files: files, folders: dirs)
+            }
+        case .adminMessage(let message):
+            let adminMessage = AdminMessage(message: message)
+            adminMessages.append(adminMessage)
+            latestAdminMessage = adminMessage
+            showAdminMessageAlert = true
+            logger.info("Received admin message: \(message)")
+        default:
+            break
+        }
+    }
+
+    // Folder-download response: a search-row right-click → "Download
+    // entire folder" triggers `requestFolderContents`, which eventually
+    // lands here with the file list. Match by token to the username that
+    // initiated the request and queue every file. No ActivityLog entry —
+    // individual downloads surface in the Transfers tab and will emit
+    // their own logDownloadCompleted when they finish, matching the
+    // single-file download path.
+    //
+    // The `folder` argument is passed into `queueFolderDownload` because
+    // some peers (e.g. vanilla Nicotine+) send full paths as each file's
+    // `filename`, while others (seen in the wild) send only basenames.
+    // The queue path uses `folder` to reconstruct the full Soulseek path
+    // when the peer sent a basename — otherwise the QueueUpload request
+    // we later send to them comes back `File not shared`.
+    private func handleFolderContentsResponse(token: UInt32, folder: String, files: [SharedFile]) {
+        guard let pending = pendingFolderDownloads.removeValue(forKey: token) else {
+            return
+        }
+        let username = pending.username
+        if files.isEmpty {
+            markFolderRequestFailed(pending, reason: "\(username) shared no files in this folder")
+            ActivityLog.shared.logFolderRequestFailed(
+                username: username, folder: folder,
+                reason: "\(username) shared no files in this folder"
+            )
+            return
+        }
+        clearFolderRequestState(pending)
+        let queued = self.queueFolderDownload(files: files, from: username, folder: folder)
+        logger.info("Folder download from \(username) in '\(folder)': queued \(queued)/\(files.count) files")
+        ActivityLog.shared.logFolderQueued(count: queued, username: username, folder: folder)
     }
 
     // MARK: - Folder Download Coordinator
@@ -358,7 +398,7 @@ final class AppState {
             scheduleFolderDownloadTimeout(token: token, request: request)
         } catch {
             let elapsed = Int(Date().timeIntervalSince(started))
-            let reason = networkClient.isConnected
+            let reason = networkClient.status.isConnected
                 ? "Could not reach \(result.username) after \(elapsed) seconds"
                 : "Not connected to the Soulseek server"
             markFolderRequestFailed(request, reason: reason)
@@ -403,12 +443,10 @@ final class AppState {
     /// We detect the basename-only case and prepend `folder` so the queued
     /// SearchResult carries the path the peer expects.
     private func queueFolderDownload(files: [SharedFile], from username: String, folder: String) -> Int {
-        var queued = 0
-        for file in files {
-            let fullPath = Self.fullSoulseekPath(folder: folder, filename: file.filename)
-            let result = SearchResult(
+        let results = files.map { file in
+            SearchResult(
                 username: username,
-                filename: fullPath,
+                filename: Self.fullSoulseekPath(folder: folder, filename: file.filename),
                 size: file.size,
                 bitrate: file.bitrate,
                 duration: file.duration,
@@ -417,10 +455,16 @@ final class AppState {
                 uploadSpeed: 0,
                 queueLength: 0
             )
-            downloadManager.queueDownload(from: result)
-            queued += 1
         }
-        return queued
+        // One Task for the whole batch so files queue in folder order —
+        // a Task per file would race and scramble queue positions.
+        let downloadManager = downloadManager
+        Task {
+            for result in results {
+                await downloadManager.queueDownload(from: result)
+            }
+        }
+        return results.count
     }
 
     /// Combine `folder` and `filename` into a full Soulseek path, detecting
@@ -446,7 +490,6 @@ final class AppState {
         guard components.count > 1 else { return "" }
         return components.dropLast().joined(separator: "\\")
     }
-
 
     // MARK: - Download Manager
     let downloadManager = DownloadManager()
@@ -497,12 +540,12 @@ final class AppState {
 
         Task {
             await initializeDatabase()
-            // Wiring is not inert: setupCallbacks loads each feature
+            // Wiring is not inert: wireNetworkEvents loads each feature
             // state's persisted data, so the database must be ready first.
             // Previews and the test host skip configure(), so neither
             // scans the filesystem.
             let client = networkClient
-            client.shareManager.loadPersistedFolders()
+            await client.shareManager.loadPersistedFolders()
             await client.shareManager.rescanAll()
         }
     }
@@ -654,8 +697,8 @@ final class AppState {
         // `loadFromDatabase` sets `isLoading = true`, so the `didSet` hooks
         // that normally push maxUploadSlots / uploadSpeedLimit to
         // UploadManager are suppressed. Re-apply after the load completes.
-        uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
-        uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
+        await uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
+        await uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
 
         // Load resumable transfers
         await transferState.loadPersisted()
@@ -667,8 +710,8 @@ final class AppState {
         // immediately with a small stagger; future rows reschedule with
         // the remaining delay. Must run after `loadPersisted` so the
         // managers can read `transferState.downloads`/`.uploads`.
-        downloadManager.rearmPersistedRetries()
-        uploadManager.rearmPersistedRetries()
+        await downloadManager.rearmPersistedRetries()
+        await uploadManager.rearmPersistedRetries()
 
         // Load wishlist items
         await wishlistState.loadFromDatabase()

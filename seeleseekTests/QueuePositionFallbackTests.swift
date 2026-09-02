@@ -28,53 +28,53 @@ struct QueuePositionFallbackTests {
     }
 
     @Test("Exact username/filename match still wins")
-    func exactMatch() {
+    func exactMatch() async {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
         let transfer = makeTransfer(username: "alice", filename: "@@music\\song.mp3")
         tracking.downloads.append(transfer)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
-        manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 7)
+        await manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 7)
 
         let updated = tracking.downloads.first { $0.id == transfer.id }
         #expect(updated?.queuePosition == 7)
     }
 
     @Test("Case-mismatched filename still updates the queue position")
-    func caseInsensitiveFilenameFallback() {
+    func caseInsensitiveFilenameFallback() async {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
         let transfer = makeTransfer(username: "alice", filename: "@@music\\Song.MP3")
         tracking.downloads.append(transfer)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
         // Peer echoes back the filename lowercased.
-        manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 12)
+        await manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 12)
 
         let updated = tracking.downloads.first { $0.id == transfer.id }
         #expect(updated?.queuePosition == 12, "case-insensitive fallback must update the row that's clearly the same file")
     }
 
     @Test("Case-mismatched username still updates the queue position")
-    func caseInsensitiveUsernameFallback() {
+    func caseInsensitiveUsernameFallback() async {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
         let transfer = makeTransfer(username: "Alice", filename: "@@music\\song.mp3")
         tracking.downloads.append(transfer)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
-        manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 3)
+        await manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 3)
 
         let updated = tracking.downloads.first { $0.id == transfer.id }
         #expect(updated?.queuePosition == 3)
     }
 
     @Test("Pending-download fallback when transferState row is missing")
-    func pendingFallback() {
+    func pendingFallback() async {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
         // Row exists in pendingDownloads but, e.g., transferState was
         // momentarily out of sync (race between ack and update). The
@@ -93,7 +93,7 @@ struct QueuePositionFallbackTests {
         )
         tracking.downloads.append(rowWithId)
 
-        manager._seedPendingDownloadForTest(
+        await manager._seedPendingDownloadForTest(
             DownloadManager.PendingDownload(
                 transferId: transferId,
                 username: "alice",
@@ -106,21 +106,21 @@ struct QueuePositionFallbackTests {
         )
 
         // Peer reports position with peer-side normalised case.
-        manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 5)
+        await manager._handlePlaceInQueueReplyForTest(username: "alice", filename: "@@music\\song.mp3", position: 5)
 
         let updated = tracking.downloads.first { $0.id == transferId }
         #expect(updated?.queuePosition == 5)
     }
 
     @Test("Reply for an unknown user/file is ignored")
-    func unknownReplyIsDropped() {
+    func unknownReplyIsDropped() async {
         let manager = DownloadManager()
         let tracking = MockTransferTracking()
         let transfer = makeTransfer(username: "alice", filename: "@@music\\song.mp3")
         tracking.downloads.append(transfer)
-        manager._setTransferStateForTest(tracking)
+        await manager._setTransferStateForTest(tracking)
 
-        manager._handlePlaceInQueueReplyForTest(username: "bob", filename: "@@other\\thing.mp3", position: 99)
+        await manager._handlePlaceInQueueReplyForTest(username: "bob", filename: "@@other\\thing.mp3", position: 99)
 
         let updated = tracking.downloads.first { $0.id == transfer.id }
         #expect(updated?.queuePosition == nil, "unrelated replies must not mutate any row")

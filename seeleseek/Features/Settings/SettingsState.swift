@@ -139,26 +139,36 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onDownloadSettingsChange?()
         }
     }
     var incompleteLocation: URL = SettingsState.defaultIncompleteLocation {
         didSet {
             guard !isLoading else { return }
             save()
+            onDownloadSettingsChange?()
         }
     }
     var downloadFolderFormat: DownloadFolderFormat = SettingsState.defaultDownloadFolderFormat {
         didSet {
             guard !isLoading else { return }
             save()
+            onDownloadSettingsChange?()
         }
     }
     var downloadFolderTemplate: String = SettingsState.defaultDownloadFolderTemplate {
         didSet {
             guard !isLoading else { return }
             save()
+            onDownloadSettingsChange?()
         }
     }
+
+    /// Live push to `DownloadManager`'s settings snapshot — wired by
+    /// AppState. Fired whenever any download-relevant setting changes,
+    /// and after `loadFromDatabase()` in case wiring happened before the
+    /// load.
+    @ObservationIgnored var onDownloadSettingsChange: (() -> Void)?
     var launchAtLogin: Bool = false {
         didSet {
             guard !isLoading else { return }
@@ -265,6 +275,7 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onSearchResponsePolicyChange?(searchResponsePolicy)
         }
     }
     /// Minimum search query length to respond to (filters out short/broad queries)
@@ -272,6 +283,7 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onSearchResponsePolicyChange?(searchResponsePolicy)
         }
     }
     /// Maximum number of results to send per search response (0 = unlimited)
@@ -279,8 +291,22 @@ final class SettingsState: DownloadSettingsProviding {
         didSet {
             guard !isLoading else { return }
             save()
+            onSearchResponsePolicyChange?(searchResponsePolicy)
         }
     }
+
+    /// The three settings above as the core's pushed-down policy value.
+    var searchResponsePolicy: SearchResponsePolicy {
+        SearchResponsePolicy(
+            enabled: respondToSearches,
+            minQueryLength: minSearchQueryLength,
+            maxResults: maxSearchResponseResults
+        )
+    }
+
+    /// Live push to `NetworkClient` — wired by AppState. Also fired after
+    /// `loadFromDatabase()` in case wiring happened before the load.
+    var onSearchResponsePolicyChange: ((SearchResponsePolicy) -> Void)?
 
     // MARK: - Shares Settings
     var sharedFolders: [URL] = []
@@ -291,7 +317,12 @@ final class SettingsState: DownloadSettingsProviding {
     var autoFetchMetadata: Bool = true
     var autoFetchAlbumArt: Bool = true
     var embedAlbumArt: Bool = true
-    var setFolderIcons: Bool = true
+    var setFolderIcons: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            onDownloadSettingsChange?()
+        }
+    }
     var organizeDownloads: Bool = false
     var organizationPattern: String = "{artist}/{album}/{track} - {title}"
 
@@ -382,7 +413,11 @@ final class SettingsState: DownloadSettingsProviding {
         activeBlockedPatterns = blockLeechPatternsEnabled
             ? UsernamePatternMatcher.compile(blockedUsernamePatterns)
             : []
+        onActiveBlockedPatternsChange?(activeBlockedPatterns)
     }
+
+    /// Live push to `PeerConnectionPool` — wired by AppState.
+    var onActiveBlockedPatternsChange: (([UsernamePatternMatcher.Compiled]) -> Void)?
 
     // MARK: - Actions
     func addSharedFolder(_ url: URL) {
@@ -679,6 +714,12 @@ final class SettingsState: DownloadSettingsProviding {
             logger.error("Failed to load settings from database: \(error.localizedDescription)")
             // Keep using values loaded from UserDefaults
         }
+        // didSet hooks are suppressed while isLoading — re-push values the
+        // network layer consumes, in case it was wired before this load.
+        onSearchResponsePolicyChange?(searchResponsePolicy)
+        onMaxUploadSlotsChange?(maxUploadSlots)
+        onUploadSpeedLimitChange?(uploadSpeedLimit)
+        onDownloadSettingsChange?()
     }
 }
 

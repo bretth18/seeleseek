@@ -31,7 +31,7 @@ This layer manages the TCP connections to the server and to peers.
 
 - **`ServerConnection`** — An `actor` that holds the TCP connection to the Soulseek server. It does the message framing and supplies an `AsyncStream<Data>` of incoming messages.
 - **`PeerConnection`** — An `actor` for one peer-to-peer TCP connection. It does the handshake, the message routing, and the file transfers.
-- **`PeerConnectionPool`** — An `@Observable` class that manages the lifecycle of all peer connections. It does rate limits, connection reuse, and statistics.
+- **`PeerConnectionPool`** — An `actor` that manages the lifecycle of all peer connections. It does rate limits, connection reuse, and statistics. The UI observes its `monitor` mirror.
 
 ### Service Layer (`Network/Services/`)
 
@@ -44,16 +44,17 @@ Services for specific protocol features.
 
 ### Coordinator (`Network/NetworkClient.swift`)
 
-The main entry point. `NetworkClient` is an `@Observable @MainActor` class. It connects the layers, routes server messages to the applicable handlers, and supplies a callback API for the app layer.
+The main entry point. `NetworkClient` is an `actor`. It connects the layers and routes server messages to the applicable handlers. The app layer receives events from `client.events` (the event bus) and observes the `client.status` and `client.monitor` mirrors from SwiftUI.
 
 ## Concurrency Model
 
-SeeleseekCore is built for Swift 6 strict concurrency:
+SeeleseekCore is built for Swift 6 strict concurrency, with the Swift 6.2 caller-isolation semantics (`NonisolatedNonsendingByDefault`):
 
-- **Actors** for connection types (`ServerConnection`, `PeerConnection`, `ListenerService`, `NATService`, `GeoIPService`) — isolated mutable state
-- **`@MainActor @Observable`** for UI types (`NetworkClient`, `PeerConnectionPool`, `DownloadManager`, `UploadManager`, `ShareManager`, `UserInfoCache`) — observable from SwiftUI
+- **Actors** for the network and storage subsystems (`NetworkClient`, `PeerConnectionPool`, `ShareManager`, `DownloadManager`, `UploadManager`, `ServerConnection`, `PeerConnection`, `ListenerService`, `NATService`, `GeoIPService`) — isolated mutable state, off the main actor
+- **`@MainActor @Observable` mirrors** for the UI (`NetworkStatusState`, `NetworkMonitorState`, `ShareState`, `UploadState`, `UserInfoCache`) — fed with value snapshots, observable from SwiftUI
+- **Event bus** (`NetworkEventBus`) — one multi-subscriber channel for each event domain (chat, social, search, connection, transfers, transfer notices). Subscribe before you connect.
 - **`Sendable`** for all model types (`Transfer`, `SearchResult`, `SharedFile`, `User`, and others)
-- **`AsyncStream`** for events from actors to the main actor
+- **`@concurrent` functions** for CPU-bound and disk-bound work (index walks, file scans, metadata reads)
 
 ## App-Layer Protocols
 
@@ -65,7 +66,7 @@ protocol TransferTracking: AnyObject, Sendable {
     var downloads: [Transfer] { get }
     func addDownload(_ transfer: Transfer)
     func addUpload(_ transfer: Transfer)
-    func updateTransfer(id: UUID, update: (inout Transfer) -> Void)
+    func updateTransfer(id: UUID, update: @Sendable (inout Transfer) -> Void)
     func getTransfer(id: UUID) -> Transfer?
 }
 
@@ -93,12 +94,15 @@ protocol MetadataReading: Sendable {
 
 | Type | Kind | Function |
 |------|------|----------|
-| `NetworkClient` | `@Observable class` | The main coordinator — connect, search, chat, browse |
+| `NetworkClient` | `actor` | The main coordinator — connect, search, chat, browse |
+| `NetworkEventBus` | `class` | Multi-subscriber event channels for each domain |
+| `NetworkStatusState` | `@MainActor @Observable` | Connection-state mirror for the UI |
+| `NetworkMonitorState` | `@MainActor @Observable` | Pool-statistics mirror for the UI |
 | `ServerConnection` | `actor` | The TCP connection to the Soulseek server |
 | `PeerConnection` | `actor` | A TCP connection to one peer |
-| `PeerConnectionPool` | `@Observable class` | Manages all peer connections |
-| `DownloadManager` | `@Observable class` | Queues, starts, and monitors downloads |
-| `UploadManager` | `@Observable class` | Manages the upload queue and sends files |
-| `ShareManager` | `@Observable class` | Makes and manages the index of shared folders |
+| `PeerConnectionPool` | `actor` | Manages all peer connections |
+| `DownloadManager` | `actor` | Queues, starts, and monitors downloads |
+| `UploadManager` | `actor` | Manages the upload queue and sends files |
+| `ShareManager` | `actor` | Makes and manages the index of shared folders |
 | `MessageBuilder` | `enum` | Makes binary protocol messages |
 | `MessageParser` | `enum` | Parses binary protocol messages |

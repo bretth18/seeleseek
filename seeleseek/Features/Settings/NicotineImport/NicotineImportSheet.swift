@@ -254,8 +254,11 @@ struct NicotineImportSheet: View {
         }
         if importShares {
             let shareManager = appState.networkClient.shareManager
-            for path in config.sharedFolders where isDirectory(path) {
-                shareManager.addFolder(URL(fileURLWithPath: path))
+            let folderPaths = config.sharedFolders.filter { isDirectory($0) }
+            Task {
+                for path in folderPaths {
+                    await shareManager.addFolder(URL(fileURLWithPath: path))
+                }
             }
         }
         if importIgnored {

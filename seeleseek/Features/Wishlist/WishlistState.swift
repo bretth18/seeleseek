@@ -81,14 +81,16 @@ final class WishlistState {
 
     // MARK: - Setup
 
-    func setupCallbacks(client: NetworkClient) {
+    func wireNetworkEvents(client: NetworkClient) {
         self.networkClient = client
+    }
 
-        client.onWishlistInterval = { [weak self] interval in
-            self?.logger.info("Wishlist interval from server: \(interval)s")
-            self?.searchInterval = interval
-            self?.restartScheduler()
-        }
+    /// Server-pushed wishlist search interval. Routed here by AppState's
+    /// search-domain event consumer.
+    func handleWishlistInterval(_ interval: UInt32) {
+        logger.info("Wishlist interval from server: \(interval)s")
+        searchInterval = interval
+        restartScheduler()
     }
 
     // MARK: - Persistence
@@ -170,7 +172,7 @@ final class WishlistState {
             logger.error("searchNow: networkClient is nil!")
             return
         }
-        guard client.isConnected else {
+        guard client.status.isConnected else {
             logger.warning("searchNow: offline, skipping '\(item.query)'")
             return
         }

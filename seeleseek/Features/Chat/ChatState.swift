@@ -88,7 +88,11 @@ final class ChatState {
     weak var networkClient: NetworkClient?
 
     // MARK: - Setup
-    func setupCallbacks(client: NetworkClient) {
+
+    @ObservationIgnored private var chatEventsTask: Task<Void, Never>?
+    @ObservationIgnored private var socialEventsTask: Task<Void, Never>?
+
+    func wireNetworkEvents(client: NetworkClient) {
         self.networkClient = client
 
         // Load persisted DMs
@@ -96,127 +100,108 @@ final class ChatState {
             await loadPersistedDMs()
         }
 
-        client.onRoomList = { [weak self] rooms in
-            self?.setAvailableRooms(rooms)
+        // One serial consumer per domain — in-domain delivery order is
+        // emission order, which chat depends on (roomJoined must land
+        // before that room's messages). Never spawn per-event Tasks here.
+        chatEventsTask?.cancel()
+        let chatEvents = client.events.chat.subscribe()
+        chatEventsTask = Task { [weak self] in
+            for await event in chatEvents {
+                guard let self else { return }
+                self.handle(event)
+            }
         }
 
-        client.onRoomListFull = { [weak self] publicRooms, ownedPrivate, memberPrivate, operated in
-            self?.handleRoomListFull(
+        // Bounded: only status colors ride this; tail-drop under a storm.
+        socialEventsTask?.cancel()
+        let socialEvents = client.events.social.subscribe(bufferingPolicy: .bufferingOldest(1024))
+        socialEventsTask = Task { [weak self] in
+            for await event in socialEvents {
+                guard let self else { return }
+                self.handle(event)
+            }
+        }
+    }
+
+    private func handle(_ event: ChatEvent) {
+        switch event {
+        case .roomList(let publicRooms, let ownedPrivate, let memberPrivate, let operated):
+            handleRoomListFull(
                 publicRooms: publicRooms,
                 ownedPrivate: ownedPrivate,
                 memberPrivate: memberPrivate,
                 operated: operated
             )
-        }
-
-        client.onRoomJoined = { [weak self] roomName, users, owner, operators in
-            self?.handleRoomJoined(roomName, users: users, owner: owner, operators: operators)
-        }
-
-        client.onRoomLeft = { [weak self] roomName in
-            self?.handleRoomLeft(roomName)
-        }
-
-        client.onRoomMessage = { [weak self] roomName, message in
+        case .roomJoined(let room, let users, let owner, let operators):
+            handleRoomJoined(room, users: users, owner: owner, operators: operators)
+        case .roomLeft(let room):
+            handleRoomLeft(room)
+        case .roomMessage(let room, let message):
             // Skip server echo of our own messages (already added optimistically in sendMessage)
             guard !message.isOwn else { return }
-            self?.addRoomMessage(roomName, message: message)
-        }
-
-        client.onPrivateMessage = { [weak self] username, message in
-            self?.addPrivateMessage(username, message: message)
-        }
-
-        client.onUserJoinedRoom = { [weak self] roomName, username in
-            self?.handleUserJoinedRoom(roomName, username: username)
-        }
-
-        client.onUserLeftRoom = { [weak self] roomName, username in
-            self?.handleUserLeftRoom(roomName, username: username)
-        }
-
-        client.onCantCreateRoom = { [weak self] roomName in
-            self?.setCreateRoomError("Cannot create room '\(roomName)'")
-        }
-
-        // Private room callbacks
-        client.onPrivateRoomMembers = { [weak self] room, members in
-            self?.updateRoomMembers(room, members: members)
-        }
-
-        client.onPrivateRoomMemberAdded = { [weak self] room, username in
-            self?.addRoomMember(room, username: username)
-        }
-
-        client.onPrivateRoomMemberRemoved = { [weak self] room, username in
-            self?.removeRoomMember(room, username: username)
-        }
-
-        client.onPrivateRoomOperators = { [weak self] room, operators in
-            self?.updateRoomOperators(room, operators: operators)
-        }
-
-        client.onPrivateRoomOperatorGranted = { [weak self] room in
-            self?.operatedRoomNames.insert(room)
-        }
-
-        client.onPrivateRoomOperatorRevoked = { [weak self] room in
-            self?.operatedRoomNames.remove(room)
-        }
-
-        client.onRoomMembershipGranted = { [weak self] room in
-            guard let self else { return }
+            addRoomMessage(room, message: message)
+        case .privateMessage(let username, let message):
+            addPrivateMessage(username, message: message)
+        case .userJoinedRoom(let room, let username):
+            handleUserJoinedRoom(room, username: username)
+        case .userLeftRoom(let room, let username):
+            handleUserLeftRoom(room, username: username)
+        case .cantCreateRoom(let room):
+            setCreateRoomError("Cannot create room '\(room)'")
+        case .privateRoomMembers(let room, let members):
+            updateRoomMembers(room, members: members)
+        case .privateRoomMemberAdded(let room, let username):
+            addRoomMember(room, username: username)
+        case .privateRoomMemberRemoved(let room, let username):
+            removeRoomMember(room, username: username)
+        case .privateRoomOperators(let room, let operators):
+            updateRoomOperators(room, operators: operators)
+        case .privateRoomOperatorGranted(let room):
+            operatedRoomNames.insert(room)
+        case .privateRoomOperatorRevoked(let room):
+            operatedRoomNames.remove(room)
+        case .roomMembershipGranted(let room):
             let msg = ChatMessage(username: "", content: "You were invited to private room '\(room)'", isSystem: true)
             // Add as a system notification to current room if any
-            if let current = self.selectedRoom, let idx = self.joinedRooms.firstIndex(where: { $0.name == current }) {
-                Self.appendCapped(msg, to: &self.joinedRooms[idx].messages)
+            if let current = selectedRoom, let idx = joinedRooms.firstIndex(where: { $0.name == current }) {
+                Self.appendCapped(msg, to: &joinedRooms[idx].messages)
             }
-        }
-
-        client.onRoomMembershipRevoked = { [weak self] room in
-            guard let self else { return }
+        case .roomMembershipRevoked(let room):
             // Remove from joined if present
-            self.joinedRooms.removeAll { $0.name == room }
-            self.memberPrivateRooms.removeAll { $0.name == room }
-            if self.selectedRoom == room {
-                self.selectedRoom = self.joinedRooms.first?.name
+            joinedRooms.removeAll { $0.name == room }
+            memberPrivateRooms.removeAll { $0.name == room }
+            if selectedRoom == room {
+                selectedRoom = joinedRooms.first?.name
             }
-        }
-
-        // Ticker callbacks
-        client.onRoomTickerState = { [weak self] room, tickers in
-            guard let self else { return }
-            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
+        case .roomTickerState(let room, let tickers):
+            if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
                 var dict: [String: String] = [:]
                 for t in tickers { dict[t.username] = t.ticker }
-                self.joinedRooms[idx].tickers = dict
+                joinedRooms[idx].tickers = dict
             }
-        }
-
-        client.onRoomTickerAdd = { [weak self] room, username, ticker in
-            guard let self else { return }
-            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
-                self.joinedRooms[idx].tickers[username] = ticker
+        case .roomTickerAdd(let room, let username, let ticker):
+            if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+                joinedRooms[idx].tickers[username] = ticker
             }
-        }
-
-        client.onRoomTickerRemove = { [weak self] room, username in
-            guard let self else { return }
-            if let idx = self.joinedRooms.firstIndex(where: { $0.name == room }) {
-                self.joinedRooms[idx].tickers.removeValue(forKey: username)
+        case .roomTickerRemove(let room, let username):
+            if let idx = joinedRooms.firstIndex(where: { $0.name == room }) {
+                joinedRooms[idx].tickers.removeValue(forKey: username)
             }
+        case .roomInvitationsEnabled, .passwordChanged, .roomAdded, .roomRemoved,
+             .globalRoomMessage:
+            break
         }
+    }
 
-        // Listen for user status updates to update private chat online status
-        client.addUserStatusHandler { [weak self] username, status, _ in
-            self?.updateUserOnlineStatus(username: username, status: status)
-        }
-
-        // User stats updates (for room user list display)
-        client.addUserStatsHandler { [weak self] username, avgSpeed, _, files, _ in
-            guard let self else { return }
-            self.userStatsCache[username] = (speed: avgSpeed, files: files)
-            self.pendingStatsRequests.remove(username)
+    private func handle(_ event: SocialEvent) {
+        switch event {
+        case .userStatus(let username, let status, _):
+            updateUserOnlineStatus(username: username, status: status)
+        case .userStats(let username, let avgSpeed, _, let files, _):
+            userStatsCache[username] = (speed: avgSpeed, files: files)
+            pendingStatsRequests.remove(username)
+        default:
+            break
         }
     }
 
@@ -423,12 +408,12 @@ final class ChatState {
 
     func isOwner(of roomName: String) -> Bool {
         guard let room = joinedRooms.first(where: { $0.name == roomName }) else { return false }
-        return room.owner == networkClient?.username
+        return room.owner == networkClient?.status.username
     }
 
     func isOperator(of roomName: String) -> Bool {
         guard let room = joinedRooms.first(where: { $0.name == roomName }) else { return false }
-        return room.operators.contains(networkClient?.username ?? "")
+        return room.operators.contains(networkClient?.status.username ?? "")
     }
 
     // MARK: - Room Actions
@@ -503,7 +488,7 @@ final class ChatState {
     /// username in a room message.
     private func announceMentionIfNeeded(_ message: ChatMessage, in roomName: String) {
         guard !message.isOwn, !message.isSystem else { return }
-        guard let localUsername = networkClient?.username, !localUsername.isEmpty else { return }
+        guard let localUsername = networkClient?.status.username, !localUsername.isEmpty else { return }
         guard message.username.caseInsensitiveCompare(localUsername) != .orderedSame else { return }
         guard Self.containsWholeWord(localUsername, in: message.content) else { return }
         VoiceOverAnnouncer.shared.announce("Mentioned by \(message.username) in \(roomName)")
@@ -582,7 +567,7 @@ final class ChatState {
     /// already hold a `ChatRoom` use this to index into it rather than
     /// re-scanning `joinedRooms` for a room they were handed.
     var myUsername: String {
-        networkClient?.username ?? ""
+        networkClient?.status.username ?? ""
     }
 
     func giveUpOwnership(room: String) {
@@ -710,7 +695,7 @@ final class ChatState {
         if let roomName = selectedRoom {
             // Send to room via network
             let message = ChatMessage(
-                username: networkClient?.username ?? "You",
+                username: networkClient?.status.username ?? "You",
                 content: content,
                 isOwn: true
             )
@@ -722,7 +707,7 @@ final class ChatState {
         } else if let username = selectedPrivateChat {
             // Send private message
             let message = ChatMessage(
-                username: networkClient?.username ?? "You",
+                username: networkClient?.status.username ?? "You",
                 content: content,
                 isOwn: true
             )

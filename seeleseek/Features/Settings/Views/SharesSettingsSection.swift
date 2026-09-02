@@ -9,6 +9,10 @@ struct SharesSettingsSection: View {
         appState.networkClient.shareManager
     }
 
+    private var shares: ShareState {
+        appState.networkClient.shareManager.state
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.sectionSpacing) {
             settingsHeader("Shares")
@@ -16,7 +20,7 @@ struct SharesSettingsSection: View {
             SharesSummaryStats()
 
             settingsGroup("Shared Folders") {
-                if shareManager.sharedFolders.isEmpty {
+                if shares.sharedFolders.isEmpty {
                     settingsRow {
                         Text("No folders shared")
                             .font(SeeleTypography.body)
@@ -25,11 +29,11 @@ struct SharesSettingsSection: View {
                     }
                 }
 
-                ForEach(shareManager.sharedFolders) { folder in
+                ForEach(shares.sharedFolders) { folder in
                     SharedFolderRow(
                         folder: folder,
-                        onRemove: { shareManager.removeFolder(folder) },
-                        onVisibilityChange: { shareManager.setVisibility($0, forFolderWithID: folder.id) }
+                        onRemove: { Task { await shareManager.removeFolder(folder) } },
+                        onVisibilityChange: { visibility in Task { await shareManager.setVisibility(visibility, forFolderWithID: folder.id) } }
                     )
                 }
 

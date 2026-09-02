@@ -1,0 +1,144 @@
+[
+  {
+    "label": "Build app (Debug)",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-configuration", "Debug",
+      "-destination", "platform=macOS",
+      "CONFIGURATION_BUILD_DIR=$ZED_WORKTREE_ROOT/build/Debug",
+      "build"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
+  },
+  {
+    "label": "Build app (Release, CI parity)",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-configuration", "Release",
+      "-destination", "platform=macOS",
+      "CODE_SIGN_IDENTITY=-",
+      "CODE_SIGNING_REQUIRED=NO",
+      "CODE_SIGNING_ALLOWED=NO",
+      "build"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Run app (Debug)",
+    "command": "$ZED_WORKTREE_ROOT/build/Debug/seeleseek.app/Contents/MacOS/seeleseek",
+    "args": [],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always",
+    "use_new_terminal": false
+  },
+  {
+    "label": "Test: unit tests",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-destination", "platform=macOS",
+      "-only-testing:seeleseekTests",
+      "test"
+    ],
+    "env": { "TEST_RUNNER_CI": "true" },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Test: unit tests + live server",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-destination", "platform=macOS",
+      "-only-testing:seeleseekTests",
+      "test"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Test: current file",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-destination", "platform=macOS",
+      "-only-testing:seeleseekTests/$ZED_STEM",
+      "test"
+    ],
+    "env": { "TEST_RUNNER_CI": "true" },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Test: symbol under cursor",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-destination", "platform=macOS",
+      "-only-testing:seeleseekTests/$ZED_STEM/$ZED_SYMBOL",
+      "test"
+    ],
+    "env": { "TEST_RUNNER_CI": "true" },
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Package: build SeeleseekCore",
+    "command": "swift",
+    "args": ["build", "--package-path", "Packages/SeeleseekCore"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Package: test SeeleseekCore",
+    "command": "swift",
+    "args": ["test", "--package-path", "Packages/SeeleseekCore"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Format current file (swift-format)",
+    "command": "xcrun",
+    "args": ["swift-format", "format", "--in-place", "--configuration", ".swift-format", "$ZED_FILE"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "never"
+  },
+  {
+    "label": "Lint current file (SwiftLint)",
+    "command": "swiftlint",
+    "args": ["lint", "--quiet", "$ZED_FILE"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Regenerate buildServer.json (fixes broken LSP)",
+    "command": "xcode-build-server",
+    "args": ["config", "-project", "seeleseek.xcodeproj", "-scheme", "seeleseek"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  },
+  {
+    "label": "Clean build",
+    "command": "xcodebuild",
+    "args": [
+      "-project", "seeleseek.xcodeproj",
+      "-scheme", "seeleseek",
+      "-destination", "platform=macOS",
+      "clean"
+    ],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "reveal": "always"
+  }
+]

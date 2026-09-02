@@ -30,7 +30,7 @@ private struct ActivePeersMetricCard: View {
     var body: some View {
         MonitorMetricCard(
             title: "Peers",
-            value: "\(appState.networkClient.peerConnectionPool.activeConnections)",
+            value: "\(appState.networkClient.monitor.activeConnections)",
             subtitle: "active connections",
             icon: "person.2.fill",
             color: SeeleColors.info
@@ -44,7 +44,7 @@ private struct DownloadedMetricCard: View {
     var body: some View {
         MonitorMetricCard(
             title: "Downloaded",
-            value: appState.networkClient.peerConnectionPool.totalBytesReceived.formattedBytes,
+            value: appState.networkClient.monitor.totalBytesReceived.formattedBytes,
             subtitle: "this session",
             icon: "arrow.down.circle.fill",
             color: SeeleColors.success
@@ -58,7 +58,7 @@ private struct UploadedMetricCard: View {
     var body: some View {
         MonitorMetricCard(
             title: "Uploaded",
-            value: appState.networkClient.peerConnectionPool.totalBytesSent.formattedBytes,
+            value: appState.networkClient.monitor.totalBytesSent.formattedBytes,
             subtitle: "this session",
             icon: "arrow.up.circle.fill",
             color: SeeleColors.accent
@@ -72,8 +72,8 @@ private struct SharesMetricCard: View {
     var body: some View {
         MonitorMetricCard(
             title: "Shares",
-            value: "\(appState.networkClient.shareManager.totalFiles)",
-            subtitle: "\(appState.networkClient.shareManager.totalFolders) folders",
+            value: "\(appState.networkClient.shareManager.state.totalFiles)",
+            subtitle: "\(appState.networkClient.shareManager.state.totalFolders) folders",
             icon: "folder.fill",
             color: SeeleColors.warning
         )

@@ -54,10 +54,13 @@ struct SeeleSeekApp: App {
                             DemoDataSeeder.seed(into: appState)
                             return
                         }
-                        #endif
-                        #if DEBUG
                         if SyntheticSearchDriver.isEnabled {
                             SyntheticSearchDriver.start(appState: appState)
+                            return
+                        }
+                        if SyntheticSearchDriver.isLiveEnabled {
+                            appState.configure()
+                            SyntheticSearchDriver.startLive(appState: appState)
                             return
                         }
                         #endif
@@ -94,7 +97,7 @@ struct SeeleSeekApp: App {
                 Divider()
 
                 Button("Disconnect") {
-                    appState.networkClient.disconnect()
+                    Task { await appState.networkClient.disconnect() }
                     appState.connection.setDisconnected()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])

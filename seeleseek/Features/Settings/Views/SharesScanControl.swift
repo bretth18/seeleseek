@@ -18,6 +18,10 @@ struct SharesScanControl: View {
         appState.networkClient.shareManager
     }
 
+    private var shares: ShareState {
+        appState.networkClient.shareManager.state
+    }
+
     var body: some View {
         HStack {
             Button(action: showFolderPicker) {
@@ -34,7 +38,7 @@ struct SharesScanControl: View {
 
             Spacer()
 
-            if shareManager.isScanning {
+            if shares.isScanning {
                 scanProgressLabel
             } else {
                 rescanButton
@@ -43,7 +47,7 @@ struct SharesScanControl: View {
     }
 
     private var scanProgressLabel: some View {
-        let percent = Int(shareManager.scanProgress * 100)
+        let percent = Int(shares.scanProgress * 100)
         return HStack(spacing: SeeleSpacing.xs) {
             ProgressView()
                 .scaleEffect(0.6)
@@ -83,7 +87,7 @@ struct SharesScanControl: View {
 
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
-            shareManager.addFolder(url)
+            Task { await shareManager.addFolder(url) }
         }
     }
 }

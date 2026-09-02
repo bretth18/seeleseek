@@ -14,7 +14,7 @@ struct PeerInfoPopover: View {
     /// dict rather than on the connection row.  reading it here invalidates
     /// this view on discovery alone, not on every bytes update.
     private var extendedClientInfo: ExtendedClientInfo? {
-        appState.networkClient.peerConnectionPool.extendedClientInfoByUser[peer.username]
+        appState.networkClient.monitor.extendedClientInfoByUser[peer.username]
     }
 
     private var displayName: String {
@@ -137,7 +137,7 @@ struct PeerInfoPopover: View {
             // the popover body ran. The value is minute-resolution, so a
             // 1 Hz TimelineView is plenty.
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                if let lastActivity = appState.networkClient.peerConnectionPool.lastActivity(for: peer.id) {
+                if let lastActivity = appState.networkClient.monitor.lastActivity(for: peer.id) {
                     DetailRow(label: "Last Activity", value: lastActivity.formatted(date: .omitted, time: .shortened))
                 }
             }

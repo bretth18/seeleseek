@@ -14,17 +14,17 @@ struct TransfersLiveStats: View {
     @Environment(\.appState) private var appState
 
     private var transferState: TransferState { appState.transferState }
-    private var uploadManager: UploadManager { appState.uploadManager }
+    private var uploads: UploadState { appState.uploadManager.state }
 
     var body: some View {
         StandardStatCluster {
             // Gate on upload activity only — a selectedTab condition here
             // reflows the cluster on every tab switch.
-            if uploadManager.activeUploadCount > 0 || uploadManager.queueDepth > 0 {
+            if uploads.activeUploadCount > 0 || uploads.queueDepth > 0 {
                 StandardLiveStat(
                     icon: "person.2.fill",
-                    value: "\(uploadManager.slotsSummary) · \(uploadManager.queueDepth) queued",
-                    accessibilityLabel: "Upload slots: \(uploadManager.slotsSummary), queue: \(uploadManager.queueDepth)"
+                    value: "\(uploads.slotsSummary) · \(uploads.queueDepth) queued",
+                    accessibilityLabel: "Upload slots: \(uploads.slotsSummary), queue: \(uploads.queueDepth)"
                 )
             }
 

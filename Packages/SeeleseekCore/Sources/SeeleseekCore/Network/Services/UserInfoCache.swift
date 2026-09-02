@@ -1,7 +1,12 @@
 import Foundation
 import os
 
-/// Caches user information like country codes, resolved from IP addresses
+/// Caches user information like country codes, resolved from IP addresses.
+///
+/// `@MainActor` on purpose while the other managers are actors: views
+/// read `flag(for:)`/`countryCode(for:)` synchronously in their bodies and
+/// observe `countries`, and it's fed at low rates (one GeoIP resolution
+/// per newly seen peer), so this class is its own mirror.
 @Observable
 @MainActor
 public final class UserInfoCache {
@@ -39,19 +44,14 @@ public final class UserInfoCache {
 
         pendingLookups.insert(username)
 
-        // Async lookup
         Task {
             if let countryCode = await geoIP.getCountryCode(for: ip) {
-                await MainActor.run {
-                    self.countries[username] = countryCode
-                    self.pendingLookups.remove(username)
-                    self.logger.debug("Resolved country for \(username): \(countryCode)")
-                    self.onCountryResolved?(username, countryCode)
-                }
+                self.countries[username] = countryCode
+                self.pendingLookups.remove(username)
+                self.logger.debug("Resolved country for \(username): \(countryCode)")
+                self.onCountryResolved?(username, countryCode)
             } else {
-                _ = await MainActor.run {
-                    self.pendingLookups.remove(username)
-                }
+                self.pendingLookups.remove(username)
             }
         }
     }

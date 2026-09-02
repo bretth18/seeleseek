@@ -37,15 +37,15 @@ struct UploadRetryRowReuseTests {
         )
     }
 
-    private func makeSetup(file: ShareManager.IndexedFile?) -> (UploadManager, MockTransferTracking, ShareManager) {
+    private func makeSetup(file: ShareManager.IndexedFile?) async -> (UploadManager, MockTransferTracking, ShareManager) {
         let manager = UploadManager()
         let tracking = MockTransferTracking()
         let shares = ShareManager(defaults: TestDefaults.isolated())
         if let file {
-            shares._seedFileIndexForTest([file])
+            await shares._seedFileIndexForTest([file])
         }
-        manager._setTransferStateForTest(tracking)
-        manager._setShareManagerForTest(shares)
+        await manager._setTransferStateForTest(tracking)
+        await manager._setShareManagerForTest(shares)
         return (manager, tracking, shares)
     }
 
@@ -54,7 +54,7 @@ struct UploadRetryRowReuseTests {
     @Test("Retry reuses the existing transferId — no duplicate row added")
     func retryReusesTransferRow() async {
         let original = makeFailedTransfer()
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             file: makeIndexedFile(sharedPath: original.filename, localPath: "/tmp/song.mp3", size: original.size)
         )
         tracking.uploads.append(original)
@@ -63,7 +63,7 @@ struct UploadRetryRowReuseTests {
         // for the duration of the test so the retry's file-lookup hits
         // the seeded fileIndex rather than going through a freed weak ref.
         _ = shares
-        manager._retryUploadForTest(
+        await manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
             filename: original.filename,
@@ -77,8 +77,8 @@ struct UploadRetryRowReuseTests {
         #expect(tracking.uploads.first?.retryCount == 1)
         // The QueuedUpload routed back to startUpload carries the original
         // transferId so startUpload's reuse branch fires.
-        #expect(manager._uploadQueueForTest.count == 1)
-        #expect(manager._uploadQueueForTest.first?.existingTransferId == original.id)
+        #expect(await manager._uploadQueueForTest.count == 1)
+        #expect(await manager._uploadQueueForTest.first?.existingTransferId == original.id)
     }
 
     @Test("Retry without ShareManager match leaves the same row terminal — still no new row")
@@ -87,14 +87,14 @@ struct UploadRetryRowReuseTests {
         // No file seeded — ShareManager.fileIndex is empty so the lookup
         // fails and the retry should mark the row terminal rather than
         // adding a duplicate.
-        let (manager, tracking, shares) = makeSetup(file: nil)
+        let (manager, tracking, shares) = await makeSetup(file: nil)
         tracking.uploads.append(original)
 
         // `shareManager` is held weakly by `UploadManager`. Keep it alive
         // for the duration of the test so the retry's file-lookup hits
         // the seeded fileIndex rather than going through a freed weak ref.
         _ = shares
-        manager._retryUploadForTest(
+        await manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
             filename: original.filename,
@@ -105,7 +105,7 @@ struct UploadRetryRowReuseTests {
         #expect(tracking.uploads.count == 1)
         #expect(tracking.uploads.first?.status == .failed)
         #expect(tracking.uploads.first?.error == "File no longer shared")
-        #expect(manager._uploadQueueForTest.isEmpty, "no enqueue when file no longer shared")
+        #expect(await manager._uploadQueueForTest.isEmpty, "no enqueue when file no longer shared")
     }
 
     // MARK: - Issue 2: dedup must not strand the row
@@ -139,12 +139,12 @@ struct UploadRetryRowReuseTests {
             retryCount: 4
         )
 
-        let (manager, tracking, shares) = makeSetup(file: nil)
+        let (manager, tracking, shares) = await makeSetup(file: nil)
         _ = shares
         tracking.uploads.append(retriable)
         tracking.uploads.append(terminal)
 
-        manager.resumeUploadsOnConnect()
+        await manager.resumeUploadsOnConnect()
 
         // Synchronous reset hits the retriable row only. The terminal
         // ("Denied") row keeps its retryCount untouched — it's not
@@ -170,11 +170,11 @@ struct UploadRetryRowReuseTests {
             retryCount: 2
         )
 
-        let (manager, tracking, shares) = makeSetup(file: nil)
+        let (manager, tracking, shares) = await makeSetup(file: nil)
         _ = shares
         tracking.uploads.append(cancelled)
 
-        manager.resumeUploadsOnConnect()
+        await manager.resumeUploadsOnConnect()
 
         #expect(tracking.uploads.first?.retryCount == 2, "no row mutations when nothing is retriable")
     }
@@ -182,14 +182,14 @@ struct UploadRetryRowReuseTests {
     @Test("Dedup short-circuits without mutating row state when transfer already in flight")
     func dedupPreservesInflightRow() async {
         let original = makeFailedTransfer(retryCount: 1, error: "Peer unreachable (firewall)")
-        let (manager, tracking, shares) = makeSetup(
+        let (manager, tracking, shares) = await makeSetup(
             file: makeIndexedFile(sharedPath: original.filename, localPath: "/tmp/song.mp3", size: original.size)
         )
         tracking.uploads.append(original)
 
         // Simulate an in-flight attempt for THIS transferId — e.g. a
         // scheduled retry that already fired moments ago.
-        manager._seedPendingUploadForTest(
+        await manager._seedPendingUploadForTest(
             UploadManager.PendingUpload(
                 transferId: original.id,
                 username: original.username,
@@ -206,7 +206,7 @@ struct UploadRetryRowReuseTests {
         // for the duration of the test so the retry's file-lookup hits
         // the seeded fileIndex rather than going through a freed weak ref.
         _ = shares
-        manager._retryUploadForTest(
+        await manager._retryUploadForTest(
             transferId: original.id,
             username: original.username,
             filename: original.filename,
@@ -221,6 +221,6 @@ struct UploadRetryRowReuseTests {
         #expect(tracking.uploads.first?.status == .failed)
         #expect(tracking.uploads.first?.error == "Peer unreachable (firewall)")
         #expect(tracking.uploads.first?.retryCount == 1, "retryCount must not be incremented on a dedup short-circuit")
-        #expect(manager._uploadQueueForTest.isEmpty, "no duplicate enqueue")
+        #expect(await manager._uploadQueueForTest.isEmpty, "no duplicate enqueue")
     }
 }

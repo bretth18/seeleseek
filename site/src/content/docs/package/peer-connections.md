@@ -168,7 +168,7 @@ public enum PeerConnectionEvent: Sendable {
 }
 ```
 
-`PeerConnectionPool` consumes these events. It sends them out again as `PeerPoolEvent` values. `NetworkClient` routes them to the applicable callbacks.
+`PeerConnectionPool` consumes these events. It sends them out again as `PeerPoolEvent` values. `NetworkClient` routes them to its internal handlers and to the event bus.
 
 ## Browse a User
 

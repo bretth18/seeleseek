@@ -99,7 +99,7 @@ struct ShareCountNotificationTests {
         // Synthetic folder — never added, so the removeAll calls are
         // no-ops, but the notification path is the same shape.
         let folder = ShareManager.SharedFolder(path: "/nonexistent/path")
-        shares.removeFolder(folder)
+        await shares.removeFolder(folder)
         let observed = await waitForCounter(counter, toReach: 1)
 
         #expect(observed == 1)
@@ -177,7 +177,7 @@ struct ShareCountNotificationTests {
         // Pre-refactor `ShareManager.init` auto-spawned a rescan via load();
         // load is now an explicit, side-effect-free call. Calling it
         // alone must NOT yield — only an actual count change does.
-        shares.loadPersistedFolders()
+        await shares.loadPersistedFolders()
         // No target value to poll for (we expect 0); just sleep long
         // enough to confirm no spurious yield arrives.
         try? await Task.sleep(for: .milliseconds(Self.quiescenceMillis))

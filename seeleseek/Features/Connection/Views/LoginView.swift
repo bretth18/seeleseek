@@ -118,7 +118,7 @@ struct LoginView: View {
 
         // Connection-status handling is wired app-wide in
         // AppState.wireNetworkClient() — this stays form-local.
-        appState.networkClient.acceptDistributedChildren = appState.settings.respondToSearches
+        await appState.networkClient.setAcceptDistributedChildrenPreference(appState.settings.respondToSearches)
 
         await appState.networkClient.connect(
             server: ServerConnection.defaultHost,
@@ -128,7 +128,7 @@ struct LoginView: View {
             preferredListenPort: UInt16(appState.settings.listenPort)
         )
 
-        if let error = appState.networkClient.connectionError {
+        if let error = appState.networkClient.status.connectionError {
             appState.connection.setError(error)
         }
     }
