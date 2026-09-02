@@ -31,6 +31,9 @@ struct SearchView: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = { if SynthDiag.logChanges { Self._printChanges() } }()
+        #endif
         @Bindable var state = appState
         VStack(spacing: 0) {
             searchBar(binding: $state.searchState.searchQuery)
@@ -448,30 +451,15 @@ struct SearchView: View {
             }
             .background(SeeleColors.surface.opacity(0.3))
 
-            // Results list
+            // An owned NSTableView hosting the SwiftUI rows. Measured under
+            // trackpad-style flicks at 120Hz (drops of >2 frames per 5s):
+            // LazyVStack ~33, List ~25 (its delegate measures every hosted
+            // cell), this ~9, AppKit cells ~1. See SearchResultsHostedTableView.
             ZStack(alignment: .bottom) {
-                ScrollView {
-                    LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
-                        if searchState.isGrouped {
-                            ForEach(searchState.displayItems) { item in
-                                SearchResultListItemView(item: item)
-                            }
-                        } else {
-                            ForEach(searchState.filteredResults) { result in
-                                SearchResultRow(
-                                    result: result,
-                                    isSelectionMode: searchState.isSelectionMode,
-                                    isSelected: searchState.selectedResults.contains(result.id),
-                                    onToggleSelection: {
-                                        searchState.toggleSelection(result.id)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    // Add bottom padding when action bar is visible
-                    .padding(.bottom, searchState.isSelectionMode ? 60 : 0)
-                }
+                SearchResultsHostedTableView(
+                    items: searchState.displayItems,
+                    bottomInset: searchState.isSelectionMode ? 60 : 0
+                )
 
                 // Floating action bar
                 if searchState.isSelectionMode {
@@ -528,7 +516,7 @@ struct SearchView: View {
 
         for result in results {
             if !appState.transferState.isFileQueued(filename: result.filename, username: result.username) {
-                appState.downloadManager.queueDownload(from: result)
+                Task { await appState.downloadManager.queueDownload(from: result) }
             }
         }
 

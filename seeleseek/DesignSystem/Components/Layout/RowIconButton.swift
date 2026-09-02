@@ -22,16 +22,22 @@ struct RowIconButton: View {
         isProminent ? SeeleSpacing.iconSizeXL : SeeleSpacing.buttonHeight
     }
 
+    // Not a SwiftUI `Button`. Measured on a 120Hz panel (500-row search,
+    // 3000pt/s wheel, cursor over rows): with one `Button` per live row
+    // the list dropped ~160 frames per 5s; as a tap-gesture glyph, ~30.
+    // `.focusable(false)` and `.focusEffectDisabled()` on the Button do
+    // not help. Cost: no Tab focus on row actions — VoiceOver keeps the
+    // label, button trait and activation.
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: glyphSize, weight: weight))
-                .foregroundStyle(tint)
-                .frame(width: hitTarget, height: hitTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        Image(systemName: systemName)
+            .font(.system(size: glyphSize, weight: weight))
+            .foregroundStyle(tint)
+            .frame(width: hitTarget, height: hitTarget)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .rowHelp(help)
+            .accessibilityLabel(help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }

@@ -134,6 +134,11 @@ struct LoginView: View {
     }
 
     private func loadSavedCredentials() {
+        #if DEBUG
+        // The synthetic driver never logs in, and a rebuilt binary's
+        // Keychain prompt blocks the main thread here before it starts.
+        if SyntheticSearchDriver.isEnabled { return }
+        #endif
         // Only prefill when both fields are empty — the view re-appears
         // (e.g. after a failed attempt) and reloading would clobber
         // whatever the user has typed.

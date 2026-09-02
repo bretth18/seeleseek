@@ -13,7 +13,7 @@ struct SearchGroupDownloadButton: View {
     @Environment(\.appState) private var appState
 
     let group: SearchResultGroup
-    var isHovered: Bool = false
+    @Environment(\.isRowHovered) private var isHovered
 
     /// Any member identifies the folder; the request keys on username+folder.
     private var representative: SearchResult? { group.results.first }

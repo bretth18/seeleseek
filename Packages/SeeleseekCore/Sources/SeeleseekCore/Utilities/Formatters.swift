@@ -2,10 +2,24 @@ import Foundation
 
 // MARK: - Byte counts
 
+// `ByteCountFormatter` is ~10x cheaper per call than
+// `formatted(.byteCount)`, which builds an AttributedString internally.
+// Search rows format sizes and peer speeds in `body`, so this runs
+// thousands of times per scroll. NSFormatter is not documented
+// thread-safe; Core callers can be off-main, hence the lock.
+nonisolated(unsafe) private let byteCountFormatter: ByteCountFormatter = {
+    let f = ByteCountFormatter()
+    f.countStyle = .file
+    return f
+}()
+private let byteCountLock = NSLock()
+
 public extension Int64 {
     var formattedBytes: String {
         guard self > 0 else { return "0 KB" }
-        return formatted(.byteCount(style: .file))
+        byteCountLock.lock()
+        defer { byteCountLock.unlock() }
+        return byteCountFormatter.string(fromByteCount: self)
     }
     var formattedSpeed: String { formattedBytes + "/s" }
 }

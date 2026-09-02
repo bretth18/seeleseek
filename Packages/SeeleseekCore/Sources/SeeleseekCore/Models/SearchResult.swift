@@ -15,6 +15,13 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
     public let queueLength: UInt32
     public let isPrivate: Bool  // Buddy-only / locked file
 
+    // Derived once at init, not computed: each is read several times per
+    // search-row body, and the repeated path splits were measurable in
+    // Instruments while scrolling.
+    public let displayFilename: String
+    public let folderPath: String
+    public let fileExtension: String
+
     public nonisolated init(
         id: UUID = UUID(),
         username: String,
@@ -43,23 +50,15 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
         self.uploadSpeed = uploadSpeed
         self.queueLength = queueLength
         self.isPrivate = isPrivate
-    }
 
-    public var displayFilename: String {
-        // Extract just the filename from the full path
-        if let lastComponent = filename.split(separator: "\\").last {
-            return String(lastComponent)
-        }
-        return filename
-    }
-
-    public var folderPath: String {
-        // Get the folder path without the filename
         let components = filename.split(separator: "\\")
-        if components.count > 1 {
-            return components.dropLast().joined(separator: "\\")
-        }
-        return ""
+        let display = components.last.map(String.init) ?? filename
+        self.displayFilename = display
+        self.folderPath = components.count > 1
+            ? components.dropLast().joined(separator: "\\")
+            : ""
+        let dot = display.split(separator: ".")
+        self.fileExtension = dot.count > 1 ? String(dot[dot.count - 1]).lowercased() : ""
     }
 
     public var formattedSize: String {
@@ -101,14 +100,6 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
     public var formattedBitDepth: String? {
         guard let bitDepth, bitDepth > 0 else { return nil }
         return "\(bitDepth)-bit"
-    }
-
-    public var fileExtension: String {
-        let components = displayFilename.split(separator: ".")
-        if components.count > 1, let ext = components.last {
-            return String(ext).lowercased()
-        }
-        return ""
     }
 
     public var isAudioFile: Bool { FileTypes.isAudio(fileExtension) }

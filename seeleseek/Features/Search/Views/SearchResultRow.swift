@@ -26,6 +26,11 @@ import SeeleseekCore
 //   - The trailing cluster is fixed-width regardless of hover so the
 //     tech-spec anchors never shift.
 
+/// Layout shell only. Every stored property is Equatable so the row is
+/// skipped when its inputs are unchanged, and nothing in `body` reads an
+/// observable: transfer status, ignore list, folder-request state and
+/// hover are read by the leaf that renders them, so hundreds of live rows
+/// do not re-body when any of those change elsewhere in the app.
 struct SearchResultRow: View {
     @Environment(\.appState) private var appState
     let result: SearchResult
@@ -34,104 +39,59 @@ struct SearchResultRow: View {
     var isNestedInGroup: Bool = false
     var isSelectionMode: Bool = false
     var isSelected: Bool = false
-    var onToggleSelection: (() -> Void)? = nil
 
-    @State private var isHovered = false
-
-    private var downloadStatus: Transfer.TransferStatus? {
-        appState.transferState.downloadStatus(for: result.filename, from: result.username)
-    }
-
-    private var isQueued: Bool {
-        guard let s = downloadStatus else { return false }
-        return s != .completed && s != .cancelled && s != .failed
-    }
-
-    private var isIgnored: Bool { appState.socialState.isIgnored(result.username) }
-
-    /// Peer status captured at row appear rather than read live from
-    /// `SocialState.peerStatuses`. Reading the dict live would invalidate
-    /// every visible search row on every unrelated peer's status arriving
-    /// — with a 500-row result list this dominated the macOS 15 re-render
-    /// storm. Accepts minor staleness if this user's status changes after
-    /// the row is on screen (rare for search-result rows, which are
-    /// typically strangers rather than actively-watched peers).
+    /// Captured on appear: reading `SocialState.peerStatuses` live would
+    /// invalidate every visible row on every unrelated peer's status.
     @State private var peerStatus: BuddyStatus?
 
-    private func refreshPeerStatus() {
-        peerStatus = appState.socialState.peerStatus(for: result.username)
-    }
-
     var body: some View {
-        StandardListRow(onHoverChanged: { isHovered = $0 }) {
+        #if DEBUG
+        let _ = { if SynthDiag.logChanges { Self._printChanges() } }()
+        #endif
+        let actions = SearchResultActions(result: result, appState: appState)
+        StandardListRow {
             HStack(alignment: .top, spacing: SeeleSpacing.sm) {
                 if isSelectionMode {
-                    selectionCheckbox
+                    selectionCheckbox(actions)
                 }
 
                 fileGlyph
 
-                infoColumn
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                SearchResultInfoColumn(
+                    result: result,
+                    isNestedInGroup: isNestedInGroup,
+                    peerStatus: peerStatus
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                metadataColumn
+                SearchResultMetadataColumn(result: result)
 
-                trailingCluster
+                SearchResultActionCluster(result: result, actions: actions)
             }
         }
+        // Fixed height so the lazy stack places the row without measuring
+        // its content — per-row measurement was the dominant scroll cost.
+        .frame(height: SearchResultRowLayout.rowHeight)
         .background(selectionOverlay)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { download() }
-        .contextMenu { contextMenu }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(accessibilityValue)
-        .accessibilityAddTraits(accessibilityTraits)
-        // The double tap gesture does not become an AXPress action on
-        // the combined element. Supply the default action explicitly.
-        .accessibilityAction { download() }
-        .accessibilityActions {
-            if isSelectionMode {
-                Button(isSelected ? "Deselect" : "Select") { onToggleSelection?() }
-            }
-            if !isQueued, !isIgnored {
-                Button("Download", action: download)
-            }
-            if !isIgnored {
-                Button("Download entire folder", action: downloadContainingFolder)
-            }
-            Button("Browse folder", action: browseFolder)
-            Button("Browse \(result.username)", action: browseUser)
-            Button("View profile") {
-                Task { await appState.socialState.loadProfile(for: result.username) }
-            }
-            if isIgnored {
-                Button("Unignore user") {
-                    Task { await appState.socialState.unignoreUser(result.username) }
-                }
-            } else {
-                Button("Ignore user") {
-                    Task { await appState.socialState.ignoreUser(result.username) }
-                }
-            }
-            Button("Copy filename", action: copyFilename)
-            Button("Copy full path", action: copyPath)
-        }
-        .onAppear { refreshPeerStatus() }
-        .onChange(of: result.username) { _, _ in refreshPeerStatus() }
+        .modifier(SearchResultRowInteractions(
+            actions: actions,
+            isSelectionMode: isSelectionMode,
+            isSelected: isSelected
+        ))
+        .onAppear { peerStatus = appState.socialState.peerStatus(for: result.username) }
     }
 
     // MARK: - Selection checkbox
 
-    private var selectionCheckbox: some View {
+    private func selectionCheckbox(_ actions: SearchResultActions) -> some View {
         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             .font(.system(size: SeeleSpacing.iconSize))
             .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textTertiary)
             .frame(width: SeeleSpacing.iconSizeXL, height: SeeleSpacing.iconSizeXL)
             .contentShape(Rectangle())
-            .onTapGesture { onToggleSelection?() }
-            // The combined row exposes the selected state and a rotor
-            // action. Hide the checkbox so the row label stays short.
+            .onTapGesture { actions.toggleSelection() }
+            // The row element exposes selection state and a rotor action.
             .accessibilityHidden(true)
     }
 
@@ -172,293 +132,50 @@ struct SearchResultRow: View {
         if result.isAudioFile { return SeeleColors.accent }
         return SeeleColors.textTertiary
     }
+}
 
-    // MARK: - Info column (flex)
+// MARK: - Interactions
 
-    private var infoColumn: some View {
-        VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-            Text(result.displayFilename)
-                .font(SeeleTypography.body)
-                .foregroundStyle(isIgnored ? SeeleColors.textTertiary : SeeleColors.textPrimary)
-                .strikethrough(isIgnored, color: SeeleColors.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+/// Double-click, context menu and accessibility for a row. A ViewModifier's
+/// body is its own invalidation scope, so the transfer-status, ignore-list
+/// and folder-request reads below re-evaluate this node, not the row.
+private struct SearchResultRowInteractions: ViewModifier {
+    @Environment(\.appState) private var appState
+    let actions: SearchResultActions
+    let isSelectionMode: Bool
+    let isSelected: Bool
 
-            if !isNestedInGroup {
-                contextLine
+    private var result: SearchResult { actions.result }
+
+    func body(content: Content) -> some View {
+        let status = actions.downloadStatus
+        let isIgnored = actions.isIgnored
+        let isQueued = actions.isQueued
+        content
+            .onTapGesture(count: 2) { actions.download() }
+            .contextMenu { contextMenu(isQueued: isQueued, isIgnored: isIgnored) }
+            // `.ignore`, not `.combine`: the row supplies its own label and
+            // value, and combining would traverse the subtree per update.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel(isIgnored: isIgnored))
+            .accessibilityValue(accessibilityValue(status: status))
+            .accessibilityAddTraits(accessibilityTraits(isQueued: isQueued))
+            // The double-tap gesture does not become an AXPress action.
+            .accessibilityAction { actions.download() }
+            // Named actions, not `accessibilityActions { Button… }`: each
+            // Button there is a live view per row.
+            .accessibilityAction(named: "Download entire folder", actions.downloadContainingFolder)
+            .accessibilityAction(named: "Browse folder", actions.browseFolder)
+            .accessibilityAction(named: "Browse \(result.username)", actions.browseUser)
+            .accessibilityAction(named: "View profile", actions.viewProfile)
+            .accessibilityActions {
+                if isSelectionMode {
+                    Button(isSelected ? "Deselect" : "Select") { actions.toggleSelection() }
+                }
             }
-        }
     }
 
-    private var contextLine: some View {
-        HStack(spacing: 0) {
-            peerCell
-                .frame(width: RowLayout.peerCellWidth, alignment: .leading)
-
-            if !result.folderPath.isEmpty {
-                folderCell
-            }
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var peerCell: some View {
-        HStack(spacing: 0) {
-            // Username sub-cell — fixed width so peer speed lands at the
-            // same X on every row.
-            PeerUsernameLabel(
-                iconName: "arrow.up",
-                username: result.username,
-                width: RowLayout.peerUsernameWidth,
-                peerStatus: peerStatus
-            )
-
-            Text(peerSpeedText)
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(peerSpeedColor)
-                .monospacedDigit()
-                .lineLimit(1)
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var folderCell: some View {
-        FolderPathLabel(
-            FolderPathLabel.compact(result.folderPath),
-            help: result.folderPath.replacingOccurrences(of: "\\", with: "/")
-        )
-    }
-
-    // MARK: - Metadata column (right)
-
-    private var metadataColumn: some View {
-        VStack(alignment: .trailing, spacing: SeeleSpacing.xxs) {
-            HStack(spacing: SeeleSpacing.sm) {
-                qualityChip
-                    .frame(width: SearchResultRowLayout.qualityChipSlotWidth, alignment: .trailing)
-                    .accessibilityLabel(QualityScale.tier(for: result).helpText)
-
-                techSpecColumns
-            }
-
-            secondaryMetadata
-        }
-    }
-
-    private var qualityChip: some View {
-        let tier = QualityScale.tier(for: result)
-        return StandardMetadataBadge(tier.label, color: tier.color)
-            .help(tier.helpText)
-    }
-
-    private var techSpecColumns: some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            statCell(
-                width: SearchResultStatColumn.formatBitrate.width,
-                text: formatBitrateText,
-                color: SeeleColors.textSecondary
-            )
-            statCell(
-                width: SearchResultStatColumn.sampleBitDepth.width,
-                text: sampleBitDepthText,
-                color: SeeleColors.textTertiary
-            )
-            statCell(
-                width: SearchResultStatColumn.duration.width,
-                text: result.formattedDuration ?? "",
-                color: SeeleColors.textTertiary
-            )
-            statCell(
-                width: SearchResultStatColumn.size.width,
-                text: result.formattedSize,
-                color: SeeleColors.textTertiary
-            )
-        }
-    }
-
-    private func statCell(width: CGFloat, text: String, color: Color) -> some View {
-        Text(text.isEmpty ? "—" : text)
-            .font(SeeleTypography.monoSmall)
-            .foregroundStyle(text.isEmpty ? SeeleColors.textTertiary : color)
-            .monospacedDigit()
-            .lineLimit(1)
-            .frame(width: width, alignment: .trailing)
-    }
-
-    private var formatBitrateText: String {
-        let ext = result.fileExtension.uppercased()
-        if let bitrate = result.bitrate, bitrate > 0 {
-            return "\(ext) \(bitrate)"
-        }
-        return ext
-    }
-
-    private var sampleBitDepthText: String {
-        guard let sampleRate = result.sampleRate, sampleRate > 0 else { return "" }
-        return sampleRateCompact(sampleRate)
-    }
-
-    private func sampleRateCompact(_ hz: UInt32) -> String {
-        let khz = Double(hz) / 1000.0
-        let base = khz == khz.rounded() ? "\(Int(khz))" : String(format: "%.1f", khz)
-        if let bd = result.bitDepth, bd > 0 { return "\(base)/\(bd)" }
-        return "\(base) kHz"
-    }
-
-    /// Line 2 of the metadata column. Real peer state — no estimates.
-    @ViewBuilder
-    private var secondaryMetadata: some View {
-        if !result.freeSlots {
-            HStack(spacing: SeeleSpacing.xxs) {
-                Image(systemName: "hourglass")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                Text("Queue \(result.queueLength)")
-                    .font(SeeleTypography.caption)
-                    .monospacedDigit()
-            }
-            .foregroundStyle(SeeleColors.warning)
-        } else if !result.isPrivate {
-            HStack(spacing: SeeleSpacing.xxs) {
-                Circle()
-                    .fill(SeeleColors.success)
-                    .frame(
-                        width: SeeleSpacing.statusDotSmall,
-                        height: SeeleSpacing.statusDotSmall
-                    )
-                Text("Available")
-                    .font(SeeleTypography.caption)
-            }
-            .foregroundStyle(SeeleColors.success)
-        } else {
-            HStack(spacing: SeeleSpacing.xxs) {
-                Circle()
-                    .fill(SeeleColors.warning)
-                    .frame(
-                        width: SeeleSpacing.statusDotSmall,
-                        height: SeeleSpacing.statusDotSmall
-                    )
-                Text("Private")
-                    .font(SeeleTypography.caption)
-            }
-            .foregroundStyle(SeeleColors.warning)
-        }
-    }
-
-    // MARK: - Trailing cluster (hover-revealed secondary actions + primary action)
-
-    private var secondaryActionsWidth: CGFloat { RowLayout.secondaryActionsWidth(2) }
-
-    private var trailingCluster: some View {
-        HStack(spacing: SeeleSpacing.xxs) {
-            secondaryActions
-            primaryAction
-        }
-        .frame(width: SearchResultRowLayout.trailingClusterWidth, alignment: .trailing)
-    }
-
-    private var secondaryActions: some View {
-        let folderRequestState = appState.folderRequestState(for: result)
-        // Hit-testing stays on even at opacity 0 so Tab focus (and, via
-        // `accessibilityAction` below, VoiceOver rotor) can reach these
-        // actions. The invisible focus ring is an accepted tradeoff.
-        return HStack(spacing: SeeleSpacing.xxs) {
-            folderSlot(folderRequestState)
-            RowIconButton(
-                systemName: "person.crop.circle",
-                help: "Browse \(result.username)'s files",
-                action: browseUser
-            )
-        }
-        .opacity(isHovered || folderRequestState != nil ? 1 : 0)
-        .frame(width: secondaryActionsWidth, alignment: .trailing)
-    }
-
-    /// Deliberately not on the download button: a request can run for a
-    /// minute, and that button must stay usable for single files.
-    @ViewBuilder
-    private func folderSlot(_ state: AppState.FolderRequestState?) -> some View {
-        if let state {
-            FolderRequestIndicator(state: state, username: result.username)
-        } else {
-            RowIconButton(
-                systemName: "folder.badge.questionmark",
-                help: "Browse this folder",
-                action: browseFolder
-            )
-        }
-    }
-
-    private var primaryAction: some View {
-        RowIconButton(
-            systemName: actionIcon,
-            help: actionHelp,
-            tint: actionColor,
-            weight: .semibold,
-            isProminent: true,
-            action: download
-        )
-        .disabled(isQueued || isIgnored)
-    }
-
-    private var actionIcon: String {
-        switch downloadStatus {
-        case .completed: "checkmark.circle.fill"
-        case .transferring, .queued, .waiting, .connecting: "arrow.down.circle.fill"
-        case .failed, .cancelled: "arrow.clockwise.circle"
-        case .none: "arrow.down.circle"
-        }
-    }
-
-    private var actionColor: Color {
-        if isIgnored { return SeeleColors.textTertiary }
-        return switch downloadStatus {
-        case .completed: SeeleColors.success
-        case .transferring, .queued, .waiting, .connecting: SeeleColors.accent
-        case .failed, .cancelled: SeeleColors.warning
-        case .none: isHovered ? SeeleColors.accent : SeeleColors.textSecondary
-        }
-    }
-
-    private var actionHelp: String {
-        if isIgnored { return "User is ignored" }
-        return switch downloadStatus {
-        case .completed: "Already downloaded"
-        case .transferring: "Downloading…"
-        case .queued, .waiting, .connecting: "In queue"
-        case .failed, .cancelled: "Retry download"
-        case .none: "Download"
-        }
-    }
-
-    // MARK: - Peer speed formatting
-
-    /// Peer's reported upload speed. In SoulSeek this is the rate at which
-    /// *they* serve files, which is usually more predictive of download
-    /// time than the file size alone.
-    private var peerSpeedText: String {
-        let bytesPerSecond = UInt64(result.uploadSpeed)
-        guard bytesPerSecond > 0 else { return "unknown" }
-        return bytesPerSecond.formattedBytes + "/s"
-    }
-
-    /// Tinted by peer quality tier.
-    ///   ≥ 1 MB/s: success (fast peer)
-    ///   ≥ 200 KB/s: info (decent peer)
-    ///   < 200 KB/s: warning (slow peer)
-    ///   unknown: tertiary (no signal)
-    private var peerSpeedColor: Color {
-        let bps = result.uploadSpeed
-        if bps == 0 { return SeeleColors.textTertiary }
-        if bps >= 1_000_000 { return SeeleColors.success }
-        if bps >= 200_000 { return SeeleColors.info }
-        return SeeleColors.warning
-    }
-
-    // MARK: - Accessibility
-
-    private var accessibilityLabel: String {
+    private func accessibilityLabel(isIgnored: Bool) -> String {
         var parts: [String] = [result.displayFilename]
         parts.append("from \(result.username)")
         parts.append(QualityScale.tier(for: result).label.lowercased())
@@ -471,17 +188,16 @@ struct SearchResultRow: View {
         return parts.joined(separator: ", ")
     }
 
-    private var accessibilityValue: String {
+    private func accessibilityValue(status: Transfer.TransferStatus?) -> String {
         var parts: [String] = []
         if isSelectionMode {
             parts.append(isSelected ? "selected" : "not selected")
         }
-        if downloadStatus != nil {
-            parts.append(actionHelp)
+        if status != nil {
+            parts.append(actions.actionHelp)
         }
-        // The row is a combined element with an explicit label, which
-        // overrides FolderRequestIndicator's own label — so the request
-        // state has to be surfaced here or VoiceOver never hears it.
+        // The row's explicit label overrides FolderRequestIndicator's own,
+        // so the request state must be spoken here.
         switch appState.folderRequestState(for: result) {
         case .fetching:
             parts.append("getting folder contents")
@@ -493,7 +209,7 @@ struct SearchResultRow: View {
         return parts.joined(separator: ", ")
     }
 
-    private var accessibilityTraits: AccessibilityTraits {
+    private func accessibilityTraits(isQueued: Bool) -> AccessibilityTraits {
         var traits: AccessibilityTraits = []
         if !isQueued {
             traits.insert(.isButton)
@@ -504,31 +220,27 @@ struct SearchResultRow: View {
         return traits
     }
 
-    // MARK: - Context menu
-
     @ViewBuilder
-    private var contextMenu: some View {
-        Button(action: download) {
+    private func contextMenu(isQueued: Bool, isIgnored: Bool) -> some View {
+        Button(action: actions.download) {
             Label(isQueued ? "Downloading…" : "Download", systemImage: "arrow.down.circle")
         }
         .disabled(isQueued || isIgnored)
 
-        Button(action: downloadContainingFolder) {
+        Button(action: actions.downloadContainingFolder) {
             Label("Download entire folder", systemImage: "arrow.down.square.fill")
         }
         .disabled(isIgnored)
 
-        Button(action: browseFolder) {
+        Button(action: actions.browseFolder) {
             Label("Browse folder", systemImage: "folder.badge.questionmark")
         }
 
-        Button(action: browseUser) {
+        Button(action: actions.browseUser) {
             Label("Browse \(result.username)", systemImage: "folder")
         }
 
-        Button {
-            Task { await appState.socialState.loadProfile(for: result.username) }
-        } label: {
+        Button(action: actions.viewProfile) {
             Label("View profile", systemImage: "person.crop.circle")
         }
 
@@ -550,42 +262,13 @@ struct SearchResultRow: View {
 
         Divider()
 
-        Button(action: copyFilename) {
+        Button(action: actions.copyFilename) {
             Label("Copy filename", systemImage: "doc.on.doc")
         }
 
-        Button(action: copyPath) {
+        Button(action: actions.copyPath) {
             Label("Copy full path", systemImage: "link")
         }
-    }
-
-    // MARK: - Actions
-
-    private func download() {
-        guard !isQueued, !isIgnored else { return }
-        appState.downloadManager.queueDownload(from: result)
-    }
-
-    private func browseUser() {
-        appState.browseState.browseUser(result.username)
-        appState.sidebarSelection = .browse
-    }
-
-    private func browseFolder() {
-        appState.browseState.browseUser(result.username, targetPath: result.filename)
-        appState.sidebarSelection = .browse
-    }
-
-    private func downloadContainingFolder() {
-        Task { await appState.downloadContainingFolder(of: result) }
-    }
-
-    private func copyFilename() {
-        result.displayFilename.copyToPasteboard()
-    }
-
-    private func copyPath() {
-        result.filename.copyToPasteboard()
     }
 }
 
@@ -594,6 +277,10 @@ struct SearchResultRow: View {
 /// Search-only columns. Peer anchors live in `RowLayout`, shared with the
 /// transfer and history rows.
 enum SearchResultRowLayout {
+    /// Every search row is exactly this tall (see the `frame(height:)`
+    /// note in `SearchResultRow.body`).
+    static let rowHeight: CGFloat = 58
+
     /// Chip slot width — tuned for the longest tier label (`LOSSLESS`).
     static let qualityChipSlotWidth: CGFloat = 62
 

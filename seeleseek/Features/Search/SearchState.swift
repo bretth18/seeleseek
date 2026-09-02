@@ -94,6 +94,9 @@ final class SearchState {
     private let logger = Logger(subsystem: "com.seeleseek", category: "SearchState")
 
     // MARK: - Setup
+    // Search results arrive via AppState's search-domain event consumer,
+    // which routes wishlist tokens away and calls `addResults` for the
+    // rest — see `AppState.wireNetworkClient`.
     func setupCallbacks(client: NetworkClient) {
         self.networkClient = client
 
@@ -184,11 +187,8 @@ final class SearchState {
     }
 
     // MARK: - Filters
-    // Each filter mutator calls `recomputeFilteredResults()` via didSet so
-    // the stored `filteredResults` cache stays in sync. Without this, the
-    // computed version was re-running filter + sort on every SearchView
-    // body eval — and each streaming-result batch triggered several evals,
-    // so with 500 rows we were doing tens of thousands of ops/sec.
+    // Every filter mutator must call `recomputeFilteredResults()` via
+    // didSet: `filteredResults` is a stored cache, never computed in body.
     // Filter values also write through to `settings.searchFilters` (see
     // `persistFiltersIfNeeded`); sort order and `showFilters` stay session-only.
     @ObservationIgnored private var suppressFilterPersist = false
@@ -402,8 +402,9 @@ final class SearchState {
 
     private(set) var resultGroups: [SearchResultGroup] = []
 
-    /// The flattened list the view renders. Derived from `resultGroups` plus
-    /// `expandedGroups`; see `SearchListItem` for why the view must not do
+    /// The flattened list the view renders: every filtered result as
+    /// `.loose` when ungrouped, otherwise derived from `resultGroups` plus
+    /// `expandedGroups`. See `SearchListItem` for why the view must not do
     /// this flattening itself.
     private(set) var displayItems: [SearchListItem] = []
 
@@ -532,7 +533,7 @@ final class SearchState {
             rebuildDisplayItems()
         } else {
             resultGroups = []
-            displayItems = []
+            displayItems = results.map(SearchListItem.loose)
         }
     }
 
@@ -627,7 +628,7 @@ final class SearchState {
         }
 
         let maxResults = settings?.maxSearchResults ?? 500
-        let currentCount = searches[index].results.count
+        let currentCount = searches[index].results.count + (pendingResults[token]?.count ?? 0)
 
         // Check if we've already reached the limit
         if maxResults > 0 && currentCount >= maxResults {
@@ -656,28 +657,130 @@ final class SearchState {
             }
         }
 
-        searches[index].results.append(contentsOf: resultsToAdd)
-        if index == selectedSearchIndex {
-            recomputeFilteredResults()
-        }
-        logger.info("Added \(resultsToAdd.count) results to '\(self.searches[index].query)' (total: \(self.searches[index].results.count))")
+        if oldestPendingArrival == nil { oldestPendingArrival = .now }
+        pendingResults[token, default: []].append(contentsOf: resultsToAdd)
+        scheduleFlush()
+        logger.info("Staged \(resultsToAdd.count) results for '\(self.searches[index].query)' (total: \(currentCount + resultsToAdd.count))")
 
         // Record results count in activity tracker
         SearchState.activityTracker.recordSearchResults(query: searches[index].query, count: resultsToAdd.count)
 
         // Check if we've now reached the limit
-        if maxResults > 0 && searches[index].results.count >= maxResults {
+        if maxResults > 0 && currentCount + resultsToAdd.count >= maxResults {
             logger.info("Search '\(self.searches[index].query)' reached limit of \(maxResults) results, stopping")
+            flushPendingResults(force: true)
             searches[index].isSearching = false
             cancelInactivityTimer(token: token)
             announceSearchComplete(searches[index])
         }
     }
 
+    // Every peer reply lands as its own `addResults` call. Appending
+    // straight to `searches[i].results` invalidates `SearchView` (it
+    // reads `searches` for the tab strip) and rebuilds every live result
+    // row per reply — measured at ~11k row bodies for one 500-result
+    // search, the original scroll hitching. Replies stage in this
+    // non-observed buffer and land once per window. Filter/sort changes
+    // still call `recomputeFilteredResults()` directly.
+    @ObservationIgnored private var pendingResults: [UInt32: [SearchResult]] = [:]
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
+    private static let flushInterval: Duration = .milliseconds(250)
+
+    /// Landing a batch re-places the entire lazy results list, which
+    /// costs a visible frame drop when it happens mid-scroll (measured:
+    /// the only dropped frames in an auto-scroll harness were the ones
+    /// coinciding with a flush). SearchView reports scroll movement
+    /// here; a scheduled flush that finds the list moved within
+    /// `scrollQuietWindow` re-arms instead of landing — bounded by
+    /// `maxFlushDeferral` so a continuous scroller still sees results.
+    @ObservationIgnored private var lastScrollActivity: ContinuousClock.Instant?
+    @ObservationIgnored private var oldestPendingArrival: ContinuousClock.Instant?
+    private static let scrollQuietWindow: Duration = .milliseconds(200)
+    /// Ceiling on scroll-deferred flushes. 4s, not lower: on a REAL
+    /// search (sustained multi-peer arrivals, unlike the synthetic
+    /// harness's bounded bursts) a 2s ceiling force-landed a full list
+    /// restructure mid-scroll every 2s — measured 33–69 ticks >33ms per
+    /// 5s while scrolling during streaming; 4s brings that to 0–5,
+    /// indistinguishable from 8s. Only bites during continuous motion —
+    /// a 200ms pause lands results immediately.
+    private static let maxFlushDeferral: Duration = .seconds(4)
+
+    /// True while the results list is in motion; false ~150ms after it
+    /// settles. `SearchView` feeds it into `\.rowHoverSuppressed`: rows
+    /// sliding under a parked cursor otherwise fire hover enter/exit per
+    /// row, each animating a background flip. Flips are edge-triggered so
+    /// the per-frame scroll callback never touches observable state.
+    private(set) var isListScrolling = false
+    @ObservationIgnored private var scrollSettleTask: Task<Void, Never>?
+    private static let hoverResumeQuiet: Duration = .milliseconds(150)
+
+    func noteResultsScrollActivity() {
+        lastScrollActivity = .now
+        guard scrollSettleTask == nil else { return }
+        // Called from the scroll geometry callback. An observable write
+        // there re-enters the same frame ("tried to update multiple
+        // times per frame"), so the flip lands on the next turn.
+        scrollSettleTask = Task { [weak self] in
+            guard let self else { return }
+            self.isListScrolling = true
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(120))
+                if let last = self.lastScrollActivity,
+                   ContinuousClock.now - last > Self.hoverResumeQuiet {
+                    break
+                }
+            }
+            self.isListScrolling = false
+            self.scrollSettleTask = nil
+        }
+    }
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.flushInterval)
+            guard !Task.isCancelled, let self else { return }
+            self.flushPendingResults()
+        }
+    }
+
+    /// Land staged replies into their searches in one observable write
+    /// per search, then rebuild the visible list if it was affected.
+    /// `force` skips the mid-scroll deferral — completion and tab-close
+    /// paths must land immediately regardless of scroll state.
+    private func flushPendingResults(force: Bool = false) {
+        flushTask?.cancel()
+        flushTask = nil
+        guard !pendingResults.isEmpty else { return }
+
+        if !force,
+           let lastScroll = lastScrollActivity,
+           ContinuousClock.now - lastScroll < Self.scrollQuietWindow,
+           let oldest = oldestPendingArrival,
+           ContinuousClock.now - oldest < Self.maxFlushDeferral {
+            scheduleFlush()
+            return
+        }
+        oldestPendingArrival = nil
+
+        var touchedSelected = false
+        for (token, results) in pendingResults {
+            guard let index = tokenToSearchIndex[token], index < searches.count else { continue }
+            searches[index].results.append(contentsOf: results)
+            if index == selectedSearchIndex { touchedSelected = true }
+        }
+        pendingResults.removeAll(keepingCapacity: true)
+        if touchedSelected { recomputeFilteredResults() }
+    }
+
     /// Mark a search as complete (no longer receiving results)
     func markSearchComplete(token: UInt32) {
         cancelInactivityTimer(token: token)
         guard let index = tokenToSearchIndex[token], index < searches.count else { return }
+
+        // Land the final staged batch before announcing/persisting so
+        // both see the full result count.
+        flushPendingResults(force: true)
 
         let wasSearching = searches[index].isSearching
         searches[index].isSearching = false
@@ -732,6 +835,9 @@ final class SearchState {
     func closeSearch(at index: Int) {
         guard index >= 0, index < searches.count else { return }
 
+        // Land staged replies so the persisted cache is complete, and so
+        // none can flush into the wrong tab after indices shift below.
+        flushPendingResults(force: true)
         let search = searches[index]
 
         // Persist search results before closing if it has results
