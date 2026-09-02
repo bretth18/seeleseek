@@ -22,16 +22,19 @@ struct RowIconButton: View {
         isProminent ? SeeleSpacing.iconSizeXL : SeeleSpacing.buttonHeight
     }
 
+    // Not a SwiftUI `Button`: one per live row cost ~160 dropped frames
+    // per 5s at 120Hz vs ~30 for a tap-gesture glyph, and `.focusable(false)`
+    // / `.focusEffectDisabled()` do not help. Cost: no Tab focus on row actions.
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: glyphSize, weight: weight))
-                .foregroundStyle(tint)
-                .frame(width: hitTarget, height: hitTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
+        Image(systemName: systemName)
+            .font(.system(size: glyphSize, weight: weight))
+            .foregroundStyle(tint)
+            .frame(width: hitTarget, height: hitTarget)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .rowHelp(help)
+            .accessibilityLabel(help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }

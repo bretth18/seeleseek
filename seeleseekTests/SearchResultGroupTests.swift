@@ -268,14 +268,15 @@ struct SearchListItemTests {
         #expect(s.displayItems.count == 1)
     }
 
-    @Test("Ungrouping clears the flattened list so stale items cannot render")
-    func ungroupClears() {
+    @Test("Ungrouping flattens every result to a loose row")
+    func ungroupFlattens() {
         let s = state([
             r("alice", "m\\Album\\01.flac"),
             r("alice", "m\\Album\\02.flac")
         ])
-        #expect(!s.displayItems.isEmpty)
+        #expect(s.displayItems.count == 1)
         s.isGrouped = false
-        #expect(s.displayItems.isEmpty)
+        #expect(s.displayItems.count == 2)
+        #expect(s.displayItems.allSatisfy { $0.id.hasPrefix("loose-") })
     }
 }

@@ -3,7 +3,7 @@ import SeeleseekCore
 
 /// Renders exactly one `SearchListItem`. Every branch must emit a single
 /// view — see `SearchListItem` for why a variable subview count is unsound
-/// inside the results `LazyVStack`.
+/// inside the results list.
 struct SearchResultListItemView: View {
     @Environment(\.appState) private var appState
 
@@ -42,8 +42,7 @@ struct SearchResultListItemView: View {
             result: result,
             isNestedInGroup: nested,
             isSelectionMode: searchState.isSelectionMode,
-            isSelected: searchState.selectedResults.contains(result.id),
-            onToggleSelection: { searchState.toggleSelection(result.id) }
+            isSelected: searchState.selectedResults.contains(result.id)
         )
     }
 }

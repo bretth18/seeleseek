@@ -15,13 +15,11 @@ struct SearchResultGroupHeader: View {
 
     let group: SearchResultGroup
 
-    @State private var isHovered = false
-
     private var searchState: SearchState { appState.searchState }
     private var isExpanded: Bool { searchState.isExpanded(group) }
 
     var body: some View {
-        StandardListRow(onHoverChanged: { isHovered = $0 }) {
+        StandardListRow {
             HStack(alignment: .center, spacing: SeeleSpacing.sm) {
                 if searchState.isSelectionMode {
                     SearchGroupSelectionToggle(group: group)
@@ -32,7 +30,7 @@ struct SearchResultGroupHeader: View {
                 infoColumn
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                SearchGroupDownloadButton(group: group, isHovered: isHovered)
+                SearchGroupDownloadButton(group: group)
                     .frame(width: SearchResultRowLayout.trailingClusterWidth, alignment: .trailing)
             }
         }

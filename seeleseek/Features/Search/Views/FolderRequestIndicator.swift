@@ -12,14 +12,14 @@ struct FolderRequestIndicator: View {
                 .progressViewStyle(.circular)
                 .scaleEffect(SeeleSpacing.scaleSmall)
                 .frame(width: SeeleSpacing.buttonHeight, height: SeeleSpacing.buttonHeight)
-                .help("Getting folder contents from \(username)...")
+                .rowHelp("Getting folder contents from \(username)...")
                 .accessibilityLabel("Getting folder contents from \(username)")
         case .failed(let reason):
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: SeeleSpacing.iconSizeSmall))
                 .foregroundStyle(SeeleColors.warning)
                 .frame(width: SeeleSpacing.buttonHeight, height: SeeleSpacing.buttonHeight)
-                .help(reason)
+                .rowHelp(reason)
                 .accessibilityLabel("Folder download failed. \(reason)")
         }
     }

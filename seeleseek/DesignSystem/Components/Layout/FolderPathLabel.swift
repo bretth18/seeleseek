@@ -25,7 +25,7 @@ struct FolderPathLabel: View {
                 .foregroundStyle(SeeleColors.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .help(help ?? text)
+                .rowHelp(help ?? text)
         }
     }
 }
