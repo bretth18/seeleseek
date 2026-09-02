@@ -15,9 +15,7 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
     public let queueLength: UInt32
     public let isPrivate: Bool  // Buddy-only / locked file
 
-    // Derived once at init, not computed: each is read several times per
-    // search-row body, and the repeated path splits were measurable in
-    // Instruments while scrolling.
+    // Stored, not computed: each is read several times per search-row body.
     public let displayFilename: String
     public let folderPath: String
     public let fileExtension: String

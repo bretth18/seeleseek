@@ -1,7 +1,4 @@
 import SwiftUI
-#if os(macOS)
-import AppKit
-#endif
 import SeeleseekCore
 
 // MARK: - Row
@@ -69,8 +66,7 @@ struct SearchResultRow: View {
                 SearchResultActionCluster(result: result, actions: actions)
             }
         }
-        // Fixed height so the lazy stack places the row without measuring
-        // its content — per-row measurement was the dominant scroll cost.
+        // Fixed height: the hosting table must never measure row content.
         .frame(height: SearchResultRowLayout.rowHeight)
         .background(selectionOverlay)
         .contentShape(Rectangle())

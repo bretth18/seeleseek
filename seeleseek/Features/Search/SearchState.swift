@@ -94,9 +94,8 @@ final class SearchState {
     private let logger = Logger(subsystem: "com.seeleseek", category: "SearchState")
 
     // MARK: - Setup
-    // Search results arrive via AppState's search-domain event consumer,
-    // which routes wishlist tokens away and calls `addResults` for the
-    // rest — see `AppState.wireNetworkClient`.
+    // Results are not subscribed here: `AppState.wireNetworkClient` routes
+    // wishlist tokens away and calls `addResults` for the rest.
     func setupCallbacks(client: NetworkClient) {
         self.networkClient = client
 
@@ -675,64 +674,29 @@ final class SearchState {
         }
     }
 
-    // Every peer reply lands as its own `addResults` call. Appending
-    // straight to `searches[i].results` invalidates `SearchView` (it
-    // reads `searches` for the tab strip) and rebuilds every live result
-    // row per reply — measured at ~11k row bodies for one 500-result
-    // search, the original scroll hitching. Replies stage in this
-    // non-observed buffer and land once per window. Filter/sort changes
-    // still call `recomputeFilteredResults()` directly.
+    // Every peer reply is its own `addResults` call; appending straight to
+    // `searches[i].results` invalidated `SearchView` and every live row per
+    // reply (~11k row bodies for one 500-result search). Replies stage here
+    // and land once per window.
     @ObservationIgnored private var pendingResults: [UInt32: [SearchResult]] = [:]
     @ObservationIgnored private var flushTask: Task<Void, Never>?
     private static let flushInterval: Duration = .milliseconds(250)
 
-    /// Landing a batch re-places the entire lazy results list, which
-    /// costs a visible frame drop when it happens mid-scroll (measured:
-    /// the only dropped frames in an auto-scroll harness were the ones
-    /// coinciding with a flush). SearchView reports scroll movement
-    /// here; a scheduled flush that finds the list moved within
-    /// `scrollQuietWindow` re-arms instead of landing — bounded by
-    /// `maxFlushDeferral` so a continuous scroller still sees results.
+    /// Landing a batch mid-scroll drops frames (the only drops seen in the
+    /// auto-scroll harness coincided with flushes), so a flush that finds
+    /// the list moved within `scrollQuietWindow` re-arms instead, up to
+    /// `maxFlushDeferral`.
     @ObservationIgnored private var lastScrollActivity: ContinuousClock.Instant?
     @ObservationIgnored private var oldestPendingArrival: ContinuousClock.Instant?
     private static let scrollQuietWindow: Duration = .milliseconds(200)
-    /// Ceiling on scroll-deferred flushes. 4s, not lower: on a REAL
-    /// search (sustained multi-peer arrivals, unlike the synthetic
-    /// harness's bounded bursts) a 2s ceiling force-landed a full list
-    /// restructure mid-scroll every 2s — measured 33–69 ticks >33ms per
-    /// 5s while scrolling during streaming; 4s brings that to 0–5,
-    /// indistinguishable from 8s. Only bites during continuous motion —
-    /// a 200ms pause lands results immediately.
+    /// 4s, not 2s: on a real search a 2s ceiling force-landed a list
+    /// restructure mid-scroll every 2s (33–69 ticks >33ms per 5s); 4s gives
+    /// 0–5, indistinguishable from 8s.
     private static let maxFlushDeferral: Duration = .seconds(4)
 
-    /// True while the results list is in motion; false ~150ms after it
-    /// settles. `SearchView` feeds it into `\.rowHoverSuppressed`: rows
-    /// sliding under a parked cursor otherwise fire hover enter/exit per
-    /// row, each animating a background flip. Flips are edge-triggered so
-    /// the per-frame scroll callback never touches observable state.
-    private(set) var isListScrolling = false
-    @ObservationIgnored private var scrollSettleTask: Task<Void, Never>?
-    private static let hoverResumeQuiet: Duration = .milliseconds(150)
-
+    /// Called per scroll frame; must not touch observable state.
     func noteResultsScrollActivity() {
         lastScrollActivity = .now
-        guard scrollSettleTask == nil else { return }
-        // Called from the scroll geometry callback. An observable write
-        // there re-enters the same frame ("tried to update multiple
-        // times per frame"), so the flip lands on the next turn.
-        scrollSettleTask = Task { [weak self] in
-            guard let self else { return }
-            self.isListScrolling = true
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(120))
-                if let last = self.lastScrollActivity,
-                   ContinuousClock.now - last > Self.hoverResumeQuiet {
-                    break
-                }
-            }
-            self.isListScrolling = false
-            self.scrollSettleTask = nil
-        }
     }
 
     private func scheduleFlush() {
@@ -744,10 +708,8 @@ final class SearchState {
         }
     }
 
-    /// Land staged replies into their searches in one observable write
-    /// per search, then rebuild the visible list if it was affected.
-    /// `force` skips the mid-scroll deferral — completion and tab-close
-    /// paths must land immediately regardless of scroll state.
+    /// `force` skips the mid-scroll deferral; completion and tab-close paths
+    /// must land immediately.
     private func flushPendingResults(force: Bool = false) {
         flushTask?.cancel()
         flushTask = nil
@@ -778,8 +740,6 @@ final class SearchState {
         cancelInactivityTimer(token: token)
         guard let index = tokenToSearchIndex[token], index < searches.count else { return }
 
-        // Land the final staged batch before announcing/persisting so
-        // both see the full result count.
         flushPendingResults(force: true)
 
         let wasSearching = searches[index].isSearching
@@ -835,8 +795,7 @@ final class SearchState {
     func closeSearch(at index: Int) {
         guard index >= 0, index < searches.count else { return }
 
-        // Land staged replies so the persisted cache is complete, and so
-        // none can flush into the wrong tab after indices shift below.
+        // Before indices shift below, or a later flush lands in the wrong tab.
         flushPendingResults(force: true)
         let search = searches[index]
 

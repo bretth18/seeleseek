@@ -28,16 +28,6 @@ enum SyntheticSearchDriver {
         CommandLine.arguments.contains("--synth-search")
     }
 
-    /// LIVE mode: the app logs in and searches the real SoulSeek network
-    /// (normal `configure()` path), while the driver supplies the same
-    /// measurement rig — pacer, auto-scroll, cursor parking. This is the
-    /// only mode that exercises the real control plane: server messages,
-    /// peer-connection churn, pool bookkeeping, GeoIP — the load the
-    /// in-process synthetic stream bypasses entirely.
-    static var isLiveEnabled: Bool {
-        CommandLine.arguments.contains("--synth-live")
-    }
-
     private static var autoScroll: Bool {
         CommandLine.arguments.contains("--synth-scroll")
     }
@@ -170,88 +160,6 @@ enum SyntheticSearchDriver {
         window.sendEvent(event)
     }
 
-#if false
-    /// LIVE mode — see `isLiveEnabled`. The caller has already run the
-    /// normal `appState.configure()`; this waits for the real login, then
-    /// runs endless real search cycles with the same stream/hold phase
-    /// cadence as the synthetic mode so PACE lines stay comparable.
-    static func startLive(appState: AppState) {
-        lineBufferStdout()
-        appState.sidebarSelection = .search
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first?.makeKeyAndOrderFront(nil)
-        moveWindowToFastestScreenAfterRestore()
-        startHangMonitor()
-        if autoScroll {
-            Task { await runAutoScroll() }
-        }
-        startCursorParkingIfRequested()
-        Task { await liveSearchForever(appState: appState) }
-    }
-
-#endif
-#if false
-    private static func liveSearchForever(appState: AppState) async {
-        // There is no auto-connect in the app — LoginView's button does
-        // this. Replicate its flow with the saved credentials.
-        // NOTE: SoulSeek permits one session per account; this kicks any
-        // other running client on the same account.
-        try? await Task.sleep(for: .seconds(3))  // let configure()'s async setup land
-        guard let credentials = CredentialStorage.load() else {
-            synthLog("LIVE: no saved credentials in keychain — cannot log in")
-            return
-        }
-        appState.connection.loginUsername = credentials.username
-        appState.connection.loginPassword = credentials.password
-        appState.connection.setConnecting()
-        await appState.networkClient.setAcceptDistributedChildrenPreference(appState.settings.respondToSearches)
-        await appState.networkClient.connect(
-            server: ServerConnection.defaultHost,
-            port: ServerConnection.defaultPort,
-            username: credentials.username,
-            password: credentials.password,
-            preferredListenPort: UInt16(appState.settings.listenPort)
-        )
-
-        var waited = 0
-        while appState.connection.connectionStatus != .connected {
-            guard waited < 30 else {
-                synthLog("LIVE: gave up waiting for login after \(waited)s (error: \(appState.networkClient.status.connectionError ?? "none"))")
-                return
-            }
-            try? await Task.sleep(for: .seconds(1))
-            waited += 1
-        }
-        synthLog("LIVE: connected after \(waited)s")
-        try? await Task.sleep(for: .seconds(2))
-
-        let queries = ["mozart flac", "aphex twin", "beatles", "ambient flac", "miles davis", "radiohead"]
-        var cycle = 0
-        while true {
-            let query = queries[cycle % queries.count]
-            cycle += 1
-            appState.searchState.searchQuery = query
-            let token = UInt32.random(in: 1..<0x8000_0000)
-            appState.searchState.startSearch(token: token)
-            phase = "stream"
-            synthLog("LIVE: cycle \(cycle) query '\(query)'")
-            do {
-                try await appState.networkClient.search(query: query, token: token)
-            } catch {
-                synthLog("LIVE: search send failed: \(error)")
-            }
-            // Real searches stream on the server's schedule; give them the
-            // same 25s stream + 10s hold cadence the synthetic mode uses.
-            try? await Task.sleep(for: .seconds(25))
-            phase = "hold"
-            try? await Task.sleep(for: .seconds(10))
-            if let index = appState.searchState.searches.firstIndex(where: { $0.token == token }) {
-                appState.searchState.closeSearch(at: index)
-            }
-        }
-    }
-
-#endif
     private static func startCursorParkingIfRequested() {
         if CommandLine.arguments.contains("--synth-cursor") {
             // Park the real cursor over the results list. Cursor-in-window
@@ -344,14 +252,10 @@ enum SyntheticSearchDriver {
 
     // MARK: - Result streaming
 
-    /// Batches sized like real peer replies (a few files from one or two
-    /// folders per peer), with jittered arrival, until ~500 results — the
-    /// default `maxSearchResults`. Each peer also runs the country
-    /// pipeline the way a real reply does: `registerIP` (async GeoIP task
-    /// + `onCountryResolved` into SocialState) plus a seeded ISO code so
-    /// every row deterministically renders its flag-emoji Text — real rows
-    /// carry that color-emoji glyph and the first harness versions never
-    /// created it at all.
+    /// Batches sized like real peer replies, with jittered arrival, until
+    /// ~500 results (the default `maxSearchResults`). Each peer also runs
+    /// the country pipeline plus a seeded ISO code so every row renders its
+    /// flag-emoji Text, which real rows carry and which is not free.
     private static func stream(into state: SearchState, token: UInt32, appState: AppState) async {
         let cache = appState.networkClient.userInfoCache
         var total = 0
@@ -382,10 +286,8 @@ enum SyntheticSearchDriver {
     ]
 
     private static func peerBatch(peer: Int) -> [SearchResult] {
-        // Realistic identities: SoulSeek paths routinely run 150–250
-        // characters with unicode, and the row middle-truncates them —
-        // which costs a full-string text measurement per row. Short toy
-        // paths understate row cost.
+        // Real SoulSeek paths run 150–250 unicode characters and the row
+        // middle-truncates them; short toy paths understate row cost.
         let username = "MusicArchivist_\(["lossless", "vinyl_rips", "shared_library", "collection"][peer % 4])_\(1980 + peer % 45)_\(peer)"
         let artist = artists[peer % artists.count]
         let lossless = peer % 3 != 0
@@ -467,17 +369,14 @@ enum SyntheticSearchDriver {
                 stuckTicks = 0
                 synthLog("SYNTH: wheel polarity flipped")
             }
-            // Constant-VELOCITY scrolling: scale each event's delta by the
-            // actual elapsed time, so a busy main thread gets fewer but
-            // larger events and every run sweeps at the same pt/s. The
-            // earlier fixed-delta-per-iteration form scrolled faster when
-            // the main thread was freer, which made CPU comparisons
-            // between builds meaningless (faster sweep = more work/s).
+            // Delta scales with elapsed time so every run sweeps at the same
+            // pt/s regardless of main-thread load; a fixed delta per
+            // iteration made CPU comparisons between builds meaningless.
             let targetSpeed: CGFloat = 3000  // pt/s
-            let now2 = ContinuousClock.now
-            let dt = min(0.1, Double((now2 - lastTick).components.attoseconds) / 1e18
-                + Double((now2 - lastTick).components.seconds))
-            lastTick = now2
+            let now = ContinuousClock.now
+            let elapsed = (now - lastTick).components
+            let dt = min(0.1, Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
+            lastTick = now
             let magnitude = min(300, targetSpeed * CGFloat(dt))
             let delta = Int32((sign * (goingDown ? -magnitude : magnitude)).rounded())
             guard let cg = CGEvent(
@@ -492,11 +391,8 @@ enum SyntheticSearchDriver {
         }
     }
 
-    /// The scroll view with the tallest DOCUMENT across all windows —
-    /// with 500 results the list document is tens of thousands of points,
-    /// while every other scroll view (sidebar, tab strip) is a few
-    /// hundred. Picking by scroll-view frame height instead selected one
-    /// of those and silently scrolled nothing.
+    /// Tallest DOCUMENT across all windows, not tallest scroll-view frame:
+    /// the latter picked the sidebar and silently scrolled nothing.
     private static func resultsScrollView() -> NSScrollView? {
         var found: [NSScrollView] = []
         for window in NSApp.windows {

@@ -5,9 +5,6 @@ import SeeleseekCore
 /// NSTableView we own (fixed row height, cell reuse, no SwiftUI delegate
 /// measurement) whose cells host the real SwiftUI rows. The table only
 /// scrolls and recycles; every row is still `SearchResultListItemView`.
-/// Hover suppression during scroll is not pushed into the hosted cells:
-/// re-setting ~20 root views on every scroll start costs more than the
-/// hover churn it would prevent with this few live rows.
 struct SearchResultsHostedTableView: NSViewRepresentable {
     @Environment(\.appState) private var appState
     let items: [SearchListItem]

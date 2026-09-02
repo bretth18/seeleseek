@@ -18,12 +18,9 @@ import XCTest
 nonisolated final class ScrollPerfTests: XCTestCase {
     func testScrollWhileSearchStreams() throws {
         let app = XCUIApplication()
-        // `--synth-scroll` makes the app inject real 125Hz pixel wheel
-        // events itself (~7500 pt/s). XCUI's own scroll(byDeltaX:) can't
-        // scroll fast — each call is a ~hundreds-of-ms XPC round trip —
-        // so this test only supplies what the app cannot fake: the REAL
-        // cursor parked over the rows, exercising hover tracking while
-        // the list flicks underneath it.
+        // The app injects its own wheel events; XCUI's scroll(byDeltaX:) is
+        // one XPC round trip per call and cannot scroll fast. This test only
+        // supplies what the app cannot fake: the real cursor over the rows.
         app.launchArguments += ["--synth-search", "--synth-scroll"]
         // XCUIApplication does not inherit the runner's environment; the
         // log-path override must be forwarded explicitly or the app

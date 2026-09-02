@@ -21,11 +21,9 @@ struct SearchResultActionCluster: View {
             // (via the row's named actions) can reach these actions.
             HStack(spacing: SeeleSpacing.xxs) {
                 folderSlot(folderRequestState)
-                // `person.crop.circle` is the profile glyph everywhere
-                // else in the app (context menu "View profile"), so this
-                // button must open the profile — wiring it to browse
-                // reads as a broken profile button. Browsing the full
-                // share list stays in the context menu.
+                // `person.crop.circle` is the profile glyph app-wide, so
+                // this must open the profile, not browse. Browse stays in
+                // the context menu.
                 RowIconButton(
                     systemName: "person.crop.circle",
                     help: "View \(result.username)'s profile",

@@ -451,10 +451,8 @@ struct SearchView: View {
             }
             .background(SeeleColors.surface.opacity(0.3))
 
-            // An owned NSTableView hosting the SwiftUI rows. Measured under
-            // trackpad-style flicks at 120Hz (drops of >2 frames per 5s):
-            // LazyVStack ~33, List ~25 (its delegate measures every hosted
-            // cell), this ~9, AppKit cells ~1. See SearchResultsHostedTableView.
+            // Not LazyVStack/List: under 120Hz flicks those dropped ~33/~25
+            // frames per 5s, the hosted table ~9. See SearchResultsHostedTableView.
             ZStack(alignment: .bottom) {
                 SearchResultsHostedTableView(
                     items: searchState.displayItems,
