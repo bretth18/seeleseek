@@ -187,7 +187,7 @@ final class AppState {
             }
         }
 
-        Task {
+        Task { [uploadManager] in
             await uploadManager.setUploadPermissionChecker { [weak self] username in
                 guard let self else { return true }
                 let patterns = self.settings.activeBlockedPatterns
