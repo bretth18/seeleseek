@@ -130,9 +130,6 @@ final class AppState {
         Task {
             await downloadManager.configure(networkClient: client, transferState: self.transferState, statisticsState: self.statisticsState, uploadManager: self.uploadManager, settings: downloadSettings, metadataReader: metadataReader)
         }
-        // Keep the manager's settings snapshot current — the actor reads
-        // pushed values instead of pulling from SettingsState per path
-        // computation.
         settings.onDownloadSettingsChange = { [weak self, weak downloadManager] in
             guard let self, let downloadManager else { return }
             let snapshot = DownloadSettingsSnapshot(from: self.settings)
@@ -141,10 +138,7 @@ final class AppState {
         let uploadManager = uploadManager
         Task {
             await uploadManager.configure(networkClient: client, transferState: transferState, shareManager: client.shareManager, statisticsState: statisticsState)
-            // Push the settings stepper's value into UploadManager and keep
-            // them in sync as the user changes it.
             await uploadManager.setMaxConcurrentUploads(self.settings.maxUploadSlots)
-            // Same wiring for the upload speed limit (KB/s, 0 = unlimited).
             await uploadManager.setUploadSpeedLimit(kbPerSecond: self.settings.uploadSpeedLimit)
         }
         settings.onMaxUploadSlotsChange = { [weak uploadManager] newValue in
@@ -200,17 +194,12 @@ final class AppState {
             }
         }
 
-        // Push the compiled username block patterns into the pool and keep
-        // them in sync; the pool evaluates them on its per-connection hot
-        // path.
         let initialPatterns = settings.activeBlockedPatterns
         Task { await client.peerConnectionPool.updateBlockedUsernamePatterns(initialPatterns) }
         settings.onActiveBlockedPatternsChange = { [weak client] patterns in
             Task { await client?.peerConnectionPool.updateBlockedUsernamePatterns(patterns) }
         }
 
-        // Push the search-response policy and keep it in sync — the
-        // distributed-search handler reads it at relay rates.
         let initialPolicy = settings.searchResponsePolicy
         Task { await client.updateSearchResponsePolicy(initialPolicy) }
         settings.onSearchResponsePolicyChange = { [weak client] policy in
@@ -265,8 +254,6 @@ final class AppState {
     private func handle(_ event: SearchEvent) {
         switch event {
         case .results(let token, let results):
-            // Route wishlist tokens before falling through to regular
-            // search results.
             let isWishlist = wishlistState.isWishlistToken(token)
             logger.info("Search results routing: token=\(String(format: "0x%08X", token)) results=\(results.count) isWishlist=\(isWishlist)")
             if isWishlist {

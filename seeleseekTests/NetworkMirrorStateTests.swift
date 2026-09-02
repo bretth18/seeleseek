@@ -29,7 +29,6 @@ struct NetworkMirrorStateTests {
         #expect(status.listenPort == 2234)
         #expect(status.distributedChildrenCount == 3)
 
-        // Disconnect transition clears back down.
         status.apply(NetworkStatusSnapshot())
         #expect(!status.isConnected)
         #expect(status.username.isEmpty)

@@ -63,7 +63,6 @@ public actor DownloadManager {
     // MARK: - Post-Download Processing
     private var metadataReader: (any MetadataReading)?
 
-    // Bus consumer tasks installed by `configure`.
     private var transferEventsTask: Task<Void, Never>?
     private var transferNoticesTask: Task<Void, Never>?
     private var socialEventsTask: Task<Void, Never>?
@@ -1738,9 +1737,6 @@ public actor DownloadManager {
 
     /// Sanitize a filename/folder name for the filesystem
     /// Prevents directory traversal attacks and invalid filesystem characters
-    /// `nonisolated static` so the off-actor workers (e.g. the metadata
-    /// reorganize task in `organizeCompletedDownload`) can call it without
-    /// a hop.
     nonisolated static func sanitizeFilename(_ name: String) -> String {
         // SECURITY: Prevent directory traversal attacks
         // Reject ".." and "." components that could escape the download directory
@@ -1867,8 +1863,7 @@ public actor DownloadManager {
         }
     }
 
-    /// Off-actor (`@concurrent`) worker: the artwork extraction is an
-    /// AVAsset open per directory and must not run main-isolated.
+    /// An AVAsset open per directory; must not run actor-isolated.
     @concurrent
     private nonisolated static func applyFolderIcon(
         metadataReader: (any MetadataReading)?,
@@ -1931,8 +1926,7 @@ public actor DownloadManager {
         }
     }
 
-    /// Off-actor (`@concurrent`) tag read + destination resolution for
-    /// `organizeCompletedDownload` — an AVAsset open per file.
+    /// An AVAsset open per file; must not run actor-isolated.
     @concurrent
     private nonisolated static func tagBasedFolderCandidate(
         metadataReader: any MetadataReading,
@@ -2013,8 +2007,6 @@ public actor DownloadManager {
         }
     }
 
-    /// Off-actor (`@concurrent`) FileManager half of `relocate` — creates
-    /// the destination and moves each file, never overwriting.
     @concurrent
     private nonisolated static func performRelocation(
         moves: [PlacedFile],

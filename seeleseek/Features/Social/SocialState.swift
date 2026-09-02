@@ -291,7 +291,6 @@ final class SocialState: PeerWatching {
     private func handle(_ event: SocialEvent) {
         switch event {
         case .userStatus(let username, let status, let privileged):
-            // Watched users / buddies
             let buddyStatus = BuddyStatus(from: status)
             // Record live status for any watched peer (buddy or not)
             peerStatuses[username] = buddyStatus
@@ -332,7 +331,6 @@ final class SocialState: PeerWatching {
             recommendationsTimeoutTask = nil
             logger.info("Received \(recs.count) recommendations, \(unrecs.count) unrecommendations")
         case .globalRecommendations(let recs, _):
-            // Network-wide popular interests
             globalRecommendations = recs
             logger.info("Received \(recs.count) global recommendations")
         case .userPrivileges(let username, let privileged):

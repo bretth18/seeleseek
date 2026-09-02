@@ -15,17 +15,13 @@ public final class EventChannel<Event: Sendable>: Sendable {
     /// Each call returns a fresh stream; cancelling the consuming Task
     /// tears down the continuation.
     ///
-    /// `bufferingPolicy` is the subscriber's back-pressure contract: it
-    /// bounds how many undelivered events queue while the consumer is
-    /// busy. The default `.unbounded` never drops — required where a lost
-    /// event breaks something (a transfer event that never arrives hangs
-    /// its transfer). Hot domains whose consumers can fall behind under a
-    /// flood (search results, social status storms) should pass
-    /// `.bufferingOldest(n)`: overflow is
-    /// tail-dropped like a network queue, so events already accepted are
-    /// never displaced and the consumer drains in arrival order. A
-    /// dropped event is gone for every purpose — pick `n` far above any
-    /// realistic backlog so the bound only bites pathological floods.
+    /// `bufferingPolicy` is the subscriber's back-pressure contract. The
+    /// default `.unbounded` never drops — required where a lost event
+    /// breaks something (a transfer event that never arrives hangs its
+    /// transfer). Hot domains that can flood (search results, social
+    /// status storms) pass `.bufferingOldest(n)`: overflow is tail-dropped,
+    /// accepted events are never displaced, and a dropped event is gone for
+    /// every purpose — pick `n` far above any realistic backlog.
     public func subscribe(
         bufferingPolicy: AsyncStream<Event>.Continuation.BufferingPolicy = .unbounded
     ) -> AsyncStream<Event> {

@@ -49,7 +49,6 @@ public struct ShareSearchSnapshot: Sendable {
             if candidates.isEmpty { return [] }
         }
 
-        // Materialize in index order; apply the visibility gate here.
         return candidates.sorted().compactMap { position in
             let file = files[position]
             if !includeBuddyOnly && file.visibility == .buddies { return nil }

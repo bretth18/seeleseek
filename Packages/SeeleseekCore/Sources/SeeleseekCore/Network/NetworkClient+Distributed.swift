@@ -3,11 +3,8 @@ import os
 
 // MARK: - Distributed Search Network
 //
-// Branch/parent/child management for Soulseek's distributed search tree,
-// plus the handlers for distributed frames (parent adoption, search relay,
-// branch propagation) and the direct/indirect delivery race for search
-// replies. Branch state (`distributedChildren` / level / root) is stored on
-// the actor in NetworkClient.swift.
+// Branch state (`distributedChildren` / level / root) lives on the actor in
+// NetworkClient.swift.
 extension NetworkClient {
     // MARK: - Distributed Network
 
@@ -384,7 +381,6 @@ extension NetworkClient {
         // Don't respond to our own searches
         guard username != self.username else { return }
 
-        // Apply search response policy (pushed down from app settings)
         let filter = searchResponsePolicy
 
         guard filter.enabled else {

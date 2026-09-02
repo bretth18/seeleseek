@@ -1,11 +1,6 @@
 import Foundation
 
 // MARK: - Server Command Facade
-//
-// Thin request senders: validate/sanitize, build the frame via
-// MessageBuilder, send on the live server connection. No state beyond the
-// connection guard lives here — replies arrive via the server-message
-// dispatch and are published on the event bus.
 extension NetworkClient {
     // MARK: - Server Commands
 

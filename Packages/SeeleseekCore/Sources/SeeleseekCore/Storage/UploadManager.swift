@@ -223,17 +223,14 @@ public actor UploadManager {
     private func handle(_ event: TransferEvent) {
         switch event {
         case .queueUpload(let username, let filename, let connection):
-            // Peer wants to download from us.
             Task {
                 await self.handleQueueUpload(username: username, filename: filename, connection: connection)
             }
         case .transferResponse(let token, let allowed, _, let reason, let connection):
-            // Peer accepted/rejected our upload offer.
             Task {
                 await self.handleTransferResponse(token: token, allowed: allowed, reason: reason, connection: connection)
             }
         case .placeInQueueRequest(let username, let filename, let connection):
-            // Peer wants to know their queue position.
             Task {
                 await self.handlePlaceInQueueRequest(username: username, filename: filename, connection: connection)
             }
@@ -1092,7 +1089,6 @@ public actor UploadManager {
                     return
                 }
 
-                // Read chunk via the file-I/O actor
                 guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
@@ -1648,7 +1644,6 @@ public actor UploadManager {
                     return
                 }
 
-                // Read chunk via the file-I/O actor
                 guard let chunk = try await fileIO.read(upTo: chunkSize), !chunk.isEmpty else {
                     break
                 }
@@ -2243,10 +2238,7 @@ public actor UploadManager {
         self.shareManager = manager
     }
 
-    /// Direct entry point for retry-internal tests. Drives the enqueue
-    /// half only (no processQueue kick) so tests can assert the queued
-    /// state deterministically. Real callers go through `failUpload`
-    /// (auto) or `retryFailedUpload` (manual).
+    /// Test-only: the enqueue half without the processQueue kick.
     internal func _retryUploadForTest(
         transferId: UUID,
         username: String,

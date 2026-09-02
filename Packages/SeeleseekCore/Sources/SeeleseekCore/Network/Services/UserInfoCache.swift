@@ -44,9 +44,6 @@ public final class UserInfoCache {
 
         pendingLookups.insert(username)
 
-        // Async lookup. The Task closure inherits this class's MainActor
-        // isolation; only the GeoIP await leaves it, so the state writes
-        // below need no explicit hop.
         Task {
             if let countryCode = await geoIP.getCountryCode(for: ip) {
                 self.countries[username] = countryCode

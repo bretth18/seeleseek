@@ -196,10 +196,8 @@ final class ChatState {
     private func handle(_ event: SocialEvent) {
         switch event {
         case .userStatus(let username, let status, _):
-            // Update private chat online status
             updateUserOnlineStatus(username: username, status: status)
         case .userStats(let username, let avgSpeed, _, let files, _):
-            // Room user list display
             userStatsCache[username] = (speed: avgSpeed, files: files)
             pendingStatsRequests.remove(username)
         default:

@@ -2,9 +2,7 @@ import Foundation
 
 // MARK: - Test Support
 //
-// `internal` seams for seeleseekTests: register waiters, seed
-// establishment/distributed fixtures, and drive teardown paths without a
-// live server. Nothing here runs in production flows.
+// Nothing here runs in production flows.
 extension NetworkClient {
     /// Test-only: register a waiter without kicking off a server round-trip.
     /// Used to exercise the multi-waiter / timeout path independently of a

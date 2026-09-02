@@ -2,17 +2,12 @@ import Foundation
 
 // MARK: - Outbound Peer Operations
 //
-// The client-initiated peer workflows: address/status lookups, browse,
-// connection establishment (the ConnectToPeer + direct/indirect race),
-// user-info fetch, artwork fetch, and folder-contents requests. All of the
-// pending-continuation state these methods drive is stored on the actor in
-// NetworkClient.swift (stored properties cannot live in extensions);
-// `failAllPendingPeerOperations` at the bottom is the disconnect-time
-// teardown that must cover every pending dict used here.
+// Pending-continuation state lives on the actor in NetworkClient.swift;
+// `failAllPendingPeerOperations` at the bottom must cover every pending dict
+// used here so no waiter survives a disconnect.
 extension NetworkClient {
     // MARK: - Peer Address Response Handling
 
-    /// Resumes pending `getPeerAddress` waiters and publishes the event.
     public func handlePeerAddressResponse(username: String, ip: String, port: Int, obfuscatedPort: Int = 0) {
         logger.debug("handlePeerAddressResponse: \(username) @ \(ip):\(port) obfuscatedPort=\(obfuscatedPort)")
 
@@ -58,7 +53,6 @@ extension NetworkClient {
         }
     }
 
-    /// Timeout path for `getPeerAddress` — fail a still-pending waiter.
     private func expirePeerAddressRequest(username: String, requestID: UUID) {
         guard var waiters = pendingPeerAddressRequests[username] else { return }
         guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }
@@ -135,8 +129,6 @@ extension NetworkClient {
         emit(.userStatus(username: username, status: status, privileged: resolvedPrivileged))
     }
 
-    /// Timeout path for `checkUserOnlineStatus` — resolve a still-pending
-    /// waiter as offline.
     func expireStatusRequest(username: String, requestID: UUID) {
         guard var waiters = pendingStatusRequests[username] else { return }
         guard let idx = waiters.firstIndex(where: { $0.requestID == requestID }) else { return }

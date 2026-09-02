@@ -475,8 +475,6 @@ public actor ShareManager {
         return unique
     }
 
-    /// Walk a folder off-actor and return the indexed files plus stats,
-    /// without touching published state.
     private func scanFolderResult(_ folder: SharedFolder) async -> ScanResult? {
         let folderURL = URL(fileURLWithPath: folder.path)
 
@@ -498,8 +496,6 @@ public actor ShareManager {
             }
         }
 
-        // Copy the Sendable bits the worker needs — no actor references
-        // escape.
         let folderID = folder.id
         let folderVisibility = folder.visibility
         // Suffix duplicate root names so sharedPaths are unique.
@@ -513,8 +509,6 @@ public actor ShareManager {
         )
     }
 
-    /// Off-actor (`@concurrent`) filesystem walk for `scanFolderResult` —
-    /// touches no published state.
     @concurrent
     private nonisolated static func walkFolder(
         at folderURL: URL,

@@ -409,7 +409,6 @@ public actor NetworkClient {
         buddyUsernames = lowercasedUsernames
     }
 
-    /// Case-insensitive buddy-list membership check against the pushed set.
     public func isBuddy(_ username: String) -> Bool {
         buddyUsernames.contains(username.lowercased())
     }

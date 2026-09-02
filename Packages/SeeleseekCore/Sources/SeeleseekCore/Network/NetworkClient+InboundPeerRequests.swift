@@ -2,10 +2,8 @@ import Foundation
 
 // MARK: - Inbound Peer Request Serving
 //
-// Answers to requests peers make of us: share lists, folder contents, our
-// user-info profile, and SeeleSeek-extension artwork. Buddy-only visibility
-// gating is enforced here for every surface a peer could enumerate. The
-// O(N) index walks run off-actor via `@concurrent` helpers.
+// Buddy-only visibility gating is enforced here for every surface a peer
+// could enumerate. The O(N) index walks run off-actor via `@concurrent`.
 extension NetworkClient {
     // MARK: - Folder Browsing
 
@@ -14,9 +12,6 @@ extension NetworkClient {
         let isBuddy = isBuddy(username)
         logger.info("Folder contents request from \(username) (buddy=\(isBuddy)) for: \(folder)")
 
-        // Snapshot the index on the main actor, then run the O(N) filter +
-        // mapping off-actor (`@concurrent`) — with large shares this walk
-        // would otherwise occupy the client actor per incoming peer request.
         let fileIndex = await shareManager.fileIndex
         let files = await Self.buildFolderContents(fileIndex: fileIndex, folder: folder, isBuddy: isBuddy)
 
@@ -33,10 +28,9 @@ extension NetworkClient {
         }
     }
 
-    /// Off-actor helper for `handleFolderContentsRequest`. Finds files
-    /// in the requested folder, respecting per-folder visibility. Buddy-only
-    /// files are dropped for non-buddies so they can't be enumerated via a
-    /// folder-contents query that bypasses the shares-reply gate.
+    /// Buddy-only files are dropped for non-buddies so they can't be
+    /// enumerated via a folder-contents query that bypasses the shares-reply
+    /// gate.
     @concurrent
     private nonisolated static func buildFolderContents(
         fileIndex: [ShareManager.IndexedFile],
@@ -73,10 +67,6 @@ extension NetworkClient {
         let isBuddy = isBuddy(username)
         logger.info("Shares request from \(username) (buddy=\(isBuddy))")
 
-        // Snapshot the index on the main actor, then run the full-index
-        // walk + per-file split + sorts off-actor (`@concurrent`) — with
-        // large shares this would otherwise occupy the client actor on
-        // every incoming shares request.
         let fileIndex = await shareManager.fileIndex
         let (publicDirs, privateDirs) = await Self.buildSharesDirectories(fileIndex: fileIndex, isBuddy: isBuddy)
 
@@ -92,8 +82,6 @@ extension NetworkClient {
 
     private typealias DirBucket = (directory: String, files: [(filename: String, size: UInt64, bitrate: UInt32?, duration: UInt32?)])
 
-    /// Off-actor helper for `handleSharesRequest`: groups the index by
-    /// directory and splits by visibility.
     @concurrent
     private nonisolated static func buildSharesDirectories(
         fileIndex: [ShareManager.IndexedFile],
@@ -138,7 +126,6 @@ extension NetworkClient {
         let queueSize = UInt32(0)
         let hasFreeSlots = true
 
-        // Profile data pushed down from SocialState (default when unset)
         let profileData = self.profileData
 
         do {
@@ -169,10 +156,6 @@ extension NetworkClient {
             return
         }
 
-        // Find the file in our share index by SoulSeek path. Snapshot on
-        // the main actor, scan off-actor (`@concurrent`) — O(N) over a
-        // large index per incoming request otherwise occupies the client
-        // actor.
         let fileIndex = await shareManager.fileIndex
         let match = await Self.findShareIndexMatch(fileIndex: fileIndex, filePath: filePath)
         guard let indexedFile = match else {
@@ -207,7 +190,6 @@ extension NetworkClient {
         try? await connection.send(extension: .artworkReply, reply)
     }
 
-    /// Off-actor linear scan of the share index for `handleArtworkRequest`.
     @concurrent
     private nonisolated static func findShareIndexMatch(
         fileIndex: [ShareManager.IndexedFile],

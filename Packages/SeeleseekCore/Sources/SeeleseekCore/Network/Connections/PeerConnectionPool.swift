@@ -240,7 +240,6 @@ public actor PeerConnectionPool {
         self.monitor = NetworkMonitorState()
         let pool = self
         Task {
-            // Speed tracking (1 Hz mirror snapshots) + stale-connection cleanup.
             await pool.startTimers()
         }
     }
@@ -844,9 +843,6 @@ public actor PeerConnectionPool {
 
     // MARK: - Statistics
 
-    /// Called by `DownloadManager` on every received file chunk. Deliberately
-    /// `nonisolated` over a Mutex so the MainActor transfer loops don't pay
-    /// an actor hop per chunk. The 1 Hz tracker turns it into speed.
     public nonisolated func recordBytesReceived(_ delta: UInt64) {
         guard delta > 0 else { return }
         pendingBytes.withLock { $0.rx &+= delta }
@@ -913,7 +909,6 @@ public actor PeerConnectionPool {
         let elapsed = now.timeIntervalSince(lastSpeedCheck)
         guard elapsed > 0 else { return nil }
 
-        // Snapshot the Mutex-guarded accumulators once for this tick.
         let (rx, tx) = pendingBytes.withLock { $0 }
 
         let downloadDelta = Double(rx &- lastBytesReceived)
