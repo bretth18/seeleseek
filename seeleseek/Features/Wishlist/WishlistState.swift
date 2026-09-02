@@ -172,7 +172,7 @@ final class WishlistState {
             logger.error("searchNow: networkClient is nil!")
             return
         }
-        guard client.isConnected else {
+        guard client.status.isConnected else {
             logger.warning("searchNow: offline, skipping '\(item.query)'")
             return
         }

@@ -64,12 +64,6 @@ struct SeeleSeekApp: App {
                             return
                         }
                         #endif
-                        #if DEBUG
-                        if SyntheticSearchDriver.isEnabled {
-                            SyntheticSearchDriver.start(appState: appState)
-                            return
-                        }
-                        #endif
                         appState.configure()
                         SeeleSeekShortcuts.updateAppShortcutParameters()
                     }

@@ -96,22 +96,8 @@ final class SearchState {
     // MARK: - Setup
     // Results are not subscribed here: `AppState.wireNetworkClient` routes
     // wishlist tokens away and calls `addResults` for the rest.
-    func setupCallbacks(client: NetworkClient) {
+    func wireNetworkEvents(client: NetworkClient) {
         self.networkClient = client
-
-        logger.info("Setting up callbacks with NetworkClient...")
-
-        client.onSearchResults = { [weak self] token, results in
-            self?.logger.info("Received \(results.count) results for token \(token)")
-            if let self = self {
-                self.addResults(results, forToken: token)
-                self.logger.info("Results added to search")
-            } else {
-                self?.logger.warning("self is nil in callback!")
-            }
-        }
-
-        logger.info("Callbacks configured with NetworkClient")
 
         // Load search history
         Task {
