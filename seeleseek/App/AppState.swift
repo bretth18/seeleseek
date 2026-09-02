@@ -594,6 +594,7 @@ final class AppState {
             ("settings.notifyDownloads",       "settingsNotifyDownloads"),
             ("settings.notifyUploads",         "settingsNotifyUploads"),
             ("settings.notifyPrivateMessages", "settingsNotifyPrivateMessages"),
+            ("settings.notifyWishlist",        "settingsNotifyWishlist"),
             ("settings.notifyOnlyInBackground","settingsNotifyOnlyInBackground"),
             ("settings.notificationSoundName", "settingsNotificationSoundName"),
             ("update.lastCheckDate",           "updateLastCheckDate"),

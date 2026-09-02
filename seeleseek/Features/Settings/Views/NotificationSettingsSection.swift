@@ -25,6 +25,8 @@ struct NotificationSettingsSection: View {
                     .disabled(!settings.enableNotifications)
                 settingsToggle("Private messages", isOn: $settings.notifyPrivateMessages)
                     .disabled(!settings.enableNotifications)
+                settingsToggle("Wishlist matches", isOn: $settings.notifyWishlist)
+                    .disabled(!settings.enableNotifications)
             }
         }
     }

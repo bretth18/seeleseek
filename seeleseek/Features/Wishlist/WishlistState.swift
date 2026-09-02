@@ -242,6 +242,7 @@ final class WishlistState {
         let newKeys = accepted.map { "\($0.username)|\($0.filename)" }.filter { !announced.contains($0) }
         if !newKeys.isEmpty, let item = items.first(where: { $0.id == itemId }) {
             VoiceOverAnnouncer.shared.announce("Wishlist: \(newKeys.count) new results for \(item.query)")
+            ActivityLog.shared.logWishlistResults(query: item.query, count: newKeys.count)
             announced.formUnion(newKeys)
             announcedResultKeys[itemId] = announced
         }

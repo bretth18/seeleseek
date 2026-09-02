@@ -46,6 +46,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             guard settings.notifyPrivateMessages else { return }
             post(title: title, body: detail)
 
+        case .wishlistResult:
+            guard settings.notifyWishlist else { return }
+            post(title: "Wishlist match", body: title)
+
         default:
             return
         }
