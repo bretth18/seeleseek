@@ -24,7 +24,8 @@ struct AboutSettingsSection: View {
     }
 
     var body: some View {
-        settingsGroup("About") {
+        settingsHeader("About")
+        settingsGroup(nil) {
             settingsRow {
                 VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
                     Text(appName)

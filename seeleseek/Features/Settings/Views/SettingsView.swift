@@ -51,7 +51,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
                     switch selectedTab {
                     case .profile:
-                        MyProfileView()
+                        UserProfileSettingsSection()
                     case .general:
                         GeneralSettingsSection(settings: appState.settings)
                     case .network:

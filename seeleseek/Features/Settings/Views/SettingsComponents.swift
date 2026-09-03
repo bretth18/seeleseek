@@ -12,12 +12,14 @@ func settingsHeader(_ title: String) -> some View {
 }
 
 /// Grouped settings section with title and bordered container
-func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+func settingsGroup<Content: View>(_ title: String?, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
-        Text(title)
-            .font(SeeleTypography.caption)
-            .foregroundStyle(SeeleColors.textTertiary)
-            .accessibilityAddTraits(.isHeader)
+        if let title = title {
+            Text(title)
+                .font(SeeleTypography.caption)
+                .foregroundStyle(SeeleColors.textTertiary)
+                .accessibilityAddTraits(.isHeader)
+        }
 
         VStack(spacing: 0) {
             content()
