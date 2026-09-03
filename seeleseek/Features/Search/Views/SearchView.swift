@@ -441,10 +441,13 @@ struct SearchView: View {
                             .buttonStyle(.plain)
                             .menuIndicator(.hidden)
 
-                            if search.isSearching {
-                                ProgressView()
-                                    .scaleEffect(0.6)
+                            ZStack {
+                                if search.isSearching {
+                                    ProgressView()
+                                        .scaleEffect(0.5)
+                                }
                             }
+                            .frame(width: SeeleSpacing.iconSizeSmall, height: SeeleSpacing.iconSizeSmall)
                         }
                     }
                 }
