@@ -127,12 +127,14 @@ struct MainView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        // Show login when disconnected OR when there's a login error (so user can retry).
+        // Login stays up until the session is actually established:
+        // `.connecting` is only ever user-initiated (auto-reconnect
+        // publishes `.reconnecting`), so leaving for the app view on it
+        // meant a rejected password flashed the app and bounced back.
         // `isReapplyingSettings` suppresses the flash when something like a port
         // change is intentionally bouncing the connection — the user should keep
         // seeing whatever they were looking at, not the login screen.
-        if (appState.connection.connectionStatus == .disconnected ||
-            appState.connection.connectionStatus == .error) &&
+        if [.disconnected, .connecting, .error].contains(appState.connection.connectionStatus) &&
            !appState.connection.isReapplyingSettings {
             LoginView()
         } else {
