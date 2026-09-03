@@ -32,6 +32,8 @@ struct SearchResultsHostedTableView: NSViewRepresentable {
         table.backgroundColor = .clear
         table.style = .plain
         table.gridStyleMask = []
+        table.setAccessibilityLabel("Search results")
+        table.setAccessibilityIdentifier("searchResultsTable")
         let column = NSTableColumn(identifier: .init("row"))
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
