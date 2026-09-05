@@ -51,4 +51,4 @@ If **Show in menu bar** is on in Settings > General, seeleseek adds an icon to t
 - **Open** — Opens the main window.
 - **Quit** — Stops the app.
 
-The icon stays in the menu bar when you close the main window.
+The icon stays in the menu bar when you close the main window. With **Minimize to menu bar** also on, closing the last window hides the Dock icon until you open a window again.
