@@ -6,6 +6,7 @@ struct LoginView: View {
 
     var body: some View {
         @Bindable var connectionState = appState.connection
+        @Bindable var settings = appState.settings
 
         VStack(spacing: 0) {
             Spacer()
@@ -63,6 +64,13 @@ struct LoginView: View {
                         .font(SeeleTypography.subheadline)
                         .foregroundStyle(SeeleColors.textSecondary)
 
+
+                    Toggle("Connect automatically at launch", isOn: $settings.connectAtLaunch)
+                        .toggleStyle(SeeleToggleStyle())
+                        .font(SeeleTypography.subheadline)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .disabled(!connectionState.rememberCredentials)
+
                     if let error = appState.connection.errorMessage {
                         HStack(spacing: SeeleSpacing.sm) {
                             Image(systemName: "exclamationmark.triangle.fill")
@@ -85,7 +93,7 @@ struct LoginView: View {
                         isLoading: appState.connection.connectionStatus == .connecting
                     ) {
                         Task {
-                            await connect()
+                            await appState.connect()
                         }
                     }
                     .disabled(!appState.connection.isLoginValid)
@@ -110,26 +118,6 @@ struct LoginView: View {
         .background(SeeleColors.background)
         .onAppear {
             loadSavedCredentials()
-        }
-    }
-
-    private func connect() async {
-        appState.connection.setConnecting()
-
-        // Connection-status handling is wired app-wide in
-        // AppState.wireNetworkClient() — this stays form-local.
-        await appState.networkClient.setAcceptDistributedChildrenPreference(appState.settings.respondToSearches)
-
-        await appState.networkClient.connect(
-            server: ServerConnection.defaultHost,
-            port: ServerConnection.defaultPort,
-            username: appState.connection.loginUsername,
-            password: appState.connection.loginPassword,
-            preferredListenPort: UInt16(appState.settings.listenPort)
-        )
-
-        if let error = appState.networkClient.status.connectionError {
-            appState.connection.setError(error)
         }
     }
 

@@ -533,6 +533,9 @@ final class AppState {
 
         Task {
             await initializeDatabase()
+            // After the database so the connect-time download/upload
+            // resume sees the persisted queue, not an empty one.
+            connectAtLaunchIfEnabled()
             // Wiring is not inert: wireNetworkEvents loads each feature
             // state's persisted data, so the database must be ready first.
             // Previews and the test host skip configure(), so neither
@@ -541,6 +544,35 @@ final class AppState {
             await client.shareManager.loadPersistedFolders()
             await client.shareManager.rescanAll()
         }
+    }
+
+    // MARK: - Connecting
+
+    /// Logs in with the credentials in the login form. Shared by the
+    /// login screen and connect-at-launch; connection-status handling is
+    /// wired app-wide in wireNetworkClient().
+    func connect() async {
+        connection.setConnecting()
+        await networkClient.setAcceptDistributedChildrenPreference(settings.respondToSearches)
+        await networkClient.connect(
+            server: ServerConnection.defaultHost,
+            port: ServerConnection.defaultPort,
+            username: connection.loginUsername,
+            password: connection.loginPassword,
+            preferredListenPort: UInt16(settings.listenPort)
+        )
+        if let error = networkClient.status.connectionError {
+            connection.setError(error)
+        }
+    }
+
+    private func connectAtLaunchIfEnabled() {
+        guard settings.connectAtLaunch,
+              connection.connectionStatus == .disconnected,
+              let credentials = CredentialStorage.load() else { return }
+        connection.loginUsername = credentials.username
+        connection.loginPassword = credentials.password
+        Task { await connect() }
     }
 
     // MARK: - Database Initialization

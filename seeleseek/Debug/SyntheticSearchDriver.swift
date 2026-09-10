@@ -189,8 +189,7 @@ enum SyntheticSearchDriver {
     }
 
     private static func liveSearchForever(appState: AppState) async {
-        // There is no auto-connect in the app — LoginView's button does
-        // this. Replicate its flow with the saved credentials.
+        // Same path as LoginView's button, with the saved credentials.
         // NOTE: SoulSeek permits one session per account; this kicks any
         // other running client on the same account.
         try? await Task.sleep(for: .seconds(3))  // let configure()'s async setup land
@@ -200,15 +199,7 @@ enum SyntheticSearchDriver {
         }
         appState.connection.loginUsername = credentials.username
         appState.connection.loginPassword = credentials.password
-        appState.connection.setConnecting()
-        await appState.networkClient.setAcceptDistributedChildrenPreference(appState.settings.respondToSearches)
-        await appState.networkClient.connect(
-            server: ServerConnection.defaultHost,
-            port: ServerConnection.defaultPort,
-            username: credentials.username,
-            password: credentials.password,
-            preferredListenPort: UInt16(appState.settings.listenPort)
-        )
+        await appState.connect()
 
         var waited = 0
         while appState.connection.connectionStatus != .connected {

@@ -108,6 +108,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let downloadFolderTemplateKey = "settingsDownloadFolderTemplate"
     private let downloadDefaultsMigratedKey = "settingsDownloadDefaultsMigratedV2"
     private let launchAtLoginKey = "settingsLaunchAtLogin"
+    private let connectAtLaunchKey = "settingsConnectAtLaunch"
     private let showInMenuBarKey = "settingsShowInMenuBar"
     private let notifyDownloadsKey = "settingsNotifyDownloads"
     private let notifyUploadsKey = "settingsNotifyUploads"
@@ -185,6 +186,12 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
     var showInMenuBar: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var connectAtLaunch: Bool = false {
         didSet {
             guard !isLoading else { return }
             save()
@@ -437,6 +444,7 @@ final class SettingsState: DownloadSettingsProviding {
         downloadFolderTemplate = SettingsState.defaultDownloadFolderTemplate
         launchAtLogin = false
         showInMenuBar = true
+        connectAtLaunch = false
         listenPort = 2234
         enableUPnP = true
         maxDownloadSlots = 5
@@ -521,6 +529,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
         UserDefaults.standard.set(launchAtLogin, forKey: launchAtLoginKey)
         UserDefaults.standard.set(showInMenuBar, forKey: showInMenuBarKey)
+        UserDefaults.standard.set(connectAtLaunch, forKey: connectAtLaunchKey)
         UserDefaults.standard.set(notifyDownloads, forKey: notifyDownloadsKey)
         UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
@@ -613,6 +622,7 @@ final class SettingsState: DownloadSettingsProviding {
         if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
             showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
         }
+        connectAtLaunch = UserDefaults.standard.bool(forKey: connectAtLaunchKey)
         if UserDefaults.standard.object(forKey: notifyDownloadsKey) != nil {
             notifyDownloads = UserDefaults.standard.bool(forKey: notifyDownloadsKey)
         }
