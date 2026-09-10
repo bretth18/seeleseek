@@ -5,6 +5,7 @@ struct TransfersView: View {
     @Environment(\.appState) private var appState
     @State private var isDashboardPresented = false
     @State private var isClearHistoryConfirmationPresented = false
+    @State private var isCancelAllConfirmationPresented = false
 
     private var transferState: TransferState { appState.transferState }
 
@@ -43,6 +44,18 @@ struct TransfersView: View {
         } message: {
             Text("This permanently deletes all completed-transfer records and totals. This cannot be undone.")
         }
+        .confirmationDialog(
+            "Cancel all downloads?",
+            isPresented: $isCancelAllConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Downloads", role: .destructive) {
+                transferState.cancelAllDownloads()
+            }
+            Button("Keep Downloading", role: .cancel) {}
+        } message: {
+            Text("Stops every queued and in-progress download. Cancelled files stay listed and can be retried.")
+        }
     }
 
     private var tabBar: some View {
@@ -72,7 +85,7 @@ struct TransfersView: View {
     }
 
     /// Always present so the trailing cluster never reflows; disabled
-    /// (not hidden) when there is nothing to clear.
+    /// (not hidden) when there is nothing to clear or cancel.
     private var clearMenu: some View {
         Menu {
             Button("Clear Completed") {
@@ -81,15 +94,20 @@ struct TransfersView: View {
             Button("Clear Failed") {
                 transferState.clearFailed()
             }
+            Divider()
+            Button("Cancel All Downloads", role: .destructive) {
+                isCancelAllConfirmationPresented = true
+            }
+            .disabled(!transferState.hasCancellableDownloads)
         } label: {
             Image(systemName: "trash")
         }
         .buttonStyle(.seeleIcon)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(!hasClearableTransfers)
-        .help("Clear finished transfers")
-        .accessibilityLabel("Clear finished transfers")
+        .disabled(!hasClearableTransfers && !transferState.hasCancellableDownloads)
+        .help("Clear or cancel transfers")
+        .accessibilityLabel("Clear or cancel transfers")
     }
 
     @ViewBuilder
@@ -104,7 +122,8 @@ struct TransfersView: View {
             transferList(
                 transfers: transferState.downloads,
                 onMoveToTop: { transferState.moveDownloadToTop(id: $0) },
-                onMoveToBottom: { transferState.moveDownloadToBottom(id: $0) }
+                onMoveToBottom: { transferState.moveDownloadToBottom(id: $0) },
+                onCancelFolder: { transferState.cancelFolder(of: $0) }
             )
         }
     }
@@ -194,7 +213,8 @@ struct TransfersView: View {
     private func transferList(
         transfers: [Transfer],
         onMoveToTop: ((UUID) -> Void)? = nil,
-        onMoveToBottom: ((UUID) -> Void)? = nil
+        onMoveToBottom: ((UUID) -> Void)? = nil,
+        onCancelFolder: ((Transfer) -> Void)? = nil
     ) -> some View {
         ScrollView {
             LazyVStack(spacing: SeeleSpacing.dividerSpacing) {
@@ -212,7 +232,8 @@ struct TransfersView: View {
                         },
                         onRemove: { transferState.removeTransfer(id: transfer.id) },
                         onMoveToTop: onMoveToTop.map { cb in { cb(transfer.id) } },
-                        onMoveToBottom: onMoveToBottom.map { cb in { cb(transfer.id) } }
+                        onMoveToBottom: onMoveToBottom.map { cb in { cb(transfer.id) } },
+                        onCancelFolder: onCancelFolder.map { cb in { cb(transfer) } }
                     )
                 }
             }

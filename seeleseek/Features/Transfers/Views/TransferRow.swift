@@ -109,6 +109,7 @@ struct TransferRow: View {
     let onRemove: () -> Void
     var onMoveToTop: (() -> Void)? = nil
     var onMoveToBottom: (() -> Void)? = nil
+    var onCancelFolder: (() -> Void)? = nil
 
     @State private var isHovered = false
 
@@ -194,7 +195,8 @@ struct TransferRow: View {
             onTogglePreview: toggleAudioPreview,
             onEditMetadata: openMetadataEditor,
             onMoveToTop: onMoveToTop,
-            onMoveToBottom: onMoveToBottom
+            onMoveToBottom: onMoveToBottom,
+            onCancelFolder: onCancelFolder
         ))
         .onAppear { refreshPeerStatus() }
         .onChange(of: transfer.username) { _, _ in refreshPeerStatus() }
@@ -228,6 +230,13 @@ struct TransferRow: View {
             }
             Button(action: onMoveToBottom) {
                 Label("Move to Bottom", systemImage: "arrow.down.to.line")
+            }
+            Divider()
+        }
+
+        if transfer.canCancel, let onCancelFolder {
+            Button(action: onCancelFolder) {
+                Label("Cancel Folder", systemImage: "xmark.circle")
             }
             Divider()
         }
@@ -320,6 +329,7 @@ private struct TransferRowAccessibilityActions: ViewModifier {
     let onEditMetadata: () -> Void
     let onMoveToTop: (() -> Void)?
     let onMoveToBottom: (() -> Void)?
+    let onCancelFolder: (() -> Void)?
 
     private var isCompletedAudio: Bool {
         transfer.status == .completed && transfer.isAudioFile && transfer.localPath != nil
@@ -338,6 +348,9 @@ private struct TransferRowAccessibilityActions: ViewModifier {
         content.accessibilityActions {
             if transfer.canCancel {
                 Button("Cancel", action: onCancel)
+                if let onCancelFolder {
+                    Button("Cancel folder", action: onCancelFolder)
+                }
             }
             if transfer.canRetry {
                 Button("Retry", action: onRetry)

@@ -562,6 +562,27 @@ final class TransferState: TransferTracking {
         onDownloadTerminated?(id)
     }
 
+    var hasCancellableDownloads: Bool {
+        downloads.contains(where: \.canCancel)
+    }
+
+    func cancelAllDownloads() {
+        cancelDownloads { _ in true }
+    }
+
+    func cancelFolder(of transfer: Transfer) {
+        cancelDownloads {
+            $0.username == transfer.username && $0.folderPath == transfer.folderPath
+        }
+    }
+
+    private func cancelDownloads(where matches: (Transfer) -> Bool) {
+        let ids = downloads.filter { $0.canCancel && matches($0) }.map(\.id)
+        for id in ids {
+            cancelTransfer(id: id)
+        }
+    }
+
     func retryTransfer(id: UUID) {
         updateTransfer(id: id) { transfer in
             transfer.status = .queued
