@@ -10,9 +10,10 @@ public enum FileTypes {
         "flac", "wav", "aiff", "aif", "alac", "ape"
     ]
 
-    public static let image: Set<String> = [
-        "jpg", "jpeg", "png", "gif", "bmp", "webp"
+    public static let imageFormats: [[String]] = [
+        ["jpg", "jpeg"], ["png"], ["gif"], ["webp"], ["bmp"]
     ]
+    public static let image: Set<String> = Set(imageFormats.joined())
 
     public static let video: Set<String> = [
         "mp4", "mkv", "avi", "mov", "wmv"

@@ -98,11 +98,9 @@ struct SearchFilterPanel: View {
             }
 
             filterRow("Image") {
-                let formats: [(String, Set<String>)] = [
-                    ("JPG", ["jpg", "jpeg"]), ("PNG", ["png"]), ("GIF", ["gif"]), ("WEBP", ["webp"]), ("BMP", ["bmp"])
-                ]
-                ForEach(formats, id: \.0) { label, exts in
-                    FilterChip(label: label, dimension: "Image", isActive: exts.isSubset(of: searchState.filterExtensions)) {
+                ForEach(FileTypes.imageFormats, id: \.self) { spellings in
+                    let exts = Set(spellings)
+                    FilterChip(label: spellings[0].uppercased(), dimension: "Image", isActive: exts.isSubset(of: searchState.filterExtensions)) {
                         searchState.toggleExtensions(exts)
                     }
                 }
