@@ -290,6 +290,7 @@ final class SearchState {
         case flac
         case lossless
         case hiRes
+        case artwork
 
         var extensions: Set<String> {
             switch self {
@@ -297,13 +298,14 @@ final class SearchState {
             case .flac: return ["flac"]
             case .lossless: return ["flac", "wav", "aiff", "alac", "ape"]
             case .hiRes: return ["flac", "wav", "aiff", "alac"]
+            case .artwork: return FileTypes.image
             }
         }
 
         var minBitrate: Int? {
             switch self {
             case .mp3_320: return 320
-            case .flac, .lossless, .hiRes: return nil
+            case .flac, .lossless, .hiRes, .artwork: return nil
             }
         }
 
@@ -345,10 +347,14 @@ final class SearchState {
     }
 
     func toggleExtension(_ ext: String) {
-        if filterExtensions.contains(ext) {
-            filterExtensions.remove(ext)
+        toggleExtensions([ext])
+    }
+
+    func toggleExtensions(_ exts: Set<String>) {
+        if exts.isSubset(of: filterExtensions) {
+            filterExtensions.subtract(exts)
         } else {
-            filterExtensions.insert(ext)
+            filterExtensions.formUnion(exts)
         }
     }
 

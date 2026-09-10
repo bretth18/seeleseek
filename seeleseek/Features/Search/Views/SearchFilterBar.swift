@@ -43,6 +43,9 @@ struct SearchFilterBar: View {
             FilterChip(label: "Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
                 searchState.applyPreset(.hiRes)
             }
+            FilterChip(label: "Artwork", isActive: searchState.isPresetActive(.artwork)) {
+                searchState.applyPreset(.artwork)
+            }
 
             Spacer()
 
@@ -90,6 +93,17 @@ struct SearchFilterPanel: View {
                 ForEach(formats, id: \.self) { ext in
                     FilterChip(label: ext.uppercased(), dimension: "Format", isActive: searchState.filterExtensions.contains(ext)) {
                         searchState.toggleExtension(ext)
+                    }
+                }
+            }
+
+            filterRow("Image") {
+                let formats: [(String, Set<String>)] = [
+                    ("JPG", ["jpg", "jpeg"]), ("PNG", ["png"]), ("GIF", ["gif"]), ("WEBP", ["webp"]), ("BMP", ["bmp"])
+                ]
+                ForEach(formats, id: \.0) { label, exts in
+                    FilterChip(label: label, dimension: "Image", isActive: exts.isSubset(of: searchState.filterExtensions)) {
+                        searchState.toggleExtensions(exts)
                     }
                 }
             }
