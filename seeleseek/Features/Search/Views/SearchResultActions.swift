@@ -48,7 +48,7 @@ struct SearchResultActions: Equatable {
 
     func browseUser() {
         appState.browseState.browseUser(result.username)
-        appState.sidebarSelection = .browse
+        appState.navigation.navigate(to: .browse)
     }
 
     func viewProfile() {
@@ -57,7 +57,7 @@ struct SearchResultActions: Equatable {
 
     func browseFolder() {
         appState.browseState.browseUser(result.username, targetPath: result.filename)
-        appState.sidebarSelection = .browse
+        appState.navigation.navigate(to: .browse)
     }
 
     func downloadContainingFolder() {

@@ -64,7 +64,7 @@ struct SearchView: View {
         .onAppear {
             consumePendingSearchFocus()
         }
-        .onChange(of: appState.searchFieldFocusPending) { _, pending in
+        .onChange(of: appState.navigation.searchFieldFocusPending) { _, pending in
             if pending { consumePendingSearchFocus() }
         }
     }
@@ -86,8 +86,8 @@ struct SearchView: View {
     }
 
     private func consumePendingSearchFocus() {
-        guard appState.searchFieldFocusPending else { return }
-        appState.searchFieldFocusPending = false
+        guard appState.navigation.searchFieldFocusPending else { return }
+        appState.navigation.searchFieldFocusPending = false
         // A view appearing in this same update cannot take focus until the next runloop.
         DispatchQueue.main.async {
             isSearchFocused = true

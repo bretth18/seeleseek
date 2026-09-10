@@ -77,7 +77,7 @@ struct SeeleSeekApp: App {
             TabNavigationCommands()
             CommandGroup(after: .textEditing) {
                 Button("Find") {
-                    appState.requestSearchFieldFocus()
+                    appState.navigation.requestSearchFieldFocus()
                 }
                 .keyboardShortcut("f", modifiers: .command)
             }
@@ -105,46 +105,46 @@ struct SeeleSeekApp: App {
             }
             CommandMenu("Navigate") {
                 Button("Search") {
-                    appState.sidebarSelection = .search
+                    appState.navigation.navigate(to: .search)
                 }
                 .keyboardShortcut("1", modifiers: .command)
                 
                 Button("Wishlists") {
-                    appState.sidebarSelection = .wishlists
+                    appState.navigation.navigate(to: .wishlists)
                 }
                 .keyboardShortcut("2", modifiers: .command)
 
                 Button("Transfers") {
-                    appState.sidebarSelection = .transfers
+                    appState.navigation.navigate(to: .transfers())
                 }
                 .keyboardShortcut("3", modifiers: .command)
 
                 Button("Browse") {
-                    appState.sidebarSelection = .browse
+                    appState.navigation.navigate(to: .browse)
                 }
                 .keyboardShortcut("4", modifiers: .command)
 
                 Button("Social") {
-                    appState.sidebarSelection = .social
+                    appState.navigation.navigate(to: .social())
                 }
                 .keyboardShortcut("5", modifiers: .command)
 
                 Button("Chat") {
-                    appState.sidebarSelection = .chat
+                    appState.navigation.navigate(to: .chat)
                 }
                 .keyboardShortcut("6", modifiers: .command)
 
                 Divider()
 
                 Button("Activity") {
-                    appState.sidebarSelection = .networkMonitor
+                    appState.navigation.navigate(to: .networkMonitor())
                 }
                 .keyboardShortcut("7", modifiers: .command)
 
                 Divider()
 
                 Button("Settings") {
-                    appState.sidebarSelection = .settings
+                    appState.navigation.navigate(to: .settings())
                 }
                 .keyboardShortcut("9", modifiers: .command)
             }

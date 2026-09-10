@@ -172,12 +172,12 @@ struct BuddyRowView: View {
 
     private func browseFiles() {
         appState.browseState.browseUser(buddy.username)
-        appState.sidebarSelection = .browse
+        appState.navigation.navigate(to: .browse)
     }
 
     private func startChat() {
         appState.chatState.selectPrivateChat(buddy.username)
-        appState.sidebarSelection = .chat
+        appState.navigation.navigate(to: .chat)
     }
 
     private func formatNumber(_ value: UInt32) -> String {

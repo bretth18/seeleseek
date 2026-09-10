@@ -136,7 +136,7 @@ struct MainView: View {
            !appState.connection.isReapplyingSettings {
             LoginView()
         } else {
-            switch appState.sidebarSelection {
+            switch appState.navigation.sidebarSelection {
             case .search:
                 SearchView()
             case .wishlists:

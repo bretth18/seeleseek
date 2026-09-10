@@ -323,13 +323,13 @@ struct UserProfileSheet: View {
 
     private func browseFiles() {
         appState.browseState.browseUser(profile.username)
-        appState.sidebarSelection = .browse
+        appState.navigation.navigate(to: .browse)
         dismiss()
     }
 
     private func startChat() {
         appState.chatState.selectPrivateChat(profile.username)
-        appState.sidebarSelection = .chat
+        appState.navigation.navigate(to: .chat)
         dismiss()
     }
 

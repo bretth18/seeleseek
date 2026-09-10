@@ -64,7 +64,7 @@ enum SyntheticSearchDriver {
             ip: "192.0.2.42",
             greeting: ""
         )
-        appState.sidebarSelection = .search
+        appState.navigation.navigate(to: .search)
 
         // Launched from a terminal the app starts in the background, where
         // the window is occluded and nothing renders — the repro needs
@@ -112,7 +112,7 @@ enum SyntheticSearchDriver {
 
         for target in targets {
             appState.socialState.showProfileSheet = false
-            appState.sidebarSelection = .search
+            appState.navigation.navigate(to: .search)
             try? await Task.sleep(for: .seconds(1))
             guard let sv = resultsScrollView(), let d = sv.documentView,
                   let win = sv.window else { break }
@@ -142,7 +142,7 @@ enum SyntheticSearchDriver {
     }
 
     private static func probeStateSnapshot(_ appState: AppState) -> String {
-        let sidebar = String(describing: appState.sidebarSelection)
+        let sidebar = String(describing: appState.navigation.sidebarSelection)
         let folder = appState.browseState.currentFolderPath ?? "nil"
         let profile = appState.socialState.viewingProfile?.username ?? "nil"
         return "sidebar=\(sidebar) browseUser='\(appState.browseState.currentUser)' folder='\(folder)' profileSheet=\(appState.socialState.showProfileSheet):\(profile)"
@@ -176,7 +176,7 @@ enum SyntheticSearchDriver {
     /// cadence as the synthetic mode so PACE lines stay comparable.
     static func startLive(appState: AppState) {
         lineBufferStdout()
-        appState.sidebarSelection = .search
+        appState.navigation.navigate(to: .search)
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first?.makeKeyAndOrderFront(nil)
         moveWindowToFastestScreenAfterRestore()

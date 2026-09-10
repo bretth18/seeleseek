@@ -187,7 +187,7 @@ struct PeerInfoPopover: View {
         HStack(spacing: SeeleSpacing.md) {
             Button {
                 appState.browseState.browseUser(peer.username)
-                appState.sidebarSelection = .browse
+                appState.navigation.navigate(to: .browse)
                 dismiss()
             } label: {
                 Label("Browse", systemImage: "folder")
@@ -197,7 +197,7 @@ struct PeerInfoPopover: View {
 
             Button {
                 appState.chatState.selectPrivateChat(peer.username)
-                appState.sidebarSelection = .chat
+                appState.navigation.navigate(to: .chat)
                 dismiss()
             } label: {
                 Label("Message", systemImage: "bubble.left")

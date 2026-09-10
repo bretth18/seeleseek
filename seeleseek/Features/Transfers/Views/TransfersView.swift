@@ -3,25 +3,10 @@ import SeeleseekCore
 
 struct TransfersView: View {
     @Environment(\.appState) private var appState
-    @State private var selectedTab: TransferTab = .downloads
     @State private var isDashboardPresented = false
     @State private var isClearHistoryConfirmationPresented = false
 
     private var transferState: TransferState { appState.transferState }
-
-    enum TransferTab: String, CaseIterable {
-        case downloads = "Downloads"
-        case uploads = "Uploads"
-        case history = "History"
-
-        var icon: String {
-            switch self {
-            case .downloads: "arrow.down.circle"
-            case .uploads: "arrow.up.circle"
-            case .history: "clock.arrow.circlepath"
-            }
-        }
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +14,7 @@ struct TransfersView: View {
 
             Divider().background(SeeleColors.surfaceSecondary)
 
-            switch selectedTab {
+            switch appState.navigation.transfersTab {
             case .downloads:
                 downloadsView
             case .uploads:
@@ -39,7 +24,7 @@ struct TransfersView: View {
             }
         }
         .background(SeeleColors.background)
-        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
+        .focusedSceneValue(\.tabCommands, .cycling(Bindable(appState.navigation).transfersTab))
         .sheet(isPresented: Bindable(appState.metadataState).isEditorPresented) {
             MetadataEditorSheet(state: appState.metadataState)
         }
@@ -62,7 +47,7 @@ struct TransfersView: View {
 
     private var tabBar: some View {
         StandardTabBar(
-            selection: $selectedTab,
+            selection: Bindable(appState.navigation).transfersTab,
             icon: { $0.icon },
             badge: { tab in
                 switch tab {

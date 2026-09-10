@@ -20,14 +20,14 @@ struct UserContextMenuItems: View {
 
         Button {
             appState.browseState.browseUser(username)
-            if navigateOnBrowse { appState.sidebarSelection = .browse }
+            if navigateOnBrowse { appState.navigation.navigate(to: .browse) }
         } label: {
             Label("Browse Files", systemImage: "folder")
         }
 
         Button {
             appState.chatState.selectPrivateChat(username)
-            if navigateOnMessage { appState.sidebarSelection = .chat }
+            if navigateOnMessage { appState.navigation.navigate(to: .chat) }
         } label: {
             Label("Send Message", systemImage: "envelope")
         }
@@ -94,12 +94,12 @@ struct UserAccessibilityActions: View {
 
         Button("Browse Files") {
             appState.browseState.browseUser(username)
-            if navigateOnBrowse { appState.sidebarSelection = .browse }
+            if navigateOnBrowse { appState.navigation.navigate(to: .browse) }
         }
 
         Button("Send Message") {
             appState.chatState.selectPrivateChat(username)
-            if navigateOnMessage { appState.sidebarSelection = .chat }
+            if navigateOnMessage { appState.navigation.navigate(to: .chat) }
         }
 
         if showAddBuddy {

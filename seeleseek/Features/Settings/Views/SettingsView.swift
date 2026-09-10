@@ -3,42 +3,13 @@ import SeeleseekCore
 
 struct SettingsView: View {
     @Environment(\.appState) private var appState
-    @State private var selectedTab: SettingsTab = .general
-
-    enum SettingsTab: String, CaseIterable {
-        case profile = "Profile"
-        case general = "General"
-        case network = "Network"
-        case shares = "Shares"
-        case metadata = "Metadata"
-        case chat = "Chat"
-        case notifications = "Notifications"
-        case privacy = "Privacy"
-        case diagnostics = "Diagnostics"
-        case update = "Update"
-        case about = "About"
-
-        var icon: String {
-            switch self {
-            case .profile: "person.crop.circle"
-            case .general: "gear"
-            case .network: "network"
-            case .shares: "folder"
-            case .metadata: "music.note"
-            case .chat: "bubble.left"
-            case .notifications: "bell"
-            case .privacy: "lock.shield"
-            case .diagnostics: "ant"
-            case .update: "arrow.triangle.2.circlepath"
-            case .about: "info.circle"
-            }
-        }
-    }
 
     var body: some View {
+        @Bindable var navigation = appState.navigation
+
         HSplitView {
             StandardTabBar(
-                selection: $selectedTab,
+                selection: $navigation.settingsTab,
                 axis: .vertical,
                 showsBackground: false,
                 icon: { $0.icon }
@@ -49,7 +20,7 @@ struct SettingsView: View {
             // Content
             ScrollView {
                 VStack(alignment: .leading, spacing: SeeleSpacing.lg) {
-                    switch selectedTab {
+                    switch navigation.settingsTab {
                     case .profile:
                         UserProfileSettingsSection()
                     case .general:
@@ -79,7 +50,7 @@ struct SettingsView: View {
             }
             .background(SeeleColors.background)
         }
-        .focusedSceneValue(\.tabCommands, .cycling($selectedTab))
+        .focusedSceneValue(\.tabCommands, .cycling($navigation.settingsTab))
     }
 
 }

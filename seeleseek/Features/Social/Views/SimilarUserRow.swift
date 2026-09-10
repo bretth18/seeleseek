@@ -91,12 +91,12 @@ struct SimilarUserRow: View {
 
     private func browseFiles() {
         appState.browseState.browseUser(username)
-        appState.sidebarSelection = .browse
+        appState.navigation.navigate(to: .browse)
     }
 
     private func startChat() {
         appState.chatState.selectPrivateChat(username)
-        appState.sidebarSelection = .chat
+        appState.navigation.navigate(to: .chat)
     }
 }
 

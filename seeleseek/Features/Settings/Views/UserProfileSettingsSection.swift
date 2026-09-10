@@ -73,17 +73,17 @@ struct UserProfileSettingsSection: View {
 
                 settingsRow {
                     HStack {
-                        Text("Add or remove interests in the Social tab.")
+                        Text("Add or remove interests under Social › Interests.")
                             .font(SeeleTypography.caption)
                             .foregroundStyle(SeeleColors.textTertiary)
 
                         Spacer()
 
-                        Button("Open Social") {
-                            appState.sidebarSelection = .social
+                        Button("Edit Interests…") {
+                            appState.navigation.navigate(to: .social(.interests))
                         }
                         .buttonStyle(.seeleSecondary(.small))
-                        .accessibilityLabel("Open the Social tab to edit interests")
+                        .accessibilityLabel("Edit interests in the Social tab")
                     }
                 }
             }
