@@ -14,7 +14,7 @@ func settingsHeader(_ title: String) -> some View {
 /// Grouped settings section with title and bordered container
 func settingsGroup<Content: View>(_ title: String?, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
-        if let title = title {
+        if let title {
             Text(title)
                 .font(SeeleTypography.caption)
                 .foregroundStyle(SeeleColors.textTertiary)

@@ -1,9 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import SeeleseekCore
-#if os(macOS)
 import AppKit
-#endif
 
 struct UserProfileSettingsSection: View {
     @Environment(\.appState) private var appState
@@ -13,6 +11,8 @@ struct UserProfileSettingsSection: View {
     }
 
     private static let descriptionLimit = 1000
+    private static let pictureSizeLimit = 256 * 1024
+    private static let avatarSize: CGFloat = 64
 
     @State private var editingDescription: String = ""
     @State private var pictureError: String?
@@ -174,8 +174,6 @@ struct UserProfileSettingsSection: View {
         appState.networkClient.status.loggedIn
     }
 
-    private static let avatarSize: CGFloat = 64
-
     @ViewBuilder
     private var avatar: some View {
         if let pictureData = socialState.myPicture,
@@ -184,10 +182,10 @@ struct UserProfileSettingsSection: View {
                 .resizable()
                 .scaledToFill()
                 .frame(width: Self.avatarSize, height: Self.avatarSize)
-                .clipShape(Circle())
+                .continuousCorners(SeeleSpacing.radiusLG)
                 .accessibilityLabel("Profile picture")
         } else {
-            Circle()
+            RoundedRectangle(cornerRadius: SeeleSpacing.radiusLG, style: .continuous)
                 .fill(SeeleColors.surfaceSecondary)
                 .frame(width: Self.avatarSize, height: Self.avatarSize)
                 .overlay {
@@ -240,7 +238,7 @@ struct UserProfileSettingsSection: View {
     @ViewBuilder
     private var interestsContent: some View {
         if socialState.myLikes.isEmpty && socialState.myHates.isEmpty {
-            Text("No interests yet. Interests help other users with similar taste find you.")
+            Text("No interests yet.")
                 .font(SeeleTypography.body)
                 .foregroundStyle(SeeleColors.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -297,9 +295,7 @@ struct UserProfileSettingsSection: View {
                     .font(SeeleTypography.body)
                     .foregroundStyle(SeeleColors.textPrimary)
 
-                Text(isPrivileged
-                     ? "Your downloads move ahead in other users' upload queues."
-                     : "Privileged users move ahead in other users' upload queues.")
+                Text("Privileged users' downloads move ahead in upload queues.")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -333,56 +329,49 @@ struct UserProfileSettingsSection: View {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        pictureError = nil
-
-        do {
-            var data = try Data(contentsOf: url)
-
-            // Resize if too large (SoulSeek protocol limit is typically ~256KB for pictures)
-            let maxSize = 256 * 1024
-            if data.count > maxSize {
-                // Try to compress as JPEG
-                if let nsImage = NSImage(data: data),
-                   let tiffData = nsImage.tiffRepresentation,
-                   let bitmap = NSBitmapImageRep(data: tiffData) {
-                    // Try progressively lower quality until under size limit
-                    for quality in stride(from: 0.8, through: 0.1, by: -0.1) {
-                        if let compressed = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]),
-                           compressed.count <= maxSize {
-                            data = compressed
-                            break
-                        }
-                    }
-                }
-
-                if data.count > maxSize {
-                    // Still too large after compression. A silent
-                    // return leaves a VoiceOver user with no feedback.
-                    pictureError = "Image is too large"
-                    VoiceOverAnnouncer.shared.announce("Image is too large")
-                    return
-                }
-            }
-
-            socialState.myPicture = data
-            saveProfile()
-        } catch {
-            pictureError = "Can not read the image file"
-            VoiceOverAnnouncer.shared.announce("Can not read the image file")
+        guard let data = try? Data(contentsOf: url) else {
+            setPictureError("Can not read the image file")
+            return
         }
+        guard let picture = Self.pictureWithinLimit(data) else {
+            setPictureError("Image is too large")
+            return
+        }
+
+        pictureError = nil
+        socialState.myPicture = picture
+        saveProfile()
+    }
+
+    private func setPictureError(_ message: String) {
+        pictureError = message
+        VoiceOverAnnouncer.shared.announce(message)
+    }
+
+    /// Recompresses as JPEG when over the limit; nil if no quality fits.
+    private static func pictureWithinLimit(_ data: Data) -> Data? {
+        if data.count <= pictureSizeLimit { return data }
+        guard let image = NSImage(data: data),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        for quality in stride(from: 0.8, through: 0.1, by: -0.1) {
+            if let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: quality]),
+               jpeg.count <= pictureSizeLimit {
+                return jpeg
+            }
+        }
+        return nil
     }
 }
 
 #Preview {
-    ScrollView {
+    let state = AppState()
+    state.socialState.myDescription = "Music lover sharing my collection."
+    state.socialState.myLikes = ["jazz", "electronic", "ambient"]
+    state.socialState.myHates = ["pop"]
+    return ScrollView {
         UserProfileSettingsSection()
-            .environment(\.appState, {
-                let state = AppState()
-                state.socialState.myDescription = "Music lover sharing my collection."
-                state.socialState.myLikes = ["jazz", "electronic", "ambient", "classical", "experimental", "vinyl"]
-                state.socialState.myHates = ["pop", "country"]
-                return state
-            }())
+            .environment(\.appState, state)
             .padding()
     }
     .frame(width: 520, height: 720)

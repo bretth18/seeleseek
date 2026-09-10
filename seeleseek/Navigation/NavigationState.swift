@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Sidebar selection plus the tab strips that sit under it. Held outside
-/// the views so `navigate(to:)` can deep link and the selection survives
-/// the detail pane being rebuilt when the sidebar changes.
+/// Sidebar selection and the per-surface tab strips. Lives outside the views
+/// so deep links can set a tab before the surface is built.
 @Observable
 final class NavigationState {
     var sidebarSelection: SidebarItem? = .search
@@ -122,21 +121,3 @@ enum SidebarItem: Hashable, Identifiable {
     }
 }
 
-// MARK: - Admin Message
-
-struct AdminMessage: Identifiable {
-    let id = UUID()
-    let message: String
-    let timestamp: Date
-
-    init(message: String) {
-        self.message = message
-        self.timestamp = Date()
-    }
-}
-
-// MARK: - Environment Keys
-
-extension EnvironmentValues {
-    @Entry var appState = AppState()
-}

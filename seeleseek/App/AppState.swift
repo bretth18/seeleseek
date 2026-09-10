@@ -25,7 +25,6 @@ final class AppState {
 
     // MARK: - Navigation
     var navigation = NavigationState()
-    /// iOS placeholder tab view; unused on macOS.
     var selectedTab: NavigationTab = .search
 
     // MARK: - Availability
@@ -715,4 +714,23 @@ final class AppState {
 
         logger.info("Persisted state loaded")
     }
+}
+
+// MARK: - Admin Message
+
+struct AdminMessage: Identifiable {
+    let id = UUID()
+    let message: String
+    let timestamp: Date
+
+    init(message: String) {
+        self.message = message
+        self.timestamp = Date()
+    }
+}
+
+// MARK: - Environment Keys
+
+extension EnvironmentValues {
+    @Entry var appState = AppState()
 }

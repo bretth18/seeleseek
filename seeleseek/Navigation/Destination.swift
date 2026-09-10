@@ -1,10 +1,3 @@
-//
-//  Destination.swift
-//  seeleseek
-//
-//  Created by Brett Henderson on 9/3/26.
-//
-
 import Foundation
 
 // MARK: - Transfer Tab
@@ -93,8 +86,7 @@ enum SettingsTab: String, CaseIterable {
 
 // MARK: - Destination
 
-/// A place the app can navigate to. Surfaces with a fixed tab strip take an
-/// optional tab; `nil` keeps whichever tab was last showing.
+/// A `nil` tab keeps whichever tab the surface last showed.
 enum Destination {
     case search
     case wishlists

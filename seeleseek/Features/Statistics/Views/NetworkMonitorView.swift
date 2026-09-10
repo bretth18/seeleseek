@@ -5,8 +5,10 @@ struct NetworkMonitorView: View {
     @Environment(\.appState) private var appState
 
     var body: some View {
+        @Bindable var navigation = appState.navigation
+
         VStack(spacing: 0) {
-            StandardTabBar(selection: Bindable(appState.navigation).monitorTab, icon: { $0.icon }) {
+            StandardTabBar(selection: $navigation.monitorTab, icon: { $0.icon }) {
                 MonitorLiveStatsBadge()
             }
 
@@ -14,7 +16,7 @@ struct NetworkMonitorView: View {
                 .background(SeeleColors.surfaceSecondary)
 
             ScrollView {
-                switch appState.navigation.monitorTab {
+                switch navigation.monitorTab {
                 case .overview:
                     NetworkOverviewTab()
                 case .peers:
@@ -27,7 +29,7 @@ struct NetworkMonitorView: View {
             }
         }
         .background(SeeleColors.background)
-        .focusedSceneValue(\.tabCommands, .cycling(Bindable(appState.navigation).monitorTab))
+        .focusedSceneValue(\.tabCommands, .cycling($navigation.monitorTab))
     }
 }
 
