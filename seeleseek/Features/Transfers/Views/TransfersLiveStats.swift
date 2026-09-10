@@ -17,10 +17,18 @@ struct TransfersLiveStats: View {
     private var uploads: UploadState { appState.uploadManager.state }
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            cluster(withSlots: true)
+            cluster(withSlots: false)
+            Color.clear.frame(width: 0, height: 0)
+        }
+    }
+
+    private func cluster(withSlots: Bool) -> some View {
         StandardStatCluster {
             // Gate on upload activity only — a selectedTab condition here
             // reflows the cluster on every tab switch.
-            if uploads.activeUploadCount > 0 || uploads.queueDepth > 0 {
+            if withSlots, uploads.activeUploadCount > 0 || uploads.queueDepth > 0 {
                 StandardLiveStat(
                     icon: "person.2.fill",
                     value: "\(uploads.slotsSummary) · \(uploads.queueDepth) queued",

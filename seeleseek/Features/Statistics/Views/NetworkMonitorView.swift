@@ -43,6 +43,17 @@ struct MonitorLiveStatsBadge: View {
     }
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            cluster(withPeers: true)
+            cluster(withPeers: false)
+            Color.clear.frame(width: 0, height: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Live network stats")
+        .accessibilityValue("Download \(monitor.currentDownloadSpeed.formattedSpeed), upload \(monitor.currentUploadSpeed.formattedSpeed), \(monitor.activeConnections) active peers")
+    }
+
+    private func cluster(withPeers: Bool) -> some View {
         StandardStatCluster {
             StandardLiveStat(
                 icon: "arrow.down",
@@ -56,15 +67,14 @@ struct MonitorLiveStatsBadge: View {
                 iconColor: SeeleColors.success,
                 accessibilityLabel: "Upload speed \(monitor.currentUploadSpeed.formattedSpeed)"
             )
-            StandardLiveStat(
-                icon: "person.2.fill",
-                value: "\(monitor.activeConnections)",
-                accessibilityLabel: "\(monitor.activeConnections) active peers"
-            )
+            if withPeers {
+                StandardLiveStat(
+                    icon: "person.2.fill",
+                    value: "\(monitor.activeConnections)",
+                    accessibilityLabel: "\(monitor.activeConnections) active peers"
+                )
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Live network stats")
-        .accessibilityValue("Download \(monitor.currentDownloadSpeed.formattedSpeed), upload \(monitor.currentUploadSpeed.formattedSpeed), \(monitor.activeConnections) active peers")
     }
 }
 

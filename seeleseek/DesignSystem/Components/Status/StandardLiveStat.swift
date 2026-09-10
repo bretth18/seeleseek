@@ -20,7 +20,9 @@ struct StandardLiveStat: View {
                 .font(SeeleTypography.mono)
                 .foregroundStyle(SeeleColors.textSecondary)
                 .contentTransition(.numericText())
+                .lineLimit(1)
         }
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isStaticText)
