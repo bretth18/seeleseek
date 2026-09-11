@@ -54,7 +54,6 @@ enum AppAppearance: String, CaseIterable {
         }
     }
 
-    /// `nil` lets the window follow the system appearance.
     var colorScheme: ColorScheme? {
         switch self {
         case .system: nil
@@ -215,8 +214,7 @@ final class SettingsState: DownloadSettingsProviding {
             save()
         }
     }
-    /// Dark by default: the app shipped dark-only, so following the
-    /// system would re-theme existing installs on light Macs unasked.
+    /// Dark, not system: existing installs on light Macs must not re-theme on update.
     var appearance: AppAppearance = .dark {
         didSet {
             guard !isLoading else { return }
