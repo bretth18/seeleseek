@@ -33,7 +33,7 @@ enum QueueBucket: String, CaseIterable, Identifiable {
         case .transferring: SeeleColors.success
         case .waiting: SeeleColors.info
         case .queued: SeeleColors.warning
-        case .retrying: Color(hex: 0xFB923C)  // orange between warning and error
+        case .retrying: SeeleColors.dynamic(light: 0xC2410C, dark: 0xFB923C)  // orange between warning and error
         case .failed: SeeleColors.error
         }
     }

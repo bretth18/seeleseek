@@ -41,6 +41,29 @@ enum NotificationSound: String, CaseIterable {
     }
 }
 
+enum AppAppearance: String, CaseIterable {
+    case system
+    case light
+    case dark
+
+    var displayName: String {
+        switch self {
+        case .system: "Match System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// `nil` lets the window follow the system appearance.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 enum DownloadFolderFormat: String, CaseIterable {
     case folderOnly = "folderOnly"
     case usernameAndPath = "usernameAndPath"
@@ -110,6 +133,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let launchAtLoginKey = "settingsLaunchAtLogin"
     private let connectAtLaunchKey = "settingsConnectAtLaunch"
     private let showInMenuBarKey = "settingsShowInMenuBar"
+    private let appearanceKey = "settingsAppearance"
     private let notifyDownloadsKey = "settingsNotifyDownloads"
     private let notifyUploadsKey = "settingsNotifyUploads"
     private let notifyPrivateMessagesKey = "settingsNotifyPrivateMessages"
@@ -186,6 +210,14 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
     var showInMenuBar: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    /// Dark by default: the app shipped dark-only, so following the
+    /// system would re-theme existing installs on light Macs unasked.
+    var appearance: AppAppearance = .dark {
         didSet {
             guard !isLoading else { return }
             save()
@@ -444,6 +476,7 @@ final class SettingsState: DownloadSettingsProviding {
         downloadFolderTemplate = SettingsState.defaultDownloadFolderTemplate
         launchAtLogin = false
         showInMenuBar = true
+        appearance = .dark
         connectAtLaunch = false
         listenPort = 2234
         enableUPnP = true
@@ -529,6 +562,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
         UserDefaults.standard.set(launchAtLogin, forKey: launchAtLoginKey)
         UserDefaults.standard.set(showInMenuBar, forKey: showInMenuBarKey)
+        UserDefaults.standard.set(appearance.rawValue, forKey: appearanceKey)
         UserDefaults.standard.set(connectAtLaunch, forKey: connectAtLaunchKey)
         UserDefaults.standard.set(notifyDownloads, forKey: notifyDownloadsKey)
         UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
@@ -621,6 +655,10 @@ final class SettingsState: DownloadSettingsProviding {
         migrateDownloadDefaultsIfNeeded()
         if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
             showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
+        }
+        if let raw = UserDefaults.standard.string(forKey: appearanceKey),
+           let value = AppAppearance(rawValue: raw) {
+            appearance = value
         }
         connectAtLaunch = UserDefaults.standard.bool(forKey: connectAtLaunchKey)
         if UserDefaults.standard.object(forKey: notifyDownloadsKey) != nil {

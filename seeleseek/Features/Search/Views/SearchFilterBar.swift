@@ -188,7 +188,7 @@ struct SearchFilterPanel: View {
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.sm)
         .background(SeeleColors.surface.opacity(0.95))
-        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+        .shadow(color: SeeleColors.shadowColor, radius: 6, y: 3)
     }
 
     // MARK: - Components

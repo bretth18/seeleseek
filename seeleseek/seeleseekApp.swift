@@ -155,6 +155,7 @@ struct SeeleSeekApp: App {
         Window("Update Available", id: "update-prompt") {
             UpdatePromptSheet(updateState: appState.updateState)
                 .environment(\.appState, appState)
+                .preferredColorScheme(appState.settings.appearance.colorScheme)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -165,6 +166,7 @@ struct SeeleSeekApp: App {
             SettingsView()
                 .environment(\.appState, appState)
                 .frame(minWidth: 700, minHeight: 500)
+                .preferredColorScheme(appState.settings.appearance.colorScheme)
         }
 
         MenuBarExtra("SeeleSeek", image: .gsgaag2Menubar2, isInserted: $appState.settings.showInMenuBar) {

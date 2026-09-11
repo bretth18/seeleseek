@@ -94,6 +94,10 @@ struct GeneralSettingsSection: View {
                 ))
             }
 
+            settingsGroup("Appearance") {
+                settingsPicker("Theme", selection: $settings.appearance, options: AppAppearance.allCases) { $0.displayName }
+            }
+
             settingsGroup("Startup") {
                 settingsToggle("Launch at login", isOn: $settings.launchAtLogin)
                 settingsToggle("Show in menu bar", isOn: $settings.showInMenuBar)

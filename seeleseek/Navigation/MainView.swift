@@ -24,7 +24,7 @@ struct MainView: View {
             iOSLayout
             #endif
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(appState.settings.appearance.colorScheme)
         #if os(macOS)
         .onChange(of: appState.updateState.showUpdatePrompt) { _, show in
             if show {

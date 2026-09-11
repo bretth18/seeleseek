@@ -201,7 +201,7 @@ struct SearchView: View {
             RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous)
                 .stroke(SeeleColors.surfaceSecondary, lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        .shadow(color: SeeleColors.shadowColorStrong, radius: 8, y: 4)
     }
 
     private var searchTabs: some View {
@@ -509,7 +509,7 @@ struct SearchView: View {
         .padding(.vertical, SeeleSpacing.sm)
         .background(
             SeeleColors.surface
-                .shadow(.drop(color: .black.opacity(0.3), radius: 8, y: -2))
+                .shadow(.drop(color: SeeleColors.shadowColorStrong, radius: 8, y: -2))
         )
     }
 
