@@ -3,33 +3,55 @@ name: Build
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'site/**'
+      - 'Installer/**'
+      - '.zed/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/release.yml'
+      - '.github/actions/**'
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - 'site/**'
+      - 'Installer/**'
+      - '.zed/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/release.yml'
+      - '.github/actions/**'
+
+# A new push to the same PR (or to main) cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep SwiftPM checkouts in the workspace so they can be cached across runs.
+  SPM_CLONES: ${{ github.workspace }}/.spm-clones
 
 jobs:
-  build:
-    name: Build
-    runs-on: macos-26
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Select Xcode
-      run: sudo xcode-select -s /Applications/Xcode.app
-
-    - name: Build App
-      run: |
-        xcodebuild -scheme seeleseek -destination 'platform=macOS' -configuration Release build CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-
   test:
     name: Test
     runs-on: macos-26
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Select Xcode
-      run: sudo xcode-select -s /Applications/Xcode.app
+    - name: Cache SwiftPM checkouts
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.SPM_CLONES }}
+        key: spm-${{ runner.os }}-${{ hashFiles('seeleseek.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
     - name: Run Unit Tests
       env:
@@ -39,4 +61,30 @@ jobs:
         # server.slsknet.org rate-limits the GitHub runner.
         TEST_RUNNER_CI: "true"
       run: |
-        xcodebuild -scheme seeleseek -destination 'platform=macOS' -only-testing:seeleseekTests test CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+        xcodebuild -scheme seeleseek -destination 'platform=macOS' \
+          -clonedSourcePackagesDirPath "$SPM_CLONES" \
+          -only-testing:seeleseekTests test \
+          CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+
+  # Release-configuration build catches optimizer-only breakage. PRs already
+  # get a Debug compile from the test job, so this only runs once per merge.
+  release-build:
+    name: Build (Release)
+    if: github.event_name == 'push'
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache SwiftPM checkouts
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.SPM_CLONES }}
+        key: spm-${{ runner.os }}-${{ hashFiles('seeleseek.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+    - name: Build App
+      run: |
+        xcodebuild -scheme seeleseek -destination 'platform=macOS' -configuration Release build \
+          -clonedSourcePackagesDirPath "$SPM_CLONES" \
+          CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
