@@ -15,6 +15,7 @@ final class AppState {
     var browseState = BrowseState()
     var metadataState = MetadataState()
     var socialState = SocialState()
+    var leechDetector = LeechDetector()
     var wishlistState = WishlistState()
     var updateState = UpdateState()
 
@@ -174,18 +175,15 @@ final class AppState {
             }
         }
 
-        Task { [uploadManager] in
-            await uploadManager.setUploadPermissionChecker { [weak self] username in
-                guard let self else { return true }
-                let patterns = self.settings.activeBlockedPatterns
-                if !patterns.isEmpty,
-                   UsernamePatternMatcher.matches(username, anyOfCompiled: patterns) {
-                    return false
-                }
-                Task { try? await self.networkClient.getUserStats(username) }
-                return self.socialState.shouldAllowUpload(to: username)
-            }
-        }
+        leechDetector.services = makeLeechServices()
+        // Cheap sync checks first; the leech detector may wait on a server round trip.
+        let policies: [any UploadPolicy] = [
+            PatternBlockPolicy(settings: settings),
+            BlocklistPolicy(socialState: socialState),
+            leechDetector,
+        ]
+        Task { [uploadManager] in await uploadManager.setUploadPolicies(policies) }
+        Task { [leechDetector] in await leechDetector.load() }
 
         let initialPatterns = settings.activeBlockedPatterns
         Task { await client.peerConnectionPool.updateBlockedUsernamePatterns(initialPatterns) }
@@ -266,11 +264,7 @@ final class AppState {
     private func handle(_ event: SocialEvent) {
         switch event {
         case .userStats(let username, _, _, let files, let dirs):
-            let hasQueuedUpload = uploadManager.state.queuedUploads.contains { $0.username == username }
-                || uploadManager.state.activeUploadCount > 0
-            if hasQueuedUpload {
-                socialState.checkForLeech(username: username, files: files, folders: dirs)
-            }
+            leechDetector.receivedStats(username: username, files: files, folders: dirs)
         case .adminMessage(let message):
             let adminMessage = AdminMessage(message: message)
             adminMessages.append(adminMessage)
@@ -544,6 +538,51 @@ final class AppState {
             await client.shareManager.loadPersistedFolders()
             await client.shareManager.rescanAll()
         }
+    }
+
+    private func makeLeechServices() -> LeechDetector.Services {
+        LeechDetector.Services(
+            requestStats: { [weak self] username in
+                try? await self?.networkClient.getUserStats(username)
+            },
+            browseShareCounts: { [weak self] username in
+                guard let self else { throw CancellationError() }
+                let files = try await self.networkClient.browseUser(username).filter { !$0.isDirectory }
+                var folders = Set<String>()
+                for file in files {
+                    let folder = Self.containingSoulseekFolder(of: file.filename)
+                    if !folder.isEmpty { folders.insert(folder) }
+                }
+                return LeechDetector.ShareCounts(files: UInt32(files.count), folders: UInt32(folders.count))
+            },
+            sendPrivateMessage: { [weak self] username, text in
+                self?.chatState.sendPrivateMessage(to: username, content: text)
+            },
+            isBuddy: { [weak self] username in
+                self?.socialState.isBuddy(username) ?? false
+            },
+            blockUser: { [weak self] username in
+                await self?.socialState.blockUser(username, reason: "Leech: not sharing enough files")
+            },
+            log: { title, detail, username in
+                ActivityLog.shared.log(.leechDetected, title: title, detail: detail, username: username)
+            },
+            loadSettings: {
+                guard let json = try await SocialRepository.getProfileSetting("leechSettings"),
+                      let data = json.data(using: .utf8) else { return nil }
+                return try JSONDecoder().decode(LeechSettings.self, from: data)
+            },
+            saveSettings: { settings in
+                let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+                try await SocialRepository.setProfileSetting("leechSettings", value: json)
+            },
+            loadNames: { key in
+                try await SettingsRepository.get(key)
+            },
+            saveNames: { key, names in
+                try await SettingsRepository.set(key, value: names)
+            }
+        )
     }
 
     // MARK: - Connecting

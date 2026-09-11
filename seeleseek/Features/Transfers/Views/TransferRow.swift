@@ -156,7 +156,8 @@ struct TransferRow: View {
 
                     TransferInfoColumn(
                         transfer: transfer,
-                        peerStatus: peerStatus
+                        peerStatus: peerStatus,
+                        isLeecher: transfer.direction == .upload && appState.leechDetector.isLeecher(transfer.username)
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -393,6 +394,7 @@ private struct TransferDirectionGlyph: View {
 private struct TransferInfoColumn: View {
     let transfer: Transfer
     let peerStatus: BuddyStatus?
+    var isLeecher = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
@@ -477,6 +479,14 @@ private struct TransferInfoColumn: View {
                 width: RowLayout.peerUsernameWidth,
                 peerStatus: peerStatus
             )
+
+            if isLeecher {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: SeeleSpacing.iconSizeXS, weight: .bold))
+                    .foregroundStyle(SeeleColors.warning)
+                    .help("Leecher: this user shares fewer files than your minimum")
+                    .accessibilityLabel("Leecher")
+            }
 
             if transfer.retryCount > 0, transfer.error != nil {
                 Text("retry \(transfer.retryCount)")

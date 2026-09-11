@@ -604,14 +604,14 @@ final class ChatState {
             if !message.isOwn {
                 privateChats[index].isOnline = true
             }
-            if selectedPrivateChat != username {
+            if selectedPrivateChat != username, !message.isOwn {
                 privateChats[index].unreadCount += 1
             }
         } else {
             // Create new chat - user is online since they sent us a message
             var chat = PrivateChat(username: username, isOnline: !message.isOwn)
             Self.appendCapped(message, to: &chat.messages)
-            chat.unreadCount = selectedPrivateChat != username ? 1 : 0
+            chat.unreadCount = (selectedPrivateChat != username && !message.isOwn) ? 1 : 0
             privateChats.append(chat)
 
             // Request user status
@@ -705,17 +705,19 @@ final class ChatState {
                 try? await networkClient?.sendRoomMessage(roomName, message: content)
             }
         } else if let username = selectedPrivateChat {
-            // Send private message
-            let message = ChatMessage(
-                username: networkClient?.status.username ?? "You",
-                content: content,
-                isOwn: true
-            )
-            addPrivateMessage(username, message: message)
+            sendPrivateMessage(to: username, content: content)
+        }
+    }
 
-            Task {
-                try? await networkClient?.sendPrivateMessage(to: username, message: content)
-            }
+    func sendPrivateMessage(to username: String, content: String) {
+        let message = ChatMessage(
+            username: networkClient?.status.username ?? "You",
+            content: content,
+            isOwn: true
+        )
+        addPrivateMessage(username, message: message)
+        Task {
+            try? await networkClient?.sendPrivateMessage(to: username, message: content)
         }
     }
 

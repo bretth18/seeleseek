@@ -27,6 +27,8 @@ struct NotificationSettingsSection: View {
                     .disabled(!settings.enableNotifications)
                 settingsToggle("Wishlist matches", isOn: $settings.notifyWishlist)
                     .disabled(!settings.enableNotifications)
+                settingsToggle("Leechers detected", isOn: $settings.notifyLeechers)
+                    .disabled(!settings.enableNotifications)
             }
         }
     }

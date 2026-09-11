@@ -98,14 +98,33 @@ public actor UploadManager {
     private var isProcessingQueue = false
     private var needsQueuePass = false
 
-    /// Called to check if an upload should be allowed (checks blocklist +
-    /// leech status). `@MainActor` — it reads app-layer state
-    /// (SocialState/SettingsState). Set by AppState via
-    /// `setUploadPermissionChecker`.
-    private var uploadPermissionChecker: (@MainActor (String) -> Bool)?
+    /// Policies read MainActor state — every evaluation hops. Keep off
+    /// per-chunk paths.
+    private var uploadPolicies: [any UploadPolicy] = []
 
-    public func setUploadPermissionChecker(_ checker: (@MainActor (String) -> Bool)?) {
-        uploadPermissionChecker = checker
+    public func setUploadPolicies(_ policies: [any UploadPolicy]) {
+        uploadPolicies = policies
+    }
+
+    private func evaluateUploadPolicies(username: String, filename: String, stage: UploadPolicyStage) async -> UploadPolicyDecision {
+        let request = UploadPolicyRequest(username: username, filename: filename, stage: stage)
+        for policy in uploadPolicies {
+            if case .deny(let reason) = await policy.evaluate(request) {
+                return .deny(reason: reason)
+            }
+        }
+        return .allow
+    }
+
+    /// Fire-and-forget: must not stall processQueue.
+    private func notifyUploadCompleted(username: String) {
+        let policies = uploadPolicies
+        guard !policies.isEmpty else { return }
+        Task {
+            for policy in policies {
+                await policy.uploadDidComplete(username: username)
+            }
+        }
     }
 
     // MARK: - Types
@@ -303,7 +322,7 @@ public actor UploadManager {
 
             if await shareManager.fileIndex.first(where: { $0.sharedPath == filename }) == nil {
                 do {
-                    try await connection.sendUploadDenied(filename: filename, reason: "File not shared.")
+                    try await connection.sendUploadDenied(filename: filename, reason: UploadDenialReason.notShared)
                 } catch {
                     logger.error("Failed to send UploadDenied: \(error.localizedDescription)")
                 }
@@ -411,7 +430,7 @@ public actor UploadManager {
         // The filename from SoulSeek uses backslashes as path separators
         guard let indexedFile = await shareManager.fileIndex.first(where: { $0.sharedPath == filename }) else {
             logger.warning("File not found in shares: \(filename)")
-            return .denied(reason: "File not shared.")
+            return .denied(reason: UploadDenialReason.notShared)
         }
 
         // Visibility gate. Buddy-only files must not be served to
@@ -430,24 +449,23 @@ public actor UploadManager {
                     "Denied upload of buddy-only file to \(username)",
                     detail: filename
                 )
-                return .denied(reason: "File not shared.")
+                return .denied(reason: UploadDenialReason.notShared)
             }
         }
 
         // Check if file exists locally
         guard FileManager.default.fileExists(atPath: indexedFile.localPath) else {
             logger.warning("Local file missing: \(indexedFile.localPath)")
-            return .denied(reason: "File not shared.")
+            return .denied(reason: UploadDenialReason.notShared)
         }
 
-        // Check if upload is allowed (blocklist + leech detection)
-        if let checker = uploadPermissionChecker, await checker(username) == false {
-            logger.info("Upload denied for \(username): blocked or leech")
+        if case .deny(let reason) = await evaluateUploadPolicies(username: username, filename: filename, stage: .request) {
+            logger.info("Upload denied for \(username) by policy: \(reason)")
             await ActivityLogger.shared?.logInfo(
                 "Denied upload request from \(username)",
                 detail: filename
             )
-            return .denied(reason: "File not shared.")
+            return .denied(reason: reason)
         }
 
         // Check per-user queue limit (like nicotine+)
@@ -597,11 +615,11 @@ public actor UploadManager {
         // Remove from queue
         uploadQueue.removeAll { $0.id == upload.id }
 
-        // Re-check permission — blocklist/leech status may have changed
+        // Re-check policy — blocklist/leech status may have changed
         // while the item sat in the queue.
-        if let checker = uploadPermissionChecker, await checker(upload.username) == false {
-            logger.info("Upload denied at start for \(upload.username): blocked or leech")
-            await sendUploadDeniedToPeer(username: upload.username, filename: upload.filename, reason: "File not shared.")
+        if case .deny(let reason) = await evaluateUploadPolicies(username: upload.username, filename: upload.filename, stage: .start) {
+            logger.info("Upload denied at start for \(upload.username) by policy: \(reason)")
+            await sendUploadDeniedToPeer(username: upload.username, filename: upload.filename, reason: reason)
             if let existing = upload.existingTransferId {
                 await cancelRetry(transferId: existing)
                 await transferState?.updateTransfer(id: existing) { t in
@@ -1200,6 +1218,7 @@ public actor UploadManager {
             uploadTeardowns.removeValue(forKey: transferId)
             activeUploads.removeValue(forKey: transferId)
             await ActivityLogger.shared?.logUploadCompleted(filename: filename)
+            notifyUploadCompleted(username: uploadUsername)
 
             // Process queue for next upload
             await processQueue()
@@ -1717,9 +1736,13 @@ public actor UploadManager {
                 t.localPath = URL(fileURLWithPath: filePath)
             }
 
+            let uploadUsername = activeUploads[transferId]?.username
             uploadTeardowns.removeValue(forKey: transferId)
             activeUploads.removeValue(forKey: transferId)
             await ActivityLogger.shared?.logUploadCompleted(filename: (filePath as NSString).lastPathComponent)
+            if let uploadUsername {
+                notifyUploadCompleted(username: uploadUsername)
+            }
 
             // Record statistics
             if let transfer = await transferState?.getTransfer(id: transferId) {
@@ -2018,9 +2041,9 @@ public actor UploadManager {
         // Re-driving this transferId — drop any stale cancel flag.
         cancelledTransferIds.remove(transferId)
 
-        // Re-check permission; terminal fail if no longer allowed.
-        if let checker = uploadPermissionChecker, await checker(username) == false {
-            logger.info("Upload retry denied for \(username): blocked or leech")
+        // Re-check policy; terminal fail if no longer allowed.
+        if case .deny(let reason) = await evaluateUploadPolicies(username: username, filename: filename, stage: .retry) {
+            logger.info("Upload retry denied for \(username) by policy: \(reason)")
             await transferState?.updateTransfer(id: transferId) { t in
                 t.status = .failed
                 t.error = "Denied"
@@ -2328,6 +2351,12 @@ public actor UploadManager {
     }
 
     internal var _activeUploadCountForTest: Int { activeUploads.count }
+    internal func _evaluateUploadPoliciesForTest(username: String, filename: String, stage: UploadPolicyStage) async -> UploadPolicyDecision {
+        await evaluateUploadPolicies(username: username, filename: filename, stage: stage)
+    }
+    internal func _notifyUploadCompletedForTest(username: String) {
+        notifyUploadCompleted(username: username)
+    }
     internal var _pendingTransferCountForTest: Int { pendingTransfers.count }
     internal func _seedQueuedUploadForTest(_ upload: QueuedUpload) {
         uploadQueue.append(upload)

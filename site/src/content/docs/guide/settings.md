@@ -94,13 +94,14 @@ See [Share Files](/docs/guide/sharing) for the configuration of shared folders.
 Block users by username. A reason is optional. A blocked user cannot interact with you. The list below the controls shows the blocked users. You can manage the list there.
 
 ### Leech Detection
-This function finds users who download files but do not share files:
+This function finds users who download files from you but do not share a sufficient number of files. seeleseek checks the share counts of a user when the user requests a file from you. Buddies are not checked. If the server reports zero shares, seeleseek browses the user to confirm before it flags the user.
 
-- **Enable Leech Detection** — Monitors the share counts of users who download from you.
-- **Minimum shared files** — The minimum number of shared files. The default is 0.
-- **Minimum shared folders** — The minimum number of shared folders. The default is 0.
-- **Action** — Do nothing, Send message, Block user, or Send message and block.
-- **Custom message** — The message template that the app sends to these users.
+- **Enable Leech Detection** — The default is off.
+- **Minimum shared files** — The default is 10.
+- **Minimum shared folders** — The default is 1.
+- **Action** — Ignore (track only), Warn (show in UI), Send message, Deny downloads, or Block user. Warn shows a warning icon on the uploads of the user and adds an event to the Activity tab. Send message sends the custom message one time, after the first upload to the user is complete. Deny downloads refuses the file requests of the user.
+- **Custom message** — The message that the app sends. Use `%files%` and `%folders%` to insert the thresholds.
+- **Detected Leechers** — The list of the users that the app flagged. The list persists between sessions. Use **Forget** to remove a user from the list, **Block** to add the user to the blocklist, or **Clear** to empty the list.
 
 ## Diagnostics
 

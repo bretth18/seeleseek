@@ -58,11 +58,6 @@ final class SocialState: PeerWatching {
     var ignoreSearchQuery: String = ""
     var showIgnoreInput = false
 
-    // MARK: - Leech Detection
-    var leechSettings = LeechSettings()
-    var detectedLeeches: Set<String> = []  // Usernames flagged as leeches
-    var warnedLeeches: Set<String> = []    // Leeches we've already warned/messaged
-
     // MARK: - Profiles
     var viewingProfile: UserProfile?
     var showProfileSheet = false
@@ -147,8 +142,9 @@ final class SocialState: PeerWatching {
         ignoredUsers.contains { $0.username.lowercased() == username.lowercased() }
     }
 
-    func isLeech(_ username: String) -> Bool {
-        detectedLeeches.contains(username)
+    func isBuddy(_ username: String) -> Bool {
+        let needle = username.lowercased()
+        return buddies.contains { $0.username.lowercased() == needle }
     }
 
     // MARK: - Peer Status
@@ -394,12 +390,6 @@ final class SocialState: PeerWatching {
                 myPicture = Data(base64Encoded: picBase64)
             }
 
-            // Load leech settings
-            if let leechJson = try await SocialRepository.getProfileSetting("leechSettings"),
-               let data = leechJson.data(using: .utf8) {
-                leechSettings = try JSONDecoder().decode(LeechSettings.self, from: data)
-            }
-
         } catch {
             logger.error("Failed to load persisted social data: \(error.localizedDescription)")
         }
@@ -421,7 +411,7 @@ final class SocialState: PeerWatching {
 
     func addBuddy(_ username: String) async {
         guard !username.isEmpty else { return }
-        guard !buddies.contains(where: { $0.username.lowercased() == username.lowercased() }) else {
+        guard !isBuddy(username) else {
             logger.warning("User \(username) is already a buddy")
             return
         }
@@ -985,88 +975,6 @@ final class SocialState: PeerWatching {
             }
         } catch {
             logger.error("Failed to persist ignored users: \(error.localizedDescription)")
-        }
-    }
-
-    // MARK: - Leech Detection
-
-    /// Check if a user is a leech based on their stats
-    func checkForLeech(username: String, files: UInt32, folders: UInt32) {
-        guard leechSettings.enabled else { return }
-        guard !isBlocked(username) else { return }
-
-        let isLeech = files < leechSettings.minSharedFiles || folders < leechSettings.minSharedFolders
-
-        if isLeech {
-            if !detectedLeeches.contains(username) {
-                detectedLeeches.insert(username)
-                logger.info("Detected leech: \(username) (files: \(files), folders: \(folders))")
-
-                // Take action based on settings
-                handleLeechDetected(username: username)
-            }
-        } else {
-            // User is no longer a leech (they started sharing)
-            detectedLeeches.remove(username)
-            warnedLeeches.remove(username)
-        }
-    }
-
-    private func handleLeechDetected(username: String) {
-        switch leechSettings.action {
-        case .ignore:
-            // Just track, no action
-            break
-
-        case .warn:
-            // UI will show warning indicator
-            break
-
-        case .message:
-            // Send a polite message (only once per session)
-            if !warnedLeeches.contains(username) {
-                warnedLeeches.insert(username)
-                Task {
-                    try? await networkClient?.sendPrivateMessage(to: username, message: leechSettings.customMessage)
-                    logger.info("Sent leech warning to \(username)")
-                }
-            }
-
-        case .deny:
-            // Upload manager will check isLeech() before allowing transfers
-            break
-
-        case .block:
-            Task {
-                await blockUser(username, reason: "Auto-blocked: No shared files")
-            }
-        }
-    }
-
-    /// Check if we should allow uploads to this user
-    func shouldAllowUpload(to username: String) -> Bool {
-        // Always deny if blocked
-        if isBlocked(username) {
-            return false
-        }
-
-        // Deny if leech and action is deny
-        if leechSettings.enabled && leechSettings.action == .deny && isLeech(username) {
-            return false
-        }
-
-        return true
-    }
-
-    func saveLeechSettings() async {
-        do {
-            let data = try JSONEncoder().encode(leechSettings)
-            if let json = String(data: data, encoding: .utf8) {
-                try await SocialRepository.setProfileSetting("leechSettings", value: json)
-                logger.info("Saved leech settings")
-            }
-        } catch {
-            logger.error("Failed to save leech settings: \(error.localizedDescription)")
         }
     }
 }

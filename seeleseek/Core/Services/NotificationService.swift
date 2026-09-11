@@ -50,6 +50,10 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
             guard settings.notifyWishlist else { return }
             post(title: "Wishlist match", body: title)
 
+        case .leechDetected:
+            guard settings.notifyLeechers else { return }
+            post(title: title, body: detail)
+
         default:
             return
         }

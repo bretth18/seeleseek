@@ -137,6 +137,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let notifyUploadsKey = "settingsNotifyUploads"
     private let notifyPrivateMessagesKey = "settingsNotifyPrivateMessages"
     private let notifyWishlistKey = "settingsNotifyWishlist"
+    private let notifyLeechersKey = "settingsNotifyLeechers"
     private let notifyOnlyInBackgroundKey = "settingsNotifyOnlyInBackground"
     private let notificationSoundNameKey = "settingsNotificationSoundName"
     private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
@@ -408,6 +409,12 @@ final class SettingsState: DownloadSettingsProviding {
             save()
         }
     }
+    var notifyLeechers: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
     var notifyOnlyInBackground: Bool = false {
         didSet {
             guard !isLoading else { return }
@@ -504,6 +511,7 @@ final class SettingsState: DownloadSettingsProviding {
         notifyUploads = false
         notifyPrivateMessages = true
         notifyWishlist = true
+        notifyLeechers = true
         notifyOnlyInBackground = false
         showOnlineStatus = true
         allowBrowsing = true
@@ -566,6 +574,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
         UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
         UserDefaults.standard.set(notifyWishlist, forKey: notifyWishlistKey)
+        UserDefaults.standard.set(notifyLeechers, forKey: notifyLeechersKey)
         UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
         UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
         UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
@@ -670,6 +679,9 @@ final class SettingsState: DownloadSettingsProviding {
         }
         if UserDefaults.standard.object(forKey: notifyWishlistKey) != nil {
             notifyWishlist = UserDefaults.standard.bool(forKey: notifyWishlistKey)
+        }
+        if UserDefaults.standard.object(forKey: notifyLeechersKey) != nil {
+            notifyLeechers = UserDefaults.standard.bool(forKey: notifyLeechersKey)
         }
         if UserDefaults.standard.object(forKey: notifyOnlyInBackgroundKey) != nil {
             notifyOnlyInBackground = UserDefaults.standard.bool(forKey: notifyOnlyInBackgroundKey)
