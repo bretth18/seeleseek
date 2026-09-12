@@ -274,7 +274,9 @@ final class ChatState {
             )
             joinedRooms.append(room)
         }
-        selectedRoom = roomName
+        if pendingSelections.remove(roomName) != nil || selectedRoom == nil {
+            selectedRoom = roomName
+        }
     }
 
     private func handleRoomLeft(_ roomName: String) {
@@ -417,7 +419,13 @@ final class ChatState {
     }
 
     // MARK: - Room Actions
-    func joinRoom(_ name: String, isPrivate: Bool = false) {
+    /// Rooms the user asked for by name; the join reply selects them.
+    /// Auto-joins at connect stay in the background unless nothing is
+    /// selected yet.
+    @ObservationIgnored private var pendingSelections: Set<String> = []
+
+    func joinRoom(_ name: String, isPrivate: Bool = false, select: Bool = true) {
+        if select { pendingSelections.insert(name) }
         Task {
             try? await networkClient?.joinRoom(name, isPrivate: isPrivate)
         }

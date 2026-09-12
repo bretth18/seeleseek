@@ -19,7 +19,7 @@ struct NicotineImportSheet: View {
     @State private var importTransferLimits = true
     @State private var importShares = true
     @State private var importIgnored = true
-    @State private var joinRoomsNow = false
+    @State private var importAutoJoinRooms = true
 
     private var isConnected: Bool {
         appState.connection.connectionStatus == .connected
@@ -78,7 +78,7 @@ struct NicotineImportSheet: View {
 
     private var nothingSelected: Bool {
         !(importCredentials || importListenPort || importDownloadDirs
-            || importTransferLimits || importShares || importIgnored || joinRoomsNow)
+            || importTransferLimits || importShares || importIgnored || importAutoJoinRooms)
     }
 
     // MARK: - Rows
@@ -148,11 +148,9 @@ struct NicotineImportSheet: View {
         }
         if !config.autojoinRooms.isEmpty {
             optionRow(
-                isOn: $joinRoomsNow,
-                title: "Join rooms now (\(config.autojoinRooms.count))",
+                isOn: $importAutoJoinRooms,
+                title: "Auto-join rooms (\(config.autojoinRooms.count))",
                 detail: config.autojoinRooms.joined(separator: ", ")
-                    + (isConnected ? "" : " — connect first"),
-                disabled: !isConnected
             )
         }
     }
@@ -215,7 +213,6 @@ struct NicotineImportSheet: View {
             config = try NicotineConfigImporter.load(from: url)
             configURL = url
             loadError = nil
-            joinRoomsNow = false
         } catch {
             loadError = "Couldn't read config: \(error.localizedDescription)"
         }
@@ -270,9 +267,11 @@ struct NicotineImportSheet: View {
                 }
             }
         }
-        if joinRoomsNow, isConnected {
-            for room in config.autojoinRooms {
-                appState.chatState.joinRoom(room)
+        if importAutoJoinRooms {
+            let new = config.autojoinRooms.filter { !settings.autoJoinRooms.contains($0) }
+            settings.autoJoinRooms += new
+            if isConnected {
+                for room in new { appState.chatState.joinRoom(room, select: false) }
             }
         }
         settings.save()

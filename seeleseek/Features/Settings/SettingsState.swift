@@ -144,6 +144,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let blockLeechPatternsEnabledKey = "settingsBlockLeechPatternsEnabled"
     private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
     private let showJoinLeaveMessagesKey = "settingsShowJoinLeaveMessages"
+    private let autoJoinRoomsKey = "settingsAutoJoinRooms"
 
     /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
     /// created by "streaming-service" apps that queue uploads en masse without sharing.
@@ -379,6 +380,17 @@ final class SettingsState: DownloadSettingsProviding {
             save()
         }
     }
+    /// Rooms joined on every connect (the server drops membership on
+    /// disconnect). Seeded with the project room on a fresh install only;
+    /// existing installs start empty so an update never drops anyone
+    /// into a room unasked.
+    static let defaultAutoJoinRooms = ["seeleseek"]
+    var autoJoinRooms: [String] = [] {
+        didSet {
+            guard !isLoading, autoJoinRooms != oldValue else { return }
+            save()
+        }
+    }
     var enableNotifications: Bool = true
     var notificationSound: Bool = true
     var selectedNotificationSound: NotificationSound = .default {
@@ -513,6 +525,7 @@ final class SettingsState: DownloadSettingsProviding {
         organizeDownloads = false
         organizationPattern = "{artist}/{album}/{track} - {title}"
         showJoinLeaveMessages = true
+        autoJoinRooms = SettingsState.defaultAutoJoinRooms
         enableNotifications = true
         notificationSound = true
         selectedNotificationSound = .default
@@ -592,6 +605,7 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
         UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
         UserDefaults.standard.set(showJoinLeaveMessages, forKey: showJoinLeaveMessagesKey)
+        UserDefaults.standard.set(autoJoinRooms, forKey: autoJoinRoomsKey)
 
         // Save to database asynchronously
         Task {
@@ -714,6 +728,11 @@ final class SettingsState: DownloadSettingsProviding {
         }
         if UserDefaults.standard.object(forKey: showJoinLeaveMessagesKey) != nil {
             showJoinLeaveMessages = UserDefaults.standard.bool(forKey: showJoinLeaveMessagesKey)
+        }
+        if let rooms = UserDefaults.standard.stringArray(forKey: autoJoinRoomsKey) {
+            autoJoinRooms = rooms
+        } else if UserDefaults.standard.object(forKey: listenPortKey) == nil {
+            autoJoinRooms = SettingsState.defaultAutoJoinRooms
         }
     }
 

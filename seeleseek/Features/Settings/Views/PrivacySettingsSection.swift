@@ -82,6 +82,8 @@ struct PrivacySettingsSection: View {
                         Button("Add", action: addPattern)
                             .buttonStyle(.seelePrimary(.small))
                             .disabled(trimmedNewPattern.isEmpty)
+
+                        Spacer()
                     }
                 }
                 .disabled(!settings.blockLeechPatternsEnabled)

@@ -227,6 +227,9 @@ final class AppState {
                 // The server wipes buddy watches and interests on every
                 // disconnect. Restore them on each connect
                 socialState.resubscribeOnConnect()
+                for room in settings.autoJoinRooms {
+                    chatState.joinRoom(room, select: false)
+                }
                 reapplyOnlineStatusIfAway()
             case .disconnected:
                 connection.setDisconnected()
