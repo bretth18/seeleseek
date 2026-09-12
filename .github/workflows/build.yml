@@ -66,10 +66,11 @@ jobs:
           -only-testing:seeleseekTests test \
           CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-  # Release-configuration build catches optimizer-only breakage. PRs already
-  # get a Debug compile from the test job, so this only runs once per merge.
-  release-build:
-    name: Build (Release)
+  # Release *configuration* compile: catches optimizer-only
+  # breakage. PRs already get a Debug compile from the test job, so this
+  # only runs once per merge.
+  release-config-build:
+    name: Build (Release config)
     if: github.event_name == 'push'
     runs-on: macos-26
     timeout-minutes: 30
