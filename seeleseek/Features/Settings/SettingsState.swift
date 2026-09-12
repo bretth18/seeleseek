@@ -124,6 +124,7 @@ final class SettingsState: DownloadSettingsProviding {
     private let maxSearchResultsKey = "settingsMaxSearchResults"
     private let groupSearchResultsKey = "settingsGroupSearchResults"
     private let searchFiltersKey = "settingsSearchFilters"
+    private let searchFilterPresetsKey = "settingsSearchFilterPresets"
     private let downloadLocationKey = "settingsDownloadLocation"
     private let incompleteLocationKey = "settingsIncompleteLocation"
     private let downloadFolderFormatKey = "settingsDownloadFolderFormat"
@@ -303,6 +304,13 @@ final class SettingsState: DownloadSettingsProviding {
     var searchFilters: PersistedSearchFilters = .empty {
         didSet {
             guard !isLoading, searchFilters != oldValue else { return }
+            save()
+        }
+    }
+    /// Quick-filter pills in the search bar, in display order.
+    var searchFilterPresets: [SearchFilterPreset] = SearchFilterPreset.defaults {
+        didSet {
+            guard !isLoading, searchFilterPresets != oldValue else { return }
             save()
         }
     }
@@ -492,6 +500,7 @@ final class SettingsState: DownloadSettingsProviding {
         maxSearchResults = 500
         groupSearchResults = false
         searchFilters = .empty
+        searchFilterPresets = SearchFilterPreset.defaults
         respondToSearches = true
         minSearchQueryLength = 3
         maxSearchResponseResults = 50
@@ -561,6 +570,9 @@ final class SettingsState: DownloadSettingsProviding {
         UserDefaults.standard.set(groupSearchResults, forKey: groupSearchResultsKey)
         if let data = try? JSONEncoder().encode(searchFilters) {
             UserDefaults.standard.set(data, forKey: searchFiltersKey)
+        }
+        if let data = try? JSONEncoder().encode(searchFilterPresets) {
+            UserDefaults.standard.set(data, forKey: searchFilterPresetsKey)
         }
         UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
         UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
@@ -645,6 +657,10 @@ final class SettingsState: DownloadSettingsProviding {
         if let data = UserDefaults.standard.data(forKey: searchFiltersKey),
            let filters = try? JSONDecoder().decode(PersistedSearchFilters.self, from: data) {
             searchFilters = filters
+        }
+        if let data = UserDefaults.standard.data(forKey: searchFilterPresetsKey),
+           let presets = try? JSONDecoder().decode([SearchFilterPreset].self, from: data) {
+            searchFilterPresets = presets
         }
         if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
             downloadLocation = URL(fileURLWithPath: downloadPath)

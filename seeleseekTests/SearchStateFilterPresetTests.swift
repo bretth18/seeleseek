@@ -16,19 +16,27 @@ struct SearchStateFilterPresetTests {
         return state
     }
 
-    @Test("Artwork preset keeps only image results")
-    func artworkPreset() {
+    @Test("A custom preset keeps only its extensions")
+    func customPreset() {
         // Uppercase extension: Windows peers share "COVER.JPG" routinely.
         let state = makeState(files: ["01.mp3", "cover.jpg", "back.jpeg", "Folder.PNG", "notes.txt"])
+        let artwork = SearchFilterPreset(name: "Artwork", extensions: FileTypes.image)
         state.filterMinBitrate = 320
-        state.applyPreset(.artwork)
-        #expect(state.isPresetActive(.artwork))
+        state.applyPreset(artwork)
+        #expect(state.isPresetActive(artwork))
         #expect(state.filterMinBitrate == nil, "a preset replaces the audio-only constraints")
         #expect(Set(state.filteredResults.map(\.fileExtension)) == ["jpg", "jpeg", "png"])
 
-        state.applyPreset(.artwork)
+        state.applyPreset(artwork)
         #expect(!state.hasActiveFilters)
         #expect(state.filteredResults.count == 5)
+    }
+
+    @Test("Stock presets stand in until settings are wired")
+    func stockFallback() {
+        let state = SearchState()
+        #expect(state.filterPresets == SearchFilterPreset.defaults)
+        #expect(state.isPresetActive(SearchFilterPreset(name: "Empty")), "an empty preset matches cleared filters, which is why the bar hides it")
     }
 
     @Test("A grouped chip toggles every spelling together")

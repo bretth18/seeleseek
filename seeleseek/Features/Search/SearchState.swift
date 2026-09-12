@@ -285,46 +285,11 @@ final class SearchState {
         return count
     }
 
-    enum FilterPreset {
-        case mp3_320
-        case flac
-        case lossless
-        case hiRes
-        case artwork
-
-        var extensions: Set<String> {
-            switch self {
-            case .mp3_320: return ["mp3"]
-            case .flac: return ["flac"]
-            case .lossless: return ["flac", "wav", "aiff", "alac", "ape"]
-            case .hiRes: return ["flac", "wav", "aiff", "alac"]
-            case .artwork: return FileTypes.image
-            }
-        }
-
-        var minBitrate: Int? {
-            switch self {
-            case .mp3_320: return 320
-            case .flac, .lossless, .hiRes, .artwork: return nil
-            }
-        }
-
-        var minSampleRate: Int? {
-            switch self {
-            case .hiRes: return 96000
-            default: return nil
-            }
-        }
-
-        var minBitDepth: Int? {
-            switch self {
-            case .hiRes: return 24
-            default: return nil
-            }
-        }
+    var filterPresets: [SearchFilterPreset] {
+        settings?.searchFilterPresets ?? SearchFilterPreset.defaults
     }
 
-    func applyPreset(_ preset: FilterPreset) {
+    func applyPreset(_ preset: SearchFilterPreset) {
         if isPresetActive(preset) {
             // Toggle off if already active
             filterExtensions = []
@@ -339,7 +304,7 @@ final class SearchState {
         }
     }
 
-    func isPresetActive(_ preset: FilterPreset) -> Bool {
+    func isPresetActive(_ preset: SearchFilterPreset) -> Bool {
         filterExtensions == preset.extensions &&
         filterMinBitrate == preset.minBitrate &&
         filterMinSampleRate == preset.minSampleRate &&

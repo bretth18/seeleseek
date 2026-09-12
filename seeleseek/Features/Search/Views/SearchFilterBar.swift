@@ -30,21 +30,10 @@ struct SearchFilterBar: View {
             .accessibilityLabel("Filters")
             .accessibilityValue(filterToggleAccessibilityValue)
 
-            // Quick preset chips
-            FilterChip(label: "MP3 320", isActive: searchState.isPresetActive(.mp3_320)) {
-                searchState.applyPreset(.mp3_320)
-            }
-            FilterChip(label: "FLAC", isActive: searchState.isPresetActive(.flac)) {
-                searchState.applyPreset(.flac)
-            }
-            FilterChip(label: "Lossless", isActive: searchState.isPresetActive(.lossless)) {
-                searchState.applyPreset(.lossless)
-            }
-            FilterChip(label: "Hi-Res", isActive: searchState.isPresetActive(.hiRes)) {
-                searchState.applyPreset(.hiRes)
-            }
-            FilterChip(label: "Artwork", isActive: searchState.isPresetActive(.artwork)) {
-                searchState.applyPreset(.artwork)
+            ForEach(searchState.filterPresets.filter(\.isComplete)) { preset in
+                FilterChip(label: preset.name, isActive: searchState.isPresetActive(preset)) {
+                    searchState.applyPreset(preset)
+                }
             }
 
             Spacer()
@@ -255,7 +244,7 @@ private struct FilterChip: View {
 @MainActor
 private func previewState(
     showFilters: Bool = false,
-    preset: SearchState.FilterPreset? = nil,
+    preset: String? = nil,
     freeSlotsOnly: Bool = false,
     grouped: Bool = false
 ) -> SearchState {
@@ -263,7 +252,9 @@ private func previewState(
     state.showFilters = showFilters
     state.filterFreeSlotOnly = freeSlotsOnly
     state.isGrouped = grouped
-    if let preset { state.applyPreset(preset) }
+    if let preset, let stock = SearchFilterPreset.defaults.first(where: { $0.name == preset }) {
+        state.applyPreset(stock)
+    }
     return state
 }
 
@@ -276,7 +267,7 @@ private func previewState(
 #Preview("Bar — preset active") {
     // Exercises the accent dot on the toggle, the "N active" count and the
     // clear button, none of which are reachable from the idle state.
-    SearchFilterBar(searchState: previewState(preset: .flac))
+    SearchFilterBar(searchState: previewState(preset: "FLAC"))
         .frame(width: 900)
         .background(SeeleColors.background)
 }
@@ -284,7 +275,7 @@ private func previewState(
 #Preview("Bar — narrow") {
     // The preset chips and the active-filter cluster compete for width; this
     // is where they start colliding.
-    SearchFilterBar(searchState: previewState(preset: .lossless))
+    SearchFilterBar(searchState: previewState(preset: "Lossless"))
         .frame(width: 480)
         .background(SeeleColors.background)
 }
@@ -297,14 +288,13 @@ private func previewState(
 
 #Preview("Panel — filters applied") {
     SearchFilterPanel(
-        searchState: previewState(preset: .hiRes, freeSlotsOnly: true, grouped: true)
+        searchState: previewState(preset: "Hi-Res", freeSlotsOnly: true, grouped: true)
     )
     .frame(width: 900)
     .background(SeeleColors.background)
 }
 
 #Preview("Panel — narrow, chips wrap") {
-    // FlowLayout's whole job: the format row must wrap rather than clip.
     SearchFilterPanel(searchState: previewState())
         .frame(width: 420)
         .background(SeeleColors.background)
@@ -312,7 +302,7 @@ private func previewState(
 
 #Preview("Bar + panel together") {
     VStack(spacing: 0) {
-        let state = previewState(showFilters: true, preset: .flac)
+        let state = previewState(showFilters: true, preset: "FLAC")
         SearchFilterBar(searchState: state)
         SearchFilterPanel(searchState: state)
         Spacer()

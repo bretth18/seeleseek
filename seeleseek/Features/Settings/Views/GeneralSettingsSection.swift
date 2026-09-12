@@ -94,6 +94,8 @@ struct GeneralSettingsSection: View {
                 ))
             }
 
+            SearchPresetsEditor(settings: settings)
+
             settingsGroup("Appearance") {
                 settingsPicker("Theme", selection: $settings.appearance, options: AppAppearance.allCases) { $0.displayName }
             }
