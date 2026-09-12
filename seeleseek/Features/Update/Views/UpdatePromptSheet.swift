@@ -53,15 +53,8 @@ struct UpdatePromptSheet: View {
     private var releaseNotes: some View {
         if let notes = updateState.releaseNotes, !notes.isEmpty {
             ScrollView {
-                Text(notes)
-                    .font(SeeleTypography.body)
-                    .foregroundStyle(SeeleColors.textPrimary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                ReleaseNotesView(markdown: notes)
                     .padding(SeeleSpacing.md)
-                    // VoiceOver must not speak raw markdown markers.
-                    // The visual text is unchanged.
-                    .accessibilityLabel("Release notes: \(UpdateSettingsSection.spokenReleaseNotes(notes))")
             }
             .background(SeeleColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD, style: .continuous))

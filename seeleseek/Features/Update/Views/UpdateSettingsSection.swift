@@ -109,27 +109,6 @@ struct UpdateSettingsSection: View {
         }
     }
 
-    /// Removes leading markdown markers per line so VoiceOver does not
-    /// speak "#" and "-" characters.
-    static func spokenReleaseNotes(_ notes: String) -> String {
-        notes
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line in
-                var trimmed = line
-                while let first = trimmed.first, first == " " {
-                    trimmed = trimmed.dropFirst()
-                }
-                while let first = trimmed.first, first == "#" || first == "-" || first == "*" {
-                    trimmed = trimmed.dropFirst()
-                }
-                while let first = trimmed.first, first == " " {
-                    trimmed = trimmed.dropFirst()
-                }
-                return String(trimmed)
-            }
-            .joined(separator: "\n")
-    }
-
     @ViewBuilder
     private var updateAvailableCard: some View {
         settingsGroup("Update Available") {
@@ -153,14 +132,10 @@ struct UpdateSettingsSection: View {
                     }
 
                     if let notes = updateState.releaseNotes, !notes.isEmpty {
-                        Text(notes)
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textSecondary)
-                            .textSelection(.enabled)
-                            .frame(maxHeight: 150)
-                            // VoiceOver must not speak raw markdown
-                            // markers. The visual text is unchanged.
-                            .accessibilityLabel(Self.spokenReleaseNotes(notes))
+                        ScrollView {
+                            ReleaseNotesView(markdown: notes, compact: true)
+                        }
+                        .frame(maxHeight: 150)
                     }
 
                     Divider()
