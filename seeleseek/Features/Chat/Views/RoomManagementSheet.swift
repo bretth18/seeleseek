@@ -29,16 +29,7 @@ struct RoomManagementSheet: View {
 
                 Spacer()
 
-                Button {
-                    isPresented = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeMedium))
-                        .foregroundStyle(SeeleColors.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Close")
+                SheetCloseButton { isPresented = false }
             }
             .padding(SeeleSpacing.lg)
 

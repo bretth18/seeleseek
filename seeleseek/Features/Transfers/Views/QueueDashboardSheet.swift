@@ -107,17 +107,8 @@ struct QueueDashboardSheet: View {
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeMedium))
-                    .foregroundStyle(SeeleColors.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .help("Close")
-            .accessibilityLabel("Close")
+            SheetCloseButton { dismiss() }
+                .help("Close")
         }
         .padding(.horizontal, SeeleSpacing.lg)
         .padding(.vertical, SeeleSpacing.md)
