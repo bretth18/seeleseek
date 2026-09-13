@@ -126,105 +126,35 @@ struct DiagnosticsSection: View {
             }
 
             settingsGroup("Port Reachability Test") {
-                settingsRow {
-                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                        Text("Tests if your listen port is reachable from the internet.")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
-
-                        if isTestingPort {
-                            HStack(spacing: SeeleSpacing.sm) {
-                                ProgressView().scaleEffect(0.7)
-                                    .accessibilityLabel("Testing")
-                                Text("Testing port reachability...")
-                                    .font(SeeleTypography.body)
-                                    .foregroundStyle(SeeleColors.textSecondary)
-                            }
-                        } else {
-                            Button("Test Port Reachability") {
-                                testPortReachability()
-                            }
-                            .font(SeeleTypography.body)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(SeeleColors.accent)
-                        }
-
-                        if !portTestResult.isEmpty {
-                            Text(portTestResult)
-                                .font(SeeleTypography.mono)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                                .textSelection(.enabled)
-                        }
+                testPanel(caption: "Tests if your listen port is reachable from the internet.", result: portTestResult) {
+                    testButton("Test Port Reachability", isRunning: isTestingPort, runningText: "Testing port reachability...") {
+                        testPortReachability()
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             settingsGroup("Browse Test") {
-                settingsRow {
-                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                        Text("Test browsing a specific user to diagnose connection issues.")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
+                testPanel(caption: "Test browsing a specific user to diagnose connection issues.", result: browseTestResult) {
+                    HStack(spacing: SeeleSpacing.sm) {
+                        TextField("Username", text: $browseTestUsername)
+                            .textFieldStyle(SeeleTextFieldStyle())
+                            .accessibilityLabel("Username to browse")
 
-                        HStack(spacing: SeeleSpacing.sm) {
-                            TextField("Username", text: $browseTestUsername)
-                                .textFieldStyle(SeeleTextFieldStyle())
-                                .accessibilityLabel("Username to browse")
-
-                            if isTestingBrowse {
-                                ProgressView().scaleEffect(0.7)
-                                    .accessibilityLabel("Testing")
-                            } else {
-                                Button("Test Browse") {
-                                    testBrowse()
-                                }
-                                .font(SeeleTypography.body)
-                                .buttonStyle(.plain)
-                                .foregroundStyle(SeeleColors.accent)
+                        if isTestingBrowse {
+                            testSpinner
+                        } else {
+                            testButton("Test Browse") { testBrowse() }
                                 .disabled(browseTestUsername.isEmpty)
-                            }
-                        }
-
-                        if !browseTestResult.isEmpty {
-                            Text(browseTestResult)
-                                .font(SeeleTypography.mono)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                                .textSelection(.enabled)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             settingsGroup("Server Connection Test") {
-                settingsRow {
-                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                        if isTesting {
-                            HStack(spacing: SeeleSpacing.sm) {
-                                ProgressView().scaleEffect(0.7)
-                                    .accessibilityLabel("Testing")
-                                Text("Testing...")
-                                    .font(SeeleTypography.body)
-                                    .foregroundStyle(SeeleColors.textSecondary)
-                            }
-                        } else {
-                            Button("Test Server Connection") {
-                                testConnection()
-                            }
-                            .font(SeeleTypography.body)
-                            .buttonStyle(.plain)
-                            .foregroundStyle(SeeleColors.accent)
-                        }
-
-                        if !testResult.isEmpty {
-                            Text(testResult)
-                                .font(SeeleTypography.mono)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                                .textSelection(.enabled)
-                        }
+                testPanel(result: testResult) {
+                    testButton("Test Server Connection", isRunning: isTesting, runningText: "Testing...") {
+                        testConnection()
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -239,6 +169,52 @@ struct DiagnosticsSection: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+        }
+    }
+
+    private var testSpinner: some View {
+        ProgressView().scaleEffect(0.7)
+            .accessibilityLabel("Testing")
+    }
+
+    private func testButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(SeeleTypography.body)
+            .buttonStyle(.plain)
+            .foregroundStyle(SeeleColors.accent)
+    }
+
+    @ViewBuilder
+    private func testButton(_ title: String, isRunning: Bool, runningText: String, action: @escaping () -> Void) -> some View {
+        if isRunning {
+            HStack(spacing: SeeleSpacing.sm) {
+                testSpinner
+                Text(runningText)
+                    .font(SeeleTypography.body)
+                    .foregroundStyle(SeeleColors.textSecondary)
+            }
+        } else {
+            testButton(title, action: action)
+        }
+    }
+
+    private func testPanel<Control: View>(caption: String? = nil, result: String, @ViewBuilder control: () -> Control) -> some View {
+        settingsRow {
+            VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
+                if let caption {
+                    Text(caption)
+                        .font(SeeleTypography.caption)
+                        .foregroundStyle(SeeleColors.textTertiary)
+                }
+                control()
+                if !result.isEmpty {
+                    Text(result)
+                        .font(SeeleTypography.mono)
+                        .foregroundStyle(SeeleColors.textSecondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
