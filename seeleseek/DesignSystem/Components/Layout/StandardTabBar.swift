@@ -215,6 +215,7 @@ extension StandardTabBar where Trailing == EmptyView {
     }
 }
 
+#if DEBUG
 #Preview {
     enum PreviewTab: String, Hashable, CaseIterable {
         case downloads = "Downloads"
@@ -242,3 +243,4 @@ extension StandardTabBar where Trailing == EmptyView {
 
     return Preview()
 }
+#endif

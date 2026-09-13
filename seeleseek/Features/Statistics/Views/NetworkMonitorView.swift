@@ -133,8 +133,10 @@ struct MonitorSearchTab: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NetworkMonitorView()
         .environment(\.appState, AppState())
         .frame(width: 900, height: 700)
 }
+#endif

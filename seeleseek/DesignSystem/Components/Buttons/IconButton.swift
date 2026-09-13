@@ -32,6 +32,7 @@ struct IconButton: View {
     }
 }
 
+#if DEBUG
 #Preview("Icon Buttons") {
     VStack(spacing: SeeleSpacing.lg) {
         HStack {
@@ -43,3 +44,4 @@ struct IconButton: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

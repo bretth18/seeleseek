@@ -165,6 +165,8 @@ struct MetadataEditorSheet: View {
     }
 }
 
+#if DEBUG
 #Preview {
     MetadataEditorSheet(state: MetadataState())
 }
+#endif

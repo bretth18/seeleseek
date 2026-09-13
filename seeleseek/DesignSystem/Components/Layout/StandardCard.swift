@@ -17,6 +17,7 @@ struct StandardCard<Content: View>: View {
     }
 }
 
+#if DEBUG
 #Preview {
     StandardCard {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
@@ -31,3 +32,4 @@ struct StandardCard<Content: View>: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

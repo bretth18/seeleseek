@@ -71,7 +71,9 @@ struct AddBuddySheet: View {
     }
 }
 
+#if DEBUG
 #Preview {
     AddBuddySheet()
         .environment(\.appState, AppState())
 }
+#endif

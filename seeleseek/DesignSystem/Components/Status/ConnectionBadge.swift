@@ -38,6 +38,7 @@ struct ConnectionBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: SeeleSpacing.lg) {
         ForEach(ConnectionStatus.allCases, id: \.self) { status in
@@ -47,3 +48,4 @@ struct ConnectionBadge: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

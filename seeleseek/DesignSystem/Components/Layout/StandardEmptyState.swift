@@ -92,6 +92,7 @@ extension StandardEmptyState where Footer == EmptyView {
     }
 }
 
+#if DEBUG
 #Preview {
     StandardEmptyState(
         icon: "music.note.list",
@@ -101,3 +102,4 @@ extension StandardEmptyState where Footer == EmptyView {
     ) {}
     .background(SeeleColors.background)
 }
+#endif

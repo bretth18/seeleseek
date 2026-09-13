@@ -214,6 +214,7 @@ struct SimilarUsersView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     SimilarUsersView()
         .environment(\.appState, {
@@ -233,3 +234,4 @@ struct SimilarUsersView: View {
         }())
         .frame(width: 500, height: 500)
 }
+#endif

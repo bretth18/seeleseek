@@ -241,8 +241,10 @@ struct TransfersView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     TransfersView()
         .environment(\.appState, AppState())
         .frame(width: 800, height: 600)
 }
+#endif

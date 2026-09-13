@@ -191,7 +191,9 @@ struct PlaceholderView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     MainView()
         .environment(\.appState, AppState())
 }
+#endif

@@ -252,6 +252,7 @@ struct SidebarRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     NavigationSplitView {
         Sidebar()
@@ -265,3 +266,4 @@ struct SidebarRow: View {
         return state
     }())
 }
+#endif

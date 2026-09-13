@@ -18,6 +18,7 @@ struct StandardStatCluster<Content: View>: View {
     }
 }
 
+#if DEBUG
 #Preview {
     StandardStatCluster {
         StandardLiveStat(
@@ -41,3 +42,4 @@ struct StandardStatCluster<Content: View>: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

@@ -147,6 +147,7 @@ struct ActivityEventRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     LiveActivityFeed()
         .environment(\.appState, AppState())
@@ -162,3 +163,4 @@ struct ActivityEventRow: View {
             log.logError("Connection refused", detail: "Peer unavailable")
         }
 }
+#endif

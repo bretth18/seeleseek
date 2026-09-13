@@ -100,6 +100,7 @@ struct SimilarUserRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack {
         SimilarUserRow(username: "jazzfan42", rating: 85)
@@ -109,3 +110,4 @@ struct SimilarUserRow: View {
     .environment(\.appState, AppState())
     .background(SeeleColors.background)
 }
+#endif

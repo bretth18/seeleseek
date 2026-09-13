@@ -18,6 +18,7 @@ struct StandardActionBar<Content: View>: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: 0) {
         StandardActionBar {
@@ -30,3 +31,4 @@ struct StandardActionBar<Content: View>: View {
     .background(SeeleColors.background)
     .frame(width: 500, height: 200)
 }
+#endif

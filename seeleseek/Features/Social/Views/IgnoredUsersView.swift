@@ -158,8 +158,10 @@ struct IgnoredUsersView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     IgnoredUsersView()
         .environment(\.appState, AppState())
         .frame(width: 640, height: 460)
 }
+#endif

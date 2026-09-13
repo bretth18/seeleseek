@@ -361,8 +361,10 @@ struct ChatView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ChatView()
         .environment(\.appState, AppState())
         .frame(width: 900, height: 600)
 }
+#endif

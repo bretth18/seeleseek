@@ -179,6 +179,7 @@ struct InterestsView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     InterestsView()
         .environment(\.appState, {
@@ -189,3 +190,4 @@ struct InterestsView: View {
         }())
         .frame(width: 500, height: 400)
 }
+#endif

@@ -530,6 +530,7 @@ struct DiagnosticsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         DiagnosticsSection()
@@ -539,3 +540,4 @@ struct DiagnosticsSection: View {
     .frame(width: 500, height: 600)
     .background(SeeleColors.background)
 }
+#endif
