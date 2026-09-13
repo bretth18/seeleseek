@@ -1405,23 +1405,6 @@ public actor UploadManager {
         logger.info("Upload speed limit set to \(kbPerSecond) KB/s")
     }
 
-    /// Cancel a queued upload by queue-entry id. Notifies the peer and
-    /// resolves the transfer row (retry-driven entries carry one) so it
-    /// doesn't strand at `.queued`.
-    public func cancelQueuedUpload(_ id: UUID) async {
-        guard let queued = uploadQueue.first(where: { $0.id == id }) else { return }
-        uploadQueue.removeAll { $0.id == id }
-        await sendUploadDeniedToPeer(username: queued.username, filename: queued.filename, reason: "Cancelled")
-        if let transferId = queued.existingTransferId {
-            await cancelRetry(transferId: transferId)
-            await transferState?.updateTransfer(id: transferId) { t in
-                t.status = .cancelled
-                t.error = "Cancelled"
-            }
-        }
-        logger.info("Cancelled queued upload: \(queued.filename)")
-    }
-
     /// Cancel an upload wherever it is in the pipeline: queued, pending
     /// (TransferRequest sent / awaiting PierceFirewall), or streaming.
     public func cancelUpload(transferId: UUID) async {
@@ -1469,12 +1452,6 @@ public actor UploadManager {
             logger.info("Cancelled active upload: \(active.filename)")
             await processQueue()
         }
-    }
-
-    /// Cancel an active upload. Kept for compatibility; routes through
-    /// `cancelUpload(transferId:)`.
-    public func cancelActiveUpload(_ transferId: UUID) async {
-        await cancelUpload(transferId: transferId)
     }
 
     // MARK: - PierceFirewall Handling
@@ -2358,9 +2335,6 @@ public actor UploadManager {
         notifyUploadCompleted(username: username)
     }
     internal var _pendingTransferCountForTest: Int { pendingTransfers.count }
-    internal func _seedQueuedUploadForTest(_ upload: QueuedUpload) {
-        uploadQueue.append(upload)
-    }
 
     /// Maps a TransferReply rejection `reason` string to the closest
     /// TransferStatus. Exposed for unit tests.

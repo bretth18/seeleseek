@@ -82,24 +82,6 @@ public struct SearchResult: Identifiable, Hashable, Sendable {
         uploadSpeed.formattedSpeed
     }
 
-    public var formattedSampleRate: String? {
-        guard let sampleRate, sampleRate > 0 else { return nil }
-        if sampleRate % 1000 == 0 {
-            return "\(sampleRate / 1000) kHz"
-        }
-        let khz = Double(sampleRate) / 1000.0
-        // Format like 44.1 kHz, 88.2 kHz
-        if khz == khz.rounded(.toNearestOrEven) {
-            return "\(Int(khz)) kHz"
-        }
-        return String(format: "%.1f kHz", khz)
-    }
-
-    public var formattedBitDepth: String? {
-        guard let bitDepth, bitDepth > 0 else { return nil }
-        return "\(bitDepth)-bit"
-    }
-
     public var isAudioFile: Bool { FileTypes.isAudio(fileExtension) }
     public var isLossless: Bool { FileTypes.isLossless(fileExtension) }
     public var isImageFile: Bool { FileTypes.isImage(fileExtension) }

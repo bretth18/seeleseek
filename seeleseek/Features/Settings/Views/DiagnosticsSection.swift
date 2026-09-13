@@ -113,7 +113,6 @@ struct DiagnosticsSection: View {
                 }
                 diagRow("Downloads", value: "\(stats.filesDownloaded)")
                 diagRow("Uploads", value: "\(stats.filesUploaded)")
-                diagRow("Searches Performed", value: "\(stats.searchesPerformed)")
                 let uniqueUsers = stats.uniqueUsersDownloadedFrom.count + stats.uniqueUsersUploadedTo.count
                 diagRow("Unique Peers (Session)", value: "\(uniqueUsers)")
             }

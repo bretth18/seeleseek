@@ -214,9 +214,6 @@ public actor DownloadManager {
         public var resumeOffset: UInt64 = 0  // For resuming partial downloads
     }
 
-    // Track partial downloads for resume
-    private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
-
     /// (username, filename) pairs currently inside `queueDownload`'s
     /// check-then-add window. The duplicate checks there suspend on a
     /// transferState read; without this synchronous claim, two rapid

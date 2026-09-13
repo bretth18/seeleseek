@@ -552,20 +552,6 @@ final class SocialState: PeerWatching {
         buddies[index].folderCount = dirs
     }
 
-    func updateBuddyNotes(_ username: String, notes: String) {
-        guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
-
-        buddies[index].notes = notes.isEmpty ? nil : notes
-
-        Task {
-            do {
-                try await SocialRepository.saveBuddy(buddies[index])
-            } catch {
-                logger.error("Failed to save buddy notes: \(error.localizedDescription)")
-            }
-        }
-    }
-
     // MARK: - Profile Actions
 
     func loadProfile(for username: String) async {

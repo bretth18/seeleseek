@@ -125,13 +125,6 @@ extension NetworkClient {
         try await connection.send(message)
     }
 
-    public func setSharedFilesCount(_ files: UInt32, directories: UInt32) async throws {
-        let connection = try requireConnectedServerConnection()
-
-        let message = MessageBuilder.sharedFoldersFilesMessage(folders: directories, files: files)
-        try await connection.send(message)
-    }
-
     /// Tell server we couldn't connect to a peer (used by peer responding to us)
     public func sendCantConnectToPeer(token: UInt32, username: String) async {
         guard isConnected, let connection = serverConnection else { return }
@@ -318,20 +311,6 @@ extension NetworkClient {
 
     // MARK: - Room Search & Wishlist
 
-    /// Search within a specific room
-    public func searchRoom(_ room: String, query: String, token: UInt32) async throws {
-        let message = MessageBuilder.roomSearch(room: room, token: token, query: query)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Room search in \(room): \(query)")
-    }
-
-    /// Add a wishlist search (runs periodically)
-    public func addWishlistSearch(query: String, token: UInt32) async throws {
-        let message = MessageBuilder.wishlistSearch(token: token, query: query)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Added wishlist search: \(query)")
-    }
-
     // MARK: - Private Rooms
 
     /// Add a member to a private room
@@ -346,13 +325,6 @@ extension NetworkClient {
         let message = MessageBuilder.privateRoomRemoveMember(room: room, username: username)
         try await requireConnectedServerConnection().send(message)
         logger.info("Removing \(username) from private room \(room)")
-    }
-
-    /// Leave a private room
-    public func leavePrivateRoom(_ room: String) async throws {
-        let message = MessageBuilder.privateRoomCancelMembership(room: room)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Leaving private room \(room)")
     }
 
     /// Give up ownership of a private room

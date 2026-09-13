@@ -305,18 +305,6 @@ final class BrowseState {
         }
     }
 
-    /// Clean up expired browse cache
-    func cleanupExpiredCache() {
-        Task {
-            do {
-                try await BrowseRepository.deleteExpired(olderThan: browseCacheTTL)
-                logger.debug("Cleaned up expired browse cache")
-            } catch {
-                logger.error("Failed to cleanup browse cache: \(error.localizedDescription)")
-            }
-        }
-    }
-
     // MARK: - Actions
 
     /// Start browsing a user - creates a new tab and initiates the request

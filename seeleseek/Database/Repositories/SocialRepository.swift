@@ -74,15 +74,6 @@ struct SocialRepository {
         }
     }
 
-    /// Delete all interests of a specific type
-    static func deleteAllInterests(type: InterestType) async throws {
-        _ = try await DatabaseManager.shared.write { db in
-            try InterestRecord
-                .filter(Column("type") == type.rawValue)
-                .deleteAll(db)
-        }
-    }
-
     // MARK: - Profile Settings
 
     /// Get a profile setting value
@@ -138,15 +129,6 @@ struct SocialRepository {
             try BlockedUserRecord
                 .filter(Column("username") == username)
                 .deleteAll(db)
-        }
-    }
-
-    /// Check if a user is blocked
-    static func isUserBlocked(_ username: String) async throws -> Bool {
-        try await DatabaseManager.shared.read { db in
-            try BlockedUserRecord
-                .filter(Column("username").lowercased == username.lowercased())
-                .fetchCount(db) > 0
         }
     }
 }
