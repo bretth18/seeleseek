@@ -145,6 +145,18 @@ final class SettingsState: DownloadSettingsProviding {
     private let blockedUsernamePatternsKey = "settingsBlockedUsernamePatterns"
     private let showJoinLeaveMessagesKey = "settingsShowJoinLeaveMessages"
     private let autoJoinRoomsKey = "settingsAutoJoinRooms"
+    private let enableNotificationsKey = "settingsEnableNotifications"
+    private let notificationSoundEnabledKey = "settingsNotificationSoundEnabled"
+    private let rescanOnStartupKey = "settingsRescanOnStartup"
+    private let shareHiddenFilesKey = "settingsShareHiddenFiles"
+    private let autoFetchMetadataKey = "settingsAutoFetchMetadata"
+    private let autoFetchAlbumArtKey = "settingsAutoFetchAlbumArt"
+    private let embedAlbumArtKey = "settingsEmbedAlbumArt"
+    private let setFolderIconsKey = "settingsSetFolderIcons"
+    private let organizeDownloadsKey = "settingsOrganizeDownloads"
+    private let organizationPatternKey = "settingsOrganizationPattern"
+    private let showOnlineStatusKey = "settingsShowOnlineStatus"
+    private let allowBrowsingKey = "settingsAllowBrowsing"
 
     /// Default patterns shipped on first launch. Prefix `slsk_` catches bot accounts
     /// created by "streaming-service" apps that queue uploads en masse without sharing.
@@ -158,8 +170,20 @@ final class SettingsState: DownloadSettingsProviding {
 
     private let logger = Logger(subsystem: "com.seeleseek", category: "Settings")
 
+    /// Backing store for prefs. Injectable so tests can use an isolated suite
+    /// instead of the live `UserDefaults.standard` (same trap as ShareManager).
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
     // Flag to prevent save during load
     private var isLoading = false
+    /// `save()` is a no-op until `load()` finishes. Stops first-frame
+    /// bindings (MenuBarExtra `isInserted`, etc.) from writing factory
+    /// defaults over real prefs before configure runs.
+    private var hasLoaded = false
 
     // MARK: - General Settings
     var downloadLocation: URL = SettingsState.defaultDownloadLocation {
@@ -357,21 +381,57 @@ final class SettingsState: DownloadSettingsProviding {
 
     // MARK: - Shares Settings
     var sharedFolders: [URL] = []
-    var rescanOnStartup: Bool = true
-    var shareHiddenFiles: Bool = false
+    var rescanOnStartup: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var shareHiddenFiles: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
 
     // MARK: - Metadata Settings
-    var autoFetchMetadata: Bool = true
-    var autoFetchAlbumArt: Bool = true
-    var embedAlbumArt: Bool = true
+    var autoFetchMetadata: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var autoFetchAlbumArt: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var embedAlbumArt: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
     var setFolderIcons: Bool = true {
         didSet {
             guard !isLoading else { return }
+            save()
             onDownloadSettingsChange?()
         }
     }
-    var organizeDownloads: Bool = false
-    var organizationPattern: String = "{artist}/{album}/{track} - {title}"
+    var organizeDownloads: Bool = false {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var organizationPattern: String = "{artist}/{album}/{track} - {title}" {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
 
     // MARK: - Chat Settings
     var showJoinLeaveMessages: Bool = true {
@@ -391,8 +451,18 @@ final class SettingsState: DownloadSettingsProviding {
             save()
         }
     }
-    var enableNotifications: Bool = true
-    var notificationSound: Bool = true
+    var enableNotifications: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var notificationSound: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
     var selectedNotificationSound: NotificationSound = .default {
         didSet {
             guard !isLoading else { return }
@@ -443,8 +513,18 @@ final class SettingsState: DownloadSettingsProviding {
     }
 
     // MARK: - Privacy Settings
-    var showOnlineStatus: Bool = true
-    var allowBrowsing: Bool = true
+    var showOnlineStatus: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
+    var allowBrowsing: Bool = true {
+        didSet {
+            guard !isLoading else { return }
+            save()
+        }
+    }
 
     /// When true, peers whose usernames match any pattern in `blockedUsernamePatterns`
     /// have their upload requests silently rejected.
@@ -555,62 +635,68 @@ final class SettingsState: DownloadSettingsProviding {
 
     @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
 
-    /// Debounced save. Every settings property calls this from its
-    /// `didSet`, and `resetToDefaults()` fires it ~30×; each call used to
-    /// rewrite all ~20 UserDefaults keys and schedule a full DB save.
-    /// Coalesce bursts into a single write half a second after the last
-    /// change.
+    /// Persist UserDefaults immediately; debounce only the DB write.
+    /// Xcode Stop / rebuild often kills the process before a 500ms Task
+    /// runs, which used to drop the last toggle (grouping, paths, etc.).
     func save() {
+        guard hasLoaded else { return }
+        persistToUserDefaults()
         pendingSaveTask?.cancel()
         pendingSaveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard let self, !Task.isCancelled else { return }
             self.pendingSaveTask = nil
-            self.saveNow()
+            await self.saveToDatabase()
         }
     }
 
-    /// Save settings to both database and UserDefaults (for backwards compatibility)
-    private func saveNow() {
-        // Save to UserDefaults (legacy support)
-        UserDefaults.standard.set(listenPort, forKey: listenPortKey)
-        UserDefaults.standard.set(enableUPnP, forKey: enableUPnPKey)
-        UserDefaults.standard.set(maxDownloadSlots, forKey: maxDownloadSlotsKey)
-        UserDefaults.standard.set(maxUploadSlots, forKey: maxUploadSlotsKey)
-        UserDefaults.standard.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
-        UserDefaults.standard.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
-        UserDefaults.standard.set(maxSearchResults, forKey: maxSearchResultsKey)
-        UserDefaults.standard.set(groupSearchResults, forKey: groupSearchResultsKey)
+    /// Write the UserDefaults mirror used at next launch.
+    private func persistToUserDefaults() {
+        defaults.set(listenPort, forKey: listenPortKey)
+        defaults.set(enableUPnP, forKey: enableUPnPKey)
+        defaults.set(maxDownloadSlots, forKey: maxDownloadSlotsKey)
+        defaults.set(maxUploadSlots, forKey: maxUploadSlotsKey)
+        defaults.set(uploadSpeedLimit, forKey: uploadSpeedLimitKey)
+        defaults.set(downloadSpeedLimit, forKey: downloadSpeedLimitKey)
+        defaults.set(maxSearchResults, forKey: maxSearchResultsKey)
+        defaults.set(groupSearchResults, forKey: groupSearchResultsKey)
         if let data = try? JSONEncoder().encode(searchFilters) {
-            UserDefaults.standard.set(data, forKey: searchFiltersKey)
+            defaults.set(data, forKey: searchFiltersKey)
         }
         if let data = try? JSONEncoder().encode(searchFilterPresets) {
-            UserDefaults.standard.set(data, forKey: searchFilterPresetsKey)
+            defaults.set(data, forKey: searchFilterPresetsKey)
         }
-        UserDefaults.standard.set(downloadLocation.path, forKey: downloadLocationKey)
-        UserDefaults.standard.set(incompleteLocation.path, forKey: incompleteLocationKey)
-        UserDefaults.standard.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
-        UserDefaults.standard.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
-        UserDefaults.standard.set(launchAtLogin, forKey: launchAtLoginKey)
-        UserDefaults.standard.set(showInMenuBar, forKey: showInMenuBarKey)
-        UserDefaults.standard.set(appearance.rawValue, forKey: appearanceKey)
-        UserDefaults.standard.set(connectAtLaunch, forKey: connectAtLaunchKey)
-        UserDefaults.standard.set(notifyDownloads, forKey: notifyDownloadsKey)
-        UserDefaults.standard.set(notifyUploads, forKey: notifyUploadsKey)
-        UserDefaults.standard.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
-        UserDefaults.standard.set(notifyWishlist, forKey: notifyWishlistKey)
-        UserDefaults.standard.set(notifyLeechers, forKey: notifyLeechersKey)
-        UserDefaults.standard.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
-        UserDefaults.standard.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
-        UserDefaults.standard.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
-        UserDefaults.standard.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
-        UserDefaults.standard.set(showJoinLeaveMessages, forKey: showJoinLeaveMessagesKey)
-        UserDefaults.standard.set(autoJoinRooms, forKey: autoJoinRoomsKey)
-
-        // Save to database asynchronously
-        Task {
-            await saveToDatabase()
-        }
+        defaults.set(downloadLocation.path, forKey: downloadLocationKey)
+        defaults.set(incompleteLocation.path, forKey: incompleteLocationKey)
+        defaults.set(downloadFolderFormat.rawValue, forKey: downloadFolderFormatKey)
+        defaults.set(downloadFolderTemplate, forKey: downloadFolderTemplateKey)
+        defaults.set(launchAtLogin, forKey: launchAtLoginKey)
+        defaults.set(showInMenuBar, forKey: showInMenuBarKey)
+        defaults.set(appearance.rawValue, forKey: appearanceKey)
+        defaults.set(connectAtLaunch, forKey: connectAtLaunchKey)
+        defaults.set(notifyDownloads, forKey: notifyDownloadsKey)
+        defaults.set(notifyUploads, forKey: notifyUploadsKey)
+        defaults.set(notifyPrivateMessages, forKey: notifyPrivateMessagesKey)
+        defaults.set(notifyWishlist, forKey: notifyWishlistKey)
+        defaults.set(notifyLeechers, forKey: notifyLeechersKey)
+        defaults.set(notifyOnlyInBackground, forKey: notifyOnlyInBackgroundKey)
+        defaults.set(selectedNotificationSound.rawValue, forKey: notificationSoundNameKey)
+        defaults.set(blockLeechPatternsEnabled, forKey: blockLeechPatternsEnabledKey)
+        defaults.set(blockedUsernamePatterns, forKey: blockedUsernamePatternsKey)
+        defaults.set(showJoinLeaveMessages, forKey: showJoinLeaveMessagesKey)
+        defaults.set(autoJoinRooms, forKey: autoJoinRoomsKey)
+        defaults.set(enableNotifications, forKey: enableNotificationsKey)
+        defaults.set(notificationSound, forKey: notificationSoundEnabledKey)
+        defaults.set(rescanOnStartup, forKey: rescanOnStartupKey)
+        defaults.set(shareHiddenFiles, forKey: shareHiddenFilesKey)
+        defaults.set(autoFetchMetadata, forKey: autoFetchMetadataKey)
+        defaults.set(autoFetchAlbumArt, forKey: autoFetchAlbumArtKey)
+        defaults.set(embedAlbumArt, forKey: embedAlbumArtKey)
+        defaults.set(setFolderIcons, forKey: setFolderIconsKey)
+        defaults.set(organizeDownloads, forKey: organizeDownloadsKey)
+        defaults.set(organizationPattern, forKey: organizationPatternKey)
+        defaults.set(showOnlineStatus, forKey: showOnlineStatusKey)
+        defaults.set(allowBrowsing, forKey: allowBrowsingKey)
     }
 
     /// Save settings to database
@@ -637,102 +723,141 @@ final class SettingsState: DownloadSettingsProviding {
     /// Load settings from UserDefaults (used during initial startup before DB is ready)
     func load() {
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
 
         logger.info("Loading settings from UserDefaults...")
-        if UserDefaults.standard.object(forKey: listenPortKey) != nil {
-            let savedPort = UserDefaults.standard.integer(forKey: listenPortKey)
+        if defaults.object(forKey: listenPortKey) != nil {
+            let savedPort = defaults.integer(forKey: listenPortKey)
             logger.info("Found saved listenPort: \(savedPort)")
             listenPort = savedPort
         } else {
             logger.info("No saved listenPort, using default: \(self.listenPort)")
         }
-        if UserDefaults.standard.object(forKey: enableUPnPKey) != nil {
-            enableUPnP = UserDefaults.standard.bool(forKey: enableUPnPKey)
+        if defaults.object(forKey: enableUPnPKey) != nil {
+            enableUPnP = defaults.bool(forKey: enableUPnPKey)
         }
-        if UserDefaults.standard.object(forKey: maxDownloadSlotsKey) != nil {
-            maxDownloadSlots = UserDefaults.standard.integer(forKey: maxDownloadSlotsKey)
+        if defaults.object(forKey: maxDownloadSlotsKey) != nil {
+            maxDownloadSlots = defaults.integer(forKey: maxDownloadSlotsKey)
         }
-        if UserDefaults.standard.object(forKey: maxUploadSlotsKey) != nil {
-            maxUploadSlots = UserDefaults.standard.integer(forKey: maxUploadSlotsKey)
+        if defaults.object(forKey: maxUploadSlotsKey) != nil {
+            maxUploadSlots = defaults.integer(forKey: maxUploadSlotsKey)
         }
-        if UserDefaults.standard.object(forKey: uploadSpeedLimitKey) != nil {
-            uploadSpeedLimit = UserDefaults.standard.integer(forKey: uploadSpeedLimitKey)
+        if defaults.object(forKey: uploadSpeedLimitKey) != nil {
+            uploadSpeedLimit = defaults.integer(forKey: uploadSpeedLimitKey)
         }
-        if UserDefaults.standard.object(forKey: downloadSpeedLimitKey) != nil {
-            downloadSpeedLimit = UserDefaults.standard.integer(forKey: downloadSpeedLimitKey)
+        if defaults.object(forKey: downloadSpeedLimitKey) != nil {
+            downloadSpeedLimit = defaults.integer(forKey: downloadSpeedLimitKey)
         }
-        if UserDefaults.standard.object(forKey: maxSearchResultsKey) != nil {
-            maxSearchResults = UserDefaults.standard.integer(forKey: maxSearchResultsKey)
+        if defaults.object(forKey: maxSearchResultsKey) != nil {
+            maxSearchResults = defaults.integer(forKey: maxSearchResultsKey)
         }
-        if UserDefaults.standard.object(forKey: groupSearchResultsKey) != nil {
-            groupSearchResults = UserDefaults.standard.bool(forKey: groupSearchResultsKey)
+        if defaults.object(forKey: groupSearchResultsKey) != nil {
+            groupSearchResults = defaults.bool(forKey: groupSearchResultsKey)
         }
-        if let data = UserDefaults.standard.data(forKey: searchFiltersKey),
+        if let data = defaults.data(forKey: searchFiltersKey),
            let filters = try? JSONDecoder().decode(PersistedSearchFilters.self, from: data) {
             searchFilters = filters
         }
-        if let data = UserDefaults.standard.data(forKey: searchFilterPresetsKey),
+        if let data = defaults.data(forKey: searchFilterPresetsKey),
            let presets = try? JSONDecoder().decode([SearchFilterPreset].self, from: data) {
             searchFilterPresets = presets
         }
-        if let downloadPath = UserDefaults.standard.string(forKey: downloadLocationKey) {
+        if let downloadPath = defaults.string(forKey: downloadLocationKey) {
             downloadLocation = URL(fileURLWithPath: downloadPath)
         }
-        if let incompletePath = UserDefaults.standard.string(forKey: incompleteLocationKey) {
+        if let incompletePath = defaults.string(forKey: incompleteLocationKey) {
             incompleteLocation = URL(fileURLWithPath: incompletePath)
         }
-        if let formatRaw = UserDefaults.standard.string(forKey: downloadFolderFormatKey),
+        if let formatRaw = defaults.string(forKey: downloadFolderFormatKey),
            let format = DownloadFolderFormat(rawValue: formatRaw) {
             downloadFolderFormat = format
         }
-        if let template = UserDefaults.standard.string(forKey: downloadFolderTemplateKey) {
+        if let template = defaults.string(forKey: downloadFolderTemplateKey) {
             downloadFolderTemplate = template
         }
         migrateDownloadDefaultsIfNeeded()
-        if UserDefaults.standard.object(forKey: showInMenuBarKey) != nil {
-            showInMenuBar = UserDefaults.standard.bool(forKey: showInMenuBarKey)
+        if defaults.object(forKey: showInMenuBarKey) != nil {
+            showInMenuBar = defaults.bool(forKey: showInMenuBarKey)
         }
-        if let raw = UserDefaults.standard.string(forKey: appearanceKey),
+        if let raw = defaults.string(forKey: appearanceKey),
            let value = AppAppearance(rawValue: raw) {
             appearance = value
         }
-        connectAtLaunch = UserDefaults.standard.bool(forKey: connectAtLaunchKey)
-        if UserDefaults.standard.object(forKey: notifyDownloadsKey) != nil {
-            notifyDownloads = UserDefaults.standard.bool(forKey: notifyDownloadsKey)
+        connectAtLaunch = defaults.bool(forKey: connectAtLaunchKey)
+        if defaults.object(forKey: notifyDownloadsKey) != nil {
+            notifyDownloads = defaults.bool(forKey: notifyDownloadsKey)
         }
-        if UserDefaults.standard.object(forKey: notifyUploadsKey) != nil {
-            notifyUploads = UserDefaults.standard.bool(forKey: notifyUploadsKey)
+        if defaults.object(forKey: notifyUploadsKey) != nil {
+            notifyUploads = defaults.bool(forKey: notifyUploadsKey)
         }
-        if UserDefaults.standard.object(forKey: notifyPrivateMessagesKey) != nil {
-            notifyPrivateMessages = UserDefaults.standard.bool(forKey: notifyPrivateMessagesKey)
+        if defaults.object(forKey: notifyPrivateMessagesKey) != nil {
+            notifyPrivateMessages = defaults.bool(forKey: notifyPrivateMessagesKey)
         }
-        if UserDefaults.standard.object(forKey: notifyWishlistKey) != nil {
-            notifyWishlist = UserDefaults.standard.bool(forKey: notifyWishlistKey)
+        if defaults.object(forKey: notifyWishlistKey) != nil {
+            notifyWishlist = defaults.bool(forKey: notifyWishlistKey)
         }
-        if UserDefaults.standard.object(forKey: notifyLeechersKey) != nil {
-            notifyLeechers = UserDefaults.standard.bool(forKey: notifyLeechersKey)
+        if defaults.object(forKey: notifyLeechersKey) != nil {
+            notifyLeechers = defaults.bool(forKey: notifyLeechersKey)
         }
-        if UserDefaults.standard.object(forKey: notifyOnlyInBackgroundKey) != nil {
-            notifyOnlyInBackground = UserDefaults.standard.bool(forKey: notifyOnlyInBackgroundKey)
+        if defaults.object(forKey: notifyOnlyInBackgroundKey) != nil {
+            notifyOnlyInBackground = defaults.bool(forKey: notifyOnlyInBackgroundKey)
         }
-        if let soundRaw = UserDefaults.standard.string(forKey: notificationSoundNameKey),
+        if let soundRaw = defaults.string(forKey: notificationSoundNameKey),
            let sound = NotificationSound(rawValue: soundRaw) {
             selectedNotificationSound = sound
         }
-        if UserDefaults.standard.object(forKey: blockLeechPatternsEnabledKey) != nil {
-            blockLeechPatternsEnabled = UserDefaults.standard.bool(forKey: blockLeechPatternsEnabledKey)
+        if defaults.object(forKey: blockLeechPatternsEnabledKey) != nil {
+            blockLeechPatternsEnabled = defaults.bool(forKey: blockLeechPatternsEnabledKey)
         }
-        if let patterns = UserDefaults.standard.stringArray(forKey: blockedUsernamePatternsKey) {
+        if let patterns = defaults.stringArray(forKey: blockedUsernamePatternsKey) {
             blockedUsernamePatterns = patterns
         }
-        if UserDefaults.standard.object(forKey: showJoinLeaveMessagesKey) != nil {
-            showJoinLeaveMessages = UserDefaults.standard.bool(forKey: showJoinLeaveMessagesKey)
+        if defaults.object(forKey: showJoinLeaveMessagesKey) != nil {
+            showJoinLeaveMessages = defaults.bool(forKey: showJoinLeaveMessagesKey)
         }
-        if let rooms = UserDefaults.standard.stringArray(forKey: autoJoinRoomsKey) {
+        if let rooms = defaults.stringArray(forKey: autoJoinRoomsKey) {
             autoJoinRooms = rooms
-        } else if UserDefaults.standard.object(forKey: listenPortKey) == nil {
+        } else if defaults.object(forKey: listenPortKey) == nil {
             autoJoinRooms = SettingsState.defaultAutoJoinRooms
+        }
+        if defaults.object(forKey: enableNotificationsKey) != nil {
+            enableNotifications = defaults.bool(forKey: enableNotificationsKey)
+        }
+        if defaults.object(forKey: notificationSoundEnabledKey) != nil {
+            notificationSound = defaults.bool(forKey: notificationSoundEnabledKey)
+        }
+        if defaults.object(forKey: rescanOnStartupKey) != nil {
+            rescanOnStartup = defaults.bool(forKey: rescanOnStartupKey)
+        }
+        if defaults.object(forKey: shareHiddenFilesKey) != nil {
+            shareHiddenFiles = defaults.bool(forKey: shareHiddenFilesKey)
+        }
+        if defaults.object(forKey: autoFetchMetadataKey) != nil {
+            autoFetchMetadata = defaults.bool(forKey: autoFetchMetadataKey)
+        }
+        if defaults.object(forKey: autoFetchAlbumArtKey) != nil {
+            autoFetchAlbumArt = defaults.bool(forKey: autoFetchAlbumArtKey)
+        }
+        if defaults.object(forKey: embedAlbumArtKey) != nil {
+            embedAlbumArt = defaults.bool(forKey: embedAlbumArtKey)
+        }
+        if defaults.object(forKey: setFolderIconsKey) != nil {
+            setFolderIcons = defaults.bool(forKey: setFolderIconsKey)
+        }
+        if defaults.object(forKey: organizeDownloadsKey) != nil {
+            organizeDownloads = defaults.bool(forKey: organizeDownloadsKey)
+        }
+        if let pattern = defaults.string(forKey: organizationPatternKey) {
+            organizationPattern = pattern
+        }
+        if defaults.object(forKey: showOnlineStatusKey) != nil {
+            showOnlineStatus = defaults.bool(forKey: showOnlineStatusKey)
+        }
+        if defaults.object(forKey: allowBrowsingKey) != nil {
+            allowBrowsing = defaults.bool(forKey: allowBrowsingKey)
         }
     }
 
@@ -744,7 +869,6 @@ final class SettingsState: DownloadSettingsProviding {
     /// Old versions created `~/Downloads/SeeleSeek` eagerly at launch, so its
     /// presence marks a pre-1.1.x install. Chosen values are left alone.
     private func migrateDownloadDefaultsIfNeeded() {
-        let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: downloadDefaultsMigratedKey) else { return }
         defaults.set(true, forKey: downloadDefaultsMigratedKey)
 
