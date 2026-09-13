@@ -49,44 +49,21 @@ struct BrowseView: View {
     // MARK: - Tab Bar
 
     private var browseTabBar: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: SeeleSpacing.xxs) {
-                    ForEach(Array(browseState.browses.enumerated()), id: \.element.id) { index, browse in
-                        BrowseTabButton(
-                            browse: browse,
-                            isSelected: index == browseState.selectedBrowseIndex,
-                            showsFocusRing: isTabStripFocused,
-                            onSelect: {
-                                browseState.selectBrowse(at: index)
-                            },
-                            onClose: {
-                                browseState.closeBrowse(at: index)
-                            }
-                        )
-                        .id(browse.id)
-                    }
-                }
-                .padding(.horizontal, SeeleSpacing.md)
-                .padding(.vertical, SeeleSpacing.sm)
-            }
-            .background(SeeleColors.surface.opacity(0.3))
-            .focusable()
-            .focused($isTabStripFocused)
-            .focusEffectDisabled()
-            .onMoveCommand { direction in
-                switch direction {
-                case .left: browseState.selectBrowse(at: browseState.selectedBrowseIndex - 1)
-                case .right: browseState.selectBrowse(at: browseState.selectedBrowseIndex + 1)
-                default: break
-                }
-            }
-            .onChange(of: browseState.selectedBrowseIndex) { _, index in
-                guard browseState.browses.indices.contains(index) else { return }
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(browseState.browses[index].id)
-                }
-            }
+        ScrollingTabStrip(
+            items: browseState.browses,
+            selectedIndex: browseState.selectedBrowseIndex,
+            spacing: SeeleSpacing.xxs,
+            horizontalPadding: SeeleSpacing.md,
+            isFocused: $isTabStripFocused,
+            select: { browseState.selectBrowse(at: $0) }
+        ) { index, browse in
+            BrowseTabButton(
+                browse: browse,
+                isSelected: index == browseState.selectedBrowseIndex,
+                showsFocusRing: isTabStripFocused,
+                onSelect: { browseState.selectBrowse(at: index) },
+                onClose: { browseState.closeBrowse(at: index) }
+            )
         }
     }
 

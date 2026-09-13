@@ -205,34 +205,13 @@ struct SearchView: View {
     }
 
     private var searchTabs: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: SeeleSpacing.xs) {
-                    ForEach(Array(searchState.searches.enumerated()), id: \.element.id) { index, search in
-                        searchTab(search: search, index: index)
-                            .id(search.id)
-                    }
-                }
-                .padding(.horizontal, SeeleSpacing.lg)
-                .padding(.vertical, SeeleSpacing.sm)
-            }
-            .background(SeeleColors.surface.opacity(0.3))
-            .focusable()
-            .focused($isTabStripFocused)
-            .focusEffectDisabled()
-            .onMoveCommand { direction in
-                switch direction {
-                case .left: searchState.selectSearch(at: searchState.selectedSearchIndex - 1)
-                case .right: searchState.selectSearch(at: searchState.selectedSearchIndex + 1)
-                default: break
-                }
-            }
-            .onChange(of: searchState.selectedSearchIndex) { _, index in
-                guard searchState.searches.indices.contains(index) else { return }
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(searchState.searches[index].id)
-                }
-            }
+        ScrollingTabStrip(
+            items: searchState.searches,
+            selectedIndex: searchState.selectedSearchIndex,
+            isFocused: $isTabStripFocused,
+            select: { searchState.selectSearch(at: $0) }
+        ) { index, search in
+            searchTab(search: search, index: index)
         }
     }
 
