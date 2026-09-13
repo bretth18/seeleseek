@@ -194,6 +194,7 @@ struct BuddyRowView: View {
 
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: 0) {
         BuddyRowView(buddy: Buddy(
@@ -222,3 +223,4 @@ struct BuddyRowView: View {
     .padding()
     .environment(\.appState, AppState())
 }
+#endif

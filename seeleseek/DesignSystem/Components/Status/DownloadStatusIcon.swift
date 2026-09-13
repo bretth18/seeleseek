@@ -69,6 +69,7 @@ struct DownloadStatusIcon: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: SeeleSpacing.lg) {
         HStack(spacing: SeeleSpacing.xl) {
@@ -102,3 +103,4 @@ struct DownloadStatusIcon: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

@@ -219,6 +219,7 @@ struct NetworkSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         NetworkSettingsSection(settings: SettingsState())
@@ -227,3 +228,4 @@ struct NetworkSettingsSection: View {
     .frame(width: 500, height: 400)
     .background(SeeleColors.background)
 }
+#endif

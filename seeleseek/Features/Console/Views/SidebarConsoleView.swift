@@ -206,6 +206,7 @@ private func seedConsolePreview(_ events: () -> Void) {
     events()
 }
 
+#if DEBUG
 #Preview("Empty") {
     SidebarConsoleView()
         .frame(width: 220, height: 80)
@@ -265,3 +266,4 @@ private func seedConsolePreview(_ events: () -> Void) {
             }
         }
 }
+#endif

@@ -358,6 +358,7 @@ struct UserProfileSheet: View {
     }
 }
 
+#if DEBUG
 #Preview {
     UserProfileSheet(profile: UserProfile(
         username: "testuser",
@@ -376,3 +377,4 @@ struct UserProfileSheet: View {
     ))
     .environment(\.appState, AppState())
 }
+#endif

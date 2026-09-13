@@ -259,8 +259,10 @@ struct IncomingSearchRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     SearchActivityView()
         .environment(\.appState, AppState())
         .frame(width: 500, height: 400)
 }
+#endif

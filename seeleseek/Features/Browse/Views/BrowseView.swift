@@ -357,8 +357,10 @@ struct BrowseView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     BrowseView()
         .environment(\.appState, AppState())
         .frame(width: 1000, height: 600)
 }
+#endif

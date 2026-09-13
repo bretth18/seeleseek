@@ -40,8 +40,10 @@ struct SocialView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     SocialView()
         .environment(\.appState, AppState())
         .frame(width: 600, height: 500)
 }
+#endif

@@ -135,6 +135,7 @@ struct GeneralSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         GeneralSettingsSection(settings: SettingsState())
@@ -143,3 +144,4 @@ struct GeneralSettingsSection: View {
     .frame(width: 500, height: 400)
     .background(SeeleColors.background)
 }
+#endif

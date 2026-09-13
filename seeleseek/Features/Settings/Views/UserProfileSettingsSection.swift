@@ -364,6 +364,7 @@ struct UserProfileSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     let state = AppState()
     state.socialState.myDescription = "Music lover sharing my collection."
@@ -377,3 +378,4 @@ struct UserProfileSettingsSection: View {
     .frame(width: 520, height: 720)
     .background(SeeleColors.background)
 }
+#endif

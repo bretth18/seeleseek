@@ -139,9 +139,11 @@ struct CoverArtEditView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     CoverArtEditView(state: MetadataState())
         .frame(width: 300)
         .padding()
         .background(SeeleColors.background)
 }
+#endif

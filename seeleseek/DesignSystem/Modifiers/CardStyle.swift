@@ -49,6 +49,7 @@ extension View {
     }
 }
 
+#if DEBUG
 #Preview("Card Styles") {
     VStack(spacing: SeeleSpacing.lg) {
         VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
@@ -84,3 +85,4 @@ extension View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

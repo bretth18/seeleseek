@@ -45,6 +45,7 @@ struct StandardStatusDot: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.md) {
         StandardStatusDot(status: .online)
@@ -54,3 +55,4 @@ struct StandardStatusDot: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

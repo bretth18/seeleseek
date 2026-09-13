@@ -49,6 +49,7 @@ struct StandardSectionHeader: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack {
         StandardSectionHeader("Downloads", count: 42)
@@ -59,3 +60,4 @@ struct StandardSectionHeader: View {
     }
     .background(SeeleColors.background)
 }
+#endif

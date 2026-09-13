@@ -67,9 +67,11 @@ struct BitrateDistribution: View {
     }
 }
 
+#if DEBUG
 #Preview {
     BitrateDistribution(buckets: BitrateDistribution.summarize(files: []))
         .frame(width: 400)
         .padding()
         .background(SeeleColors.background)
 }
+#endif

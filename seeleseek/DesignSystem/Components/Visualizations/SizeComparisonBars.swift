@@ -49,6 +49,7 @@ struct SizeComparisonBars: View {
     }
 }
 
+#if DEBUG
 #Preview {
     SizeComparisonBars(items: [
         (label: "Music", size: 1_500_000_000),
@@ -59,3 +60,4 @@ struct SizeComparisonBars: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

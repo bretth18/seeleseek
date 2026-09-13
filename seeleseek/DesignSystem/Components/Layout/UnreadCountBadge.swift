@@ -21,6 +21,7 @@ struct UnreadCountBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.md) {
         UnreadCountBadge(count: 3)
@@ -30,3 +31,4 @@ struct UnreadCountBadge: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

@@ -22,6 +22,7 @@ struct StandardMetadataBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.sm) {
         StandardMetadataBadge("320 kbps", color: SeeleColors.success)
@@ -31,3 +32,4 @@ struct StandardMetadataBadge: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

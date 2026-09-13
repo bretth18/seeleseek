@@ -81,6 +81,7 @@ extension EnvironmentValues {
     @Entry var rowHoverSuppressed = false
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: 0) {
         StandardListRow {
@@ -102,6 +103,7 @@ extension EnvironmentValues {
     }
     .background(SeeleColors.background)
 }
+#endif
 
 /// `help()` installs an AppKit tracking area per call. Rows carry several
 /// tooltips each, and hundreds of rows stay live in a lazy stack, so the

@@ -149,6 +149,7 @@ struct SharedFolderRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         SharesSettingsSection(settings: SettingsState())
@@ -158,3 +159,4 @@ struct SharedFolderRow: View {
     .frame(width: 500, height: 400)
     .background(SeeleColors.background)
 }
+#endif

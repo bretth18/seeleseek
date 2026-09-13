@@ -87,6 +87,7 @@ struct BuddyListView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     BuddyListView()
         .environment(\.appState, {
@@ -100,3 +101,4 @@ struct BuddyListView: View {
         }())
         .frame(width: 400, height: 400)
 }
+#endif

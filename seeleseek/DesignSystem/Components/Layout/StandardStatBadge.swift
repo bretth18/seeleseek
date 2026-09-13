@@ -39,6 +39,7 @@ struct StandardStatBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.lg) {
         StandardStatBadge("Downloads", value: "42", icon: "arrow.down", color: SeeleColors.success)
@@ -47,3 +48,4 @@ struct StandardStatBadge: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

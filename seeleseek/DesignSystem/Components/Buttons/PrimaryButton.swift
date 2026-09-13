@@ -44,6 +44,7 @@ struct PrimaryButton: View {
     }
 }
 
+#if DEBUG
 #Preview("Buttons") {
     VStack(spacing: SeeleSpacing.lg) {
         PrimaryButton("Connect", icon: "network") {}
@@ -52,3 +53,4 @@ struct PrimaryButton: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

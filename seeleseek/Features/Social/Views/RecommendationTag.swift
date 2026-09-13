@@ -31,6 +31,7 @@ struct RecommendationTag: View {
     }
 }
 
+#if DEBUG
 #Preview {
     FlowLayout(spacing: SeeleSpacing.sm) {
         RecommendationTag(item: "ambient", score: 45)
@@ -41,3 +42,4 @@ struct RecommendationTag: View {
     .environment(\.appState, AppState())
     .background(SeeleColors.background)
 }
+#endif
