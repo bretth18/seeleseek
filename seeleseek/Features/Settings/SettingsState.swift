@@ -212,23 +212,14 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
     var showInMenuBar: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     /// Dark, not system: existing installs on light Macs must not re-theme on update.
     var appearance: AppAppearance = .dark {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var connectAtLaunch: Bool = false {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
 
     // MARK: - Network Settings
@@ -240,16 +231,10 @@ final class SettingsState: DownloadSettingsProviding {
         }
     }
     var enableUPnP: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var maxDownloadSlots: Int = 5 {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var maxUploadSlots: Int = 5 {
         didSet {
@@ -276,19 +261,13 @@ final class SettingsState: DownloadSettingsProviding {
     /// never assigned to the manager's limiter.
     var onUploadSpeedLimitChange: ((Int) -> Void)?
     var downloadSpeedLimit: Int = 0 {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
 
     // MARK: - Search Settings
     /// Maximum number of search results to collect (0 = unlimited)
     var maxSearchResults: Int = 500 {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     /// Mirrors `SearchState.isGrouped`, which writes back here on every
     /// change so the filter-bar toggle persists too. The oldValue guard
@@ -372,10 +351,7 @@ final class SettingsState: DownloadSettingsProviding {
 
     // MARK: - Chat Settings
     var showJoinLeaveMessages: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     /// Rooms joined on every connect (the server drops membership on
     /// disconnect). Seeded with the project room on a fresh install only;
@@ -391,10 +367,7 @@ final class SettingsState: DownloadSettingsProviding {
     var enableNotifications: Bool = true
     var notificationSound: Bool = true
     var selectedNotificationSound: NotificationSound = .default {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
 
     var availableNotificationSounds: [NotificationSound] {
@@ -403,40 +376,22 @@ final class SettingsState: DownloadSettingsProviding {
 
     // MARK: - Notification Settings (granular)
     var notifyDownloads: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var notifyUploads: Bool = false {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var notifyPrivateMessages: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var notifyWishlist: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var notifyLeechers: Bool = true {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
     var notifyOnlyInBackground: Bool = false {
-        didSet {
-            guard !isLoading else { return }
-            save()
-        }
+        didSet { save() }
     }
 
     // MARK: - Privacy Settings
@@ -498,6 +453,7 @@ final class SettingsState: DownloadSettingsProviding {
     /// schedule a full DB save. Coalesce bursts into a single write half a
     /// second after the last change.
     func save() {
+        guard !isLoading else { return }
         pendingSaveTask?.cancel()
         pendingSaveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))

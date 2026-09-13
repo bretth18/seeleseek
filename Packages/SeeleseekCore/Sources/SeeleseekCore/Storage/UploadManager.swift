@@ -75,17 +75,12 @@ public actor UploadManager {
 
     // MARK: - Retry Configuration
 
-    /// Backoff schedule mirrors `DownloadManager.retryDelays`. Length sets
-    /// `maxRetries`; after `maxRetries` attempts the upload is left
-    /// permanently `.failed` (the user can still retry manually).
-    private let retryDelays: [TimeInterval] = [10, 30, 120, 600, 1800]
-    private var maxRetries: Int { retryDelays.count }
-    /// Sleeping retry tasks keyed by transferId. Cancelled when the user
-    /// takes the row out of a retriable state (cancel, remove, manual retry,
-    /// clear failed) so the Task doesn't wake up to 30 min later and stomp
-    /// a row that has moved on. The status guard inside the Task already
-    /// makes the no-op safe; this just stops the wasted sleep.
-    private var pendingRetries: [UUID: Task<Void, Never>] = [:]
+    /// After `maxRetries` attempts the upload is left permanently `.failed`
+    /// (the user can still retry manually). Sleeping retries are cancelled
+    /// when the user takes the row out of a retriable state so the Task
+    /// doesn't wake up to 30 min later and stomp a row that has moved on.
+    private let retryScheduler = TransferRetryScheduler()
+    private var maxRetries: Int { TransferRetryScheduler.maxRetries }
 
     /// Transfer ids cancelled mid-stream. Checked per chunk by both
     /// streaming loops; cleared on stream exit or re-drive.
@@ -518,14 +513,14 @@ public actor UploadManager {
         // isn't in the queue or in flight, but it does have a live row —
         // enqueueing a fresh entry would create a duplicate row AND a
         // double upload when the sleeping retry later fires. Match rows
-        // sleeping in `pendingRetries` or persisted `.failed`/`.queued`
+        // sleeping in `retryScheduler` or persisted `.failed`/`.queued`
         // with a scheduled `nextRetryAt`, cancel the pending retry (the
         // peer's request supersedes the backoff), and route through
         // `existingTransferId` so startUpload reuses the row.
         var existingTransferId: UUID?
         if let row = await transferState?.uploads.first(where: { t in
             t.username == username && t.filename == filename
-                && (pendingRetries[t.id] != nil
+                && (retryScheduler.isPending(t.id)
                     || ((t.status == .failed || t.status == .queued) && t.nextRetryAt != nil))
         }) {
             await cancelRetry(transferId: row.id)
@@ -1783,47 +1778,13 @@ public actor UploadManager {
 
     // MARK: - Retry Logic
 
-    /// Classify an upload-failure reason as retriable. Mirrors
-    /// `DownloadManager.isRetriableError` so the two halves of the transfer
-    /// system stay in sync — same backoff, same terminal patterns. The bare
-    /// `cancel` stem was removed (same fix as the download classifier): it
-    /// also matched the client's own transient teardown strings
-    /// ("Operation canceled", "Connection was cancelled" from
-    /// NWError/POSIX), wrongly marking them terminal. Genuine cancels never
+    /// Classify an upload-failure reason as retriable. Genuine cancels never
     /// reach the classifier — user cancels short-circuit via
     /// `cancelledTransferIds` + the `.cancelled` status guard in
     /// `failUpload`, and peer "Cancelled" rejections map straight to
-    /// `.cancelled` via `status(forReject:)`. `not shared` catches our own
-    /// `sendUploadDenied` reasons coming back round when the peer rejects.
+    /// `.cancelled` via `status(forReject:)`.
     public static func isRetriableError(_ error: String?) -> Bool {
-        guard let lowered = error?.lowercased(), !lowered.isEmpty else {
-            return false
-        }
-        // Soulseek peer rejection reasons that can never succeed on retry.
-        // Retrying these wastes the full 30-minute backoff ladder and leaves
-        // the user staring at "Retrying in 10m..." for a transfer that
-        // wouldn't have a chance even if we waited a year.
-        let terminalPatterns = [
-            "denied",          // peer ACL rejection
-            "not shared",      // file not in peer's shares
-            "not available",   // file not available
-            "file not found",  // file gone
-            "too many",        // peer's queue / per-user cap reached
-            "banned",          // peer banned us
-            "blocked",         // peer's country/IP block
-            "disallowed",      // disallowed extension etc
-            "pending shutdown",// peer is shutting down
-        ]
-        for pattern in terminalPatterns where lowered.contains(pattern) {
-            return false
-        }
-        return true
-    }
-
-    private static func formatRetryDelay(_ delay: TimeInterval) -> String {
-        let seconds = Int(delay)
-        if seconds < 60 { return "\(seconds)s" }
-        return "\(seconds / 60)m"
+        TransferRetryScheduler.isRetriableError(error)
     }
 
     /// Centralized teardown for an upload attempt that has already started
@@ -1892,7 +1853,8 @@ public actor UploadManager {
         )
     }
 
-    /// Schedule automatic retry for a failed upload using `retryDelays`.
+    /// Schedule automatic retry for a failed upload using
+    /// `TransferRetryScheduler.delays`.
     private func scheduleUploadRetry(
         transferId: UUID,
         username: String,
@@ -1900,30 +1862,20 @@ public actor UploadManager {
         size: UInt64,
         retryCount: Int
     ) async {
-        guard retryCount < self.maxRetries else { return }
-        let delay = retryDelays[retryCount]
+        guard let delay = retryScheduler.delay(forRetryCount: retryCount) else { return }
         let fireAt = Date().addingTimeInterval(delay)
         logger.info("Scheduling upload retry #\(retryCount + 1) for \(filename) in \(delay)s")
 
         // `nextRetryAt` is persisted so a quit + relaunch in the middle of
         // a 30-minute backoff still honors the original schedule (see
-        // `rearmPersistedRetries`). The error string is the format
-        // contract `TransferRow` parses for the "Retrying in 2m" badge.
+        // `rearmPersistedRetries`).
         await transferState?.updateTransfer(id: transferId) { t in
-            t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
+            t.error = TransferRetryScheduler.retryingErrorText(delay: delay)
             t.nextRetryAt = fireAt
         }
 
-        // Cancel any prior retry Task before overwriting the dict slot —
-        // the orphan would otherwise sleep on and could fire later.
-        if let existing = pendingRetries.removeValue(forKey: transferId) {
-            existing.cancel()
-        }
-
-        let task = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard let self, !Task.isCancelled else { return }
-            await self.runScheduledRetry(
+        retryScheduler.schedule(transferId, after: delay) { [weak self] in
+            await self?.runScheduledRetry(
                 transferId: transferId,
                 username: username,
                 filename: filename,
@@ -1932,7 +1884,6 @@ public actor UploadManager {
                 requiredStatuses: [.failed, .queued]
             )
         }
-        pendingRetries[transferId] = task
     }
 
     /// Wake-up body for a scheduled/rearmed retry Task. Between schedule
@@ -1950,7 +1901,7 @@ public actor UploadManager {
         retryCount: Int,
         requiredStatuses: Set<Transfer.TransferStatus>
     ) async {
-        pendingRetries.removeValue(forKey: transferId)
+        retryScheduler.clear(transferId)
         guard let current = await transferState?.getTransfer(id: transferId),
               requiredStatuses.contains(current.status) else {
             logger.info("Skipping scheduled upload retry for \(filename): row moved on")
@@ -2094,7 +2045,7 @@ public actor UploadManager {
 
     /// Resume retriable failed uploads from a prior session.
     ///
-    /// `pendingRetries` is in-memory, so a quit during the 30-min backoff
+    /// `retryScheduler` is in-memory, so a quit during the 30-min backoff
     /// window leaves the persisted `.failed` row stranded. This is the
     /// upload-side counterpart to `DownloadManager.resumeDownloadsOnConnect`.
     /// Called from `LoginView` once the server connection is `.connected`.
@@ -2167,8 +2118,7 @@ public actor UploadManager {
     /// doesn't resurrect this scheduled retry on top of the new flow
     /// that just took the row out of a retriable state.
     public func cancelRetry(transferId: UUID) async {
-        if let task = pendingRetries.removeValue(forKey: transferId) {
-            task.cancel()
+        if retryScheduler.cancel(transferId) {
             logger.info("Cancelled pending upload retry for \(transferId)")
         }
         // Only touch the row when there's actually a stamp to clear —
@@ -2189,39 +2139,19 @@ public actor UploadManager {
     /// `transferState.loadPersisted()` completes.
     public func rearmPersistedRetries() async {
         guard let transferState else { return }
-        let now = Date()
-        let candidates = await transferState.uploads.filter {
-            $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
+        let uploads = await transferState.uploads
+        let count = retryScheduler.rearm(uploads) { [weak self] transfer in
+            await self?.runScheduledRetry(
+                transferId: transfer.id,
+                username: transfer.username,
+                filename: transfer.filename,
+                size: transfer.size,
+                retryCount: transfer.retryCount,
+                requiredStatuses: [.failed]
+            )
         }
-        guard !candidates.isEmpty else { return }
-        logger.info("Rearming \(candidates.count) persisted upload retries")
-        for (index, transfer) in candidates.enumerated() {
-            guard let fireAt = transfer.nextRetryAt else { continue }
-            let remaining = fireAt.timeIntervalSince(now)
-            let stagger = remaining <= 0 ? Double(index) * 0.5 : 0
-            let delay = max(0, remaining) + stagger
-            let transferId = transfer.id
-            let username = transfer.username
-            let filename = transfer.filename
-            let size = transfer.size
-            let retryCount = transfer.retryCount
-
-            if let existing = pendingRetries.removeValue(forKey: transferId) {
-                existing.cancel()
-            }
-            let task = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(delay))
-                guard let self, !Task.isCancelled else { return }
-                await self.runScheduledRetry(
-                    transferId: transferId,
-                    username: username,
-                    filename: filename,
-                    size: size,
-                    retryCount: retryCount,
-                    requiredStatuses: [.failed]
-                )
-            }
-            pendingRetries[transferId] = task
+        if count > 0 {
+            logger.info("Rearming \(count) persisted upload retries")
         }
     }
 
@@ -2263,7 +2193,7 @@ public actor UploadManager {
     /// can `await task.value` instead of polling for side-effects — a
     /// contended CI executor can starve a polling deadline.
     internal func _pendingRetryTaskForTest(transferId: UUID) -> Task<Void, Never>? {
-        pendingRetries[transferId]
+        retryScheduler.task(for: transferId)
     }
 
     /// Seed a pending entry to exercise the dedup branch of
