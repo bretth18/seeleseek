@@ -658,11 +658,6 @@ public actor PeerConnectionPool {
         activeConnections = 0
     }
 
-    /// Get an active connection by ID
-    public func getConnection(_ id: String) -> PeerConnection? {
-        activeConnections_[id]
-    }
-
     /// Get an active connection by username (first match)
     /// Iterates PeerConnectionInfo rather than parsing the key: the key
     /// format differs between outgoing ("username-token") and incoming
@@ -1170,14 +1165,6 @@ public actor PeerConnectionPool {
     }
 
     // MARK: - Analytics
-
-    public var connectionsByType: [PeerConnection.ConnectionType: Int] {
-        var result: [PeerConnection.ConnectionType: Int] = [:]
-        for conn in connections.values {
-            result[conn.connectionType, default: 0] += 1
-        }
-        return result
-    }
 
     public var averageConnectionDuration: TimeInterval {
         let durations = connections.values.compactMap { info -> TimeInterval? in

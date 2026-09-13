@@ -20,7 +20,6 @@ final class AppState {
     var updateState = UpdateState()
 
     // MARK: - Admin Messages
-    var adminMessages: [AdminMessage] = []
     var showAdminMessageAlert = false
     var latestAdminMessage: AdminMessage?
 
@@ -52,8 +51,6 @@ final class AppState {
         }
     }
 
-    // MARK: - Database State
-    var isDatabaseReady = false
     private let logger = Logger(subsystem: "com.seeleseek", category: "AppState")
 
     // MARK: - Network Client
@@ -269,9 +266,7 @@ final class AppState {
         case .userStats(let username, _, _, let files, let dirs):
             leechDetector.receivedStats(username: username, files: files, folders: dirs)
         case .adminMessage(let message):
-            let adminMessage = AdminMessage(message: message)
-            adminMessages.append(adminMessage)
-            latestAdminMessage = adminMessage
+            latestAdminMessage = AdminMessage(message: message)
             showAdminMessageAlert = true
             logger.info("Received admin message: \(message)")
         default:
@@ -633,7 +628,6 @@ final class AppState {
             // Clean up expired cache
             try? await DatabaseManager.shared.cleanupExpiredCache()
 
-            isDatabaseReady = true
             logger.info("Database initialization complete")
         } catch {
             logger.error("Database initialization failed: \(error.localizedDescription)")

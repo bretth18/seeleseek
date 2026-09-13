@@ -40,26 +40,6 @@ struct SearchRepository {
         }
     }
 
-    /// Check if a cached search exists for a query string
-    static func findCached(query: String, maxAge: TimeInterval) async throws -> (SearchQueryRecord, [SearchResultRecord])? {
-        let minTimestamp = Date().timeIntervalSince1970 - maxAge
-
-        return try await DatabaseManager.shared.read { db in
-            guard let queryRecord = try SearchQueryRecord
-                .filter(Column("query") == query && Column("createdAt") >= minTimestamp)
-                .order(Column("createdAt").desc)
-                .fetchOne(db) else {
-                return nil
-            }
-
-            let results = try SearchResultRecord
-                .filter(Column("queryId") == queryRecord.id)
-                .fetchAll(db)
-
-            return (queryRecord, results)
-        }
-    }
-
     /// Save a search query
     static func save(_ query: SearchQuery) async throws {
         _ = try await DatabaseManager.shared.write { db in
@@ -99,15 +79,6 @@ struct SearchRepository {
     static func delete(id: UUID) async throws {
         _ = try await DatabaseManager.shared.write { db in
             try SearchQueryRecord.filter(Column("id") == id.uuidString).deleteAll(db)
-        }
-    }
-
-    /// Delete expired search queries
-    static func deleteExpired(olderThan age: TimeInterval) async throws {
-        let cutoff = Date().timeIntervalSince1970 - age
-
-        _ = try await DatabaseManager.shared.write { db in
-            try SearchQueryRecord.filter(Column("createdAt") < cutoff).deleteAll(db)
         }
     }
 

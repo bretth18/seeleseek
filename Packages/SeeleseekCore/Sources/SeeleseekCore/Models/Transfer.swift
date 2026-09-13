@@ -107,10 +107,6 @@ public struct Transfer: Identifiable, Hashable, Sendable {
         return Double(bytesTransferred) / Double(size)
     }
 
-    public var formattedProgress: String {
-        "\(bytesTransferred.formattedBytes) / \(size.formattedBytes)"
-    }
-
     public var formattedSpeed: String {
         speed.formattedSpeed
     }

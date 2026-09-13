@@ -66,64 +66,14 @@ actor CoverArtArchive {
             return cached
         }
 
-        // First, get the cover art info to find the front cover
-        let infoURL = "\(baseURL)/release/\(releaseMBID)"
-        guard let url = URL(string: infoURL) else {
-            throw MetadataError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        logger.info("Fetching cover art info: \(releaseMBID)")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw MetadataError.invalidResponse
-        }
-
-        // 404 means no cover art available
-        if httpResponse.statusCode == 404 {
-            logger.info("No cover art available for release: \(releaseMBID)")
+        guard let imgURL = try await getFrontCoverURL(releaseMBID: releaseMBID, size: size) else {
             return nil
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            throw MetadataError.apiError(httpResponse.statusCode)
-        }
-
-        let coverArtResponse = try JSONDecoder().decode(CoverArtResponse.self, from: data)
-
-        // Find the front cover
-        guard let frontCover = coverArtResponse.images.first(where: { $0.front }) ?? coverArtResponse.images.first else {
-            logger.info("No front cover found for release: \(releaseMBID)")
-            return nil
-        }
-
-        // Get the appropriate size URL
-        let imageURL: String
-        switch size {
-        case .small:
-            imageURL = frontCover.thumbnails.small ?? frontCover.thumbnails._250 ?? frontCover.image
-        case .medium:
-            imageURL = frontCover.thumbnails.large ?? frontCover.thumbnails._500 ?? frontCover.image
-        case .large:
-            imageURL = frontCover.thumbnails._1200 ?? frontCover.image
-        case .full:
-            imageURL = frontCover.image
-        }
-
-        // Fetch the actual image
-        guard let imgURL = URL(string: imageURL) else {
-            throw MetadataError.invalidURL
         }
 
         var imgRequest = URLRequest(url: imgURL)
         imgRequest.setValue(userAgent, forHTTPHeaderField: "User-Agent")
 
-        logger.info("Fetching cover image: \(imageURL)")
+        logger.info("Fetching cover image: \(imgURL.absoluteString)")
 
         let (imageData, imgResponse) = try await URLSession.shared.data(for: imgRequest)
 

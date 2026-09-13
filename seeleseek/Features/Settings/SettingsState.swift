@@ -380,7 +380,6 @@ final class SettingsState: DownloadSettingsProviding {
     var onSearchResponsePolicyChange: ((SearchResponsePolicy) -> Void)?
 
     // MARK: - Shares Settings
-    var sharedFolders: [URL] = []
     var rescanOnStartup: Bool = true {
         didSet {
             guard !isLoading else { return }
@@ -562,65 +561,6 @@ final class SettingsState: DownloadSettingsProviding {
 
     /// Live push to `PeerConnectionPool` — wired by AppState.
     var onActiveBlockedPatternsChange: (([UsernamePatternMatcher.Compiled]) -> Void)?
-
-    // MARK: - Actions
-    func addSharedFolder(_ url: URL) {
-        if !sharedFolders.contains(url) {
-            sharedFolders.append(url)
-        }
-    }
-
-    func removeSharedFolder(_ url: URL) {
-        sharedFolders.removeAll { $0 == url }
-    }
-
-    func resetToDefaults() {
-        downloadLocation = SettingsState.defaultDownloadLocation
-        incompleteLocation = SettingsState.defaultIncompleteLocation
-        downloadFolderFormat = SettingsState.defaultDownloadFolderFormat
-        downloadFolderTemplate = SettingsState.defaultDownloadFolderTemplate
-        launchAtLogin = false
-        showInMenuBar = true
-        appearance = .dark
-        connectAtLaunch = false
-        listenPort = 2234
-        enableUPnP = true
-        maxDownloadSlots = 5
-        maxUploadSlots = 5
-        uploadSpeedLimit = 0
-        downloadSpeedLimit = 0
-        maxSearchResults = 500
-        groupSearchResults = false
-        searchFilters = .empty
-        searchFilterPresets = SearchFilterPreset.defaults
-        respondToSearches = true
-        minSearchQueryLength = 3
-        maxSearchResponseResults = 50
-        rescanOnStartup = true
-        shareHiddenFiles = false
-        autoFetchMetadata = true
-        autoFetchAlbumArt = true
-        embedAlbumArt = true
-        setFolderIcons = true
-        organizeDownloads = false
-        organizationPattern = "{artist}/{album}/{track} - {title}"
-        showJoinLeaveMessages = true
-        autoJoinRooms = SettingsState.defaultAutoJoinRooms
-        enableNotifications = true
-        notificationSound = true
-        selectedNotificationSound = .default
-        notifyDownloads = true
-        notifyUploads = false
-        notifyPrivateMessages = true
-        notifyWishlist = true
-        notifyLeechers = true
-        notifyOnlyInBackground = false
-        showOnlineStatus = true
-        allowBrowsing = true
-        blockLeechPatternsEnabled = true
-        blockedUsernamePatterns = SettingsState.defaultBlockedUsernamePatterns
-        save()
-    }
 
     // MARK: - Launch at Login Sync
 
@@ -949,22 +889,5 @@ extension SettingsState {
 
     var incompleteDownloadDirectory: URL {
         incompleteLocation
-    }
-}
-
-// MARK: - Speed Formatting
-extension SettingsState {
-    var formattedUploadLimit: String {
-        if uploadSpeedLimit == 0 {
-            return "Unlimited"
-        }
-        return Int64(uploadSpeedLimit * 1024).formattedSpeed
-    }
-
-    var formattedDownloadLimit: String {
-        if downloadSpeedLimit == 0 {
-            return "Unlimited"
-        }
-        return Int64(downloadSpeedLimit * 1024).formattedSpeed
     }
 }

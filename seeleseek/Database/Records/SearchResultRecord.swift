@@ -92,24 +92,6 @@ struct SearchResultRecord: Codable, FetchableRecord, PersistableRecord, Sendable
         self.queueLength = queueLength
     }
 
-    /// Convert database record to domain model
-    func toSearchResult() -> SearchResult {
-        SearchResult(
-            id: UUID(uuidString: id) ?? UUID(),
-            username: username,
-            filename: filename,
-            size: UInt64(size),
-            bitrate: bitrate.map { UInt32($0) },
-            duration: duration.map { UInt32($0) },
-            sampleRate: sampleRate.map { UInt32($0) },
-            bitDepth: bitDepth.map { UInt32($0) },
-            isVBR: isVBR,
-            freeSlots: freeSlots,
-            uploadSpeed: UInt32(uploadSpeed),
-            queueLength: UInt32(queueLength)
-        )
-    }
-
     /// Create database record from domain model
     static func from(_ result: SearchResult, queryId: UUID) -> SearchResultRecord {
         SearchResultRecord(

@@ -59,10 +59,6 @@ final class MetadataState {
     var isApplying = false
     var applyError: String?
 
-    // MARK: - Configuration
-    var autoEnrichOnDownload = false
-    var showEditorOnDownload = false
-
     // MARK: - Actions
 
     /// Show the metadata editor for a downloaded file
