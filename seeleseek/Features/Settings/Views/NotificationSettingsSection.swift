@@ -34,6 +34,7 @@ struct NotificationSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         NotificationSettingsSection(settings: SettingsState())
@@ -42,3 +43,4 @@ struct NotificationSettingsSection: View {
     .frame(width: 500, height: 400)
     .background(SeeleColors.background)
 }
+#endif

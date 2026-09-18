@@ -509,12 +509,6 @@ final class ChatState {
         return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    func updateRoomUsers(_ roomName: String, users: [String]) {
-        if let index = joinedRooms.firstIndex(where: { $0.name == roomName }) {
-            joinedRooms[index].users = users
-        }
-    }
-
     // MARK: - Room Creation & Management
 
     func createRoom() {
@@ -748,13 +742,6 @@ final class ChatState {
         } else if let user = selectedPrivateChat, let idx = privateChats.firstIndex(where: { $0.username == user }) {
             Self.appendCapped(message, to: &privateChats[idx].messages)
         }
-    }
-
-    // MARK: - Room List
-    func setAvailableRooms(_ rooms: [ChatRoom]) {
-        availableRooms = rooms
-        recomputeSortedRooms()
-        roomListResponseArrived()
     }
 
     // MARK: - DM Persistence

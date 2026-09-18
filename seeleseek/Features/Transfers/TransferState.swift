@@ -644,10 +644,6 @@ final class TransferState: TransferTracking {
         }
     }
 
-    func moveDownload(from source: IndexSet, to destination: Int) {
-        downloads.move(fromOffsets: source, toOffset: destination)
-    }
-
     func moveDownloadToTop(id: UUID) {
         guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
         let transfer = downloads.remove(at: index)

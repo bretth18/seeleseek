@@ -62,6 +62,7 @@ struct StandardSearchField: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack(spacing: SeeleSpacing.md) {
         StandardSearchField(text: .constant(""), placeholder: "Search files...")
@@ -70,3 +71,4 @@ struct StandardSearchField: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

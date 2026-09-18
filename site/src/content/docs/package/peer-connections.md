@@ -98,7 +98,6 @@ pool.currentDownloadSpeed   // bytes/sec
 pool.currentUploadSpeed     // bytes/sec
 pool.speedHistory           // The last 60 SpeedSample entries (1 each second)
 pool.peerLocations          // The geographic locations of the peers
-pool.connectionsByType      // The connections, in groups by type
 pool.topPeersByTraffic      // The top 10 peers by transferred bytes
 pool.averageConnectionDuration
 ```

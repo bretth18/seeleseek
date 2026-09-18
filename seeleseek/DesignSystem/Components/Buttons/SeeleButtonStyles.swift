@@ -144,6 +144,7 @@ extension ButtonStyle where Self == SeeleIconButtonStyle {
     }
 }
 
+#if DEBUG
 #Preview("Seele Button Styles") {
     VStack(spacing: SeeleSpacing.lg) {
         HStack {
@@ -161,3 +162,4 @@ extension ButtonStyle where Self == SeeleIconButtonStyle {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

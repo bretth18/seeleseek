@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Network
 import SeeleseekCore
@@ -225,3 +226,4 @@ class ProtocolTest {
         return message
     }
 }
+#endif

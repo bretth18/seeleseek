@@ -158,37 +158,19 @@ struct ChatView: View {
     private func roomSidebarRow(_ room: ChatRoom) -> some View {
         let isSelected = chatState.selectedRoom == room.name
 
-        return Button {
-            chatState.selectRoom(room.name)
-        } label: {
-            HStack(spacing: SeeleSpacing.sm) {
-                // Icon: lock for private, crown for owned, wrench for operated, default group
-                roomIcon(room)
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
-                    .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
-                    .frame(width: SeeleSpacing.xl)
-
-                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                    Text(room.name)
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
-
-                    Text("\(room.userCount) users")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-
-                Spacer()
-
-                UnreadCountBadge(count: room.unreadCount)
-            }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(isSelected ? SeeleColors.surfaceSecondary : .clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
+        return ChatSidebarRow(
+            isSelected: isSelected,
+            title: room.name,
+            subtitle: "\(room.userCount) users",
+            unreadCount: room.unreadCount,
+            accessibilityLabel: roomRowAccessibilityLabel(room),
+            select: { chatState.selectRoom(room.name) }
+        ) {
+            // Icon: lock for private, crown for owned, wrench for operated, default group
+            roomIcon(room)
+                .font(.system(size: SeeleSpacing.iconSizeSmall))
+                .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textSecondary)
+        } menu: {
             Button {
                 chatState.selectRoom(room.name)
                 chatState.showRoomManagement = true
@@ -203,10 +185,7 @@ struct ChatView: View {
             } label: {
                 Label("Leave Room", systemImage: "arrow.right.square")
             }
-        }
-        .accessibilityLabel(roomRowAccessibilityLabel(room))
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-        .accessibilityActions {
+        } actions: {
             Button("Room info") {
                 chatState.selectRoom(room.name)
                 chatState.showRoomManagement = true
@@ -249,37 +228,18 @@ struct ChatView: View {
     // MARK: - DM Sidebar Row
 
     private func dmSidebarRow(_ chat: PrivateChat) -> some View {
-        let isSelected = chatState.selectedPrivateChat == chat.username
-
-        return Button {
-            chatState.selectPrivateChat(chat.username)
-        } label: {
-            HStack(spacing: SeeleSpacing.sm) {
-                // Online status dot
-                StandardStatusDot(isOnline: chat.isOnline, size: SeeleSpacing.statusDotSmall)
-                    .frame(width: SeeleSpacing.xl)
-
-                VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                    Text(chat.username)
-                        .font(SeeleTypography.subheadline)
-                        .foregroundStyle(isSelected ? SeeleColors.accent : SeeleColors.textPrimary)
-
-                    Text(chat.isOnline ? "Online" : "Offline")
-                        .font(SeeleTypography.caption)
-                        .foregroundStyle(SeeleColors.textTertiary)
-                }
-
-                Spacer()
-
-                UnreadCountBadge(count: chat.unreadCount)
-            }
-            .padding(.horizontal, SeeleSpacing.md)
-            .padding(.vertical, SeeleSpacing.sm)
-            .background(isSelected ? SeeleColors.surfaceSecondary : .clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
+        ChatSidebarRow(
+            isSelected: chatState.selectedPrivateChat == chat.username,
+            title: chat.username,
+            subtitle: chat.isOnline ? "Online" : "Offline",
+            unreadCount: chat.unreadCount,
+            // VoiceOver cannot see the context menu. The label replaces
+            // the default one, which spoke the status twice.
+            accessibilityLabel: dmRowAccessibilityLabel(chat),
+            select: { chatState.selectPrivateChat(chat.username) }
+        ) {
+            StandardStatusDot(isOnline: chat.isOnline, size: SeeleSpacing.statusDotSmall)
+        } menu: {
             UserContextMenuItems(username: chat.username)
 
             Divider()
@@ -295,12 +255,7 @@ struct ChatView: View {
             } label: {
                 Label("Close Chat", systemImage: "xmark")
             }
-        }
-        // VoiceOver cannot see the context menu. The label replaces
-        // the default one, which spoke the status twice.
-        .accessibilityLabel(dmRowAccessibilityLabel(chat))
-        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-        .accessibilityActions {
+        } actions: {
             UserAccessibilityActions(username: chat.username)
 
             Button("Delete history") {
@@ -361,8 +316,10 @@ struct ChatView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ChatView()
         .environment(\.appState, AppState())
         .frame(width: 900, height: 600)
 }
+#endif

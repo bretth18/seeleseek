@@ -8,156 +8,119 @@ public enum MessageBuilder {
     // MARK: - Server Messages
 
     public nonisolated static func loginMessage(username: String, password: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.login.rawValue)
-        payload.appendString(username)
-        payload.appendString(password)
+        serverMessage(.login) {
+            $0.appendString(username)
+            $0.appendString(password)
 
-        // Client version
-        payload.appendUInt32(169)
+            // Client version
+            $0.appendUInt32(169)
 
-        // MD5 hash of username + password
-        let hashInput = username + password
-        let hashData = hashInput.data(using: .utf8) ?? Data()
-        let digest = Insecure.MD5.hash(data: hashData)
-        let hashHex = digest.map { String(format: "%02x", $0) }.joined()
-        payload.appendString(hashHex)
+            // MD5 hash of username + password
+            let hashInput = username + password
+            let hashData = hashInput.data(using: .utf8) ?? Data()
+            let digest = Insecure.MD5.hash(data: hashData)
+            let hashHex = digest.map { String(format: "%02x", $0) }.joined()
+            $0.appendString(hashHex)
 
-        // Minor version
-        payload.appendUInt32(3)
-
-        return wrapMessage(payload)
+            // Minor version
+            $0.appendUInt32(3)
+        }
     }
 
     public nonisolated static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.setListenPort.rawValue)
-        payload.appendUInt32(port)
-        // The obfuscation block is optional on the wire. Only advertise if we
-        // actually have a listener on the obfuscated port — otherwise peers
-        // attempting obfuscated inbound would hit a dead port.
-        if obfuscatedPort > 0 {
-            payload.appendUInt32(ObfuscationType.rotated.rawValue)
-            payload.appendUInt32(obfuscatedPort)
+        serverMessage(.setListenPort) {
+            $0.appendUInt32(port)
+            // The obfuscation block is optional on the wire. Only advertise if we
+            // actually have a listener on the obfuscated port — otherwise peers
+            // attempting obfuscated inbound would hit a dead port.
+            if obfuscatedPort > 0 {
+                $0.appendUInt32(ObfuscationType.rotated.rawValue)
+                $0.appendUInt32(obfuscatedPort)
+            }
         }
-        return wrapMessage(payload)
     }
 
     public nonisolated static func setOnlineStatusMessage(status: UserStatus) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.setOnlineStatus.rawValue)
-        payload.appendUInt32(status.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.setOnlineStatus) { $0.appendUInt32(status.rawValue) }
     }
 
     public nonisolated static func sharedFoldersFilesMessage(folders: UInt32, files: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.sharedFoldersFiles.rawValue)
-        payload.appendUInt32(folders)
-        payload.appendUInt32(files)
-        return wrapMessage(payload)
+        serverMessage(.sharedFoldersFiles) {
+            $0.appendUInt32(folders)
+            $0.appendUInt32(files)
+        }
     }
 
     public nonisolated static func pingMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.ping.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.ping)
     }
 
     public nonisolated static func fileSearchMessage(token: UInt32, query: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.fileSearch.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(query)
-        return wrapMessage(payload)
+        serverMessage(.fileSearch) {
+            $0.appendUInt32(token)
+            $0.appendString(query)
+        }
     }
 
     public nonisolated static func joinRoomMessage(roomName: String, isPrivate: Bool = false) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.joinRoom.rawValue)
-        payload.appendString(roomName)
-        payload.appendUInt32(isPrivate ? 1 : 0)
-        return wrapMessage(payload)
+        serverMessage(.joinRoom) {
+            $0.appendString(roomName)
+            $0.appendUInt32(isPrivate ? 1 : 0)
+        }
     }
 
     public nonisolated static func leaveRoomMessage(roomName: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.leaveRoom.rawValue)
-        payload.appendString(roomName)
-        return wrapMessage(payload)
+        serverMessage(.leaveRoom) { $0.appendString(roomName) }
     }
 
     public nonisolated static func sayInChatRoomMessage(roomName: String, message: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.sayInChatRoom.rawValue)
-        payload.appendString(roomName)
-        payload.appendString(message)
-        return wrapMessage(payload)
+        serverMessage(.sayInChatRoom) {
+            $0.appendString(roomName)
+            $0.appendString(message)
+        }
     }
 
     public nonisolated static func privateMessageMessage(username: String, message: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateMessages.rawValue)
-        payload.appendString(username)
-        payload.appendString(message)
-        return wrapMessage(payload)
+        serverMessage(.privateMessages) {
+            $0.appendString(username)
+            $0.appendString(message)
+        }
     }
 
     public nonisolated static func acknowledgePrivateMessageMessage(messageId: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.acknowledgePrivateMessage.rawValue)
-        payload.appendUInt32(messageId)
-        return wrapMessage(payload)
+        serverMessage(.acknowledgePrivateMessage) { $0.appendUInt32(messageId) }
     }
 
     public nonisolated static func watchUserMessage(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.watchUser.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.watchUser) { $0.appendString(username) }
     }
 
     public nonisolated static func unwatchUserMessage(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.unwatchUser.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.unwatchUser) { $0.appendString(username) }
     }
 
     public nonisolated static func ignoreUserMessage(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.ignoreUser.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.ignoreUser) { $0.appendString(username) }
     }
 
     public nonisolated static func unignoreUserMessage(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.unignoreUser.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.unignoreUser) { $0.appendString(username) }
     }
 
     public nonisolated static func getUserStatusMessage(username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.getUserStatus.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.getUserStatus) { $0.appendString(username) }
     }
 
     public nonisolated static func connectToPeerMessage(token: UInt32, username: String, connectionType: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.connectToPeer.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(username)
-        payload.appendString(connectionType)
-        return wrapMessage(payload)
+        serverMessage(.connectToPeer) {
+            $0.appendUInt32(token)
+            $0.appendString(username)
+            $0.appendString(connectionType)
+        }
     }
 
     public nonisolated static func getRoomListMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.roomList.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.roomList)
     }
 
     // MARK: - Peer Messages
@@ -179,9 +142,7 @@ public enum MessageBuilder {
     }
 
     public nonisolated static func sharesRequestMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.sharesRequest.rawValue))
-        return wrapMessage(payload)
+        peerMessage(.sharesRequest)
     }
 
     /// Build shares reply message (code 5) - zlib compressed.
@@ -249,9 +210,7 @@ public enum MessageBuilder {
     }
 
     public nonisolated static func userInfoRequestMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.userInfoRequest.rawValue))
-        return wrapMessage(payload)
+        peerMessage(.userInfoRequest)
     }
 
     /// UserInfoResponse (code 16) - respond to peer's request for our user info
@@ -262,23 +221,21 @@ public enum MessageBuilder {
         queueSize: UInt32,
         hasFreeSlots: Bool
     ) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.userInfoReply.rawValue))
-        payload.appendString(description)
+        peerMessage(.userInfoReply) {
+            $0.appendString(description)
 
-        if let picture = picture, !picture.isEmpty {
-            payload.appendUInt8(1)  // has picture = true
-            payload.appendUInt32(UInt32(picture.count))
-            payload.append(picture)
-        } else {
-            payload.appendUInt8(0)  // has picture = false
+            if let picture = picture, !picture.isEmpty {
+                $0.appendUInt8(1)  // has picture = true
+                $0.appendUInt32(UInt32(picture.count))
+                $0.append(picture)
+            } else {
+                $0.appendUInt8(0)  // has picture = false
+            }
+
+            $0.appendUInt32(totalUploads)
+            $0.appendUInt32(queueSize)
+            $0.appendUInt8(hasFreeSlots ? 1 : 0)
         }
-
-        payload.appendUInt32(totalUploads)
-        payload.appendUInt32(queueSize)
-        payload.appendUInt8(hasFreeSlots ? 1 : 0)
-
-        return wrapMessage(payload)
     }
 
     /// Build a FileSearchResponse (peer code 9). `privateResults` is the
@@ -339,19 +296,15 @@ public enum MessageBuilder {
     }
 
     public nonisolated static func queueDownloadMessage(filename: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.queueDownload.rawValue))
-        payload.appendString(filename)
-        return wrapMessage(payload)
+        peerMessage(.queueDownload) { $0.appendString(filename) }
     }
 
     /// Request contents of a specific folder (code 36)
     public nonisolated static func folderContentsRequestMessage(token: UInt32, folder: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.folderContentsRequest.rawValue))
-        payload.appendUInt32(token)
-        payload.appendString(folder)
-        return wrapMessage(payload)
+        peerMessage(.folderContentsRequest) {
+            $0.appendUInt32(token)
+            $0.appendString(folder)
+        }
     }
 
     /// Response with folder contents (code 37) - zlib compressed
@@ -470,388 +423,298 @@ public enum MessageBuilder {
     }
 
     public nonisolated static func transferRequestMessage(direction: FileTransferDirection, token: UInt32, filename: String, fileSize: UInt64? = nil) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.transferRequest.rawValue))
-        payload.appendUInt32(UInt32(direction.rawValue))
-        payload.appendUInt32(token)
-        payload.appendString(filename)
-        if direction == .upload {
-            // Mandatory per protocol: a code-40 upload request without the
-            // uint64 size is truncated on the wire and the receiving peer
-            // silently drops it. Zero-byte files legitimately send 0.
-            assert(fileSize != nil, "upload TransferRequest requires fileSize")
-            payload.appendUInt64(fileSize ?? 0)
+        peerMessage(.transferRequest) {
+            $0.appendUInt32(UInt32(direction.rawValue))
+            $0.appendUInt32(token)
+            $0.appendString(filename)
+            if direction == .upload {
+                // Mandatory per protocol: a code-40 upload request without the
+                // uint64 size is truncated on the wire and the receiving peer
+                // silently drops it. Zero-byte files legitimately send 0.
+                assert(fileSize != nil, "upload TransferRequest requires fileSize")
+                $0.appendUInt64(fileSize ?? 0)
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Reply to a transfer request - allowed=true means we accept the transfer.
     /// For deprecated download-response flow (peer code 41a), include fileSize when allowed.
     public nonisolated static func transferReplyMessage(token: UInt32, allowed: Bool, fileSize: UInt64? = nil, reason: String? = nil) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.transferReply.rawValue))
-        payload.appendUInt32(token)
-        payload.appendBool(allowed)
-        if allowed, let fileSize {
-            payload.appendUInt64(fileSize)
-        } else if !allowed, let reason {
-            payload.appendString(reason)
+        peerMessage(.transferReply) {
+            $0.appendUInt32(token)
+            $0.appendBool(allowed)
+            if allowed, let fileSize {
+                $0.appendUInt64(fileSize)
+            } else if !allowed, let reason {
+                $0.appendString(reason)
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Send place in queue response (code 44)
     public nonisolated static func placeInQueueResponseMessage(filename: String, place: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.placeInQueueReply.rawValue))
-        payload.appendString(filename)
-        payload.appendUInt32(place)
-        return wrapMessage(payload)
+        peerMessage(.placeInQueueReply) {
+            $0.appendString(filename)
+            $0.appendUInt32(place)
+        }
     }
 
     /// Send place in queue request (code 51) - ask uploader for our queue position
     public nonisolated static func placeInQueueRequestMessage(filename: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.placeInQueueRequest.rawValue))
-        payload.appendString(filename)
-        return wrapMessage(payload)
+        peerMessage(.placeInQueueRequest) { $0.appendString(filename) }
     }
 
     /// Send upload denied response (code 50)
     public nonisolated static func uploadDeniedMessage(filename: String, reason: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.uploadDenied.rawValue))
-        payload.appendString(filename)
-        payload.appendString(reason)
-        return wrapMessage(payload)
+        peerMessage(.uploadDenied) {
+            $0.appendString(filename)
+            $0.appendString(reason)
+        }
     }
 
     /// Send upload failed response (code 46)
     public nonisolated static func uploadFailedMessage(filename: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.uploadFailed.rawValue))
-        payload.appendString(filename)
-        return wrapMessage(payload)
+        peerMessage(.uploadFailed) { $0.appendString(filename) }
     }
 
     // MARK: - Additional Server Messages
 
     public nonisolated static func getUserAddress(_ username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.getPeerAddress.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.getPeerAddress) { $0.appendString(username) }
     }
 
     public nonisolated static func cantConnectToPeer(token: UInt32, username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.cantConnectToPeer.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.cantConnectToPeer) {
+            $0.appendUInt32(token)
+            $0.appendString(username)
+        }
     }
 
     // MARK: - User Interests & Recommendations
 
     /// Add something I like (code 51)
     public nonisolated static func addThingILike(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.addThingILike.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.addThingILike) { $0.appendString(item) }
     }
 
     /// Remove something I like (code 52)
     public nonisolated static func removeThingILike(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.removeThingILike.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.removeThingILike) { $0.appendString(item) }
     }
 
     /// Get my recommendations (code 54)
     public nonisolated static func getRecommendations() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.recommendations.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.recommendations)
     }
 
     /// Get global network-wide recommendations (code 56)
     public nonisolated static func getGlobalRecommendations() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.globalRecommendations.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.globalRecommendations)
     }
 
     /// Get user's interests (code 57)
     public nonisolated static func getUserInterests(_ username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.userInterests.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.userInterests) { $0.appendString(username) }
     }
 
     /// Get similar users (code 110)
     public nonisolated static func getSimilarUsers() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.similarUsers.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.similarUsers)
     }
 
     /// Get item recommendations (code 111)
     public nonisolated static func getItemRecommendations(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.itemRecommendations.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.itemRecommendations) { $0.appendString(item) }
     }
 
     /// Get similar users for item (code 112)
     public nonisolated static func getItemSimilarUsers(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.itemSimilarUsers.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.itemSimilarUsers) { $0.appendString(item) }
     }
 
     /// Add something I hate (code 117)
     public nonisolated static func addThingIHate(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.addThingIHate.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.addThingIHate) { $0.appendString(item) }
     }
 
     /// Remove something I hate (code 118)
     public nonisolated static func removeThingIHate(_ item: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.removeThingIHate.rawValue)
-        payload.appendString(item)
-        return wrapMessage(payload)
+        serverMessage(.removeThingIHate) { $0.appendString(item) }
     }
 
     // MARK: - User Stats & Privileges
 
     /// Get user stats (code 36)
     public nonisolated static func getUserStats(_ username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.getUserStats.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.getUserStats) { $0.appendString(username) }
     }
 
     /// Check our privileges (code 92)
     public nonisolated static func checkPrivileges() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.checkPrivileges.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.checkPrivileges)
     }
 
     /// Get user privileges (code 122)
     public nonisolated static func getUserPrivileges(_ username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.userPrivileges.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.userPrivileges) { $0.appendString(username) }
     }
 
     // MARK: - Room Tickers
 
     /// Set room ticker (code 116)
     public nonisolated static func setRoomTicker(room: String, ticker: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.roomTickerSet.rawValue)
-        payload.appendString(room)
-        payload.appendString(ticker)
-        return wrapMessage(payload)
+        serverMessage(.roomTickerSet) {
+            $0.appendString(room)
+            $0.appendString(ticker)
+        }
     }
 
     // MARK: - Room Search & Wishlist
 
     /// Search in a specific room (code 120)
     public nonisolated static func roomSearch(room: String, token: UInt32, query: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.roomSearch.rawValue)
-        payload.appendString(room)
-        payload.appendUInt32(token)
-        payload.appendString(query)
-        return wrapMessage(payload)
+        serverMessage(.roomSearch) {
+            $0.appendString(room)
+            $0.appendUInt32(token)
+            $0.appendString(query)
+        }
     }
 
     /// Add a wishlist search (code 103)
     public nonisolated static func wishlistSearch(token: UInt32, query: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.wishlistSearch.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(query)
-        return wrapMessage(payload)
+        serverMessage(.wishlistSearch) {
+            $0.appendUInt32(token)
+            $0.appendString(query)
+        }
     }
 
     // MARK: - Private Rooms
 
     /// Add a member to a private room (code 134)
     public nonisolated static func privateRoomAddMember(room: String, username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomAddMember.rawValue)
-        payload.appendString(room)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomAddMember) {
+            $0.appendString(room)
+            $0.appendString(username)
+        }
     }
 
     /// Remove a member from a private room (code 135)
     public nonisolated static func privateRoomRemoveMember(room: String, username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomRemoveMember.rawValue)
-        payload.appendString(room)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomRemoveMember) {
+            $0.appendString(room)
+            $0.appendString(username)
+        }
     }
 
     /// Leave a private room (code 136)
     public nonisolated static func privateRoomCancelMembership(room: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomCancelMembership.rawValue)
-        payload.appendString(room)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomCancelMembership) { $0.appendString(room) }
     }
 
     /// Give up ownership of a private room (code 137)
     public nonisolated static func privateRoomCancelOwnership(room: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomCancelOwnership.rawValue)
-        payload.appendString(room)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomCancelOwnership) { $0.appendString(room) }
     }
 
     /// Add an operator to a private room (code 143)
     public nonisolated static func privateRoomAddOperator(room: String, username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomAddOperator.rawValue)
-        payload.appendString(room)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomAddOperator) {
+            $0.appendString(room)
+            $0.appendString(username)
+        }
     }
 
     /// Remove an operator from a private room (code 144)
     public nonisolated static func privateRoomRemoveOperator(room: String, username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.privateRoomRemoveOperator.rawValue)
-        payload.appendString(room)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.privateRoomRemoveOperator) {
+            $0.appendString(room)
+            $0.appendString(username)
+        }
     }
 
     // MARK: - Distributed Network Messages
 
     /// Tell server we have no distributed parent and need one
     public nonisolated static func haveNoParent(_ haveNoParent: Bool) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.haveNoParent.rawValue)
-        payload.appendBool(haveNoParent)
-        return wrapMessage(payload)
+        serverMessage(.haveNoParent) { $0.appendBool(haveNoParent) }
     }
 
     /// Tell server whether we accept child connections
     public nonisolated static func acceptChildren(_ accept: Bool) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.acceptChildren.rawValue)
-        payload.appendBool(accept)
-        return wrapMessage(payload)
+        serverMessage(.acceptChildren) { $0.appendBool(accept) }
     }
 
     /// Tell server our branch level in the distributed network
     public nonisolated static func branchLevel(_ level: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.branchLevel.rawValue)
-        payload.appendUInt32(level)
-        return wrapMessage(payload)
+        serverMessage(.branchLevel) { $0.appendUInt32(level) }
     }
 
     /// Tell server our branch root username
     public nonisolated static func branchRoot(_ username: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.branchRoot.rawValue)
-        payload.appendString(username)
-        return wrapMessage(payload)
+        serverMessage(.branchRoot) { $0.appendString(username) }
     }
 
     /// Tell server our child depth
     public nonisolated static func childDepth(_ depth: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.childDepth.rawValue)
-        payload.appendUInt32(depth)
-        return wrapMessage(payload)
+        serverMessage(.childDepth) { $0.appendUInt32(depth) }
     }
 
     // MARK: - User Search
 
     /// Search a specific user's files (code 42)
     public nonisolated static func userSearchMessage(username: String, token: UInt32, query: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.userSearch.rawValue)
-        payload.appendString(username)
-        payload.appendUInt32(token)
-        payload.appendString(query)
-        return wrapMessage(payload)
+        serverMessage(.userSearch) {
+            $0.appendString(username)
+            $0.appendUInt32(token)
+            $0.appendString(query)
+        }
     }
 
     // MARK: - Upload Speed & Privileges
 
     /// Report upload speed to server (code 121)
     public nonisolated static func sendUploadSpeedMessage(speed: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.sendUploadSpeedRequest.rawValue)
-        payload.appendUInt32(speed)
-        return wrapMessage(payload)
+        serverMessage(.sendUploadSpeedRequest) { $0.appendUInt32(speed) }
     }
 
     /// Give privileges to another user (code 123)
     public nonisolated static func givePrivilegesMessage(username: String, days: UInt32) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.givePrivileges.rawValue)
-        payload.appendString(username)
-        payload.appendUInt32(days)
-        return wrapMessage(payload)
+        serverMessage(.givePrivileges) {
+            $0.appendString(username)
+            $0.appendUInt32(days)
+        }
     }
 
     // MARK: - Room Invitations
 
     /// Enable or disable room invitations (code 141)
     public nonisolated static func enableRoomInvitationsMessage(enable: Bool) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.enableRoomInvitations.rawValue)
-        payload.appendBool(enable)
-        return wrapMessage(payload)
+        serverMessage(.enableRoomInvitations) { $0.appendBool(enable) }
     }
 
     // MARK: - Bulk Messaging
 
     /// Send a message to multiple users at once (code 149)
     public nonisolated static func messageUsersMessage(usernames: [String], message: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.messageUsers.rawValue)
-        payload.appendUInt32(UInt32(usernames.count))
-        for username in usernames {
-            payload.appendString(username)
+        serverMessage(.messageUsers) {
+            $0.appendUInt32(UInt32(usernames.count))
+            for username in usernames {
+                $0.appendString(username)
+            }
+            $0.appendString(message)
         }
-        payload.appendString(message)
-        return wrapMessage(payload)
     }
 
     // MARK: - Global Room
 
     /// Join the global room (code 150)
     public nonisolated static func joinGlobalRoomMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.joinGlobalRoom.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.joinGlobalRoom)
     }
 
     /// Leave the global room (code 151)
     public nonisolated static func leaveGlobalRoomMessage() -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.leaveGlobalRoom.rawValue)
-        return wrapMessage(payload)
+        serverMessage(.leaveGlobalRoom)
     }
 
     // MARK: - SeeleSeek Extension Messages
@@ -864,43 +727,56 @@ public enum MessageBuilder {
         advertising codes: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised,
         clientInfo: String = ExtendedClientInfo.localClientInfo
     ) -> Data {
-        var payload = Data()
-        // 0. send extendedClient code
-        payload.appendUInt32(ExtendedClientInfoCode.extendedClientInfo.rawValue)
-        // 1. send revision identifier (value is always 1)
-        payload.appendUInt32(ExtendedClientInfo.currentRevision)
-        // 2. send string with optional client info (may identify software or any custom signals)
-        payload.appendString(clientInfo)
-        
-        payload.appendUInt32(UInt32(codes.count))
-        for code in codes {
-            payload.appendUInt32(code.rawValue)
-            payload.appendString(code.wireName)
-            payload.appendUInt32(0) // reserved
+        extensionMessage(.extendedClientInfo) {
+            $0.appendUInt32(ExtendedClientInfo.currentRevision)
+            $0.appendString(clientInfo)
+            $0.appendUInt32(UInt32(codes.count))
+            for code in codes {
+                $0.appendUInt32(code.rawValue)
+                $0.appendString(code.wireName)
+                $0.appendUInt32(0) // reserved
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Artwork request (code 10001) — ask peer for album art embedded in a file.
     public nonisolated static func artworkRequestMessage(token: UInt32, filePath: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ExtendedClientInfoCode.artworkRequest.rawValue)
-        payload.appendUInt32(token)
-        payload.appendString(filePath)
-        return wrapMessage(payload)
+        extensionMessage(.artworkRequest) {
+            $0.appendUInt32(token)
+            $0.appendString(filePath)
+        }
     }
 
     /// Artwork reply (code 10002) — respond with image data (or empty if none found).
     public nonisolated static func artworkReplyMessage(token: UInt32, imageData: Data) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ExtendedClientInfoCode.artworkReply.rawValue)
-        payload.appendUInt32(token)
-        // Write raw image bytes (length is implicit from message frame)
-        payload.append(imageData)
-        return wrapMessage(payload)
+        extensionMessage(.artworkReply) {
+            $0.appendUInt32(token)
+            // Write raw image bytes (length is implicit from message frame)
+            $0.append(imageData)
+        }
     }
 
     // MARK: - Utilities
+
+    nonisolated private static func serverMessage(_ code: ServerMessageCode, _ fields: (inout Data) -> Void = { _ in }) -> Data {
+        framed(code.rawValue, fields)
+    }
+
+    nonisolated private static func peerMessage(_ code: PeerMessageCode, _ fields: (inout Data) -> Void = { _ in }) -> Data {
+        framed(UInt32(code.rawValue), fields)
+    }
+
+    nonisolated private static func extensionMessage(_ code: ExtendedClientInfoCode, _ fields: (inout Data) -> Void = { _ in }) -> Data {
+        framed(code.rawValue, fields)
+    }
+
+    /// uint32 code, then `fields`, wrapped in the length prefix.
+    nonisolated private static func framed(_ code: UInt32, _ fields: (inout Data) -> Void) -> Data {
+        var payload = Data()
+        payload.appendUInt32(code)
+        fields(&payload)
+        return wrapMessage(payload)
+    }
 
     nonisolated private static func wrapMessage(_ payload: Data) -> Data {
         var message = Data()

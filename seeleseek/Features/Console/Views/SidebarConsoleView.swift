@@ -200,6 +200,7 @@ struct SidebarConsoleView: View {
 // mix, then renders at the sidebar's real width (220pt). Expand/collapse is
 // interactive in the Xcode canvas — click the chevron to switch states.
 
+#if DEBUG
 private func seedConsolePreview(_ events: () -> Void) {
     let log = ActivityLog.shared
     log.clear()
@@ -265,3 +266,4 @@ private func seedConsolePreview(_ events: () -> Void) {
             }
         }
 }
+#endif

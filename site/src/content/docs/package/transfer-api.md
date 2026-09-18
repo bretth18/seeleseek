@@ -48,7 +48,6 @@ transfer.displayFilename  // The filename without the path
 transfer.folderPath       // The directory path, or nil
 transfer.isAudioFile      // true for audio formats
 transfer.progress         // 0.0 to 1.0
-transfer.formattedProgress // "45.2 MB / 100.0 MB"
 transfer.formattedSpeed   // "1.5 MB/s"
 transfer.isActive         // The transfer is in progress
 transfer.canCancel        // A cancel is possible
@@ -165,9 +164,8 @@ uploadManager.uploadPermissionChecker = { username in
 // Get the queue position for a file request
 let position = uploadManager.getQueuePosition(for: "path/file.flac", username: "bob")
 
-// Cancel queued or active uploads
-uploadManager.cancelQueuedUpload(uploadId)
-await uploadManager.cancelActiveUpload(transferId)
+// Cancel a queued or active upload by its transfer id
+await uploadManager.cancelUpload(transferId: transferId)
 
 // Statistics
 uploadManager.activeUploadCount  // The number of active uploads

@@ -38,6 +38,7 @@ struct SecondaryButton: View {
     }
 }
 
+#if DEBUG
 #Preview("Secondary Button") {
     VStack(spacing: SeeleSpacing.lg) {
         SecondaryButton("Cancel", icon: "xmark") {}
@@ -45,3 +46,4 @@ struct SecondaryButton: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

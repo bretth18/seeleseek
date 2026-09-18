@@ -126,6 +126,7 @@ struct ConnectionStatusView: View {
     }
 }
 
+#if DEBUG
 #Preview("Connected") {
     let state = AppState()
     state.connection.setConnected(
@@ -150,3 +151,4 @@ struct ConnectionStatusView: View {
     return ConnectionStatusView()
         .environment(\.appState, state)
 }
+#endif

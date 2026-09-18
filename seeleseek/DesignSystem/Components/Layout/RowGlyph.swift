@@ -55,6 +55,7 @@ struct RowGlyphOrnament: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.lg) {
         RowGlyph(systemName: "waveform", tint: SeeleColors.success)
@@ -69,3 +70,4 @@ struct RowGlyphOrnament: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

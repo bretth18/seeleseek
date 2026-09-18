@@ -77,8 +77,6 @@ public actor NATService {
 
     // MARK: - Public Interface
 
-    public var externalAddress: String? { externalIP }
-
     /// Gateway (router) IP. Populated after the first successful UPnP
     /// discovery or NAT-PMP mapping attempt.
     public var gatewayAddress: String? { gatewayIP }

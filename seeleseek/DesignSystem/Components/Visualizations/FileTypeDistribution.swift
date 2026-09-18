@@ -95,9 +95,11 @@ struct FileTypeDistribution: View {
     }
 }
 
+#if DEBUG
 #Preview {
     FileTypeDistribution(entries: [], allFilesSize: 1)
         .frame(width: 400)
         .padding()
         .background(SeeleColors.background)
 }
+#endif

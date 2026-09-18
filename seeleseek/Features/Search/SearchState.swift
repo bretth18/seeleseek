@@ -129,24 +129,6 @@ final class SearchState {
         }
     }
 
-    /// Check for cached search results
-    func checkCache(for query: String) async -> SearchQuery? {
-        do {
-            // Check for cached results (max 1 hour old)
-            if let (queryRecord, resultRecords) = try await SearchRepository.findCached(query: query, maxAge: 3600) {
-                let results = resultRecords.map { $0.toSearchResult() }
-                var cachedQuery = SearchQuery(query: queryRecord.query, token: UInt32(queryRecord.token))
-                cachedQuery.results = results
-                cachedQuery.isSearching = false
-                logger.info("Found cached search for '\(query)' with \(results.count) results")
-                return cachedQuery
-            }
-        } catch {
-            logger.error("Failed to check search cache: \(error.localizedDescription)")
-        }
-        return nil
-    }
-
     // MARK: - Selection Mode
     var selectedResults: Set<UUID> = []
     var isSelectionMode: Bool = false {
@@ -559,23 +541,6 @@ final class SearchState {
         logger.info("Started search '\(self.searchQuery)' with token \(token), tab \(newIndex)")
     }
 
-    /// Start a search from cached results
-    func startSearchFromCache(_ cachedQuery: SearchQuery) {
-        searches.append(cachedQuery)
-        let newIndex = searches.count - 1
-        tokenToSearchIndex[cachedQuery.token] = newIndex
-        selectedSearchIndex = newIndex
-        // `selectedSearchIndex.didSet` would normally handle the
-        // recompute, but when the first tab is loaded from cache both
-        // sides of the assignment are 0 and the guard short-circuits —
-        // leaving `filteredResults` empty while `currentSearch.results`
-        // is populated. Recompute explicitly so this entry point is
-        // safe regardless of caller state.
-        recomputeFilteredResults()
-
-        logger.info("Loaded cached search '\(cachedQuery.query)' with \(cachedQuery.results.count) results")
-    }
-
     /// Add results to a specific search by token
     func addResults(_ results: [SearchResult], forToken token: UInt32) {
         guard let index = tokenToSearchIndex[token], index < searches.count else {
@@ -822,17 +787,5 @@ final class SearchState {
         filterExtensions = []
         filterFreeSlotOnly = false
         sortOrder = .relevance
-    }
-
-    /// Clean up expired search cache
-    func cleanupExpiredCache() {
-        Task {
-            do {
-                try await SearchRepository.deleteExpired(olderThan: 3600) // 1 hour
-                logger.debug("Cleaned up expired search cache")
-            } catch {
-                logger.error("Failed to cleanup search cache: \(error.localizedDescription)")
-            }
-        }
     }
 }

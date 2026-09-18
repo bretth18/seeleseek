@@ -424,24 +424,18 @@ final class SocialState: PeerWatching {
         peerStatuses[username] = buddy.status
 
         // Persist to database
-        Task {
-            do {
-                try await SocialRepository.saveBuddy(buddy)
-                logger.info("Saved buddy \(username) to database")
-            } catch {
-                logger.error("Failed to save buddy: \(error.localizedDescription)")
-            }
+        detached("save buddy") {
+            try await SocialRepository.saveBuddy(buddy)
+            self.logger.info("Saved buddy \(username) to database")
         }
 
         // Watch user on server (get status updates)
-        do {
+        await attempt("watch user") {
             try await networkClient?.watchUser(username)
             logger.info("Watching user \(username)")
 
             // Request initial status
             await refreshBuddyStatus(username)
-        } catch {
-            logger.error("Failed to watch user: \(error.localizedDescription)")
         }
     }
 
@@ -455,13 +449,9 @@ final class SocialState: PeerWatching {
         }
 
         // Remove from database
-        Task {
-            do {
-                try await SocialRepository.deleteBuddy(username)
-                logger.info("Removed buddy \(username) from database")
-            } catch {
-                logger.error("Failed to remove buddy: \(error.localizedDescription)")
-            }
+        detached("remove buddy") {
+            try await SocialRepository.deleteBuddy(username)
+            self.logger.info("Removed buddy \(username) from database")
         }
 
         // Unwatch on the server only when nothing else still needs this
@@ -473,16 +463,14 @@ final class SocialState: PeerWatching {
             return
         }
 
-        do {
+        await attempt("unwatch user") {
             try await networkClient?.unwatchUser(username)
             logger.info("Unwatched user \(username)")
-        } catch {
-            logger.error("Failed to unwatch user: \(error.localizedDescription)")
         }
     }
 
     func refreshBuddyStatus(_ username: String) async {
-        do {
+        await attempt("refresh buddy status") {
             // Request user status
             try await networkClient?.getUserStatus(username)
 
@@ -490,8 +478,6 @@ final class SocialState: PeerWatching {
             try await networkClient?.getUserStats(username)
 
             logger.debug("Requested status/stats for \(username)")
-        } catch {
-            logger.error("Failed to refresh buddy status: \(error.localizedDescription)")
         }
     }
 
@@ -513,13 +499,8 @@ final class SocialState: PeerWatching {
         guard changed else { return }
 
         // Update in database
-        Task {
-            do {
-                try await SocialRepository.saveBuddy(buddies[index])
-            } catch {
-                logger.error("Failed to update buddy status in database: \(error.localizedDescription)")
-            }
-        }
+        let buddy = buddies[index]
+        detached("update buddy status in database") { try await SocialRepository.saveBuddy(buddy) }
     }
 
     /// Persist a freshly-resolved country code on the buddy record (if
@@ -531,13 +512,7 @@ final class SocialState: PeerWatching {
            buddies[index].countryCode != countryCode {
             buddies[index].countryCode = countryCode
             let snapshot = buddies[index]
-            Task {
-                do {
-                    try await SocialRepository.saveBuddy(snapshot)
-                } catch {
-                    logger.error("Failed to persist country for \(username): \(error.localizedDescription)")
-                }
-            }
+            detached("persist country for \(username)") { try await SocialRepository.saveBuddy(snapshot) }
         }
         if viewingProfile?.username == username {
             viewingProfile?.countryCode = countryCode
@@ -550,20 +525,6 @@ final class SocialState: PeerWatching {
         buddies[index].averageSpeed = speed
         buddies[index].fileCount = files
         buddies[index].folderCount = dirs
-    }
-
-    func updateBuddyNotes(_ username: String, notes: String) {
-        guard let index = buddies.firstIndex(where: { $0.username == username }) else { return }
-
-        buddies[index].notes = notes.isEmpty ? nil : notes
-
-        Task {
-            do {
-                try await SocialRepository.saveBuddy(buddies[index])
-            } catch {
-                logger.error("Failed to save buddy notes: \(error.localizedDescription)")
-            }
-        }
     }
 
     // MARK: - Profile Actions
@@ -595,14 +556,12 @@ final class SocialState: PeerWatching {
             viewingProfile?.picture = myPicture
         }
 
-        do {
+        await attempt("load profile") {
             try await networkClient?.getUserStatus(username)
             try await networkClient?.getUserInterests(username)
             try await networkClient?.getUserStats(username)
             try await networkClient?.getUserPrivileges(username)
             logger.info("Requested profile data for \(username)")
-        } catch {
-            logger.error("Failed to load profile: \(error.localizedDescription)")
         }
 
         isLoadingProfile = false
@@ -658,7 +617,7 @@ final class SocialState: PeerWatching {
     }
 
     func saveMyProfile() async {
-        do {
+        await attempt("save profile") {
             try await SocialRepository.setProfileSetting("description", value: myDescription)
             if let pictureData = myPicture {
                 try await SocialRepository.setProfileSetting("picture", value: pictureData.base64EncodedString())
@@ -666,8 +625,6 @@ final class SocialState: PeerWatching {
                 try await SocialRepository.deleteProfileSetting("picture")
             }
             logger.info("Saved profile")
-        } catch {
-            logger.error("Failed to save profile: \(error.localizedDescription)")
         }
     }
 
@@ -680,24 +637,16 @@ final class SocialState: PeerWatching {
         myLikes.append(item)
 
         // Save to database
-        Task {
-            do {
-                try await SocialRepository.saveInterest(item, type: .like)
-            } catch {
-                logger.error("Failed to save like: \(error.localizedDescription)")
-            }
-        }
+        detached("save like") { try await SocialRepository.saveInterest(item, type: .like) }
 
         // Send to server
-        do {
+        await attempt("add like on server") {
             try await networkClient?.addThingILike(item)
             logger.info("Added like: \(item)")
 
             // Auto-refresh recommendations after adding an interest
             try await networkClient?.getRecommendations()
             try await networkClient?.getSimilarUsers()
-        } catch {
-            logger.error("Failed to add like on server: \(error.localizedDescription)")
         }
     }
 
@@ -705,20 +654,12 @@ final class SocialState: PeerWatching {
         myLikes.removeAll { $0 == item }
 
         // Remove from database
-        Task {
-            do {
-                try await SocialRepository.deleteInterest(item)
-            } catch {
-                logger.error("Failed to remove like from database: \(error.localizedDescription)")
-            }
-        }
+        detached("remove like from database") { try await SocialRepository.deleteInterest(item) }
 
         // Remove from server
-        do {
+        await attempt("remove like on server") {
             try await networkClient?.removeThingILike(item)
             logger.info("Removed like: \(item)")
-        } catch {
-            logger.error("Failed to remove like on server: \(error.localizedDescription)")
         }
     }
 
@@ -729,24 +670,16 @@ final class SocialState: PeerWatching {
         myHates.append(item)
 
         // Save to database
-        Task {
-            do {
-                try await SocialRepository.saveInterest(item, type: .hate)
-            } catch {
-                logger.error("Failed to save hate: \(error.localizedDescription)")
-            }
-        }
+        detached("save hate") { try await SocialRepository.saveInterest(item, type: .hate) }
 
         // Send to server
-        do {
+        await attempt("add hate on server") {
             try await networkClient?.addThingIHate(item)
             logger.info("Added hate: \(item)")
 
             // Auto-refresh recommendations after adding an interest
             try await networkClient?.getRecommendations()
             try await networkClient?.getSimilarUsers()
-        } catch {
-            logger.error("Failed to add hate on server: \(error.localizedDescription)")
         }
     }
 
@@ -754,43 +687,25 @@ final class SocialState: PeerWatching {
         myHates.removeAll { $0 == item }
 
         // Remove from database
-        Task {
-            do {
-                try await SocialRepository.deleteInterest(item)
-            } catch {
-                logger.error("Failed to remove hate from database: \(error.localizedDescription)")
-            }
-        }
+        detached("remove hate from database") { try await SocialRepository.deleteInterest(item) }
 
         // Remove from server
-        do {
+        await attempt("remove hate on server") {
             try await networkClient?.removeThingIHate(item)
             logger.info("Removed hate: \(item)")
-        } catch {
-            logger.error("Failed to remove hate on server: \(error.localizedDescription)")
         }
     }
 
     // MARK: - Privilege Actions
 
     func checkPrivileges() {
-        Task {
-            do {
-                try await networkClient?.checkPrivileges()
-            } catch {
-                logger.error("Failed to check privileges: \(error.localizedDescription)")
-            }
-        }
+        detached("check privileges") { try await self.networkClient?.checkPrivileges() }
     }
 
     func givePrivileges(to username: String, days: UInt32) {
-        Task {
-            do {
-                try await networkClient?.givePrivileges(to: username, days: days)
-                logger.info("Gave \(days) days of privileges to \(username)")
-            } catch {
-                logger.error("Failed to give privileges: \(error.localizedDescription)")
-            }
+        detached("give privileges") {
+            try await self.networkClient?.givePrivileges(to: username, days: days)
+            self.logger.info("Gave \(days) days of privileges to \(username)")
         }
     }
 
@@ -863,11 +778,9 @@ final class SocialState: PeerWatching {
 
     func rewatchAllBuddies() async {
         for buddy in buddies {
-            do {
+            await attempt("rewatch \(buddy.username)") {
                 try await networkClient?.watchUser(buddy.username)
                 try await networkClient?.getUserStatus(buddy.username)
-            } catch {
-                logger.error("Failed to rewatch \(buddy.username): \(error.localizedDescription)")
             }
         }
 
@@ -883,19 +796,15 @@ final class SocialState: PeerWatching {
 
         var registered = 0
         for like in myLikes {
-            do {
+            await attempt("re-register like '\(like)'") {
                 try await networkClient.addThingILike(like)
                 registered += 1
-            } catch {
-                logger.error("Failed to re-register like '\(like)': \(error.localizedDescription)")
             }
         }
         for hate in myHates {
-            do {
+            await attempt("re-register hate '\(hate)'") {
                 try await networkClient.addThingIHate(hate)
                 registered += 1
-            } catch {
-                logger.error("Failed to re-register hate '\(hate)': \(error.localizedDescription)")
             }
         }
 
@@ -911,11 +820,9 @@ final class SocialState: PeerWatching {
         blockedUsers.append(blocked)
 
         // Persist to database
-        do {
+        await attempt("save blocked user") {
             try await SocialRepository.saveBlockedUser(blocked)
             logger.info("Blocked user \(username)")
-        } catch {
-            logger.error("Failed to save blocked user: \(error.localizedDescription)")
         }
 
         // Note: Server-side ignore (code 11) is obsolete in the protocol
@@ -926,11 +833,9 @@ final class SocialState: PeerWatching {
         blockedUsers.removeAll { $0.username.lowercased() == username.lowercased() }
 
         // Remove from database
-        do {
+        await attempt("remove blocked user") {
             try await SocialRepository.deleteBlockedUser(username)
             logger.info("Unblocked user \(username)")
-        } catch {
-            logger.error("Failed to remove blocked user: \(error.localizedDescription)")
         }
     }
 
@@ -941,11 +846,7 @@ final class SocialState: PeerWatching {
         guard !trimmed.isEmpty else { return }
         guard !isIgnored(trimmed) else { return }
 
-        do {
-            try await networkClient?.ignoreUser(trimmed)
-        } catch {
-            logger.error("Failed to ignore user on server: \(error.localizedDescription)")
-        }
+        await attempt("ignore user on server") { try await networkClient?.ignoreUser(trimmed) }
 
         ignoredUsers.append(IgnoredUser(username: trimmed, reason: reason))
         await persistIgnoredUsers()
@@ -956,11 +857,7 @@ final class SocialState: PeerWatching {
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        do {
-            try await networkClient?.unignoreUser(trimmed)
-        } catch {
-            logger.error("Failed to unignore user on server: \(error.localizedDescription)")
-        }
+        await attempt("unignore user on server") { try await networkClient?.unignoreUser(trimmed) }
 
         ignoredUsers.removeAll { $0.username.lowercased() == trimmed.lowercased() }
         await persistIgnoredUsers()
@@ -968,13 +865,30 @@ final class SocialState: PeerWatching {
     }
 
     private func persistIgnoredUsers() async {
-        do {
+        await attempt("persist ignored users") {
             let data = try JSONEncoder().encode(ignoredUsers)
             if let json = String(data: data, encoding: .utf8) {
                 try await SocialRepository.setProfileSetting("ignoredUsers", value: json)
             }
-        } catch {
-            logger.error("Failed to persist ignored users: \(error.localizedDescription)")
         }
     }
+
+    // MARK: - Error-logged helpers
+
+    /// Run `body` in a Task; a failure is logged, never surfaced.
+    private func detached(_ what: String, _ body: @escaping () async throws -> Void) {
+        Task {
+            await attempt(what, body)
+        }
+    }
+
+    /// Run `body`, logging a thrown error as "Failed to `what`".
+    private func attempt(_ what: String, _ body: () async throws -> Void) async {
+        do {
+            try await body()
+        } catch {
+            logger.error("Failed to \(what): \(error.localizedDescription)")
+        }
+    }
+
 }

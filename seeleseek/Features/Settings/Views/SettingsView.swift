@@ -55,8 +55,10 @@ struct SettingsView: View {
 
 }
 
+#if DEBUG
 #Preview {
     SettingsView()
         .environment(\.appState, AppState())
         .frame(width: 700, height: 500)
 }
+#endif

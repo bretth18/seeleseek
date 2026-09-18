@@ -489,11 +489,6 @@ extension NetworkClient {
         }
     }
 
-    /// Invalidate the cached user info for a user (next fetch will re-request).
-    public func invalidateUserInfoCache(for username: String) {
-        userInfoReplyCache.removeValue(forKey: username)
-    }
-
     private func cacheUserInfoReply(username: String, _ info: MessageParser.UserInfoReplyInfo) {
         if userInfoReplyCache.count >= maxUserInfoCacheEntries,
            userInfoReplyCache[username] == nil {

@@ -38,18 +38,6 @@ public actor GeoIPService {
         return nil
     }
 
-    /// Batch version. Returns a dictionary keyed by IP for addresses that
-    /// resolved; missing IPs are simply absent.
-    public func getCountryCodes(for ips: [String]) async -> [String: String] {
-        var results: [String: String] = [:]
-        for ip in ips {
-            if let code = await getCountryCode(for: ip) {
-                results[ip] = code
-            }
-        }
-        return results
-    }
-
     // MARK: - Loading
 
     private func ensureLoaded() async {

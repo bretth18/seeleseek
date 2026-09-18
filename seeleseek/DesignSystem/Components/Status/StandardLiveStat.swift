@@ -29,6 +29,7 @@ struct StandardLiveStat: View {
     }
 }
 
+#if DEBUG
 #Preview {
     HStack(spacing: SeeleSpacing.lg) {
         StandardLiveStat(
@@ -46,3 +47,4 @@ struct StandardLiveStat: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

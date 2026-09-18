@@ -77,6 +77,7 @@ struct ChatSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         ChatSettingsSection(settings: SettingsState())
@@ -85,3 +86,4 @@ struct ChatSettingsSection: View {
     .frame(width: 500, height: 400)
     .background(SeeleColors.background)
 }
+#endif

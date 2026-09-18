@@ -498,33 +498,12 @@ private struct TransferInfoColumn: View {
     }
 
     private var offlineLabel: some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "wifi.slash")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.error)
-                .accessibilityHidden(true)
-
-            Text("Peer offline")
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.error)
-                .lineLimit(1)
-        }
+        RowStatusLabel(icon: "wifi.slash", text: "Peer offline", tint: SeeleColors.error)
     }
 
     private func errorLabel(_ error: String) -> some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.error)
-                .accessibilityHidden(true)
-
-            Text(error)
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.error)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(error)
-        }
+        RowStatusLabel(icon: "exclamationmark.triangle.fill", text: error, tint: SeeleColors.error)
+            .help(error)
     }
 
     /// Pending-retry variant of `errorLabel`: orange clock instead of red
@@ -535,33 +514,12 @@ private struct TransferInfoColumn: View {
     private var retryWaitingLabel: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let countdown = transfer.retryCountdownString(now: context.date) ?? "soon"
-            HStack(spacing: SeeleSpacing.xs) {
-                Image(systemName: "clock")
-                    .font(.system(size: SeeleSpacing.iconSizeXS))
-                    .foregroundStyle(SeeleColors.warning)
-                    .accessibilityHidden(true)
-
-                Text("Retrying in \(countdown)")
-                    .font(SeeleTypography.monoSmall)
-                    .foregroundStyle(SeeleColors.warning)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
+            RowStatusLabel(icon: "clock", text: "Retrying in \(countdown)", tint: SeeleColors.warning)
         }
     }
 
     private var retryLabel: some View {
-        HStack(spacing: SeeleSpacing.xs) {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: SeeleSpacing.iconSizeXS))
-                .foregroundStyle(SeeleColors.warning)
-                .accessibilityHidden(true)
-
-            Text("retry \(transfer.retryCount)")
-                .font(SeeleTypography.monoSmall)
-                .foregroundStyle(SeeleColors.warning)
-                .monospacedDigit()
-        }
+        RowStatusLabel(icon: "arrow.clockwise", text: "retry \(transfer.retryCount)", tint: SeeleColors.warning)
     }
 }
 
