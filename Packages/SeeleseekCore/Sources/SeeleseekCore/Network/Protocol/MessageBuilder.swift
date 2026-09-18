@@ -8,39 +8,36 @@ public enum MessageBuilder {
     // MARK: - Server Messages
 
     public nonisolated static func loginMessage(username: String, password: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.login.rawValue)
-        payload.appendString(username)
-        payload.appendString(password)
+        serverMessage(.login) {
+            $0.appendString(username)
+            $0.appendString(password)
 
-        // Client version
-        payload.appendUInt32(169)
+            // Client version
+            $0.appendUInt32(169)
 
-        // MD5 hash of username + password
-        let hashInput = username + password
-        let hashData = hashInput.data(using: .utf8) ?? Data()
-        let digest = Insecure.MD5.hash(data: hashData)
-        let hashHex = digest.map { String(format: "%02x", $0) }.joined()
-        payload.appendString(hashHex)
+            // MD5 hash of username + password
+            let hashInput = username + password
+            let hashData = hashInput.data(using: .utf8) ?? Data()
+            let digest = Insecure.MD5.hash(data: hashData)
+            let hashHex = digest.map { String(format: "%02x", $0) }.joined()
+            $0.appendString(hashHex)
 
-        // Minor version
-        payload.appendUInt32(3)
-
-        return wrapMessage(payload)
+            // Minor version
+            $0.appendUInt32(3)
+        }
     }
 
     public nonisolated static func setListenPortMessage(port: UInt32, obfuscatedPort: UInt32 = 0) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.setListenPort.rawValue)
-        payload.appendUInt32(port)
-        // The obfuscation block is optional on the wire. Only advertise if we
-        // actually have a listener on the obfuscated port — otherwise peers
-        // attempting obfuscated inbound would hit a dead port.
-        if obfuscatedPort > 0 {
-            payload.appendUInt32(ObfuscationType.rotated.rawValue)
-            payload.appendUInt32(obfuscatedPort)
+        serverMessage(.setListenPort) {
+            $0.appendUInt32(port)
+            // The obfuscation block is optional on the wire. Only advertise if we
+            // actually have a listener on the obfuscated port — otherwise peers
+            // attempting obfuscated inbound would hit a dead port.
+            if obfuscatedPort > 0 {
+                $0.appendUInt32(ObfuscationType.rotated.rawValue)
+                $0.appendUInt32(obfuscatedPort)
+            }
         }
-        return wrapMessage(payload)
     }
 
     public nonisolated static func setOnlineStatusMessage(status: UserStatus) -> Data {
@@ -224,23 +221,21 @@ public enum MessageBuilder {
         queueSize: UInt32,
         hasFreeSlots: Bool
     ) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.userInfoReply.rawValue))
-        payload.appendString(description)
+        peerMessage(.userInfoReply) {
+            $0.appendString(description)
 
-        if let picture = picture, !picture.isEmpty {
-            payload.appendUInt8(1)  // has picture = true
-            payload.appendUInt32(UInt32(picture.count))
-            payload.append(picture)
-        } else {
-            payload.appendUInt8(0)  // has picture = false
+            if let picture = picture, !picture.isEmpty {
+                $0.appendUInt8(1)  // has picture = true
+                $0.appendUInt32(UInt32(picture.count))
+                $0.append(picture)
+            } else {
+                $0.appendUInt8(0)  // has picture = false
+            }
+
+            $0.appendUInt32(totalUploads)
+            $0.appendUInt32(queueSize)
+            $0.appendUInt8(hasFreeSlots ? 1 : 0)
         }
-
-        payload.appendUInt32(totalUploads)
-        payload.appendUInt32(queueSize)
-        payload.appendUInt8(hasFreeSlots ? 1 : 0)
-
-        return wrapMessage(payload)
     }
 
     /// Build a FileSearchResponse (peer code 9). `privateResults` is the
@@ -428,34 +423,32 @@ public enum MessageBuilder {
     }
 
     public nonisolated static func transferRequestMessage(direction: FileTransferDirection, token: UInt32, filename: String, fileSize: UInt64? = nil) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.transferRequest.rawValue))
-        payload.appendUInt32(UInt32(direction.rawValue))
-        payload.appendUInt32(token)
-        payload.appendString(filename)
-        if direction == .upload {
-            // Mandatory per protocol: a code-40 upload request without the
-            // uint64 size is truncated on the wire and the receiving peer
-            // silently drops it. Zero-byte files legitimately send 0.
-            assert(fileSize != nil, "upload TransferRequest requires fileSize")
-            payload.appendUInt64(fileSize ?? 0)
+        peerMessage(.transferRequest) {
+            $0.appendUInt32(UInt32(direction.rawValue))
+            $0.appendUInt32(token)
+            $0.appendString(filename)
+            if direction == .upload {
+                // Mandatory per protocol: a code-40 upload request without the
+                // uint64 size is truncated on the wire and the receiving peer
+                // silently drops it. Zero-byte files legitimately send 0.
+                assert(fileSize != nil, "upload TransferRequest requires fileSize")
+                $0.appendUInt64(fileSize ?? 0)
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Reply to a transfer request - allowed=true means we accept the transfer.
     /// For deprecated download-response flow (peer code 41a), include fileSize when allowed.
     public nonisolated static func transferReplyMessage(token: UInt32, allowed: Bool, fileSize: UInt64? = nil, reason: String? = nil) -> Data {
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.transferReply.rawValue))
-        payload.appendUInt32(token)
-        payload.appendBool(allowed)
-        if allowed, let fileSize {
-            payload.appendUInt64(fileSize)
-        } else if !allowed, let reason {
-            payload.appendString(reason)
+        peerMessage(.transferReply) {
+            $0.appendUInt32(token)
+            $0.appendBool(allowed)
+            if allowed, let fileSize {
+                $0.appendUInt64(fileSize)
+            } else if !allowed, let reason {
+                $0.appendString(reason)
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Send place in queue response (code 44)
@@ -703,14 +696,13 @@ public enum MessageBuilder {
 
     /// Send a message to multiple users at once (code 149)
     public nonisolated static func messageUsersMessage(usernames: [String], message: String) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ServerMessageCode.messageUsers.rawValue)
-        payload.appendUInt32(UInt32(usernames.count))
-        for username in usernames {
-            payload.appendString(username)
+        serverMessage(.messageUsers) {
+            $0.appendUInt32(UInt32(usernames.count))
+            for username in usernames {
+                $0.appendString(username)
+            }
+            $0.appendString(message)
         }
-        payload.appendString(message)
-        return wrapMessage(payload)
     }
 
     // MARK: - Global Room
@@ -735,21 +727,16 @@ public enum MessageBuilder {
         advertising codes: [ExtendedClientInfoCode] = ExtendedClientInfoCode.advertised,
         clientInfo: String = ExtendedClientInfo.localClientInfo
     ) -> Data {
-        var payload = Data()
-        // 0. send extendedClient code
-        payload.appendUInt32(ExtendedClientInfoCode.extendedClientInfo.rawValue)
-        // 1. send revision identifier (value is always 1)
-        payload.appendUInt32(ExtendedClientInfo.currentRevision)
-        // 2. send string with optional client info (may identify software or any custom signals)
-        payload.appendString(clientInfo)
-        
-        payload.appendUInt32(UInt32(codes.count))
-        for code in codes {
-            payload.appendUInt32(code.rawValue)
-            payload.appendString(code.wireName)
-            payload.appendUInt32(0) // reserved
+        extensionMessage(.extendedClientInfo) {
+            $0.appendUInt32(ExtendedClientInfo.currentRevision)
+            $0.appendString(clientInfo)
+            $0.appendUInt32(UInt32(codes.count))
+            for code in codes {
+                $0.appendUInt32(code.rawValue)
+                $0.appendString(code.wireName)
+                $0.appendUInt32(0) // reserved
+            }
         }
-        return wrapMessage(payload)
     }
 
     /// Artwork request (code 10001) — ask peer for album art embedded in a file.
@@ -762,12 +749,11 @@ public enum MessageBuilder {
 
     /// Artwork reply (code 10002) — respond with image data (or empty if none found).
     public nonisolated static func artworkReplyMessage(token: UInt32, imageData: Data) -> Data {
-        var payload = Data()
-        payload.appendUInt32(ExtendedClientInfoCode.artworkReply.rawValue)
-        payload.appendUInt32(token)
-        // Write raw image bytes (length is implicit from message frame)
-        payload.append(imageData)
-        return wrapMessage(payload)
+        extensionMessage(.artworkReply) {
+            $0.appendUInt32(token)
+            // Write raw image bytes (length is implicit from message frame)
+            $0.append(imageData)
+        }
     }
 
     // MARK: - Utilities

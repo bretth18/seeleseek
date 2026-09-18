@@ -274,7 +274,6 @@ struct NicotineImportSheet: View {
                 for room in new { appState.chatState.joinRoom(room, select: false) }
             }
         }
-        settings.save()
     }
 
     private func isDirectory(_ path: String) -> Bool {
