@@ -298,7 +298,7 @@ final class SettingsState: DownloadSettingsProviding {
     /// stops that write-back loop from re-saving.
     var groupSearchResults: Bool = false {
         didSet {
-            guard !isLoading, groupSearchResults != oldValue else { return }
+            guard groupSearchResults != oldValue else { return }
             save()
         }
     }
@@ -307,14 +307,14 @@ final class SettingsState: DownloadSettingsProviding {
     /// (including Clear → empty).
     var searchFilters: PersistedSearchFilters = .empty {
         didSet {
-            guard !isLoading, searchFilters != oldValue else { return }
+            guard searchFilters != oldValue else { return }
             save()
         }
     }
     /// Quick-filter pills in the search bar, in display order.
     var searchFilterPresets: [SearchFilterPreset] = SearchFilterPreset.defaults {
         didSet {
-            guard !isLoading, searchFilterPresets != oldValue else { return }
+            guard searchFilterPresets != oldValue else { return }
             save()
         }
     }
@@ -401,7 +401,7 @@ final class SettingsState: DownloadSettingsProviding {
     static let defaultAutoJoinRooms = ["seeleseek"]
     var autoJoinRooms: [String] = [] {
         didSet {
-            guard !isLoading, autoJoinRooms != oldValue else { return }
+            guard autoJoinRooms != oldValue else { return }
             save()
         }
     }
@@ -452,7 +452,6 @@ final class SettingsState: DownloadSettingsProviding {
     var blockLeechPatternsEnabled: Bool = true {
         didSet {
             recomputeActiveBlockedPatterns()
-            guard !isLoading else { return }
             save()
         }
     }
@@ -463,7 +462,6 @@ final class SettingsState: DownloadSettingsProviding {
     var blockedUsernamePatterns: [String] = SettingsState.defaultBlockedUsernamePatterns {
         didSet {
             recomputeActiveBlockedPatterns()
-            guard !isLoading else { return }
             save()
         }
     }

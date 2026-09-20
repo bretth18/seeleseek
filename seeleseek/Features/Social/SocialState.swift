@@ -424,7 +424,7 @@ final class SocialState: PeerWatching {
         peerStatuses[username] = buddy.status
 
         // Persist to database
-        detached("save buddy") {
+        inTask("save buddy") {
             try await SocialRepository.saveBuddy(buddy)
             self.logger.info("Saved buddy \(username) to database")
         }
@@ -449,7 +449,7 @@ final class SocialState: PeerWatching {
         }
 
         // Remove from database
-        detached("remove buddy") {
+        inTask("remove buddy") {
             try await SocialRepository.deleteBuddy(username)
             self.logger.info("Removed buddy \(username) from database")
         }
@@ -500,7 +500,7 @@ final class SocialState: PeerWatching {
 
         // Update in database
         let buddy = buddies[index]
-        detached("update buddy status in database") { try await SocialRepository.saveBuddy(buddy) }
+        inTask("update buddy status in database") { try await SocialRepository.saveBuddy(buddy) }
     }
 
     /// Persist a freshly-resolved country code on the buddy record (if
@@ -512,7 +512,7 @@ final class SocialState: PeerWatching {
            buddies[index].countryCode != countryCode {
             buddies[index].countryCode = countryCode
             let snapshot = buddies[index]
-            detached("persist country for \(username)") { try await SocialRepository.saveBuddy(snapshot) }
+            inTask("persist country for \(username)") { try await SocialRepository.saveBuddy(snapshot) }
         }
         if viewingProfile?.username == username {
             viewingProfile?.countryCode = countryCode
@@ -637,7 +637,7 @@ final class SocialState: PeerWatching {
         myLikes.append(item)
 
         // Save to database
-        detached("save like") { try await SocialRepository.saveInterest(item, type: .like) }
+        inTask("save like") { try await SocialRepository.saveInterest(item, type: .like) }
 
         // Send to server
         await attempt("add like on server") {
@@ -654,7 +654,7 @@ final class SocialState: PeerWatching {
         myLikes.removeAll { $0 == item }
 
         // Remove from database
-        detached("remove like from database") { try await SocialRepository.deleteInterest(item) }
+        inTask("remove like from database") { try await SocialRepository.deleteInterest(item) }
 
         // Remove from server
         await attempt("remove like on server") {
@@ -670,7 +670,7 @@ final class SocialState: PeerWatching {
         myHates.append(item)
 
         // Save to database
-        detached("save hate") { try await SocialRepository.saveInterest(item, type: .hate) }
+        inTask("save hate") { try await SocialRepository.saveInterest(item, type: .hate) }
 
         // Send to server
         await attempt("add hate on server") {
@@ -687,7 +687,7 @@ final class SocialState: PeerWatching {
         myHates.removeAll { $0 == item }
 
         // Remove from database
-        detached("remove hate from database") { try await SocialRepository.deleteInterest(item) }
+        inTask("remove hate from database") { try await SocialRepository.deleteInterest(item) }
 
         // Remove from server
         await attempt("remove hate on server") {
@@ -699,11 +699,11 @@ final class SocialState: PeerWatching {
     // MARK: - Privilege Actions
 
     func checkPrivileges() {
-        detached("check privileges") { try await self.networkClient?.checkPrivileges() }
+        inTask("check privileges") { try await self.networkClient?.checkPrivileges() }
     }
 
     func givePrivileges(to username: String, days: UInt32) {
-        detached("give privileges") {
+        inTask("give privileges") {
             try await self.networkClient?.givePrivileges(to: username, days: days)
             self.logger.info("Gave \(days) days of privileges to \(username)")
         }
@@ -876,7 +876,7 @@ final class SocialState: PeerWatching {
     // MARK: - Error-logged helpers
 
     /// Run `body` in a Task; a failure is logged, never surfaced.
-    private func detached(_ what: String, _ body: @escaping () async throws -> Void) {
+    private func inTask(_ what: String, _ body: @escaping () async throws -> Void) {
         Task {
             await attempt(what, body)
         }

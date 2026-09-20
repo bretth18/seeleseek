@@ -30,21 +30,13 @@ struct ScrollingTabStrip<Item: Identifiable, Tab: View>: View {
             .focusEffectDisabled()
             .onMoveCommand { direction in
                 switch direction {
-                case .left: select(TabCycler.clampedPrevious(selectedIndex, count: items.count))
-                case .right: select(TabCycler.clampedNext(selectedIndex, count: items.count))
+                case .left: move(to: TabCycler.clampedPrevious(selectedIndex, count: items.count))
+                case .right: move(to: TabCycler.clampedNext(selectedIndex, count: items.count))
                 default: break
                 }
             }
-            .onKeyPress(.home) {
-                guard !items.isEmpty, selectedIndex != 0 else { return .ignored }
-                select(0)
-                return .handled
-            }
-            .onKeyPress(.end) {
-                guard !items.isEmpty, selectedIndex != items.count - 1 else { return .ignored }
-                select(items.count - 1)
-                return .handled
-            }
+            .onKeyPress(.home) { move(to: 0) }
+            .onKeyPress(.end) { move(to: items.count - 1) }
             .onChange(of: selectedIndex) { _, index in
                 guard items.indices.contains(index) else { return }
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -52,5 +44,13 @@ struct ScrollingTabStrip<Item: Identifiable, Tab: View>: View {
                 }
             }
         }
+    }
+
+    /// Re-selecting the current tab is not a no-op for every caller
+    /// (BrowseState resets its tree), so edge presses must not call `select`.
+    private func move(to index: Int) -> KeyPress.Result {
+        guard items.indices.contains(index), index != selectedIndex else { return .ignored }
+        select(index)
+        return .handled
     }
 }

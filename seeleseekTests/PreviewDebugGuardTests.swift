@@ -17,16 +17,19 @@ struct PreviewDebugGuardTests {
         var offenders: [String] = []
         for case let url as URL in enumerator where url.pathExtension == "swift" {
             let source = try String(contentsOf: url, encoding: .utf8)
-            var conditions: [String] = []
+            // One entry per open `#if`: true while inside a branch that is
+            // exactly `DEBUG`, false in any other branch of that block.
+            var branches: [Bool] = []
             for (number, raw) in source.components(separatedBy: "\n").enumerated() {
                 let line = raw.trimmingCharacters(in: .whitespaces)
                 if line.hasPrefix("#if ") {
-                    conditions.append(line)
+                    branches.append(line == "#if DEBUG")
+                } else if line.hasPrefix("#elseif ") || line.hasPrefix("#else") {
+                    if !branches.isEmpty { branches[branches.count - 1] = line == "#elseif DEBUG" }
                 } else if line.hasPrefix("#endif") {
-                    _ = conditions.popLast()
+                    _ = branches.popLast()
                 } else if line.hasPrefix("#Preview") {
-                    let guarded = conditions.contains { $0.contains("DEBUG") }
-                    if !guarded {
+                    if !branches.contains(true) {
                         offenders.append("\(url.lastPathComponent):\(number + 1)")
                     }
                 }

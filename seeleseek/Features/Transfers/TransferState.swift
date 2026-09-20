@@ -537,7 +537,7 @@ final class TransferState: TransferTracking {
 
     /// Invoked when a user-visible action takes a transfer out of a
     /// retriable state (cancel, remove, manual retry). Set by AppState to
-    /// `downloadManager.cancelRetry(transferId:)` so any `pendingRetries`
+    /// `downloadManager.cancelRetry(transferId:)` so any scheduler
     /// Task that was sleeping for the next backoff tick is dropped
     /// immediately instead of waking up to 30 min later and finding it
     /// has no work to do. The status-guard inside the Task already makes

@@ -201,12 +201,7 @@ public enum MessageBuilder {
         // unconditionally, so an uncompressed fallback can never parse)
         let compressed = compressZlib(uncompressedPayload)
 
-        // Build final message
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.sharesReply.rawValue))
-        payload.append(compressed)
-
-        return wrapMessage(payload)
+        return peerMessage(.sharesReply) { $0.append(compressed) }
     }
 
     public nonisolated static func userInfoRequestMessage() -> Data {
@@ -287,12 +282,7 @@ public enum MessageBuilder {
         // Compress with zlib (mandatory for code 9)
         let compressed = compressZlib(uncompressedPayload)
 
-        // Build final message
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.searchReply.rawValue))
-        payload.append(compressed)
-
-        return wrapMessage(payload)
+        return peerMessage(.searchReply) { $0.append(compressed) }
     }
 
     public nonisolated static func queueDownloadMessage(filename: String) -> Data {
@@ -345,12 +335,7 @@ public enum MessageBuilder {
 
         // Compress with zlib (mandatory for code 37)
         let compressedPayload = compressZlib(uncompressedPayload)
-
-        var payload = Data()
-        payload.appendUInt32(UInt32(PeerMessageCode.folderContentsReply.rawValue))
-        payload.append(compressedPayload)
-
-        return wrapMessage(payload)
+        return peerMessage(.folderContentsReply) { $0.append(compressedPayload) }
     }
 
     /// Compress data using zlib. Always produces a valid zlib stream —
@@ -763,7 +748,9 @@ public enum MessageBuilder {
     }
 
     nonisolated private static func peerMessage(_ code: PeerMessageCode, _ fields: (inout Data) -> Void = { _ in }) -> Data {
-        framed(UInt32(code.rawValue), fields)
+        // PeerInit/PierceFirewall are one-byte codes with no uint32 frame.
+        precondition(code != .peerInit && code != .pierceFirewall)
+        return framed(UInt32(code.rawValue), fields)
     }
 
     nonisolated private static func extensionMessage(_ code: ExtendedClientInfoCode, _ fields: (inout Data) -> Void = { _ in }) -> Data {

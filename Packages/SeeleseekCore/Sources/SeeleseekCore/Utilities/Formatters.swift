@@ -71,9 +71,6 @@ public extension Date {
     }
 }
 
-public extension Int {
-}
-
 // MARK: - Country flags
 
 public enum CountryFormatter {

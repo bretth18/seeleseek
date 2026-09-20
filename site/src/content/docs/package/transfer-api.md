@@ -164,7 +164,8 @@ uploadManager.uploadPermissionChecker = { username in
 // Get the queue position for a file request
 let position = uploadManager.getQueuePosition(for: "path/file.flac", username: "bob")
 
-// Cancel a queued or active upload by its transfer id
+// Cancel an active upload, or a retry that waits in the queue, by its transfer id.
+// A first-time peer request has no transfer row until it starts.
 await uploadManager.cancelUpload(transferId: transferId)
 
 // Statistics
