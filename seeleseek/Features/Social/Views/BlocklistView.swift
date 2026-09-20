@@ -220,6 +220,7 @@ struct BlocklistView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     BlocklistView()
         .environment(\.appState, {
@@ -228,3 +229,4 @@ struct BlocklistView: View {
         }())
         .frame(width: 600, height: 400)
 }
+#endif

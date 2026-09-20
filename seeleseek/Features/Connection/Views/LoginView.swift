@@ -138,6 +138,7 @@ struct LoginView: View {
     }
 }
 
+#if DEBUG
 #Preview("Login - Empty") {
     LoginView()
         .environment(\.appState, AppState())
@@ -152,4 +153,5 @@ struct LoginView: View {
     return LoginView()
         .environment(\.appState, state)
 }
+#endif
 

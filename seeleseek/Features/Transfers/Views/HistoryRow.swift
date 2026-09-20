@@ -117,13 +117,7 @@ struct HistoryRow: View {
             )
 
             if !fileExists {
-                HStack(spacing: SeeleSpacing.xs) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: SeeleSpacing.iconSizeXS))
-                    Text("File missing")
-                        .font(SeeleTypography.monoSmall)
-                }
-                .foregroundStyle(SeeleColors.warning)
+                RowStatusLabel(icon: "exclamationmark.triangle.fill", text: "File missing", tint: SeeleColors.warning)
             }
 
             Spacer(minLength: 0)

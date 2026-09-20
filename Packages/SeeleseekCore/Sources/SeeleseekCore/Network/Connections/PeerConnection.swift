@@ -109,11 +109,6 @@ public actor PeerConnection {
         extendedClientInfo?.supports(code) ?? false
     }
 
-    /// Get the discovered peer username (from PeerInit message)
-    public func getPeerUsername() -> String {
-        return peerUsername
-    }
-
     /// Set the peer username (used when matching PierceFirewall to pending uploads)
     public func setPeerUsername(_ username: String) {
         peerUsername = username
@@ -1319,11 +1314,6 @@ public actor PeerConnection {
             }
         }
         logger.info("[\(self.peerInfo.username)] Peer handshake received")
-    }
-
-    /// Check if peer has completed handshake
-    public var isPeerHandshakeComplete: Bool {
-        peerHandshakeReceived
     }
 
     // MARK: - Security Constants

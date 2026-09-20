@@ -50,6 +50,7 @@ struct FlowLayout: Layout {
     }
 }
 
+#if DEBUG
 #Preview {
     FlowLayout(spacing: 8) {
         ForEach(["Rock", "Jazz", "Electronic", "Classical", "Blues", "Hip-Hop", "Metal"], id: \.self) { tag in
@@ -64,3 +65,4 @@ struct FlowLayout: Layout {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

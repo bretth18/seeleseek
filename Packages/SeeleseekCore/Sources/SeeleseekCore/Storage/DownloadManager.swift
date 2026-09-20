@@ -137,9 +137,8 @@ public actor DownloadManager {
     // because Soulseek peer upload queues commonly drain on that timescale
     // — a retry too soon arrives before the queue has moved and gets
     // silently dropped from `pendingDownloads`.
-    private let retryDelays: [TimeInterval] = [10, 30, 120, 600, 1800]  // 10s, 30s, 2m, 10m, 30m
-    private var maxRetries: Int { retryDelays.count }
-    private var pendingRetries: [UUID: Task<Void, Never>] = [:]  // Track retry tasks
+    private let retryScheduler = TransferRetryScheduler()
+    private var maxRetries: Int { TransferRetryScheduler.maxRetries }
     private var reQueueTimer: Task<Void, Never>?  // Periodic re-queue timer (60s)
     private var connectionRetryTimer: Task<Void, Never>?  // Retry failed connections (3 min)
     private var queuePositionTimer: Task<Void, Never>?  // Update queue positions (5 min)
@@ -213,9 +212,6 @@ public actor DownloadManager {
         public var peerPort: Int?        // Store peer port for outgoing F connection
         public var resumeOffset: UInt64 = 0  // For resuming partial downloads
     }
-
-    // Track partial downloads for resume
-    private var partialDownloads: [String: URL] = [:]  // filename -> partial file path
 
     /// (username, filename) pairs currently inside `queueDownload`'s
     /// check-then-add window. The duplicate checks there suspend on a
@@ -2727,7 +2723,7 @@ public actor DownloadManager {
             $0.status == .failed && $0.direction == .download &&
             isRetriableError($0.error ?? "") &&
             $0.retryCount < maxRetries &&
-            pendingRetries[$0.id] == nil &&
+            !retryScheduler.isPending($0.id) &&
             !isCancelled($0.id) &&
             !isPeerOffline($0.username)
         }
@@ -3093,94 +3089,36 @@ public actor DownloadManager {
     }
 
     /// Classify a download-failure reason as retriable. Used by both the
-    /// scheduled-retry path (after a transient failure) and
-    /// `resumeDownloadsOnConnect` (to decide which persisted `.failed` rows
-    /// to resurrect on next login).
-    ///
-    /// Retry-by-default. The old implementation used an allowlist of
-    /// substrings ("timeout", "connection", "network", …) and returned
-    /// false for anything unmatched, which meant common failure reasons
-    /// like `NetworkError.notConnected`'s "Not connected to server" or
-    /// `NWError.canceled`'s "Operation canceled" (American spelling vs our
-    /// British "cancelled") dropped straight through to "not retriable" —
-    /// no retry ever scheduled, no resume on reconnect. With the retry
-    /// count capped at `maxRetries` (the length of `retryDelays`) the
-    /// downside of an over-eager retry is bounded, so we now flip the
-    /// default: retry unless the error matches an explicit user- or
-    /// peer-driven stop reason.
+    /// scheduled-retry path and `resumeDownloadsOnConnect` (to decide which
+    /// persisted `.failed` rows to resurrect on next login).
     static func isRetriableError(_ error: String?) -> Bool {
-        guard let lowered = error?.lowercased(), !lowered.isEmpty else {
-            return false
-        }
-
-        // Known terminal reasons — peer-side decisions that re-asking won't
-        // change. The bare "cancel" stem was removed: it also matched the
-        // client's own transient teardown strings ("Connection was
-        // cancelled", "Operation canceled"), wrongly marking them terminal.
-        // User-initiated cancels no longer flow through failDownload at all
-        // (see cancelDownload + the cancelled-transfer guards), so we only
-        // need genuine peer-denial reasons here.
-        let terminalPatterns = [
-            "denied",
-            "not shared",
-            "not available",
-            "file not found",
-            "too many",
-            "banned",
-            "blocked",
-            "disallowed",
-            "pending shutdown",
-        ]
-        for pattern in terminalPatterns {
-            if lowered.contains(pattern) { return false }
-        }
-        return true
+        TransferRetryScheduler.isRetriableError(error)
     }
 
     private func isRetriableError(_ error: String?) -> Bool {
         Self.isRetriableError(error)
     }
 
-    private nonisolated static func formatRetryDelay(_ delay: TimeInterval) -> String {
-        let seconds = Int(delay)
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        return "\(minutes)m"
-    }
-
     /// Schedule automatic retry for a failed transfer with backoff measured
-    /// in minutes (see `retryDelays`).
+    /// in minutes (see `TransferRetryScheduler.delays`).
     private func scheduleRetry(transferId: UUID, username: String, filename: String, size: UInt64, retryCount: Int) async {
-        guard retryCount < self.maxRetries else {
+        guard let delay = retryScheduler.delay(forRetryCount: retryCount) else {
             logger.info("Max retries (\(self.maxRetries)) reached for \(filename)")
             return
         }
-
-        let delay = retryDelays[retryCount]
         let fireAt = Date().addingTimeInterval(delay)
         logger.info("Scheduling retry #\(retryCount + 1) for \(filename) in \(delay)s")
 
-        // Update status to show pending retry. `nextRetryAt` is persisted
-        // so a quit + relaunch in the middle of a 30-minute backoff still
-        // honors the original schedule (see `rearmPersistedRetries`).
+        // `nextRetryAt` is persisted so a quit + relaunch in the middle of
+        // a 30-minute backoff still honors the original schedule (see
+        // `rearmPersistedRetries`).
         await transferState?.updateTransfer(id: transferId) { t in
-            t.error = "Retrying in \(Self.formatRetryDelay(delay))..."
+            t.error = TransferRetryScheduler.retryingErrorText(delay: delay)
             t.nextRetryAt = fireAt
         }
 
-        // Cancel any prior pending retry for this transfer first —
-        // assigning into `pendingRetries[...]` only drops the dict
-        // reference; without this the old Task keeps sleeping and
-        // could fire later (its `.failed` guard usually catches it,
-        // but we don't want the orphan around).
-        if let existing = pendingRetries.removeValue(forKey: transferId) {
-            existing.cancel()
-        }
-
-        let task = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard let self, !Task.isCancelled else { return }
-            await self.runScheduledDownloadRetry(
+        retryScheduler.schedule(transferId, after: delay) { [weak self] in
+            await self?.runScheduledDownloadRetry(
                 transferId: transferId,
                 username: username,
                 filename: filename,
@@ -3188,8 +3126,6 @@ public actor DownloadManager {
                 retryCount: retryCount
             )
         }
-
-        pendingRetries[transferId] = task
     }
 
     /// Wake-up body for a scheduled/rearmed retry Task. Only proceeds if
@@ -3206,7 +3142,7 @@ public actor DownloadManager {
         size: UInt64,
         retryCount: Int
     ) async {
-        pendingRetries.removeValue(forKey: transferId)
+        retryScheduler.clear(transferId)
         guard let current = await transferState?.getTransfer(id: transferId),
               current.status == .failed else {
             logger.info("Skipping scheduled retry for \(filename): no longer in .failed state")
@@ -3289,8 +3225,7 @@ public actor DownloadManager {
     /// resurrect this scheduled retry on top of the new flow that just
     /// took the row out of a retriable state.
     public func cancelRetry(transferId: UUID) async {
-        if let task = pendingRetries.removeValue(forKey: transferId) {
-            task.cancel()
+        if retryScheduler.cancel(transferId) {
             logger.info("Cancelled pending retry for transfer \(transferId)")
         }
         // Only touch the row when there's actually a stamp to clear —
@@ -3351,40 +3286,18 @@ public actor DownloadManager {
     /// after `transferState.loadPersisted()` completes.
     public func rearmPersistedRetries() async {
         guard let transferState else { return }
-        let now = Date()
-        let candidates = await transferState.downloads.filter {
-            $0.status == .failed && $0.nextRetryAt != nil && $0.retryCount < self.maxRetries
+        let downloads = await transferState.downloads
+        let count = retryScheduler.rearm(downloads) { [weak self] transfer in
+            await self?.runScheduledDownloadRetry(
+                transferId: transfer.id,
+                username: transfer.username,
+                filename: transfer.filename,
+                size: transfer.size,
+                retryCount: transfer.retryCount
+            )
         }
-        guard !candidates.isEmpty else { return }
-        logger.info("Rearming \(candidates.count) persisted download retries")
-        for (index, transfer) in candidates.enumerated() {
-            guard let fireAt = transfer.nextRetryAt else { continue }
-            let remaining = fireAt.timeIntervalSince(now)
-            // Stagger past-due rows by 0.5s each. Future rows already
-            // have a natural spread from the original scheduling.
-            let stagger = remaining <= 0 ? Double(index) * 0.5 : 0
-            let delay = max(0, remaining) + stagger
-            let transferId = transfer.id
-            let username = transfer.username
-            let filename = transfer.filename
-            let size = transfer.size
-            let retryCount = transfer.retryCount
-
-            if let existing = pendingRetries.removeValue(forKey: transferId) {
-                existing.cancel()
-            }
-            let task = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(delay))
-                guard let self, !Task.isCancelled else { return }
-                await self.runScheduledDownloadRetry(
-                    transferId: transferId,
-                    username: username,
-                    filename: filename,
-                    size: size,
-                    retryCount: retryCount
-                )
-            }
-            pendingRetries[transferId] = task
+        if count > 0 {
+            logger.info("Rearming \(count) persisted download retries")
         }
     }
 

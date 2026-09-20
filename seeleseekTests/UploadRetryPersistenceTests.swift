@@ -6,7 +6,7 @@ import Foundation
 /// Regression tests for `Transfer.nextRetryAt` persistence and
 /// `UploadManager.rearmPersistedRetries`.
 ///
-/// Before this work, `pendingRetries: [UUID: Task]` was in-memory only.
+/// Before this work, the sleeping retry Tasks were in-memory only.
 /// A user who quit the app during a 28-minute backoff would relaunch
 /// and find the row stuck at `.failed` with a stale "Retrying in 28m..."
 /// string forever — the Task that drove the retry died with the process.
@@ -124,7 +124,7 @@ struct UploadRetryPersistenceTests {
 
     @Test("Rearm skips rows that already exhausted retries")
     func skipExhaustedRetries() async {
-        // maxRetries == retryDelays.count. With the 5-step ladder, a row
+        // maxRetries equals the ladder length. With the 5-step ladder, a row
         // at retryCount 5 is fully exhausted and should not re-arm.
         let exhausted = makeFailed(retryCount: 5, nextRetryAt: Date().addingTimeInterval(-60))
         let (manager, tracking, shares) = await makeSetup(

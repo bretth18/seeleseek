@@ -43,6 +43,7 @@ extension FolderPathLabel {
     }
 }
 
+#if DEBUG
 #Preview {
     VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
         FolderPathLabel("Music/Albums/Selected Ambient Works")
@@ -54,3 +55,4 @@ extension FolderPathLabel {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

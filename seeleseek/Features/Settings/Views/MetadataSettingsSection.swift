@@ -41,6 +41,7 @@ struct MetadataSettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         MetadataSettingsSection(settings: SettingsState())
@@ -49,3 +50,4 @@ struct MetadataSettingsSection: View {
     .frame(width: 500, height: 300)
     .background(SeeleColors.background)
 }
+#endif

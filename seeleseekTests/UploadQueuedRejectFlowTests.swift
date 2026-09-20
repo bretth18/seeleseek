@@ -58,7 +58,7 @@ struct UploadQueuedRejectFlowTests {
         #expect(row?.error?.contains("Retrying in") == true,
                 "scheduleUploadRetry must rewrite the error to the countdown badge format")
         #expect(row?.nextRetryAt != nil, "scheduleUploadRetry must persist nextRetryAt")
-        // Pre-fix: pendingRetries was empty for `.queued`. Post-fix: a
+        // Pre-fix: no retry Task was scheduled for `.queued`. Post-fix: a
         // retry Task should be sleeping the backoff.
         #expect(await manager._pendingRetryTaskForTest(transferId: transferId) != nil,
                 "Queued reject must schedule a retry so the row doesn't sit inert forever")

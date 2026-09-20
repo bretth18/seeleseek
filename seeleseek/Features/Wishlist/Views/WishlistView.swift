@@ -262,6 +262,7 @@ struct WishlistItemRow: View {
     }
 }
 
+#if DEBUG
 #Preview {
     WishlistView()
         .environment(\.appState, {
@@ -274,3 +275,4 @@ struct WishlistItemRow: View {
             return state
         }())
 }
+#endif

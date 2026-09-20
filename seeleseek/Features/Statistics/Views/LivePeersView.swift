@@ -57,8 +57,10 @@ struct LivePeersView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     LivePeersView()
         .environment(\.appState, AppState())
         .frame(width: 600, height: 400)
 }
+#endif

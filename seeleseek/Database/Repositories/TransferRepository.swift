@@ -60,20 +60,6 @@ struct TransferRepository {
         }
     }
 
-    /// Update transfer status
-    static func updateStatus(id: UUID, status: Transfer.TransferStatus, error: String? = nil) async throws {
-        try await DatabaseManager.shared.write { db in
-            try db.execute(
-                sql: """
-                    UPDATE transfers
-                    SET status = ?, error = ?, updatedAt = ?
-                    WHERE id = ?
-                    """,
-                arguments: [status.rawValue, error, Date().timeIntervalSince1970, id.uuidString]
-            )
-        }
-    }
-
     /// Update transfer progress
     static func updateProgress(id: UUID, bytesTransferred: UInt64, speed: Int64) async throws {
         try await DatabaseManager.shared.write { db in

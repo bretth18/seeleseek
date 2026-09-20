@@ -52,18 +52,6 @@ struct SettingsRepository {
         }
     }
 
-    /// Get all settings (for debugging/export)
-    static func getAll() async throws -> [String: String] {
-        try await DatabaseManager.shared.read { db in
-            let records = try SettingRecord.fetchAll(db)
-            var result: [String: String] = [:]
-            for record in records {
-                result[record.key] = record.value
-            }
-            return result
-        }
-    }
-
     /// Check if database has been migrated from UserDefaults
     static func isMigrated() async throws -> Bool {
         try await get("db_migrated_v1", default: false)

@@ -196,6 +196,7 @@ private struct SearchPresetForm: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         SearchPresetsEditor(settings: SettingsState())
@@ -204,3 +205,4 @@ private struct SearchPresetForm: View {
     .frame(width: 520, height: 400)
     .background(SeeleColors.background)
 }
+#endif

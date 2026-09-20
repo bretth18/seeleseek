@@ -138,6 +138,7 @@ struct SeeleFormRow<Content: View>: View {
 
 // MARK: - Previews
 
+#if DEBUG
 #Preview("Text Field") {
     VStack(spacing: SeeleSpacing.lg) {
         TextField("Username", text: .constant(""))
@@ -192,3 +193,4 @@ struct SeeleFormRow<Content: View>: View {
     .padding()
     .background(SeeleColors.background)
 }
+#endif

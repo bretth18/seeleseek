@@ -71,13 +71,6 @@ public extension Date {
     }
 }
 
-public extension Int {
-    /// Audio track duration as MM:SS.
-    var formattedAudioDuration: String {
-        Duration.seconds(self).formatted(.time(pattern: .minuteSecond))
-    }
-}
-
 // MARK: - Country flags
 
 public enum CountryFormatter {

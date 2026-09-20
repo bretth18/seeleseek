@@ -109,16 +109,7 @@ struct UserProfileSheet: View {
 
             Spacer()
 
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeMedium))
-                    .foregroundStyle(SeeleColors.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel("Close profile")
+            SheetCloseButton(label: "Close profile") { dismiss() }
         }
     }
 
@@ -358,6 +349,7 @@ struct UserProfileSheet: View {
     }
 }
 
+#if DEBUG
 #Preview {
     UserProfileSheet(profile: UserProfile(
         username: "testuser",
@@ -376,3 +368,4 @@ struct UserProfileSheet: View {
     ))
     .environment(\.appState, AppState())
 }
+#endif

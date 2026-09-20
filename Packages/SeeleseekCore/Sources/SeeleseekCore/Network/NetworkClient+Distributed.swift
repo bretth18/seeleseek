@@ -46,13 +46,6 @@ extension NetworkClient {
         logger.info("Set BranchRoot(\(root))")
     }
 
-    /// Update our child depth
-    public func setDistributedChildDepth(_ depth: UInt32) async throws {
-        let message = MessageBuilder.childDepth(depth)
-        try await requireConnectedServerConnection().send(message)
-        logger.info("Set ChildDepth(\(depth))")
-    }
-
     /// Reset distributed network state (called when server sends code 130)
     public func resetDistributedNetwork() async {
         guard isConnected else { return }
@@ -135,9 +128,6 @@ extension NetworkClient {
             }
         }
     }
-
-    /// Get number of distributed children
-    public var distributedChildCount: Int { distributedChildren.count }
 
     // MARK: - Distributed Network Handlers
 

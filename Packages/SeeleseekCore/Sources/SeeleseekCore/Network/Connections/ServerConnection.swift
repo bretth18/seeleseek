@@ -252,46 +252,6 @@ public actor ServerConnection {
         }
     }
 
-    public func sendPing() async throws {
-        try await send(MessageBuilder.pingMessage())
-    }
-
-    public func setOnlineStatus(_ status: UserStatus) async throws {
-        try await send(MessageBuilder.setOnlineStatusMessage(status: status))
-    }
-
-    public func setSharedFoldersFiles(folders: UInt32, files: UInt32) async throws {
-        try await send(MessageBuilder.sharedFoldersFilesMessage(folders: folders, files: files))
-    }
-
-    public func search(query: String, token: UInt32) async throws {
-        try await send(MessageBuilder.fileSearchMessage(token: token, query: query))
-    }
-
-    public func getRoomList() async throws {
-        try await send(MessageBuilder.getRoomListMessage())
-    }
-
-    public func joinRoom(_ roomName: String) async throws {
-        try await send(MessageBuilder.joinRoomMessage(roomName: roomName))
-    }
-
-    public func leaveRoom(_ roomName: String) async throws {
-        try await send(MessageBuilder.leaveRoomMessage(roomName: roomName))
-    }
-
-    public func sendChatMessage(room: String, message: String) async throws {
-        try await send(MessageBuilder.sayInChatRoomMessage(roomName: room, message: message))
-    }
-
-    public func sendPrivateMessage(to username: String, message: String) async throws {
-        try await send(MessageBuilder.privateMessageMessage(username: username, message: message))
-    }
-
-    public func acknowledgePrivateMessage(id: UInt32) async throws {
-        try await send(MessageBuilder.acknowledgePrivateMessageMessage(messageId: id))
-    }
-
     // MARK: - Private Methods
 
     // Bumped per connect(); a cancelled previous socket's late events must

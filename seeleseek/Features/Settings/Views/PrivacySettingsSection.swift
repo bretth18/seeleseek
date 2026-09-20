@@ -499,6 +499,7 @@ struct PrivacySettingsSection: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ScrollView {
         PrivacySettingsSection(settings: SettingsState())
@@ -508,3 +509,4 @@ struct PrivacySettingsSection: View {
     .frame(width: 500, height: 600)
     .background(SeeleColors.background)
 }
+#endif
