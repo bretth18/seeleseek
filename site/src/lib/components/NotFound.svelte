@@ -39,7 +39,7 @@ let { status = 404, message = 'This page does not exist.' }: Props = $props();
 			class="border-b md:border-b-0 md:border-r border-border flex items-baseline justify-between min-h-[7rem]"
 		>
 			<span
-				class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-accent-soft group-hover:text-accent transition-colors"
+				class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-foreground group-hover:text-accent transition-colors"
 				>Home</span
 			>
 			<span class="{typography.meta}">/</span>

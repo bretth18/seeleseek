@@ -21,7 +21,7 @@ export const homepageFaq: FaqItem[] = [
 	},
 	{
 		q: 'How is seeleseek different from Nicotine+ or SoulseekQt?',
-		a: 'seeleseek is written in native Swift and SwiftUI. It starts quickly, uses the system controls, and has the standard macOS look. Cross-platform Qt and Python clients do not.'
+		a: 'seeleseek is written in native Swift and SwiftUI. It starts quickly, uses the system controls, and has the standard macOS look. Cross-platform Qt and Python clients do not. seeleseek also supports VoiceOver. All controls have labels, and the app announces important events, for example completed searches and failed transfers.'
 	},
 	{
 		q: 'Does seeleseek work with the official Soulseek network?',
