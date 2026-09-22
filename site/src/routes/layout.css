@@ -2,26 +2,26 @@
 @plugin '@tailwindcss/typography';
 
 :root {
-	--ss-bg: hsl(0 0% 0%);
+	--ss-bg: hsl(0 0% 5%);
 	--ss-fg: hsl(0 0% 96%);
-	--ss-muted: hsl(0 0% 6%);
+	--ss-muted: hsl(0 0% 9%);
 	--ss-muted-fg: hsl(0 0% 55%);
-	--ss-card: hsl(0 0% 6%);
+	--ss-card: hsl(0 0% 9%);
 	--ss-card-fg: hsl(0 0% 96%);
-	--ss-popover: hsl(0 0% 6%);
+	--ss-popover: hsl(0 0% 9%);
 	--ss-popover-fg: hsl(0 0% 96%);
-	--ss-border: hsl(0 0% 10%);
-	--ss-input: hsl(0 0% 10%);
+	--ss-border: hsl(0 0% 14%);
+	--ss-input: hsl(0 0% 14%);
 	--ss-primary: hsl(0 0% 96%);
 	--ss-primary-fg: hsl(0 0% 5%);
-	--ss-secondary: hsl(0 0% 12%);
+	--ss-secondary: hsl(0 0% 16%);
 	--ss-secondary-fg: hsl(0 0% 96%);
 	--ss-accent: hsl(340 100% 52%);
 	--ss-accent-fg: hsl(0 0% 100%);
 	--ss-destructive: hsl(0 84% 60%);
 	--ss-destructive-fg: hsl(0 0% 96%);
 	--ss-ring: hsl(340 100% 52%);
-	--ss-divider: hsl(0 0% 13%);
+	--ss-divider: hsl(0 0% 17%);
 	--ss-tertiary-fg: hsl(0 0% 36%);
 }
 

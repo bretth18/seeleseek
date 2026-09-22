@@ -1,21 +1,18 @@
 <script lang="ts">
 import DitheredImage from '$lib/components/DitheredImage.svelte';
-import { Cell, Shot, typography } from '$lib/design';
+import { Cell, typography } from '$lib/design';
 import { dither } from '$lib/design/tokens';
 import { DOWNLOAD_URL, OG_IMAGE, Seo, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from '$lib/seo';
 import { faqJsonLd, homepageFaq } from '$lib/seo/faq';
 
-const screenshots = [
-	{
-		src: '/screenshots/01-search.png',
-		label: 'Search',
-		alt: 'seeleseek search view showing Soulseek file search results on macOS'
-	},
-	{
-		src: '/screenshots/03-transfers.png',
-		label: 'Transfers',
-		alt: 'seeleseek transfer queue showing active Soulseek downloads on macOS'
-	}
+const screenshot = {
+	src: '/screenshots/03-transfers.png',
+	alt: "seeleseek downloading several files in various states on macOS"
+};
+
+const faqColumns = [
+	homepageFaq.slice(0, Math.ceil(homepageFaq.length / 2)),
+	homepageFaq.slice(Math.ceil(homepageFaq.length / 2))
 ];
 
 const allScreenshots = [
@@ -67,80 +64,75 @@ const softwareLd = {
 
 	<h2 class="sr-only">Native Soulseek client for macOS</h2>
 
-	<!-- Hero slab -->
-	<div class="border-b border-border">
-		<Cell pad="lg">
-			<div class="flex flex-col gap-12 md:gap-16">
+
+	<div class="grid grid-cols-1 lg:grid-cols-2 lg:min-h-[max(22rem,calc(100svh-29rem))] border-b border-border">
+		<Cell pad="md" class="border-b lg:border-b-0 lg:border-r border-border lg:flex lg:flex-col lg:justify-center">
+			<div class="flex flex-col gap-6 md:gap-8">
 				<DitheredImage
 					src="/mascot.svg"
 					alt="seeleseek mascot — a native Soulseek client for macOS"
-					class="dither-canvas w-28 h-28 md:w-32 md:h-32"
+					class="dither-canvas w-20 h-20 md:w-24 md:h-24"
 					cutoff={0.5}
 					darkrgba={dither.bg}
 					lightrgba={dither.accent}
 				/>
-				<h1 class="{typography.display} text-accent">seeleseek</h1>
-				<p class="max-w-xl text-foreground/50 text-[clamp(1rem,1.8vw,1.25rem)] leading-[1.4] tracking-[-0.01em]">
-					A native Soulseek client for macOS, written in Swift.
-				</p>
+				<div class="flex flex-col gap-4 md:gap-6">
+					<h1 class="{typography.display} text-accent">seeleseek</h1>
+					<p class="max-w-xl text-foreground/60 text-[clamp(1rem,1.8vw,1.25rem)] leading-[1.4] tracking-[-0.01em]">
+						A native Soulseek client for macOS, written in Swift.
+					</p>
+				</div>
 			</div>
 		</Cell>
+
+
+		<div class="relative overflow-hidden aspect-2206/1100 sm:aspect-2206/900 lg:aspect-auto">
+			<h2 class="sr-only">Screenshots</h2>
+			<div class="@container absolute inset-x-5 top-6 md:inset-x-10 md:top-8 lg:bottom-0 lg:right-0 lg:@container-[size]">
+				<img src={screenshot.src} alt={screenshot.alt} width="2206" height="1340" fetchpriority="high" decoding="async" class="w-full h-auto rounded-t-[2.6cqw] lg:h-full lg:object-cover lg:object-left-top lg:rounded-none lg:rounded-l-[calc(max(100cqw,164.6cqh)*0.0249)]" />
+			</div>
+		</div>
 	</div>
 
 	<!-- Two-cell action row -->
-	<div class="grid grid-cols-1 md:grid-cols-2 border-b border-border">
-		<Cell href={DOWNLOAD_URL} external class="border-b md:border-b-0 md:border-r border-border flex items-baseline justify-between min-h-[7rem]">
-			<span class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-accent-soft group-hover:text-accent transition-colors">Download .pkg</span>
+	<div class="grid grid-cols-1 lg:grid-cols-2 border-b border-border">
+		<Cell href={DOWNLOAD_URL} external class="border-b lg:border-b-0 lg:border-r border-border flex items-baseline justify-between">
+			<span class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-foreground group-hover:text-accent transition-colors">Download .pkg</span>
 			<span class="{typography.meta}">macOS 15.6+</span>
 		</Cell>
-		<Cell href="/docs/guide/getting-started" class="flex items-baseline justify-between min-h-[7rem]">
+		<Cell href="/docs/guide/getting-started" class="flex items-baseline justify-between">
 			<span class="text-2xl md:text-3xl font-bold tracking-[-0.03em] text-foreground/80 group-hover:text-foreground transition-colors">Docs</span>
 			<span class="{typography.meta}">Guide · Protocol</span>
 		</Cell>
 	</div>
 
-	<!-- Two screenshots, flat, minimal -->
-	<h2 class="sr-only">Screenshots</h2>
-	<div class="grid grid-cols-1 md:grid-cols-2 border-b border-border">
-		{#each screenshots as shot, i}
-			<div class={i === 0 ? 'border-b md:border-b-0 md:border-r border-border' : ''}>
-				<Cell>
-					<Shot src={shot.src} alt={shot.alt} class="aspect-[3/2]" />
-					<p class="mt-4 {typography.meta}">{shot.label}</p>
-				</Cell>
-			</div>
-		{/each}
-	</div>
 
-	<!-- FAQ — collapsed, accessible, crawlable -->
-	<section class="border-b border-border" aria-labelledby="faq-heading">
-		<Cell pad="md">
-			<h2 id="faq-heading" class="{typography.meta} mb-4">FAQ</h2>
-			<div class="flex flex-col">
-				{#each homepageFaq as item}
-					<details class="group border-t border-border first:border-t-0 py-3">
-						<summary class="cursor-pointer list-none flex items-baseline justify-between gap-4 text-sm font-bold tracking-[-0.01em] text-foreground/80 hover:text-foreground transition-colors">
-							<span>{item.q}</span>
-							<span class="text-foreground/30 group-open:text-accent transition-colors" aria-hidden="true">+</span>
-						</summary>
-						<p class="mt-3 text-sm text-foreground/50 leading-[1.5] max-w-2xl">{item.a}</p>
-					</details>
-				{/each}
-			</div>
-		</Cell>
+	<section class="flex-1" aria-labelledby="faq-heading">
+		<h2 id="faq-heading" class="{typography.meta} px-5 md:px-10 pt-6 md:pt-8 pb-3">FAQ</h2>
+		<div class="grid grid-cols-1 lg:grid-cols-2">
+			{#each faqColumns as column, i}
+				<div class="px-5 md:px-10 {i === 0 ? 'lg:border-r border-border lg:pb-8' : 'pb-6 md:pb-8'}">
+					{#each column as item, j}
+						<details class="group py-3 {j > 0 || i > 0 ? 'border-t border-border' : ''} {i > 0 && j === 0 ? 'lg:border-t-0' : ''}">
+							<summary class="cursor-pointer list-none flex items-baseline justify-between gap-4 text-sm font-bold tracking-[-0.01em] text-foreground/80 hover:text-foreground transition-colors">
+								<span>{item.q}</span>
+								<span class="text-foreground/40 group-open:text-accent transition-colors" aria-hidden="true">+</span>
+							</summary>
+							<p class="mt-3 text-sm text-foreground/60 leading-normal max-w-2xl">{item.a}</p>
+						</details>
+					{/each}
+				</div>
+			{/each}
+		</div>
 	</section>
 
-	<!-- Bottom strip -->
-	<div class="grid grid-cols-1 sm:grid-cols-3 sm:min-h-[4.5rem]">
-		<Cell pad="sm" class="border-b sm:border-b-0 sm:border-r border-border">
-			<span class="text-sm font-bold text-foreground/40">seeleseek</span>
+	<footer class="border-t border-border grid grid-cols-2">
+		<Cell pad="sm" class="border-r border-border">
+			<span class="text-sm text-foreground/55">©2026 seeleseek</span>
 		</Cell>
-		<Cell pad="sm" href="https://github.com/bretth18/seeleseek" external class="border-b sm:border-b-0 sm:border-r border-border">
-			<span class="text-sm font-bold group-hover:text-accent transition-colors">GitHub</span>
+		<Cell pad="sm" href="https://github.com/bretth18/seeleseek" external>
+			<span class="text-sm font-bold group-hover:text-accent transition-colors">GitHub ↗</span>
 		</Cell>
-		<Cell pad="sm">
-			<span class="text-sm font-bold text-foreground/40">©2026 seeleseek</span>
-		</Cell>
-	</div>
+	</footer>
 
 </div>

@@ -39,7 +39,7 @@ const navLinks = [
 							href={link.href}
 							target={link.external ? '_blank' : undefined}
 							rel={link.external ? 'noopener noreferrer' : undefined}
-							class="text-sm tracking-tight transition-colors {(link.match && pathname.startsWith(link.match)) ? 'text-foreground' : 'text-foreground/30 hover:text-foreground/60'}"
+							class="text-sm tracking-tight transition-colors {(link.match && pathname.startsWith(link.match)) ? 'text-foreground' : 'text-foreground/55 hover:text-foreground/80'}"
 						>
 							{link.label}
 						</a>
@@ -51,7 +51,7 @@ const navLinks = [
 				<Search />
 				<a
 					href={DOWNLOAD_URL}
-					class="text-sm font-bold text-accent hover:text-accent/60 transition-colors tracking-tight"
+					class="text-sm font-bold text-accent hover:text-foreground transition-colors tracking-tight"
 				>
 					Download ↓
 				</a>

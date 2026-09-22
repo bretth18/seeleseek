@@ -13,9 +13,9 @@ let { href, external = false, pad = 'md', class: className = '', children }: Pro
 
 const padding = $derived(
 	{
-		sm: 'p-5 md:p-6',
-		md: 'p-6 md:p-8',
-		lg: 'p-6 md:p-10 lg:p-16'
+		sm: 'px-5 md:px-10 py-4 md:py-5',
+		md: 'px-5 md:px-10 py-6 md:py-8',
+		lg: 'px-5 md:px-10 py-10 lg:py-16'
 	}[pad]
 );
 
