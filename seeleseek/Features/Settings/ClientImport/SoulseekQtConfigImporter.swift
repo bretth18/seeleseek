@@ -111,23 +111,16 @@ struct SoulseekQtDataGraph {
 
     /// Names of `entityTable` nodes that carry a true `flagTable`
     /// attribute, e.g. `user` nodes linked to an `is_ignored` = "1" node.
-    /// The real export only showed this shape for `in_user_list` and
-    /// `shared_public`; `is_ignored` and `room_autojoin` were empty. If a
-    /// flag node has no entity neighbour and is not boolean-looking, its
-    /// own value is taken as the name.
+    /// One flag node is shared by every flagged entity.
     func entities(_ entityTable: String, flaggedBy flagTable: String) -> [String] {
         var seen = Set<String>()
         var names: [String] = []
         func add(_ name: String) {
             if !name.isEmpty, seen.insert(name).inserted { names.append(name) }
         }
-        for flagID in idsIn[flagTable] ?? [] {
-            let flag = valueOf[flagID] ?? ""
-            let linked = (neighbors[flagID] ?? []).filter { tableOf[$0] == entityTable }
-            if linked.isEmpty {
-                if !Self.isBoolean(flag) { add(flag) }
-            } else if Self.isTrue(flag) {
-                for id in linked { add(valueOf[id] ?? "") }
+        for flagID in idsIn[flagTable] ?? [] where Self.isTrue(valueOf[flagID]) {
+            for id in neighbors[flagID] ?? [] where tableOf[id] == entityTable {
+                add(valueOf[id] ?? "")
             }
         }
         return names
@@ -136,10 +129,6 @@ struct SoulseekQtDataGraph {
     static func isTrue(_ raw: String?) -> Bool {
         guard let raw else { return false }
         return ["1", "yes", "true"].contains(raw.lowercased())
-    }
-
-    private static func isBoolean(_ raw: String) -> Bool {
-        isTrue(raw) || ["0", "no", "false"].contains(raw.lowercased())
     }
 
     private struct Reader {

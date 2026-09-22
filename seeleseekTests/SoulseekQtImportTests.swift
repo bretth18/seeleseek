@@ -102,16 +102,6 @@ struct SoulseekQtImportTests {
         #expect(config.uploadSpeedLimit == 0)
     }
 
-    @Test("Flag tables holding names directly are accepted")
-    func unlinkedFlagNames() throws {
-        let data = Self.scd(
-            tables: [("room_autojoin", [(1, "indie music"), (2, "1")])],
-            links: []
-        )
-        let config = try SoulseekQtConfigImporter.parse(data)
-        #expect(config.autojoinRooms == ["indie music"])
-    }
-
     @Test("Out-of-range ports and empty values are rejected")
     func validation() throws {
         let data = Self.scd(
