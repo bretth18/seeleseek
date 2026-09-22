@@ -4,7 +4,7 @@ import SeeleseekCore
 struct GeneralSettingsSection: View {
     @Environment(\.appState) private var appState
     @Bindable var settings: SettingsState
-    @State private var showNicotineImport = false
+    @State private var importSource: ClientImportSource?
 
     /// Uses the manager's own resolver so the preview can't drift.
     private var folderStructurePreview: String {
@@ -111,26 +111,31 @@ struct GeneralSettingsSection: View {
                 settingsRow {
                     HStack {
                         VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                            Text("Migrate from Nicotine+")
+                            Text("Migrate from another client")
                                 .font(SeeleTypography.body)
                                 .foregroundStyle(SeeleColors.textPrimary)
-                            Text("Login, ports, folders, shares, and ignore list")
+                            Text("Login, ports, folders, shares, ignore list, and rooms")
                                 .font(SeeleTypography.caption)
                                 .foregroundStyle(SeeleColors.textTertiary)
                         }
 
                         Spacer()
 
-                        Button("Import from Nicotine+…") {
-                            showNicotineImport = true
+                        Button("Nicotine+…") {
+                            importSource = .nicotine
+                        }
+                        .buttonStyle(.seeleSecondary(.small))
+
+                        Button("SoulseekQt…") {
+                            importSource = .soulseekQt
                         }
                         .buttonStyle(.seeleSecondary(.small))
                     }
                 }
             }
         }
-        .sheet(isPresented: $showNicotineImport) {
-            NicotineImportSheet(isPresented: $showNicotineImport)
+        .sheet(item: $importSource) { source in
+            ClientImportSheet(source: source)
         }
     }
 }
