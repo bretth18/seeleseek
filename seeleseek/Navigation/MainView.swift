@@ -158,7 +158,7 @@ struct MainView: View {
             case .networkMonitor:
                 NetworkMonitorView()
             case .settings:
-                SettingsView()
+                SettingsView(selection: Bindable(appState.navigation).settingsTab)
             case nil:
                 SearchView()
             }

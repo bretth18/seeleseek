@@ -163,11 +163,13 @@ struct SeeleSeekApp: App {
         .commandsRemoved()
 
         Settings {
-            SettingsView()
+            SettingsWindowView()
                 .environment(\.appState, appState)
-                .frame(minWidth: 700, minHeight: 500)
+                .frame(minWidth: 700, idealWidth: 700, minHeight: 500, idealHeight: 500)
+                .toolbar(removing: .title)
                 .preferredColorScheme(appState.settings.appearance.colorScheme)
         }
+        .windowResizability(.contentMinSize)
 
         MenuBarExtra("SeeleSeek", image: .gsgaag2Menubar2, isInserted: $appState.settings.showInMenuBar) {
             MenuBarView()
