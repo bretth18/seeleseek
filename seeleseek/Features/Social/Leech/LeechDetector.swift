@@ -90,17 +90,25 @@ final class LeechDetector: UploadPolicy {
         guard settings.enabled else { return .allow }
         let user = request.username
         beginProbeIfNeeded(user)
-        guard settings.action.deniesTransfers else { return .allow }
-        if request.stage == .request, !detectedLeechers.contains(user) {
+        guard settings.deniesTransfers else { return .allow }
+        if request.stage == .request {
             await waitForVerdict(user)
         }
-        return detectedLeechers.contains(user) ? .deny(reason: UploadDenialReason.notShared) : .allow
+        guard detectedLeechers.contains(user) else { return .allow }
+        if settings.sendMessage {
+            messageOnce(user)
+        }
+        return .deny(reason: UploadDenialReason.notShared)
     }
 
     @MainActor
     func uploadDidComplete(username: String) async {
-        guard settings.enabled, settings.action == .message, probes[username] == .leecher,
-              messagedLeechers.insert(username).inserted else { return }
+        guard settings.enabled, settings.sendMessage, detectedLeechers.contains(username) else { return }
+        messageOnce(username)
+    }
+
+    private func messageOnce(_ username: String) {
+        guard messagedLeechers.insert(username).inserted else { return }
         persist(Self.messagedKey, messagedLeechers)
         let lines = settings.renderedMessage
             .split(whereSeparator: \.isNewline)
@@ -154,7 +162,7 @@ final class LeechDetector: UploadPolicy {
                 "Sharing \(counts.files) files in \(counts.folders) folders (minimum \(settings.minSharedFiles) files, \(settings.minSharedFolders) folders)",
                 username
             )
-            if settings.action == .block {
+            if settings.blockUser {
                 Task { await services.blockUser(username) }
             }
         } else {
