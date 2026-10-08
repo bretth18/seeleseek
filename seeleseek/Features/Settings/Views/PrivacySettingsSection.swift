@@ -273,115 +273,7 @@ struct PrivacySettingsSection: View {
                 }
             }
 
-            settingsGroup("Detection") {
-                settingsRow {
-                    HStack {
-                        VStack(alignment: .leading, spacing: SeeleSpacing.xs) {
-                            Text("Enable Leech Detection")
-                                .font(SeeleTypography.body)
-                                .foregroundStyle(SeeleColors.textPrimary)
-                                .accessibilityHidden(true)
-
-                            Text("Check the share counts of users who download from you. Buddies are never checked.")
-                                .font(SeeleTypography.caption)
-                                .foregroundStyle(SeeleColors.textSecondary)
-                        }
-
-                        Spacer()
-
-                        Toggle("", isOn: Bindable(leech).settings.enabled)
-                            .toggleStyle(SeeleToggleStyle())
-                            .labelsHidden()
-                            .accessibilityLabel("Enable Leech Detection")
-                    }
-                }
-            }
-
-            settingsGroup("Detection Thresholds") {
-                settingsRow {
-                    HStack {
-                        Text("Minimum shared files")
-                            .font(SeeleTypography.body)
-                            .foregroundStyle(SeeleColors.textPrimary)
-                            .accessibilityHidden(true)
-
-                        Spacer()
-
-                        TextField("", value: Bindable(leech).settings.minSharedFiles, format: .number)
-                            .textFieldStyle(SeeleTextFieldStyle())
-                            .frame(width: 80)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Minimum shared files")
-                    }
-                }
-                settingsRow {
-                    HStack {
-                        Text("Minimum shared folders")
-                            .font(SeeleTypography.body)
-                            .foregroundStyle(SeeleColors.textPrimary)
-                            .accessibilityHidden(true)
-
-                        Spacer()
-
-                        TextField("", value: Bindable(leech).settings.minSharedFolders, format: .number)
-                            .textFieldStyle(SeeleTextFieldStyle())
-                            .frame(width: 80)
-                            .multilineTextAlignment(.trailing)
-                            .accessibilityLabel("Minimum shared folders")
-                    }
-                }
-                settingsCaption("Users sharing fewer files or folders than this are leechers")
-            }
-            .opacity(leech.settings.enabled ? 1 : 0.5)
-            .disabled(!leech.settings.enabled)
-
-            settingsGroup("Action") {
-                ForEach(LeechAction.allCases, id: \.self) { action in
-                    leechActionRow(action)
-                }
-            }
-            .opacity(leech.settings.enabled ? 1 : 0.5)
-            .disabled(!leech.settings.enabled)
-
-            settingsGroup("Custom Message") {
-                settingsRow {
-                    VStack(alignment: .leading, spacing: SeeleSpacing.sm) {
-                        TextEditor(text: Bindable(leech).settings.customMessage)
-                            .accessibilityLabel("Custom leech message")
-                            .font(SeeleTypography.body)
-                            .foregroundStyle(SeeleColors.textPrimary)
-                            .scrollContentBackground(.hidden)
-                            .padding(SeeleSpacing.sm)
-                            .background(SeeleColors.surfaceSecondary)
-                            .clipShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusMD / 2))
-                            .frame(height: 80)
-
-                        Text("Sent once per user after their first completed upload, when the action is \"Send message\". %files% and %folders% expand to the thresholds above.")
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textTertiary)
-
-                        FlowLayout(spacing: SeeleSpacing.xs) {
-                            ForEach(LeechSettings.defaultMessages.indices, id: \.self) { index in
-                                Button {
-                                    leech.settings.customMessage = LeechSettings.defaultMessages[index]
-                                } label: {
-                                    Text("Template \(index + 1)")
-                                        .font(SeeleTypography.caption)
-                                        .foregroundStyle(SeeleColors.accent)
-                                        .padding(.horizontal, SeeleSpacing.sm)
-                                        .padding(.vertical, SeeleSpacing.xs)
-                                        .background(SeeleColors.accent.opacity(0.1), in: Capsule())
-                                        .contentShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityHint("Replaces the custom message with this template")
-                            }
-                        }
-                    }
-                }
-            }
-            .opacity(leech.settings.enabled && leech.settings.action == .message ? 1 : 0.5)
-            .disabled(!leech.settings.enabled || leech.settings.action != .message)
+            LeechRuleGroup(leech: leech)
 
             if leech.settings.enabled {
                 settingsGroup("Detected Leechers") {
@@ -411,45 +303,6 @@ struct PrivacySettingsSection: View {
                 }
             }
         }
-    }
-
-    private func leechActionRow(_ action: LeechAction) -> some View {
-        Button {
-            leech.settings.action = action
-        } label: {
-            settingsRow {
-                HStack(spacing: SeeleSpacing.md) {
-                    Image(systemName: leech.settings.action == action ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(leech.settings.action == action ? SeeleColors.accent : SeeleColors.textTertiary)
-                        .accessibilityHidden(true)
-
-                    VStack(alignment: .leading, spacing: SeeleSpacing.xxs) {
-                        Text(action.displayName)
-                            .font(SeeleTypography.body)
-                            .foregroundStyle(SeeleColors.textPrimary)
-
-                        Text(action.description)
-                            .font(SeeleTypography.caption)
-                            .foregroundStyle(SeeleColors.textSecondary)
-                    }
-
-                    Spacer()
-                }
-                .padding(.horizontal, SeeleSpacing.xs)
-                .padding(.vertical, SeeleSpacing.rowVertical)
-                .background(leech.settings.action == action ? SeeleColors.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous)
-                        .stroke(leech.settings.action == action ? SeeleColors.selectionBorder : Color.clear, lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: SeeleSpacing.radiusSM, style: .continuous))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(action.displayName)
-        .accessibilityHint(action.description)
-        .accessibilityAddTraits(leech.settings.action == action ? [.isSelected] : [])
     }
 
     private func leechRow(_ username: String) -> some View {
@@ -501,11 +354,15 @@ struct PrivacySettingsSection: View {
 
 #if DEBUG
 #Preview {
-    ScrollView {
+    let appState = AppState()
+    appState.leechDetector.settings.enabled = true
+    appState.leechDetector.settings.denyDownloads = true
+    appState.leechDetector.settings.sendMessage = true
+    return ScrollView {
         PrivacySettingsSection(settings: SettingsState())
             .padding()
     }
-    .environment(\.appState, AppState())
+    .environment(\.appState, appState)
     .frame(width: 500, height: 600)
     .background(SeeleColors.background)
 }
