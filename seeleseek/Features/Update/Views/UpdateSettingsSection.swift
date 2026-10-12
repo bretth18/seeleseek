@@ -6,6 +6,7 @@ import SeeleseekCore
 
 struct UpdateSettingsSection: View {
     @Bindable var updateState: UpdateState
+    @Bindable var crashReportState: CrashReportState
 
     var body: some View {
         VStack(alignment: .leading, spacing: SeeleSpacing.md) {
@@ -52,6 +53,7 @@ struct UpdateSettingsSection: View {
                 }
 
                 settingsToggle("Check automatically on launch", isOn: $updateState.autoCheckEnabled)
+                settingsToggle("Offer to report crashes on launch", isOn: $crashReportState.offerOnLaunch)
 
                 if let lastCheck = updateState.lastCheckDate {
                     settingsRow {

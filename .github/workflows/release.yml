@@ -187,10 +187,19 @@ jobs:
         # 6. Staple the notarization ticket.
         xcrun stapler staple build/seeleseek.pkg
 
+    - name: Package dSYMs
+      # Release binaries are stripped; crash reports from users only
+      # symbolicate against the dSYM from this exact archive.
+      run: |
+        ditto -c -k --keepParent build/seeleseek.xcarchive/dSYMs \
+          "build/seeleseek-${{ steps.version.outputs.VERSION }}-dSYMs.zip"
+
     - name: Release
       uses: softprops/action-gh-release@v1
       with:
-        files: build/seeleseek.pkg
+        files: |
+          build/seeleseek.pkg
+          build/seeleseek-${{ steps.version.outputs.VERSION }}-dSYMs.zip
         generate_release_notes: true
 
     - name: Cleanup keychain

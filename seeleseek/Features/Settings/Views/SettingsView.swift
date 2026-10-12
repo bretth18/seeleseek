@@ -44,7 +44,7 @@ struct SettingsView: View {
                     case .diagnostics:
                         DiagnosticsSection()
                     case .update:
-                        UpdateSettingsSection(updateState: appState.updateState)
+                        UpdateSettingsSection(updateState: appState.updateState, crashReportState: appState.crashReportState)
                     case .about:
                         AboutSettingsSection()
                     }

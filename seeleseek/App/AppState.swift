@@ -18,6 +18,7 @@ final class AppState {
     var leechDetector = LeechDetector()
     var wishlistState = WishlistState()
     var updateState = UpdateState()
+    var crashReportState = CrashReportState()
 
     // MARK: - Admin Messages
     var showAdminMessageAlert = false
@@ -522,6 +523,8 @@ final class AppState {
         // Configure notifications
         NotificationService.shared.settings = settings
         NotificationService.shared.requestAuthorization()
+
+        Task { await crashReportState.checkOnLaunch() }
 
         Task {
             await initializeDatabase()
