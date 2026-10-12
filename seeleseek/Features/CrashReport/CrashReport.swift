@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct CrashReport: Sendable, Equatable {
+nonisolated struct CrashReport: Sendable {
     let fileURL: URL
     let date: Date
     let fullText: String
@@ -14,7 +14,7 @@ nonisolated struct CrashReport: Sendable, Equatable {
     let crashedThread: [String]
 
     static let crashBugType = "309"
-    static let issueURL = URL(string: "https://github.com/bretth18/seeleseek/issues/new")!
+    static let newIssueURL = URL(string: "https://github.com/bretth18/seeleseek/issues/new")!
     static let maxFrames = 30
 
     static var defaultDirectory: URL {
@@ -38,13 +38,10 @@ nonisolated struct CrashReport: Sendable, Equatable {
             }
             .sorted { $0.1 > $1.1 }
 
-        for (url, date) in candidates {
-            guard let text = try? String(contentsOf: url, encoding: .utf8),
-                  let report = parse(text, fileURL: url, date: date, processName: processName)
-            else { continue }
-            return report
-        }
-        return nil
+        return candidates.lazy.compactMap { url, date in
+            (try? String(contentsOf: url, encoding: .utf8))
+                .flatMap { parse($0, fileURL: url, date: date, processName: processName) }
+        }.first
     }
 
     /// Hang and resource reports share the `.ips` extension; only bug type
@@ -53,7 +50,7 @@ nonisolated struct CrashReport: Sendable, Equatable {
         let parts = text.split(separator: "\n", maxSplits: 1)
         guard let header = json(parts.first),
               header["bug_type"] as? String == crashBugType,
-              (header["app_name"] as? String ?? header["name"] as? String) == processName
+              header["app_name"] as? String == processName
         else { return nil }
         let body = json(parts.count > 1 ? parts[1] : nil) ?? [:]
 
@@ -155,11 +152,11 @@ nonisolated struct CrashReport: Sendable, Equatable {
     }
 
     var issueURL: URL {
-        var components = URLComponents(url: Self.issueURL, resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: Self.newIssueURL, resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "title", value: issueTitle),
             URLQueryItem(name: "body", value: issueBody),
         ]
-        return components.url ?? Self.issueURL
+        return components.url ?? Self.newIssueURL
     }
 }
