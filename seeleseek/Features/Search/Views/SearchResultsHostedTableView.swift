@@ -55,7 +55,9 @@ struct SearchResultsHostedTableView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.appState = appState
-        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+        if scrollView.contentInsets.bottom != bottomInset {
+            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+        }
         context.coordinator.apply(items)
     }
 
@@ -64,11 +66,20 @@ struct SearchResultsHostedTableView: NSViewRepresentable {
         weak var table: NSTableView?
         private(set) var items: [SearchListItem] = []
         private var ids: [String] = []
+        private var pendingItems: [SearchListItem]?
 
         init(appState: AppState) { self.appState = appState }
 
         func apply(_ newItems: [SearchListItem]) {
-            guard let table else { items = newItems; return }
+            guard table != nil else { items = newItems; return }
+            let alreadyScheduled = pendingItems != nil
+            pendingItems = newItems
+            guard !alreadyScheduled else { return }
+            DispatchQueue.main.async { [weak self] in self?.flush() }
+        }
+
+        private func flush() {
+            guard let newItems = pendingItems.take(), let table else { return }
             let newIDs = newItems.map(\.id)
             if newIDs == ids { items = newItems; return }
             if newIDs.count > ids.count, Array(newIDs.prefix(ids.count)) == ids {
