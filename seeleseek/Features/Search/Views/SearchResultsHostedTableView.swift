@@ -71,11 +71,10 @@ struct SearchResultsHostedTableView: NSViewRepresentable {
         init(appState: AppState) { self.appState = appState }
 
         func apply(_ newItems: [SearchListItem]) {
-            guard table != nil else { items = newItems; return }
-            let alreadyScheduled = pendingItems != nil
+            if pendingItems == nil {
+                DispatchQueue.main.async { [weak self] in self?.flush() }
+            }
             pendingItems = newItems
-            guard !alreadyScheduled else { return }
-            DispatchQueue.main.async { [weak self] in self?.flush() }
         }
 
         private func flush() {

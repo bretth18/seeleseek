@@ -5,20 +5,33 @@ struct LoginView: View {
     @Environment(\.appState) private var appState
 
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            content(showsLogo: true)
+            content(showsLogo: false)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(SeeleColors.background)
+        .onAppear {
+            loadSavedCredentials()
+        }
+    }
+
+    private func content(showsLogo: Bool) -> some View {
         @Bindable var connectionState = appState.connection
         @Bindable var settings = appState.settings
 
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             Spacer()
 
             VStack(spacing: SeeleSpacing.xxl) {
                 // Logo / Title
                 VStack(spacing: SeeleSpacing.md) {
-                    Image(nsImage: .gsgaag2)
-                        .renderingMode(.template)
-                        .accessibilityHidden(true)
-
-                    .foregroundStyle(SeeleColors.accent)
+                    if showsLogo {
+                        Image(nsImage: .gsgaag2)
+                            .renderingMode(.template)
+                            .foregroundStyle(SeeleColors.accent)
+                            .accessibilityHidden(true)
+                    }
 
                     Text("seeleseek")
                         .font(SeeleTypography.logo)
@@ -113,11 +126,6 @@ struct LoginView: View {
                     .foregroundStyle(SeeleColors.textTertiary)
             }
             .padding(.bottom, SeeleSpacing.xl)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(SeeleColors.background)
-        .onAppear {
-            loadSavedCredentials()
         }
     }
 
