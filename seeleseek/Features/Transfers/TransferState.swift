@@ -259,14 +259,6 @@ final class TransferState: TransferTracking {
         downloads.filter { $0.status == .queued || $0.status == .waiting }
     }
 
-    var completedDownloads: [Transfer] {
-        downloads.filter { $0.status == .completed }
-    }
-
-    var failedDownloads: [Transfer] {
-        downloads.filter { $0.status == .failed || $0.status == .cancelled }
-    }
-
     var hasActiveTransfers: Bool {
         !activeDownloads.isEmpty || !activeUploads.isEmpty
     }
@@ -568,6 +560,16 @@ final class TransferState: TransferTracking {
 
     func cancelAllDownloads() {
         cancelDownloads { _ in true }
+    }
+
+    var hasCancellableUploads: Bool {
+        uploads.contains(where: \.canCancel)
+    }
+
+    func cancelAllUploads() {
+        for id in uploads.filter(\.canCancel).map(\.id) {
+            cancelTransfer(id: id)
+        }
     }
 
     func cancelFolder(of transfer: Transfer) {

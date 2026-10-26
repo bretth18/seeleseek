@@ -6,6 +6,7 @@ struct TransfersView: View {
     @State private var isDashboardPresented = false
     @State private var isClearHistoryConfirmationPresented = false
     @State private var isCancelAllConfirmationPresented = false
+    @State private var isCancelAllUploadsConfirmationPresented = false
 
     private var transferState: TransferState { appState.transferState }
 
@@ -56,6 +57,18 @@ struct TransfersView: View {
         } message: {
             Text("Stops every queued and in-progress download. Cancelled files stay listed and can be retried.")
         }
+        .confirmationDialog(
+            "Cancel all uploads?",
+            isPresented: $isCancelAllUploadsConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Uploads", role: .destructive) {
+                transferState.cancelAllUploads()
+            }
+            Button("Keep Uploading", role: .cancel) {}
+        } message: {
+            Text("Stops every queued and in-progress upload. Peers are told the transfer was cancelled.")
+        }
     }
 
     private var tabBar: some View {
@@ -81,7 +94,13 @@ struct TransfersView: View {
     }
 
     private var hasClearableTransfers: Bool {
-        !transferState.completedDownloads.isEmpty || !transferState.failedDownloads.isEmpty
+        (transferState.downloads + transferState.uploads).contains {
+            $0.status == .completed || $0.status == .failed || $0.status == .cancelled
+        }
+    }
+
+    private var hasCancellableTransfers: Bool {
+        transferState.hasCancellableDownloads || transferState.hasCancellableUploads
     }
 
     /// Always present so the trailing cluster never reflows; disabled
@@ -99,13 +118,17 @@ struct TransfersView: View {
                 isCancelAllConfirmationPresented = true
             }
             .disabled(!transferState.hasCancellableDownloads)
+            Button("Cancel All Uploads", role: .destructive) {
+                isCancelAllUploadsConfirmationPresented = true
+            }
+            .disabled(!transferState.hasCancellableUploads)
         } label: {
             Image(systemName: "trash")
         }
         .buttonStyle(.seeleIcon)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(!hasClearableTransfers && !transferState.hasCancellableDownloads)
+        .disabled(!hasClearableTransfers && !hasCancellableTransfers)
         .help("Clear or cancel transfers")
         .accessibilityLabel("Clear or cancel transfers")
     }
