@@ -34,6 +34,7 @@ struct ChatRoomContentView: View {
                     chatState.sendMessage()
                 }
             }
+            .frame(minWidth: 260)
 
             if chatState.showUserListPanel {
                 Divider().background(SeeleColors.surfaceSecondary)
@@ -55,6 +56,7 @@ struct ChatRoomContentView: View {
                     Text(room.name)
                         .font(SeeleTypography.headline)
                         .foregroundStyle(SeeleColors.textPrimary)
+                        .lineLimit(1)
                         .accessibilityAddTraits(.isHeader)
 
                     if room.isPrivate {
@@ -71,6 +73,7 @@ struct ChatRoomContentView: View {
                 Text("\(room.userCount) users online")
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textSecondary)
+                    .lineLimit(1)
             }
 
             Spacer()
