@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A color with a value per appearance, resolved when drawn.
-/// Nonisolated: SwiftUI resolves dynamic NSColors on its display-link render queue,
-/// where a MainActor-inferred provider traps on the executor check (#117).
+/// Nonisolated: SwiftUI resolves dynamic NSColors on its display-link render queue
 nonisolated struct ThemedColor: Sendable {
     enum Theme {
         case light
