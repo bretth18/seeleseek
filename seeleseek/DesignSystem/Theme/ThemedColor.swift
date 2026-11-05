@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// A color with a value per appearance, resolved when drawn.
-struct ThemedColor {
+/// Nonisolated: SwiftUI resolves dynamic NSColors on its display-link render queue
+nonisolated struct ThemedColor: Sendable {
     enum Theme {
         case light
         case lightHighContrast
@@ -61,14 +62,14 @@ struct ThemedColor {
     }
 
     var color: Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: NSColor(name: nil) { @Sendable appearance in
             let theme = Theme(appearance)
             return NSColor(hex: hex(for: theme), alpha: alpha(for: theme))
         })
     }
 }
 
-extension NSColor {
+nonisolated extension NSColor {
     convenience init(hex: UInt, alpha: CGFloat = 1) {
         self.init(
             srgbRed: CGFloat((hex >> 16) & 0xFF) / 255.0,
