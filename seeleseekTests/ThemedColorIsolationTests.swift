@@ -3,8 +3,6 @@ import AppKit
 import SwiftUI
 @testable import seeleseek
 
-/// #117: SwiftUI resolves dynamic NSColors on its display-link queue. A
-/// MainActor-isolated provider traps there, taking the whole test process down.
 @Suite("ThemedColor isolation")
 struct ThemedColorIsolationTests {
 
