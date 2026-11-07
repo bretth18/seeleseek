@@ -831,3 +831,87 @@ struct DatabaseIntegrationTests {
         #expect(all[0].localPath == "/tmp/song.mp3")
     }
 }
+
+// MARK: - Batched repository writes
+
+extension DatabaseIntegrationTests {
+
+    @Test("persistBatch: a row the database rejects is reported, and the rows around it still commit")
+    func persistBatchSurvivesRejectedRow() throws {
+        let db = try makeTestDatabase()
+        try db.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_bad BEFORE INSERT ON transfers WHEN NEW.filename = 'bad'
+                BEGIN SELECT RAISE(ABORT, 'rejected'); END
+                """)
+        }
+        func transfer(_ filename: String) -> Transfer {
+            Transfer(username: "alice", filename: filename, size: 100, direction: .download, status: .queued)
+        }
+        var inProgress = transfer("progress")
+        try db.write { try TransferRecord.from(inProgress).insert($0) }
+        inProgress.bytesTransferred = 42
+
+        let failures = try db.write { db in
+            var failures = 0
+            TransferRepository.persistBatch(
+                full: [transfer("first"), transfer("bad"), transfer("last")],
+                progress: [inProgress],
+                onRowError: { _ in failures += 1 },
+                in: db
+            )
+            return failures
+        }
+
+        #expect(failures == 1)
+        let filenames = try db.read { try String.fetchAll($0, sql: "SELECT filename FROM transfers ORDER BY filename") }
+        #expect(filenames == ["first", "last", "progress"])
+        let bytes = try db.read { try Int.fetchOne($0, sql: "SELECT bytesTransferred FROM transfers WHERE filename = 'progress'") }
+        #expect(bytes == 42)
+    }
+
+    @Test("settings: setMany overwrites existing keys and getAll decodes each value's own type")
+    func settingsBatchRoundTrip() throws {
+        let db = try makeTestDatabase()
+        try db.write { db in
+            try SettingsRepository.setMany([
+                SettingRecord.create(key: "listenPort", value: 2234),
+                SettingRecord.create(key: "enableUPnP", value: true),
+            ], in: db)
+            try SettingsRepository.setMany([
+                SettingRecord.create(key: "listenPort", value: 50000),
+                SettingRecord.create(key: "downloadFolderTemplate", value: "{username}/{folder}"),
+            ], in: db)
+        }
+
+        let stored = try db.read { try SettingsRepository.getAll(in: $0) }
+
+        #expect(stored.count == 3)
+        #expect(stored["listenPort"]?.decode(Int.self) == 50000)
+        #expect(stored["enableUPnP"]?.decode(Bool.self) == true)
+        #expect(stored["downloadFolderTemplate"]?.decode(String.self) == "{username}/{folder}")
+    }
+
+    @Test("chat: conversations come newest-first, each with its latest N messages oldest-first")
+    func allConversationsOrderingAndLimit() throws {
+        let db = try makeTestDatabase()
+        let messages: [(peer: String, content: String, time: Double)] = [
+            ("bob", "b1", 1), ("bob", "b2", 2), ("bob", "b3", 3),
+            ("carol", "c1", 4),
+            ("alice", "a1", 5),
+        ]
+        try db.write { db in
+            for m in messages {
+                try PrivateMessageRecord(
+                    id: UUID().uuidString, peerUsername: m.peer, senderUsername: m.peer, content: m.content,
+                    isOwn: false, isSystem: false, messageId: nil, timestamp: m.time
+                ).insert(db)
+            }
+        }
+
+        let conversations = try db.read { try ChatRepository.allConversations(limit: 2, in: $0) }
+
+        #expect(conversations.map(\.peer) == ["alice", "carol", "bob"])
+        #expect(conversations.last?.messages.map(\.content) == ["b2", "b3"])
+    }
+}

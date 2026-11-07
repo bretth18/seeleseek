@@ -49,29 +49,63 @@ struct TransferRepository {
     /// Save a transfer (insert or update)
     static func save(_ transfer: Transfer) async throws {
         _ = try await DatabaseManager.shared.write { db in
-            // Check if exists to preserve createdAt
-            if let existing = try TransferRecord.filter(Column("id") == transfer.id.uuidString).fetchOne(db) {
-                let record = TransferRecord.from(transfer, createdAt: existing.createdAt)
-                try record.update(db)
-            } else {
-                let record = TransferRecord.from(transfer)
-                try record.insert(db)
-            }
+            try upsert(transfer, in: db)
         }
     }
 
     /// Update transfer progress
     static func updateProgress(id: UUID, bytesTransferred: UInt64, speed: Int64) async throws {
         try await DatabaseManager.shared.write { db in
-            try db.execute(
-                sql: """
-                    UPDATE transfers
-                    SET bytesTransferred = ?, speed = ?, updatedAt = ?
-                    WHERE id = ?
-                    """,
-                arguments: [Int64(bytesTransferred), speed, Date().timeIntervalSince1970, id.uuidString]
-            )
+            try updateProgress(of: id, bytesTransferred: bytesTransferred, speed: speed, in: db)
         }
+    }
+
+    /// Full saves and progress-only updates in one transaction. A row that
+    /// fails is skipped and reported, so one bad row can't drop the batch.
+    static func persistBatch(
+        full: [Transfer],
+        progress: [Transfer],
+        onRowError: @Sendable @escaping (Error) -> Void
+    ) async throws {
+        try await DatabaseManager.shared.write { db in
+            persistBatch(full: full, progress: progress, onRowError: onRowError, in: db)
+        }
+    }
+
+    nonisolated static func persistBatch(
+        full: [Transfer],
+        progress: [Transfer],
+        onRowError: (Error) -> Void,
+        in db: Database
+    ) {
+        for transfer in full {
+            do { try upsert(transfer, in: db) } catch { onRowError(error) }
+        }
+        for transfer in progress {
+            try? updateProgress(of: transfer.id, bytesTransferred: transfer.bytesTransferred, speed: transfer.speed, in: db)
+        }
+    }
+
+    nonisolated private static func upsert(_ transfer: Transfer, in db: Database) throws {
+        // Check if exists to preserve createdAt
+        if let existing = try TransferRecord.filter(Column("id") == transfer.id.uuidString).fetchOne(db) {
+            let record = TransferRecord.from(transfer, createdAt: existing.createdAt)
+            try record.update(db)
+        } else {
+            let record = TransferRecord.from(transfer)
+            try record.insert(db)
+        }
+    }
+
+    nonisolated private static func updateProgress(of id: UUID, bytesTransferred: UInt64, speed: Int64, in db: Database) throws {
+        try db.execute(
+            sql: """
+                UPDATE transfers
+                SET bytesTransferred = ?, speed = ?, updatedAt = ?
+                WHERE id = ?
+                """,
+            arguments: [Int64(bytesTransferred), speed, Date().timeIntervalSince1970, id.uuidString]
+        )
     }
 
     /// Delete a transfer

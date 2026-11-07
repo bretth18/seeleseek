@@ -4,26 +4,26 @@ import SeeleseekCore
 
 /// Repository for chat message persistence
 struct ChatRepository {
-    /// Fetch all private message conversations (distinct peer usernames)
-    static func fetchConversations() async throws -> [String] {
-        try await DatabaseManager.shared.read { db in
-            try String.fetchAll(db, sql: """
-                SELECT DISTINCT peerUsername FROM private_messages
-                ORDER BY (SELECT MAX(timestamp) FROM private_messages pm2 WHERE pm2.peerUsername = private_messages.peerUsername) DESC
-            """)
-        }
+    /// Every conversation (most recent first) with its last N messages, in one read.
+    static func fetchAllConversations(limit: Int = 200) async throws -> [(peer: String, messages: [ChatMessage])] {
+        try await DatabaseManager.shared.read { db in try allConversations(limit: limit, in: db) }
     }
 
-    /// Fetch messages for a specific conversation, most recent N messages
-    static func fetchMessages(for peerUsername: String, limit: Int = 200) async throws -> [ChatMessage] {
-        try await DatabaseManager.shared.read { db in
-            let records = try PrivateMessageRecord
-                .filter(Column("peerUsername") == peerUsername)
-                .order(Column("timestamp").desc)
-                .limit(limit)
-                .fetchAll(db)
-            return records.reversed().map { $0.toChatMessage() }
-        }
+    nonisolated static func allConversations(limit: Int, in db: Database) throws -> [(peer: String, messages: [ChatMessage])] {
+        let peers = try String.fetchAll(db, sql: """
+            SELECT DISTINCT peerUsername FROM private_messages
+            ORDER BY (SELECT MAX(timestamp) FROM private_messages pm2 WHERE pm2.peerUsername = private_messages.peerUsername) DESC
+        """)
+        return try peers.map { ($0, try recentMessages(for: $0, limit: limit, in: db)) }
+    }
+
+    nonisolated private static func recentMessages(for peerUsername: String, limit: Int, in db: Database) throws -> [ChatMessage] {
+        let records = try PrivateMessageRecord
+            .filter(Column("peerUsername") == peerUsername)
+            .order(Column("timestamp").desc)
+            .limit(limit)
+            .fetchAll(db)
+        return records.reversed().map { $0.toChatMessage() }
     }
 
     /// Save a single message

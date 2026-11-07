@@ -2622,10 +2622,11 @@ public actor DownloadManager {
         // can't burst-saturate the manager; the next tick picks up
         // where this one stopped (dictionary order rotates naturally).
         var dialBudget = maxDialsPerTick
+        var connectedRefreshes: [(PeerConnection, [Transfer])] = []
 
         for (username, transfers) in byUser {
             if let connection = await networkClient.peerConnectionPool.getConnectionForUser(username) {
-                await refreshQueueSlots(for: transfers, over: connection)
+                connectedRefreshes.append((connection, transfers))
             } else {
                 // No connection exists. Skip peers the server says are
                 // offline — a UserStatus push re-drives them on return.
@@ -2666,6 +2667,14 @@ public actor DownloadManager {
                         await self?.redialAndRefreshQueueSlots(username: username, transfers: pendingToRefresh)
                     }
                 }
+            }
+        }
+
+        // Peers in parallel: each send waits for the socket, so one
+        // backpressured peer would otherwise stall the rest of the tick.
+        await withTaskGroup(of: Void.self) { group in
+            for (connection, transfers) in connectedRefreshes {
+                group.addTask { await self.refreshQueueSlots(for: transfers, over: connection) }
             }
         }
     }
@@ -2787,12 +2796,19 @@ public actor DownloadManager {
 
         logger.info("Updating queue positions for \(activeDownloads.count) waiting/connecting downloads")
 
-        for transfer in activeDownloads {
-            if let connection = await networkClient.peerConnectionPool.getConnectionForUser(transfer.username) {
-                do {
-                    try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
-                } catch {
-                    logger.debug("Failed to request queue position for \(transfer.filename)")
+        let pool = networkClient.peerConnectionPool
+        let byUser = Dictionary(grouping: activeDownloads, by: \.username)
+        await withTaskGroup(of: Void.self) { group in
+            for (username, transfers) in byUser {
+                group.addTask { [logger] in
+                    guard let connection = await pool.getConnectionForUser(username) else { return }
+                    for transfer in transfers {
+                        do {
+                            try await connection.sendPlaceInQueueRequest(filename: transfer.filename)
+                        } catch {
+                            logger.debug("Failed to request queue position for \(transfer.filename)")
+                        }
+                    }
                 }
             }
         }

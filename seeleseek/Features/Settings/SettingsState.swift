@@ -562,18 +562,20 @@ final class SettingsState: DownloadSettingsProviding {
     /// Save settings to database
     private func saveToDatabase() async {
         do {
-            try await SettingsRepository.set("listenPort", value: listenPort)
-            try await SettingsRepository.set("enableUPnP", value: enableUPnP)
-            try await SettingsRepository.set("maxDownloadSlots", value: maxDownloadSlots)
-            try await SettingsRepository.set("maxUploadSlots", value: maxUploadSlots)
-            try await SettingsRepository.set("uploadSpeedLimit", value: uploadSpeedLimit)
-            try await SettingsRepository.set("downloadSpeedLimit", value: downloadSpeedLimit)
-            try await SettingsRepository.set("maxSearchResults", value: maxSearchResults)
-            try await SettingsRepository.set("respondToSearches", value: respondToSearches)
-            try await SettingsRepository.set("minSearchQueryLength", value: minSearchQueryLength)
-            try await SettingsRepository.set("maxSearchResponseResults", value: maxSearchResponseResults)
-            try await SettingsRepository.set("downloadFolderFormat", value: downloadFolderFormat.rawValue)
-            try await SettingsRepository.set("downloadFolderTemplate", value: downloadFolderTemplate)
+            try await SettingsRepository.setMany([
+                SettingRecord.create(key: "listenPort", value: listenPort),
+                SettingRecord.create(key: "enableUPnP", value: enableUPnP),
+                SettingRecord.create(key: "maxDownloadSlots", value: maxDownloadSlots),
+                SettingRecord.create(key: "maxUploadSlots", value: maxUploadSlots),
+                SettingRecord.create(key: "uploadSpeedLimit", value: uploadSpeedLimit),
+                SettingRecord.create(key: "downloadSpeedLimit", value: downloadSpeedLimit),
+                SettingRecord.create(key: "maxSearchResults", value: maxSearchResults),
+                SettingRecord.create(key: "respondToSearches", value: respondToSearches),
+                SettingRecord.create(key: "minSearchQueryLength", value: minSearchQueryLength),
+                SettingRecord.create(key: "maxSearchResponseResults", value: maxSearchResponseResults),
+                SettingRecord.create(key: "downloadFolderFormat", value: downloadFolderFormat.rawValue),
+                SettingRecord.create(key: "downloadFolderTemplate", value: downloadFolderTemplate),
+            ])
             logger.debug("Settings saved to database")
         } catch {
             logger.error("Failed to save settings to database: \(error.localizedDescription)")
@@ -769,22 +771,26 @@ final class SettingsState: DownloadSettingsProviding {
         do {
             logger.info("Loading settings from database...")
 
-            listenPort = try await SettingsRepository.get("listenPort", default: listenPort)
-            enableUPnP = try await SettingsRepository.get("enableUPnP", default: enableUPnP)
-            maxDownloadSlots = try await SettingsRepository.get("maxDownloadSlots", default: maxDownloadSlots)
-            maxUploadSlots = try await SettingsRepository.get("maxUploadSlots", default: maxUploadSlots)
-            uploadSpeedLimit = try await SettingsRepository.get("uploadSpeedLimit", default: uploadSpeedLimit)
-            downloadSpeedLimit = try await SettingsRepository.get("downloadSpeedLimit", default: downloadSpeedLimit)
-            maxSearchResults = try await SettingsRepository.get("maxSearchResults", default: maxSearchResults)
-            respondToSearches = try await SettingsRepository.get("respondToSearches", default: respondToSearches)
-            minSearchQueryLength = try await SettingsRepository.get("minSearchQueryLength", default: minSearchQueryLength)
-            maxSearchResponseResults = try await SettingsRepository.get("maxSearchResponseResults", default: maxSearchResponseResults)
+            let stored = try await SettingsRepository.getAll()
+            func value<T: Decodable>(_ key: String, default fallback: T) -> T {
+                stored[key]?.decode(T.self) ?? fallback
+            }
 
-            let formatRaw: String = try await SettingsRepository.get("downloadFolderFormat", default: downloadFolderFormat.rawValue)
-            if let format = DownloadFolderFormat(rawValue: formatRaw) {
+            listenPort = value("listenPort", default: listenPort)
+            enableUPnP = value("enableUPnP", default: enableUPnP)
+            maxDownloadSlots = value("maxDownloadSlots", default: maxDownloadSlots)
+            maxUploadSlots = value("maxUploadSlots", default: maxUploadSlots)
+            uploadSpeedLimit = value("uploadSpeedLimit", default: uploadSpeedLimit)
+            downloadSpeedLimit = value("downloadSpeedLimit", default: downloadSpeedLimit)
+            maxSearchResults = value("maxSearchResults", default: maxSearchResults)
+            respondToSearches = value("respondToSearches", default: respondToSearches)
+            minSearchQueryLength = value("minSearchQueryLength", default: minSearchQueryLength)
+            maxSearchResponseResults = value("maxSearchResponseResults", default: maxSearchResponseResults)
+
+            if let format = DownloadFolderFormat(rawValue: value("downloadFolderFormat", default: downloadFolderFormat.rawValue)) {
                 downloadFolderFormat = format
             }
-            downloadFolderTemplate = try await SettingsRepository.get("downloadFolderTemplate", default: downloadFolderTemplate)
+            downloadFolderTemplate = value("downloadFolderTemplate", default: downloadFolderTemplate)
 
             logger.info("Settings loaded from database")
         } catch {

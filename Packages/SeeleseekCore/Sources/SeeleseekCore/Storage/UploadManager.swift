@@ -382,21 +382,33 @@ public actor UploadManager {
     /// Tell all queued peers their updated queue position
     private func broadcastQueuePositions() async {
         guard let pool = networkClient?.peerConnectionPool else { return }
+        var positionsByUser: [String: [(filename: String, place: UInt32)]] = [:]
         for (index, upload) in uploadQueue.enumerated() {
-            let position = UInt32(index + 1)
-            // Resolve the live connection at send time. Caching the one the
-            // peer used at QueueUpload meant broadcasts often went to a dead
-            // connection and the failure was silent (logged at .debug).
-            // If the peer has no live connection, skip — they'll reconnect
-            // and re-request position when they want it.
-            guard let connection = await pool.getConnectionForUser(upload.username) else {
-                logger.debug("No live connection to \(upload.username) — skipping queue-position broadcast")
-                continue
-            }
-            do {
-                try await connection.sendPlaceInQueue(filename: upload.filename, place: position)
-            } catch {
-                logger.debug("Failed to send queue position to \(upload.username): \(error.localizedDescription)")
+            positionsByUser[upload.username, default: []].append((upload.filename, UInt32(index + 1)))
+        }
+        // One lookup per peer, peers in parallel: a backpressured peer must
+        // not delay everyone queued behind it. Per-peer order is kept.
+        await withTaskGroup(of: Void.self) { group in
+            for (username, positions) in positionsByUser {
+                group.addTask { [logger] in
+                    // Resolve the live connection at send time. Caching the one the
+                    // peer used at QueueUpload meant broadcasts often went to a dead
+                    // connection and the failure was silent (logged at .debug).
+                    // If the peer has no live connection, skip — they'll reconnect
+                    // and re-request position when they want it.
+                    guard let connection = await pool.getConnectionForUser(username) else {
+                        logger.debug("No live connection to \(username) — skipping queue-position broadcast")
+                        return
+                    }
+                    for (filename, place) in positions {
+                        do {
+                            try await connection.sendPlaceInQueue(filename: filename, place: place)
+                        } catch {
+                            logger.debug("Failed to send queue position to \(username): \(error.localizedDescription)")
+                            return
+                        }
+                    }
+                }
             }
         }
     }
@@ -2222,6 +2234,9 @@ public actor UploadManager {
         self.transferState = state
     }
 
+    internal func _setNetworkClientForTest(_ client: NetworkClient) {
+        networkClient = client
+    }
     internal func _setShareManagerForTest(_ manager: ShareManager) {
         self.shareManager = manager
     }

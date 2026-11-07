@@ -408,8 +408,9 @@ extension NetworkClient {
     public func updateShareCounts() async {
         guard isConnected, let connection = serverConnection else { return }
 
-        let folders = await UInt32(shareManager.totalFolders)
-        let files = await UInt32(shareManager.totalFiles)
+        let counts = await shareManager.shareCounts
+        let folders = UInt32(counts.folders)
+        let files = UInt32(counts.files)
 
         do {
             let message = MessageBuilder.sharedFoldersFilesMessage(folders: folders, files: files)

@@ -755,17 +755,17 @@ final class AppState {
     }
 
     private func loadPersistedState() async {
-        // Load settings from database
-        await settings.loadFromDatabase()
+        // Independent DB reads; the pool serves them concurrently.
+        async let settingsLoaded: Void = settings.loadFromDatabase()
+        async let transfersLoaded: Void = transferState.loadPersisted()
+        async let wishlistLoaded: Void = wishlistState.loadFromDatabase()
 
+        await settingsLoaded
         // `loadFromDatabase` sets `isLoading = true`, so the `didSet` hooks
         // that normally push maxUploadSlots / uploadSpeedLimit to
         // UploadManager are suppressed. Re-apply after the load completes.
         await uploadManager.setMaxConcurrentUploads(settings.maxUploadSlots)
         await uploadManager.setUploadSpeedLimit(kbPerSecond: settings.uploadSpeedLimit)
-
-        // Load resumable transfers
-        await transferState.loadPersisted()
 
         // Rearm any retry timers that were mid-backoff when the app last
         // quit. Without this, a row scheduled to retry in 28 minutes but
@@ -774,11 +774,10 @@ final class AppState {
         // immediately with a small stagger; future rows reschedule with
         // the remaining delay. Must run after `loadPersisted` so the
         // managers can read `transferState.downloads`/`.uploads`.
-        await downloadManager.rearmPersistedRetries()
-        await uploadManager.rearmPersistedRetries()
-
-        // Load wishlist items
-        await wishlistState.loadFromDatabase()
+        await transfersLoaded
+        async let downloadsRearmed: Void = downloadManager.rearmPersistedRetries()
+        async let uploadsRearmed: Void = uploadManager.rearmPersistedRetries()
+        _ = await (downloadsRearmed, uploadsRearmed, wishlistLoaded)
 
         // Check for updates on launch
         updateState.checkOnLaunch()

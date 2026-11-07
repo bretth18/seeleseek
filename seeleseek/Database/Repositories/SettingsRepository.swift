@@ -45,6 +45,33 @@ struct SettingsRepository {
         }
     }
 
+    /// Every stored setting, keyed by name, in one read.
+    static func getAll() async throws -> [String: SettingRecord] {
+        try await DatabaseManager.shared.read { db in try getAll(in: db) }
+    }
+
+    /// Upsert several settings in one transaction.
+    static func setMany(_ records: [SettingRecord]) async throws {
+        try await DatabaseManager.shared.write { db in try setMany(records, in: db) }
+    }
+
+    nonisolated static func getAll(in db: Database) throws -> [String: SettingRecord] {
+        let records = try SettingRecord.fetchAll(db)
+        return Dictionary(records.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
+    }
+
+    nonisolated static func setMany(_ records: [SettingRecord], in db: Database) throws {
+        for record in records {
+            try db.execute(
+                sql: """
+                    INSERT OR REPLACE INTO settings (key, value, updatedAt)
+                    VALUES (?, ?, ?)
+                    """,
+                arguments: [record.key, record.value, record.updatedAt]
+            )
+        }
+    }
+
     /// Delete a setting
     static func delete(_ key: String) async throws {
         _ = try await DatabaseManager.shared.write { db in

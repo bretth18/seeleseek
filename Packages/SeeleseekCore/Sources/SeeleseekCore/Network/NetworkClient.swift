@@ -602,8 +602,9 @@ public actor NetworkClient {
             try await connection.send(statusMessage)
 
             // Step 7: Report shared files
-            let folders = await UInt32(shareManager.totalFolders)
-            let files = await UInt32(shareManager.totalFiles)
+            let counts = await shareManager.shareCounts
+            let folders = UInt32(counts.folders)
+            let files = UInt32(counts.files)
             let sharesMessage = MessageBuilder.sharedFoldersFilesMessage(folders: folders, files: files)
             try await connection.send(sharesMessage)
             logger.info("Reported shares: \(folders) folders, \(files) files")

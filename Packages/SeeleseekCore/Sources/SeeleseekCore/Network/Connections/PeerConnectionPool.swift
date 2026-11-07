@@ -872,10 +872,25 @@ public actor PeerConnectionPool {
     /// actually moved, so idle sessions don't invalidate SwiftUI observers.
     private func refreshConnectionTraffic() async {
         let now = Date()
-        for (id, connection) in activeConnections_ {
-            let (rx, tx) = await connection.trafficSnapshot
-            // Re-fetch after the hop: the entry can be removed (handoff,
-            // disconnect) while we were suspended.
+        // Gather concurrently: a connection actor busy with a large receive
+        // would otherwise hold up the sweep for every connection after it.
+        let snapshots = await withTaskGroup(
+            of: (String, UInt64, UInt64).self,
+            returning: [(String, UInt64, UInt64)].self
+        ) { group in
+            for (id, connection) in activeConnections_ {
+                group.addTask {
+                    let (rx, tx) = await connection.trafficSnapshot
+                    return (id, rx, tx)
+                }
+            }
+            var results: [(String, UInt64, UInt64)] = []
+            results.reserveCapacity(activeConnections_.count)
+            for await result in group { results.append(result) }
+            return results
+        }
+        for (id, rx, tx) in snapshots {
+            // Entries can be removed (handoff, disconnect) while suspended.
             guard var info = connections[id] else { continue }
 
             let total = rx &+ tx
@@ -1179,6 +1194,12 @@ public actor PeerConnectionPool {
 
     internal func _seedConnectionForTest(_ info: PeerConnectionInfo) {
         connections[info.id] = info
+        activeConnections = connections.count
+    }
+
+    internal func _seedActiveConnectionForTest(_ info: PeerConnectionInfo, connection: PeerConnection) {
+        connections[info.id] = info
+        activeConnections_[info.id] = connection
         activeConnections = connections.count
     }
 

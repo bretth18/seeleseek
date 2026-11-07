@@ -398,20 +398,13 @@ final class TransferState: TransferTracking {
         guard !fullRows.isEmpty || !progressRows.isEmpty else { return }
 
         flushInFlight = true
-        Task {
-            for transfer in fullRows {
-                do {
-                    try await TransferRepository.save(transfer)
-                } catch {
+        Task { [logger] in
+            do {
+                try await TransferRepository.persistBatch(full: fullRows, progress: progressRows) { error in
                     logger.error("Failed to persist transfer: \(error.localizedDescription)")
                 }
-            }
-            for transfer in progressRows {
-                try? await TransferRepository.updateProgress(
-                    id: transfer.id,
-                    bytesTransferred: transfer.bytesTransferred,
-                    speed: transfer.speed
-                )
+            } catch {
+                logger.error("Failed to persist transfers: \(error.localizedDescription)")
             }
             flushInFlight = false
             // Re-arm if new updates landed while writing.

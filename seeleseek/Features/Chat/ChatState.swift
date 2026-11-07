@@ -749,9 +749,8 @@ final class ChatState {
     /// Load persisted DM conversations from database
     private func loadPersistedDMs() async {
         do {
-            let peerUsernames = try await ChatRepository.fetchConversations()
-            for peer in peerUsernames {
-                let messages = try await ChatRepository.fetchMessages(for: peer)
+            let conversations = try await ChatRepository.fetchAllConversations()
+            for (peer, messages) in conversations {
                 guard !messages.isEmpty else { continue }
 
                 if let index = privateChats.firstIndex(where: { $0.username == peer }) {
@@ -768,8 +767,8 @@ final class ChatState {
                     privateChats.append(chat)
                 }
             }
-            if !peerUsernames.isEmpty {
-                logger.info("Loaded DM history for \(peerUsernames.count) conversations")
+            if !conversations.isEmpty {
+                logger.info("Loaded DM history for \(conversations.count) conversations")
             }
 
             // Prune old messages

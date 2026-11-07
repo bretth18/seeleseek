@@ -760,20 +760,27 @@ public actor NATService {
 
     // MARK: - STUN
 
-    private func getExternalIPSTUN() async throws -> String {
-        // Cloudflare first (fast, permissive rate limits), Google/Nextcloud as fallbacks.
-        let servers: [(host: String, port: UInt16)] = [
-            ("stun.cloudflare.com", 3478),
-            ("stun.l.google.com", 19302),
-            ("stun1.l.google.com", 19302),
-            ("stun.nextcloud.com", 3478)
-        ]
-        for server in servers {
-            if let ip = try? await stunQuery(host: server.host, port: server.port) {
+    nonisolated static let stunServers: [(host: String, port: UInt16)] = [
+        ("stun.cloudflare.com", 3478),
+        ("stun.l.google.com", 19302),
+        ("stun1.l.google.com", 19302),
+        ("stun.nextcloud.com", 3478)
+    ]
+
+    func getExternalIPSTUN(servers: [(host: String, port: UInt16)] = NATService.stunServers) async throws -> String {
+        // Race all servers: sequential fallback cost up to 2 s per dead server.
+        let ip = await withTaskGroup(of: String?.self, returning: String?.self) { group in
+            for server in servers {
+                group.addTask { try? await self.stunQuery(host: server.host, port: server.port) }
+            }
+            for await case let ip? in group {
+                group.cancelAll()
                 return ip
             }
+            return nil
         }
-        throw NATError.ipDiscoveryFailed
+        guard let ip else { throw NATError.ipDiscoveryFailed }
+        return ip
     }
 
     private func stunQuery(host: String, port: UInt16) async throws -> String {
@@ -812,74 +819,88 @@ public actor NATService {
         let didComplete = Mutex(false)
         let queryLogger = logger
 
-        return try await withCheckedThrowingContinuation { continuation in
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    connection.send(content: request, completion: .contentProcessed { _ in })
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        connection.send(content: request, completion: .contentProcessed { _ in })
 
-                    @Sendable func receiveNext() {
-                        connection.receiveMessage { data, _, _, error in
-                            guard !didComplete.withLock({ $0 }) else { return }
-                            // Socket errors mustn't spin the re-arm loop; let the timeout fire.
-                            guard error == nil else { return }
+                        @Sendable func receiveNext() {
+                            connection.receiveMessage { data, _, _, error in
+                                guard !didComplete.withLock({ $0 }) else { return }
+                                // Socket errors mustn't spin the re-arm loop; let the timeout fire.
+                                guard error == nil else { return }
 
-                            // Short datagrams and replies whose transaction ID doesn't
-                            // match ours (stale responses from prior queries to the same
-                            // server) re-arm the receive instead of converting a working
-                            // query into a timeout.
-                            guard let data, data.count >= 20,
-                                  data.readUInt32BE(at: 8) == txnID.0,
-                                  data.readUInt32BE(at: 12) == txnID.1,
-                                  data.readUInt32BE(at: 16) == txnID.2 else {
-                                receiveNext()
-                                return
-                            }
+                                // Short datagrams and replies whose transaction ID doesn't
+                                // match ours (stale responses from prior queries to the same
+                                // server) re-arm the receive instead of converting a working
+                                // query into a timeout.
+                                guard let data, data.count >= 20,
+                                      data.readUInt32BE(at: 8) == txnID.0,
+                                      data.readUInt32BE(at: 12) == txnID.1,
+                                      data.readUInt32BE(at: 16) == txnID.2 else {
+                                    receiveNext()
+                                    return
+                                }
 
-                            if let reflex = Self.parseSTUNResponse(data) {
-                                guard didComplete.withLock({
-                                    guard !$0 else { return false }
-                                    $0 = true
-                                    return true
-                                }) else { return }
-                                connection.cancel()
-                                continuation.resume(returning: reflex.ip)
-                            } else {
-                                queryLogger.debug("STUN \(host):\(port) parse failed; bytes: \(data.hexString)")
-                                receiveNext()
+                                if let reflex = Self.parseSTUNResponse(data) {
+                                    guard didComplete.withLock({
+                                        guard !$0 else { return false }
+                                        $0 = true
+                                        return true
+                                    }) else { return }
+                                    connection.cancel()
+                                    continuation.resume(returning: reflex.ip)
+                                } else {
+                                    queryLogger.debug("STUN \(host):\(port) parse failed; bytes: \(data.hexString)")
+                                    receiveNext()
+                                }
                             }
                         }
-                    }
-                    receiveNext()
+                        receiveNext()
 
-                case .failed(let error):
+                    case .failed(let error):
+                        guard didComplete.withLock({
+                            guard !$0 else { return false }
+                            $0 = true
+                            return true
+                        }) else { return }
+                        connection.cancel()
+                        continuation.resume(throwing: error)
+
+                    case .cancelled:
+                        // Reached only via task cancellation (a lost race);
+                        // every other path sets didComplete before cancelling.
+                        guard didComplete.withLock({
+                            guard !$0 else { return false }
+                            $0 = true
+                            return true
+                        }) else { return }
+                        continuation.resume(throwing: CancellationError())
+
+                    default:
+                        break
+                    }
+                }
+
+                connection.start(queue: .global())
+
+                let timeoutConnection = connection
+                let timeoutContinuation = continuation
+                Task { @Sendable in
+                    try? await Task.sleep(for: .seconds(2))
                     guard didComplete.withLock({
                         guard !$0 else { return false }
                         $0 = true
                         return true
                     }) else { return }
-                    connection.cancel()
-                    continuation.resume(throwing: error)
-
-                default:
-                    break
+                    timeoutConnection.cancel()
+                    timeoutContinuation.resume(throwing: NATError.discoveryTimeout)
                 }
             }
-
-            connection.start(queue: .global())
-
-            let timeoutConnection = connection
-            let timeoutContinuation = continuation
-            Task { @Sendable in
-                try? await Task.sleep(for: .seconds(2))
-                guard didComplete.withLock({
-                    guard !$0 else { return false }
-                    $0 = true
-                    return true
-                }) else { return }
-                timeoutConnection.cancel()
-                timeoutContinuation.resume(throwing: NATError.discoveryTimeout)
-            }
+        } onCancel: {
+            connection.cancel()
         }
     }
 

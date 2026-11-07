@@ -120,11 +120,17 @@ extension NetworkClient {
         message.appendUInt32(UInt32(searchPayload.count))
         message.append(searchPayload)
 
-        for child in self.distributedChildren {
-            do {
-                try await child.send(message)
-            } catch {
-                logger.error("Failed to forward search to child: \(error.localizedDescription)")
+        // Concurrent: `send` waits for the kernel to take the bytes, so one
+        // backpressured child would otherwise delay every child after it.
+        await withTaskGroup(of: Void.self) { group in
+            for child in self.distributedChildren {
+                group.addTask { [logger, message] in
+                    do {
+                        try await child.send(message)
+                    } catch {
+                        logger.error("Failed to forward search to child: \(error.localizedDescription)")
+                    }
+                }
             }
         }
     }
@@ -332,12 +338,16 @@ extension NetworkClient {
         rootMessage.appendUInt32(UInt32(rootPayload.count))
         rootMessage.append(rootPayload)
 
-        for child in children {
-            do {
-                try await child.send(levelMessage)
-                try await child.send(rootMessage)
-            } catch {
-                logger.error("Failed to send branch info to child: \(error.localizedDescription)")
+        await withTaskGroup(of: Void.self) { group in
+            for child in children {
+                group.addTask { [logger, levelMessage, rootMessage] in
+                    do {
+                        try await child.send(levelMessage)
+                        try await child.send(rootMessage)
+                    } catch {
+                        logger.error("Failed to send branch info to child: \(error.localizedDescription)")
+                    }
+                }
             }
         }
 

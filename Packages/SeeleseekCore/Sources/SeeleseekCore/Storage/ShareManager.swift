@@ -34,6 +34,8 @@ public actor ShareManager {
     // Computed stats
     public var totalFiles: Int { fileIndex.count }
     public var totalFolders: Int { sharedFolders.count }
+    /// Both totals in one actor hop, from the same scan state.
+    public var shareCounts: (folders: Int, files: Int) { (sharedFolders.count, fileIndex.count) }
     /// Cached — recomputed whenever `fileIndex` changes (an O(n) reduce).
     public private(set) var totalSize: UInt64 = 0 {
         didSet { publishState() }
