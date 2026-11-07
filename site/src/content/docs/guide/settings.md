@@ -30,6 +30,7 @@ Configure the profile that other users see:
 ### Startup
 - **Launch at login** — Starts seeleseek when you log in to macOS.
 - **Show in menu bar** — Adds an icon to the menu bar. The default is on.
+- **Minimize to menu bar** — When the last window is closed, hides the Dock icon and keeps the app in the menu bar only. Requires **Show in menu bar**. The default is off.
 
 ## Network
 

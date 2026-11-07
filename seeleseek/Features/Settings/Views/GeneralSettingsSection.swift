@@ -103,6 +103,8 @@ struct GeneralSettingsSection: View {
             settingsGroup("Startup") {
                 settingsToggle("Launch at login", isOn: $settings.launchAtLogin)
                 settingsToggle("Show in menu bar", isOn: $settings.showInMenuBar)
+                settingsToggle("Minimize to menu bar", isOn: $settings.minimizeToMenuBar)
+                    .disabled(!settings.showInMenuBar)
                 settingsToggle("Connect at launch", isOn: $settings.connectAtLaunch)
                 settingsCaption("Logs in with the credentials saved by \"Remember me\".")
             }
