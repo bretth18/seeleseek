@@ -1,7 +1,9 @@
 import Testing
 import Network
 import Foundation
+import Darwin
 @testable import SeeleseekCore
+@testable import seeleseek
 
 /// Tests for the peer-connectivity:
 ///  - obfuscated listener retention
@@ -150,6 +152,174 @@ struct PeerConnectivityTests {
         fakeServer.cancel()
         _ = try? await fakeServer.value
         listener.cancel()
+    }
+
+    @Test("Applying a listen port keeps the requested listener without UI event delivery", .timeLimit(.minutes(1)))
+    func applyListenPortKeepsSuccessfulConnection() async throws {
+        try await withPortChangeServer { client, serverPort in
+            let defaults = UserDefaults(suiteName: UUID().uuidString)!
+            let settings = SettingsState(defaults: defaults)
+            let targetPort = try Self.availablePortPair()
+            settings.listenPort = Int(targetPort)
+
+            let error = await settings.applyListenPort(
+                using: client,
+                username: "port-change-test",
+                password: "test",
+                server: "127.0.0.1",
+                serverPort: serverPort
+            )
+
+            #expect(error == nil)
+            #expect(await client.isConnected)
+            #expect(await client.listenPort == targetPort)
+            #expect(settings.listenPort == Int(targetPort))
+            let peer = PeerConnection(
+                peerInfo: .init(username: "probe", ip: "127.0.0.1", port: settings.listenPort),
+                token: 123
+            )
+            try await peer.connect()
+            await peer.disconnect()
+        }
+    }
+
+    @Test("A failed port-change login reports the server error and restores the listener", .timeLimit(.minutes(1)))
+    func applyListenPortRestoresAfterLoginFailure() async throws {
+        try await withPortChangeServer(rejectSecondLogin: true) { client, serverPort in
+            let originalPort = await client.listenPort
+            let defaults = UserDefaults(suiteName: UUID().uuidString)!
+            let settings = SettingsState(defaults: defaults)
+            settings.listenPort = Int(try Self.availablePortPair())
+
+            let error = await settings.applyListenPort(
+                using: client,
+                username: "port-change-test",
+                password: "test",
+                server: "127.0.0.1",
+                serverPort: serverPort
+            )
+
+            #expect(error?.contains("INVALIDPASS") == true)
+            #expect(await client.isConnected)
+            #expect(await client.listenPort == originalPort)
+            #expect(settings.listenPort == Int(originalPort))
+            let peer = PeerConnection(
+                peerInfo: .init(username: "probe", ip: "127.0.0.1", port: Int(originalPort)),
+                token: 123
+            )
+            try await peer.connect()
+            await peer.disconnect()
+        }
+    }
+
+    /// Probes a disjoint pair with sockets whose close releases the reservation synchronously.
+    private static func availablePortPair() throws -> UInt16 {
+        for _ in 0..<10 {
+            let port = NetworkTests.randomTestPort()
+            var sockets: [Int32] = []
+            defer { sockets.forEach { _ = Darwin.close($0) } }
+            var available = true
+            for offset in UInt16(0)...UInt16(1) {
+                let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+                guard socket >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno)!) }
+                sockets.append(socket)
+                var address = sockaddr_in()
+                address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+                address.sin_family = sa_family_t(AF_INET)
+                address.sin_port = (port + offset).bigEndian
+                let result = withUnsafePointer(to: &address) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        Darwin.bind(socket, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
+                }
+                if result != 0 {
+                    guard errno == EADDRINUSE else { throw POSIXError(POSIXErrorCode(rawValue: errno)!) }
+                    available = false
+                    break
+                }
+            }
+            if available { return port }
+        }
+        throw POSIXError(.EADDRINUSE)
+    }
+
+    private func withPortChangeServer(
+        rejectSecondLogin: Bool = false,
+        operation: (NetworkClient, UInt16) async throws -> Void
+    ) async throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        let (connections, continuation) = AsyncStream.makeStream(of: NWConnection.self)
+        listener.newConnectionHandler = { continuation.yield($0) }
+        defer {
+            listener.cancel()
+            continuation.finish()
+        }
+        let serverPort = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<UInt16, Error>) in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    continuation.resume(returning: listener.port!.rawValue)
+                case .failed(let error):
+                    continuation.resume(throwing: error)
+                default:
+                    break
+                }
+            }
+            listener.start(queue: .global())
+        }
+        let serverTask = Task {
+            var accepted: [NWConnection] = []
+            defer { accepted.forEach { $0.cancel() } }
+            for await connection in connections {
+                accepted.append(connection)
+                connection.start(queue: .global())
+                _ = try await Self.receiveServerFrame(from: connection)
+                if rejectSecondLogin && accepted.count == 2 {
+                    var payload = Data()
+                    payload.appendBool(false)
+                    payload.appendString("INVALIDPASS")
+                    var frame = Data()
+                    frame.appendUInt32(UInt32(payload.count + 4))
+                    frame.appendUInt32(1)
+                    frame.append(payload)
+                    try await withCheckedThrowingContinuation {
+                        (continuation: CheckedContinuation<Void, Error>) in
+                        connection.send(content: frame, completion: .contentProcessed { error in
+                            if let error {
+                                continuation.resume(throwing: error)
+                            } else {
+                                continuation.resume()
+                            }
+                        })
+                    }
+                } else {
+                    try await Self.sendLoginSuccess(on: connection)
+                }
+            }
+        }
+
+        let client = NetworkClient()
+        await client._setSkipNATSetupForTest(true)
+        await client.connect(
+            server: "127.0.0.1",
+            port: serverPort,
+            username: "port-change-test",
+            password: "test",
+            preferredListenPort: NetworkTests.randomTestPort()
+        )
+        let result: Result<Void, Error>
+        do {
+            try #require(await client.isConnected)
+            try await operation(client, serverPort)
+            result = .success(())
+        } catch {
+            result = .failure(error)
+        }
+        await client.disconnectAsync()
+        serverTask.cancel()
+        _ = try await serverTask.value
+        try result.get()
     }
 
     private static func receiveServerFrame(from connection: NWConnection) async throws -> Data {

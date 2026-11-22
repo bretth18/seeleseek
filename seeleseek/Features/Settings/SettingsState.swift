@@ -491,6 +491,59 @@ final class SettingsState: DownloadSettingsProviding {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
+    /// Reconnects using the requested port and restores the previous session on failure.
+    /// The UI's event-driven status can lag behind the completed network operation.
+    func applyListenPort(
+        using client: NetworkClient,
+        username: String,
+        password: String,
+        server: String = ServerConnection.defaultHost,
+        serverPort: UInt16 = ServerConnection.defaultPort
+    ) async -> String? {
+        let targetPort = listenPort
+        let originalPort = await client.listenPort
+        guard targetPort != Int(originalPort) else { return nil }
+
+        await client.disconnectAsync()
+        await client.connect(
+            server: server,
+            port: serverPort,
+            username: username,
+            password: password,
+            preferredListenPort: UInt16(targetPort)
+        )
+
+        let failure: String
+        if await client.isConnected {
+            let actualPort = await client.listenPort
+            guard actualPort != UInt16(targetPort) else { return nil }
+            failure = "Port \(targetPort) was unavailable; connected on \(actualPort) instead."
+        } else {
+            let reason = await client.connectionError ?? "Unknown connection error"
+            failure = "Couldn't reconnect using port \(targetPort): \(reason)."
+        }
+
+        // Cancel automatic retries before restoring the previous port.
+        await client.disconnectAsync()
+        listenPort = Int(originalPort)
+        guard originalPort > 0 else { return failure }
+
+        await client.connect(
+            server: server,
+            port: serverPort,
+            username: username,
+            password: password,
+            preferredListenPort: originalPort
+        )
+        if await client.isConnected {
+            let restoredPort = await client.listenPort
+            listenPort = Int(restoredPort)
+            return "\(failure) Listening on \(restoredPort)."
+        }
+        let restoreError = await client.connectionError ?? "Unknown connection error"
+        return "\(failure) Couldn't restore port \(originalPort): \(restoreError)."
+    }
+
     // MARK: - Persistence
 
     @ObservationIgnored private var pendingSaveTask: Task<Void, Never>?
