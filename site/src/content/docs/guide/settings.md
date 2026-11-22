@@ -37,6 +37,10 @@ Configure the profile that other users see:
 - **Listen Port** — The port for incoming peer connections. The range is 1024 to 65535. The default is 2234.
 - **Enable UPnP** — Configures the router port forwarding automatically. The default is on.
 
+Change **Listen Port** and click **Apply** to reconnect. If the change fails, seeleseek displays the error and attempts to restore the previous port.
+
+For a VPN with port forwarding, use the active port assigned by the VPN and disable **Enable UPnP**. Update the listen port whenever the VPN assigns a different port.
+
 ### Transfer Slots
 - **Max Download Slots** — The number of parallel downloads. 1 to 20. The default is 5.
 - **Max Upload Slots** — The number of parallel uploads. 1 to 20. The default is 5.

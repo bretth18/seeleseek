@@ -6,9 +6,7 @@ struct NetworkSettingsSection: View {
     @Bindable var settings: SettingsState
 
     @State private var isApplyingPort = false
-    /// One-shot error surfaced under the Apply row when the bounce
-    /// fails (e.g. the requested port is already in use). Cleared
-    /// when the user starts another apply attempt.
+    /// Failed apply attempts are shown until dismissed or retried.
     @State private var portApplyError: String?
     /// Focus on the listen-port TextField. Tracked so we can defocus
     /// the field before reading `settings.listenPort` in the apply
@@ -17,19 +15,6 @@ struct NetworkSettingsSection: View {
     /// while the field still has focus would otherwise see a stale
     /// value.
     @FocusState private var listenPortFocused: Bool
-
-    /// Port the listener is currently bound to (0 when offline).
-    private var boundPort: Int { Int(appState.networkClient.status.listenPort) }
-
-    /// True when the user has typed a port that differs from what the
-    /// listener is actually bound to *and* there's a live session to
-    /// bounce. While disconnected, the new value is picked up
-    /// automatically on the next `connect()`, so the row stays hidden.
-    private var portChangeIsLive: Bool {
-        appState.connection.connectionStatus == .connected
-            && boundPort > 0
-            && settings.listenPort != boundPort
-    }
 
     /// Re-issuing `connect()` needs the in-memory username/password the
     /// login form populated. They survive for the session — but if both
@@ -46,9 +31,6 @@ struct NetworkSettingsSection: View {
 
             settingsGroup("Connection") {
                 listenPortRow
-                if portChangeIsLive {
-                    applyPortRow
-                }
                 if let portApplyError {
                     portApplyErrorRow(portApplyError)
                 }
@@ -65,13 +47,6 @@ struct NetworkSettingsSection: View {
                 settingsNumberField("Download Limit (KB/s)", value: $settings.downloadSpeedLimit, range: 0...100000, placeholder: "0 = Unlimited")
             }
         }
-        // The apply row appears without focus movement. Announce it so
-        // VoiceOver users know a reconnect is required.
-        .onChange(of: portChangeIsLive) { _, isLive in
-            if isLive {
-                VoiceOverAnnouncer.shared.announce("Port change needs a reconnect")
-            }
-        }
     }
 
     /// Inlined version of `settingsNumberField` that exposes
@@ -85,42 +60,23 @@ struct NetworkSettingsSection: View {
                     .foregroundStyle(SeeleColors.textPrimary)
                     .accessibilityHidden(true)
                 Spacer()
-                TextField("", value: $settings.listenPort, format: .number)
+                TextField("", value: $settings.listenPort, format: .number.grouping(.never))
                     .textFieldStyle(SeeleTextFieldStyle())
                     .frame(width: 80)
                     .multilineTextAlignment(.trailing)
                     .focused($listenPortFocused)
                     .onSubmit { listenPortFocused = false }
                     .accessibilityLabel("Listen Port")
-            }
-        }
-    }
-
-    private var applyPortRow: some View {
-        settingsRow {
-            HStack(spacing: SeeleSpacing.md) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: SeeleSpacing.iconSizeSmall))
-                    .foregroundStyle(SeeleColors.warning)
-                    .accessibilityHidden(true)
-
-                Text("Listening on \(boundPort). Reconnect to switch to \(settings.listenPort).")
-                    .font(SeeleTypography.caption)
-                    .foregroundStyle(SeeleColors.textSecondary)
-                    .lineLimit(2)
-
-                Spacer(minLength: SeeleSpacing.sm)
-
+                    .disabled(isApplyingPort)
                 Button(isApplyingPort ? "Applying…" : "Apply") {
                     Task { await applyPortChange() }
                 }
                 .buttonStyle(.seelePrimary(.small))
-                .disabled(!hasReconnectCredentials || isApplyingPort)
-                .help(
-                    hasReconnectCredentials
-                        ? "Disconnect and reconnect using the new port"
-                        : "Sign in again to apply port changes while connected"
+                .disabled(
+                    !hasReconnectCredentials || isApplyingPort
+                        || appState.connection.connectionStatus != .connected
                 )
+                .help("Reconnect using this listen port")
             }
         }
     }
@@ -133,7 +89,7 @@ struct NetworkSettingsSection: View {
                     .foregroundStyle(SeeleColors.error)
                     .accessibilityHidden(true)
 
-                Text(message)
+                Text(verbatim: message)
                     .font(SeeleTypography.caption)
                     .foregroundStyle(SeeleColors.textSecondary)
                     .lineLimit(3)
@@ -163,12 +119,7 @@ struct NetworkSettingsSection: View {
 
         let username = appState.connection.loginUsername
         let password = appState.connection.loginPassword
-        let targetPort = settings.listenPort
-        // Snapshot before disconnect — `boundPort` reads listenPort,
-        // which `performDisconnect` clears to 0.
-        let originalPort = boundPort
         guard !username.isEmpty, !password.isEmpty else { return }
-        guard targetPort != originalPort else { return }
 
         isApplyingPort = true
         portApplyError = nil
@@ -180,41 +131,13 @@ struct NetworkSettingsSection: View {
             appState.connection.isReapplyingSettings = false
         }
 
-        // disconnectAsync (vs sync disconnect) awaits the listener / NAT
-        // teardown so the follow-up start() doesn't race a still-pending
-        // stop() on the listenerService actor — that race left the new
-        // listener cancelled and the old one leaking on its original port.
-        await appState.networkClient.disconnectAsync()
-        await appState.networkClient.connect(
-            server: ServerConnection.defaultHost,
-            port: ServerConnection.defaultPort,
+        portApplyError = await settings.applyListenPort(
+            using: appState.networkClient,
             username: username,
-            password: password,
-            preferredListenPort: UInt16(targetPort)
+            password: password
         )
-
-        // If the bounce didn't end with us connected, the listener
-        // either failed to bind the requested port (already in use,
-        // privileged, etc.) or the server login failed. NetworkClient
-        // schedules an auto-reconnect with the *same* preferredListenPort,
-        // which would loop forever on a bad port. Cancel the loop, revert
-        // the field, reconnect on the original port, and surface a
-        // visible error so the user knows the apply didn't take.
-        if appState.connection.connectionStatus != .connected {
-            await appState.networkClient.disconnectAsync()
-            settings.listenPort = originalPort
-            let errorMessage = "Couldn't bind port \(targetPort). Reverted to \(originalPort)."
-            portApplyError = errorMessage
-            VoiceOverAnnouncer.shared.announce(errorMessage)
-            if originalPort > 0 {
-                await appState.networkClient.connect(
-                    server: ServerConnection.defaultHost,
-                    port: ServerConnection.defaultPort,
-                    username: username,
-                    password: password,
-                    preferredListenPort: UInt16(originalPort)
-                )
-            }
+        if let portApplyError {
+            VoiceOverAnnouncer.shared.announce(portApplyError)
         }
     }
 }
